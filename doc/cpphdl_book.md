@@ -14,11 +14,30 @@ date: "2026"
 
 \clearpage
 
+# Table of contents {.unnumbered .unlisted}
+
+**Part I. Describe RTL in C++**
+
+- [1. Introduction](#chapter-1)
+- [2. Capture a Sample](#chapter-2)
+- [3. Absorb Bursts with Memory and Child Modules](#chapter-3)
+- [4. Connect Reusable Interface Endpoints](#chapter-4)
+- [5. Cross Clock Domains and Test Both Flows](#chapter-5)
+- [6. Conclusion to Part I](#chapter-6)
+
+**Part II. Schedule C++ Algorithms and Synthesize Hardware**
+
+- [7. HLS Principles](#chapter-7)
+- [8. Synthesis and Retiming](#chapter-8)
+- [9. Developing Hardware-Friendly HLS C++ Design](#chapter-9)
+
+\clearpage
+
 # Part I. Describe RTL in C++ {.unnumbered}
 
 ![](cpphdl_book_images/chapter-01-introduction.png)
 
-# 1. Introduction
+# 1. Introduction {#chapter-1}
 
 ## 1.1 The design we are going to build
 
@@ -294,7 +313,7 @@ are needed for asynchronous reset.
 
 ![](cpphdl_book_images/chapter-02-sample-capture.png)
 
-# 2. Capture a Sample
+# 2. Capture a Sample {#chapter-2}
 
 This example maps a one-slot RTL stage to CppHDL ports, combs, and registers,
 then runs a native test and writes VCD without generating SystemVerilog first.
@@ -682,7 +701,7 @@ while the consumer is paused.
 
 ![](cpphdl_book_images/chapter-03-memory-hierarchy.png)
 
-# 3. Absorb Bursts with Memory and Child Modules
+# 3. Absorb Bursts with Memory and Child Modules {#chapter-3}
 
 This chapter adds `memory<>` and child modules. The main CppHDL concern is
 preserving simultaneous register and memory updates despite sequential C++ calls.
@@ -1063,7 +1082,7 @@ so developers can connect and extend modules without handling every wire separat
 
 ![](cpphdl_book_images/chapter-04-interfaces.png)
 
-# 4. Connect Reusable Interface Endpoints
+# 4. Connect Reusable Interface Endpoints {#chapter-4}
 
 This chapter replaces scalar connections with CppHDL interfaces and uses
 C++ inheritance to extend a synthesizable endpoint. The native test stays the same.
@@ -1416,7 +1435,7 @@ Next, we add CppHDL's named clock methods and testbench scheduling for CDC.
 
 ![](cpphdl_book_images/chapter-05-clock-domain-crossing.png)
 
-# 5. Cross Clock Domains and Test Both Flows
+# 5. Cross Clock Domains and Test Both Flows {#chapter-5}
 
 The FIFO uses a conventional Gray-pointer CDC architecture. The new material
 is how CppHDL assigns methods to clocks, how a native test schedules coincident
@@ -2073,7 +2092,7 @@ Why does passing the native test not validate the converter output?
 
 ![](cpphdl_book_images/chapter-06-conclusion.png)
 
-# 6. Conclusion to Part I
+# 6. Conclusion to Part I {#chapter-6}
 
 The circuits are conventional RTL. We compiled their C++ descriptions with
 testbenches, wrote output values to VCD, added a counter through inheritance,
@@ -2091,8 +2110,9 @@ scheduler implement selected C++ methods inside those modules.
 
 # Part II. Schedule C++ Algorithms and Synthesize Hardware {.unnumbered}
 
-We now want hardware that receives market-data packets and produces order
-packets. The calculations are easier to develop as C++ methods than as a
+Lets now study how to use High Level Synthesis capabilities of cpphdl toolkit
+with High Frequency Trading application as an example. The calculations are
+easier to develop as C++ methods than as a
 handwritten FSM. Their implementation must nevertheless accept consecutive
 input words, preserve packet boundaries, and wait when an output is blocked.
 
@@ -2102,7 +2122,52 @@ Chapter 9 develops the source-level design choices, with before/after examples.
 Neither scheduling nor retiming makes a store-and-scan packet algorithm into
 a streaming design automatically: the C++ must expose work that can overlap.
 
-# 7. HLS Principles
+# 7. HLS Principles {#chapter-7}
+
+High Level Synthesis (HLS) turns an algorithm into a hardware implementation.
+You write calculations, conditions, loops, and helper methods in C++ instead
+of assigning every operation to a clock and writing the corresponding RTL
+control logic. The HLS tool determines how the supported operations execute
+across clock cycles under the selected scheduling and memory contracts.
+
+The central task is **scheduling data dependencies**. For `y = (a + b) * c`,
+the multiplication needs the addition's result. They may execute as one
+combinational chain, or in separate stages with a register holding the sum.
+In the latter case, the matching value of `c` must also reach the multiplication
+stage. Independent calculations may run in parallel; a dependent memory read
+must wait until its data is available.
+
+This produces three closely related design decisions:
+
+- **When does each operation execute?** The schedule determines clock
+  boundaries, control steps, and which method invocations can overlap.
+- **Which values need storage?** Values used after a clock boundary must
+  survive it. Persistent object state and addressable data also need storage,
+  but a temporary C++ variable does not necessarily require a register.
+- **Which resources serve the operations?** Parallel arithmetic or memory
+  accesses can require additional hardware. Sharing a resource can reduce
+  area but may force operations to wait. Memory capacity, ports, and response
+  latency therefore influence the schedule, not just the storage choice.
+
+In CppHDL, an ordinary C++ class describes the algorithm, and a `ClockedXXX<>`
+wrapper selects its execution contract. `ClockedDelayer` keeps invocations
+ordered, `ClockedPipeline` overlaps them, and `ClockedMemory` supports waiting
+for external memory. The surrounding RTL module connects their ports and
+supplies clock and reset handling. You can test the algorithm directly in C++
+before testing its generated hardware.
+
+HLS scheduling and timing-driven synthesis are separate steps here. HLS
+constructs the initial control logic and pipeline; optional synthesis retiming
+uses delay estimates to adjust register boundaries. HLS remains useful without
+that second step because it can emit scheduled SystemVerilog for an existing
+implementation flow.
+
+The designer still chooses the algorithm, its bounds, and the required
+throughput. HLS does not automatically replace a buffered software algorithm
+with a streaming one or make dependent state updates safe to overlap. The
+following HFT example shows how those choices affect the hardware.
+
+![](cpphdl_book_images/schema-hft-architecture.png)
 
 ## 7.1 Follow a word through the HFT example
 
@@ -2199,39 +2264,101 @@ replaces the implementation **inside** the wrapper, not the parent's wiring.
 
 ## 7.3 Choose among the clocked wrappers
 
-There are three execution wrappers and one compatibility name. Choose by the
-relationship between successive calls, not by hoping that one template name
-will guarantee a clock frequency.
+Each wrapper turns calls to `T::command()` into a hardware interface, but it
+chooses a different relationship between calls, registers, and memory. We will
+compare their purpose, hardware structure, feedback, and costs before selecting
+their parameters. Include `hls/Clocked.h` for all three.
 
-**`ClockedDelayer` keeps calls ordered.** One invocation runs at a time. Loops
-and scheduled memory operations can take multiple clocks; the next invocation
-does not overlap that work. Use it when each call must observe the preceding
-call's state changes, such as tree insertion or a dependent search. A long
-straight-line calculation can limit frequency, and serialized calls limit
-throughput. Delayed execution does not itself prescribe a low clock frequency.
+First, separate three measurements:
 
-**`ClockedPipeline` overlaps calls.** Different calls occupy different stages.
-With an available consumer it can accept a call every clock: initiation
-interval, or **II, is one**. It is intended for high-throughput calculations
-that tolerate additional stages. Its feedback contract can change the results
-of stateful code, not just the time at which results appear.
+- **Clock period:** the time available for the logic between register edges.
+- **Latency:** how many clocks an accepted command takes to produce a result.
+- **Initiation interval (II):** how often another command can be accepted.
 
-**`ClockedMemory` waits for external memory.** It uses delayed scheduling and
-adds a request/completion interface for pointer accesses. A memory response
-may take an unknown number of clocks. Computation that needs that response
-must wait; independent pipelined computation belongs in another child module.
+A deep pipeline can have long latency and still accept one command every
+clock. A short calculation can have low latency yet wait for its response to
+be consumed before accepting another command. None of the template names
+alone guarantees a physical clock frequency.
 
-**`Clocked` is the old spelling of `ClockedDelayer`.** It is not a fourth
-scheduler. There is no separate automatic `ClockedDram` or `ClockedSram` wrapper:
-external controllers connect through `ClockedMemory`'s interface.
+### The common connection contract
 
-All wrappers have command and response handshakes. A command is accepted when
-`command_valid_in && command_ready_out`; a response is consumed when
-`response_valid_out && response_ready_in`. Keep an offered command stable until
-accepted. A blocked response remains valid and stable. Check `fault_out` with
-the response. Reset cancels in-flight work.
+The parent supplies `operation_in`, `index_in`, and `value_in`, plus
+`command_valid_in`. The method chooses what these three arguments mean.
+`command_ready_out` reports whether the wrapper can accept them. Acceptance
+occurs at the edge where both command-valid and command-ready are high.
 
-### Parameters of `ClockedDelayer`
+The wrapper returns `result_out` and `fault_out` with `response_valid_out`.
+The parent supplies `response_ready_in`; the response transfers at an edge
+where both response signals are high. Keep an offered command stable until
+accepted. A blocked response remains valid with its payload unchanged.
+Check the fault with the response rather than treating every result as valid
+application data. Reset cancels in-flight work.
+
+Connect these signals once in the parent's `_assign()` and call the child's
+work and strobe methods through the hierarchy, as in Part I. The illustrations
+below show the generated hardware, not the native wrapper's implementation.
+For delayed and memory workers, the rectangles identify execution roles;
+they do not promise one clock per rectangle. For a pipeline, the numbered
+rectangles are actual successive stages.
+
+![](cpphdl_book_images/schema-clocked-delayer.png){width=90%}
+
+### `ClockedDelayer`: finish one operation before starting another
+
+**Purpose.** Use this wrapper for algorithms whose next call must see the
+completed state changes of the previous call. Examples include updating a
+container, traversing a tree, or running a loop that accumulates a result.
+These are ordered transactions rather than independent stream words.
+
+**Hardware structure.** The scheduler creates control state that selects the
+current continuation of the C++ method. Arithmetic and conditions between
+clock boundaries form combinational logic. A loop resumes on later clocks;
+values still needed then are retained in registers or selected memory.
+Straight-line helper calls can belong to the same clock step. The hardware
+does not execute one C++ statement per clock or maintain a CPU call stack.
+
+Consider a worker that adds four values to a persistent total:
+
+```cpp
+struct AccumulateFour {
+    uint32_t total = 0;
+    uint64_t command(uint32_t first, uint32_t step, uint32_t unused) {
+        for (uint32_t i = 0; i < 4; ++i)
+            total += first + i * step;
+        return total;
+    }
+};
+cpphdl::hls::ClockedDelayer<AccumulateFour> accumulator;
+```
+
+**Execution and feedback.** After reset, command `(1, 1, 0)` adds
+1 + 2 + 3 + 4 and returns 10. A later command `(10, 1, 0)` starts with that
+total, adds 10 + 11 + 12 + 13, and returns 56. Its iterations use the updated
+total from preceding iterations. No second invocation runs against an
+unfinished first invocation.
+
+The controller captures a command, executes the scheduled steps, and holds
+the response for the consumer. While executing or holding an unconsumed
+response it cannot start the next command. Loop tests, memory operations,
+and entry/exit control affect the exact latency; four source iterations are
+not a promise of four clocks for the entire command.
+
+**Benefits.** Sequential state dependencies remain straightforward. Loops,
+supported containers, and bounded recursion can be represented without
+handwriting their control FSMs. Resources used in successive steps can be
+reused where the scheduler supports sharing; concurrent invocations do not
+require separate in-flight state.
+
+**Costs and limits.** One active command limits throughput. Long acyclic
+calculations between suspension points can limit frequency because the
+delayed scheduler does not automatically balance them to a timing target.
+Sharing hardware can save area, but one active call does not guarantee a
+single shared arithmetic unit for every expression. Inspect the implementation.
+This is suitable for ordered control work, not our one-word-per-clock HFT
+header path. It preserves supported transaction behavior, not the execution
+time of native C++.
+
+#### Parameters and native testing
 
 The following declaration shows the defaults, in their actual order:
 
@@ -2261,7 +2388,86 @@ The native wrapper executes a whole C++ command as a transaction. Generated
 RTL executes its scheduled steps. Compare transaction results, not native and
 RTL cycle counts, for this wrapper.
 
-### Parameters of `ClockedPipeline`
+![](cpphdl_book_images/schema-clocked-pipeline.png){width=90%}
+
+### `ClockedPipeline`: overlap independent calculations
+
+**Purpose.** Use this wrapper when new input work should enter before earlier
+work has produced its result. Word parsing, arithmetic transforms, and
+explicitly indexed formatting are suitable when calls are independent or
+their feedback is deliberately latency-tolerant. This is the wrapper used
+for the HFT header checks, decision, and TX formatting.
+
+**Hardware structure.** HLS splits the method's operation graph across the
+requested stages. Each stage contains combinational logic and register
+boundaries that retain intermediate data, predicates, and validity. At a
+given clock, stage 1 can process call C while stages 2 and 3 process B and A.
+The generated hardware computes different parts of those calls concurrently;
+it does not calculate everything first and merely delay the answer.
+
+For a small stateless example, add a bias and multiply by a gain:
+
+```cpp
+struct ScaleValue {
+    uint64_t command(uint32_t bias, uint32_t gain, uint32_t value) {
+        return (uint64_t(value) + bias) * gain;
+    }
+};
+cpphdl::hls::ClockedPipeline<ScaleValue, 3> scaler;
+```
+
+The cast makes the addition and product unsigned 64-bit calculations;
+overflow follows that type's modulo arithmetic. HLS decides the initial
+placement of operations. The three stages do not prescribe an adder in one
+particular stage or divide a multiplier into three equal pieces. Timing-driven
+cuts inside arithmetic are a separate synthesis step.
+
+**Execution.** Offer A = `(1, 2, 10)`, B = `(1, 2, 20)`, and
+C = `(1, 2, 30)` on consecutive ready clocks. Their results are 22, 42, and 62.
+With no stalls, the following is the pipeline state **after** each edge:
+
+| Edge | Stage 1 | Stage 2 | Output stage |
+| --- | --- | --- | --- |
+| 1 | A | empty | empty |
+| 2 | B | A | empty |
+| 3 | C | B | A: 22 |
+| 4 | next call | C | B: 42 |
+| 5 | next call | next call | C: 62 |
+
+A result that becomes visible after edge 3 can transfer on edge 4 when the
+consumer is ready. Latency to output-valid is three edges including admission;
+the interval between consecutive output results is one clock. Empty input
+cycles become bubbles. If a valid output is blocked, the whole pipeline
+freezes and command-ready falls; no stage overwrites a blocked result.
+
+**Feedback.** Stateless `ScaleValue` has none. For a stateful method, each
+admitted call reads the currently committed object state and carries a
+candidate update through the pipeline. That update commits when the result
+enters the final stage, not when the consumer eventually removes it. A call
+admitted on the commit edge still reads the old state.
+
+For example, replacing the body with `return ++count;` and initializing the
+member `count` to zero allows A, B, and C above all to return 1. They sampled
+the same committed zero before any update became visible. The delayed
+wrapper would produce 1, 2, 3 on three completed calls. Pipeline updates are
+whole-object snapshots; overlapping calls have neither automatic forwarding
+nor a field-wise merge. Extra retiming stages delay this feedback further.
+
+**Benefits.** With ready consumers, II=1 gives one accepted command per clock.
+Splitting combinational work can support a shorter clock period, and
+`fit_pipeline_retiming` can add timing-driven stages while retaining the
+streaming interface. Stateless or suitably structured methods remain ordinary
+C++ algorithms with a clear native reference.
+
+**Costs and limits.** Live operands, tags, and candidate state consume pipeline
+registers. More stages increase latency and may increase area. Floating
+feedback can change stateful results, not just delay them. Loops, recursion,
+dynamic allocation, and scheduled-memory operations are currently rejected
+in this wrapper. A blocked output stops every stage. Use explicit RTL for an
+immediate per-word recurrence, or a delayed worker when calls must wait for
+each preceding update.
+
+#### Parameters and native testing
 
 For the HFT parser we keep the default argument and result types:
 
@@ -2289,7 +2495,75 @@ backpressure; it computes each result at admission, while generated RTL
 distributes the actual calculations among stages. Synthesis can add further
 stages, as chapter 8 explains.
 
-### Parameters of `ClockedMemory`
+![](cpphdl_book_images/schema-clocked-memory.png){width=90%}
+
+### `ClockedMemory`: suspend a method until external data arrives
+
+**Purpose.** Use this wrapper when ordinary pointer expressions must access
+an external memory controller. The controller can acknowledge a request or
+return read data after a variable number of clocks. The wrapper preserves
+method order across those waits rather than assuming that a dereference is
+combinational or completes on the next clock.
+
+**Hardware structure.** This is a delayed FSM with request registers,
+completion handling, and saved values for the continuation. A memory access
+captures its address, size, direction, and write data. After acceptance,
+the worker waits without reissuing the request. A read completion supplies
+the operand needed by later statements; a write also requires acknowledgement.
+The external SRAM/DDR controller remains a separate component.
+
+Here a lookup is followed by an addition:
+
+```cpp
+struct ReadAndBias {
+    uint64_t command(uint32_t base, uint32_t index, uint32_t bias) {
+        auto words = cpphdl::hls::external_memory<const uint32_t>(base);
+        return uint64_t(words[index]) + bias;
+    }
+};
+cpphdl::hls::ClockedMemory<ReadAndBias> reader;
+```
+
+**Execution and feedback.** With base `0x1000` and index 3, the read request
+addresses byte `0x100c` and has size 4. If memory returns 7 and the captured
+bias was 5, the result is 12. The addition cannot use an earlier response or
+an arbitrary value while waiting. The saved bias remains 5 even if command
+input pins change after their original command was accepted.
+
+The sequence is command acceptance, request acceptance, completion acceptance,
+dependent calculation, and response. These are handshake events and execution
+steps, not five guaranteed consecutive clocks. Memory can respond quickly or
+keep the worker waiting. The control feedback in the picture holds the
+continuation until the required event; it does not admit overlapping calls
+against unfinished memory operations.
+
+**Connections.** There are two distinct interfaces. The command/response
+ports connect the worker to its parent. `memory_out` connects it to a memory
+controller through `assignIf`. Its request carries byte address, size, write
+direction, and data; its completion carries read data and an error flag.
+Both channels have independent valid/ready handshakes. An accepted write
+requires exactly one completion just like a read.
+
+**Benefits.** The algorithm retains readable pointer accesses and helper
+calls while hardware explicitly handles delayed responses. Temporary values
+survive a wait, operations stay ordered, and controller errors can reach
+`fault_out`. The same method can be tested against a bound host buffer before
+testing the bus-level implementation.
+
+**Costs and limits.** There is one active command and one outstanding memory
+request. A slow controller therefore limits throughput; adding arithmetic
+pipeline stages does not hide that wait. The current interface has 32-bit
+byte addresses and up to 64-bit data per access, without bursts or an implicit
+cache. It supplies no AXI adapter or DDR PHY. Its untagged channel requires
+coordinated reset so that an old completion cannot satisfy a new request.
+Native execution accesses the host buffer directly and does not reproduce
+controller latency; use RTL tests for stalls and errors.
+
+For a throughput-oriented design, use this worker to prepare operands for
+a separate `ClockedPipeline` child, with explicit buffering and ownership
+between them. Section 9.10 develops that arrangement.
+
+#### Parameters and native testing
 
 An external-memory worker has a smaller parameter list:
 
@@ -2301,6 +2575,26 @@ The second parameter is the byte-address width. Only 32 is currently supported.
 Its command arguments and result have the same types as `ClockedDelayer`.
 It adds `ExternalMemoryIf<32> memory_out`; it does not take the delayed
 wrapper's heap, shared-memory, or block-RAM parameters.
+
+The example above uses 32-bit elements, so indexing scales the byte address
+by four. Supported integer element sizes are 1, 2, 4, and 8 bytes, naturally
+aligned. A 64-bit pointer element type selects an eight-byte access, not an
+arbitrarily wide DDR bus. Section 7.7 gives the complete interface and native
+memory-binding example.
+
+#### Compatibility name and selection summary
+
+`Clocked<T, ...>` is an alias for `ClockedDelayer<T, ...>`, with the same
+parameters and implementation. It creates no additional layer of hardware
+and needs no separate diagram. There is currently no `ClockedDram` or
+`ClockedSram` scheduler; controller choice belongs behind `ClockedMemory`'s
+external interface.
+
+Use **Delayer** when preserving call-to-call state order is the main
+requirement, **Pipeline** when calls can overlap and sustained rate matters,
+and **Memory** when the method must wait for external accesses. Choose the
+clock period from the generated paths and timing requirements, not from the
+name of the wrapper. Different workers can coexist in the same RTL parent.
 
 ## 7.4 Let a delayed method finish a dependent operation
 
@@ -2598,7 +2892,7 @@ retiming in the next chapter.
 
 \clearpage
 
-# 8. Synthesis and Retiming
+# 8. Synthesis and Retiming {#chapter-8}
 
 ## 8.1 Turn the scheduled design into gates
 
@@ -2885,7 +3179,7 @@ unexpected number of memory transactions.
 
 \clearpage
 
-# 9. Developing Hardware-Friendly HLS C++ Design
+# 9. Developing Hardware-Friendly HLS C++ Design {#chapter-9}
 
 Correct C++ does not automatically describe economical hardware. A processor
 reuses its arithmetic units and memory ports as it executes statements.
