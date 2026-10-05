@@ -2909,8 +2909,6 @@ retiming in the next chapter.
 
 # 8. Synthesis and Retiming {#chapter-8}
 
-![](cpphdl_book_images/schema-hft-architecture.png)
-
 ## 8.1 Turn the scheduled design into gates
 
 The HFT example now has explicit RTL around three scheduled HLS pipelines.
