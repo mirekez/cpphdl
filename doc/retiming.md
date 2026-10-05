@@ -193,6 +193,10 @@ not assume the original native wrapper's `STAGES` still applies.
 
 Rules may select a complete streaming region or its parent, not part of its
 internal pipeline. Any surrounding unmodified logic must also meet the target.
+The first stage's timing budget includes the arrival delay of parent logic
+driving the region's inputs. Retiming expands arithmetic operators to the
+generic mapper's gate network before placing internal boundaries, so those
+boundaries are checked against the implementation that will be emitted.
 `keep_behaviour_retiming` leaves a stream unchanged if timing already fits;
 otherwise it rejects rather than altering its feedback latency. Scheduled
 memory, asynchronous reset, and per-function keep-box/one-clock constraints
@@ -383,6 +387,22 @@ definitions. No unresolved blackbox is substituted for simulation.
 declared delay. `--delay-scale` scales built-in cell estimates only; an explicitly
 declared box delay stays unchanged. These numbers are user-provided timing
 contracts, not timing measurements or guarantees of DSP inference.
+
+### External Combinational Functions
+
+`CPPHDL_BLACKBOX=module:delay_ns` declares an external function implementation
+instead of retaining a lowered body. The retimer treats each call as an atomic
+combinational operation, aligns its arguments, and can insert registers before
+or after it in fit mode. It cannot insert registers inside it. A delay larger
+than the available stage budget is rejected. Keep-behaviour mode does not move
+registers through these opaque operations.
+
+The delay may be zero when intentionally excluding an unfinished math block
+from timing. This does not make the block physically instantaneous and does not
+describe a registered/multicycle implementation. External module bodies must
+be supplied separately; their unknown internal gates are not included in area
+reports. See [external math blackboxes](synthesis.md#external-math-blackboxes)
+for the interface contract and simulation requirements.
 
 `synth/tests/retiming/keep_box.cpp` compares C++, the retimed native graph and
 Verilator over 4,096 transactions with resets and tags. It tests both retiming

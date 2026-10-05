@@ -2,7 +2,9 @@ include("${TOOLCHAIN}")
 set(reasons "II=1" "II=1" "memory/escaping pointers" "recursive clocked call"
     "nonautomatic local declaration" "memory/escaping pointers" "global" "STAGES must be in 1..64"
     "floating-point" "missing instantiated body" "STAGES must be in 1..64"
-    "function timing/keep-box constraints" "function timing/keep-box constraints")
+    "function timing/keep-box constraints" "function timing/keep-box constraints"
+    "Argument/Result must match" "Argument/Result must match" "same unsigned integer width"
+    "external pointer access requires ClockedMemory" "external pointer access requires ClockedMemory")
 list(GET reasons ${CASE} reason)
 file(REMOVE_RECURSE "${WORK}/generated")
 file(MAKE_DIRECTORY "${WORK}")

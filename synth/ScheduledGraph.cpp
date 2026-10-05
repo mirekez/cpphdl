@@ -141,6 +141,15 @@ class Exporter {
         std::vector<Value> a;
         for (auto& e : expressions) a.push_back(evaluate(e).bits);
         if (name == "$signed" || name == "$unsigned") return {a.at(0), name == "$signed"};
+        if (auto it = d.blackboxes.find(name); it != d.blackboxes.end()) {
+            Value inputs;
+            for (auto& arg : a) {
+                if (arg.size() != 64) throw std::runtime_error("invalid blackbox argument slot");
+                inputs.insert(inputs.end(),arg.begin(),arg.end());
+            }
+            const auto& spec = it->second.first;
+            return {g.add("blackbox",it->second.second,inputs,constant(spec.delayPs,64),{},spec.module)};
+        }
         if (name == "hls_storage_address_valid") return {valid(a.at(0), a.at(1))};
         if (name.find("hls_bank_write_") == 0) {
             auto tail = name.substr(15);
@@ -270,11 +279,11 @@ public:
     Exporter(Graph& graph, const ScheduledDesign& design, std::string name) : g(graph), d(design), scope(std::move(name)) {}
     std::map<std::string,Value> run(bool pipeline = false, bool initialize = false) {
         g.currentScope = scope;
-        for (auto [name,width] : std::map<std::string,unsigned>{{"reset",1},{"command_valid_in",1},{"response_ready_in",1},{"operation_in",32},{"index_in",32},{"value_in",32}})
+        for (auto [name,width] : std::map<std::string,unsigned>{{"reset",1},{"command_valid_in",1},{"response_ready_in",1},{"operation_in",d.argumentBits},{"index_in",d.argumentBits},{"value_in",d.argumentBits}})
             ports[name] = env[name] = g.wire(width,scope + "." + name);
         reset = env["reset"];
         if (pipeline) reset = {0};
-        for (auto [name,width] : std::map<std::string,unsigned>{{"phase",32},{"fault",32},{"heap_next",d.addressBits},{"result",64},{"pending",1},{"booting",1}}) {
+        for (auto [name,width] : std::map<std::string,unsigned>{{"phase",32},{"fault",32},{"heap_next",d.addressBits},{"result",d.resultBits},{"pending",1},{"booting",1}}) {
             if (pipeline) env[name] = Value(width,0); else state(name,width);
         }
         for (auto& [name,symbol] : d.symbols) env[name] = Value(symbol.width,0);
@@ -291,17 +300,38 @@ public:
             env["memory_write_data"] = Value(d.portBytes * 8,0); env["memory_read"] = env["memory_write"] = {0};
             state("memory_read_data",d.portBytes * 8);
         }
+        Value externalBusy{0}, externalSent{0}, externalAccept{0}, externalComplete{0}, externalBad{0};
+        if (d.externalMemory) {
+            for (auto [name,width] : std::map<std::string,unsigned>{{"ready_out",1},{"valid_out",1},{"data_out",64},{"error_out",1}})
+                ports["memory_out." + name] = g.wire(width,scope + ".memory_out." + name);
+            externalBusy = state("external_busy",1); externalSent = state("external_sent",1);
+            for (auto [name,width] : std::map<std::string,unsigned>{{"address",32},{"write_data",64},{"size",8},{"write",1}}) {
+                env["external_" + name] = Value(width,0);
+                auto saved = state("external_saved_" + name,width);
+                std::string pin = name == "address" ? "addr_in" : name == "write_data" ? "data_in" : name + "_in";
+                ports["memory_out." + pin] = saved;
+            }
+            env["external_read"] = {0}; state("external_read_data",64);
+            for (unsigned bit=0; bit<3; ++bit)
+                externalBad = either(externalBad,both(slice(states.at("external_saved_address"),bit,1),
+                    g.binary("lt",constant(1u<<bit,8),states.at("external_saved_size"),1)));
+            ports["memory_out.valid_in"] = both(inv(externalBad),both(inv(reset),both(externalBusy,inv(externalSent))));
+            externalAccept = both(ports.at("memory_out.valid_in"),ports.at("memory_out.ready_out"));
+            ports["memory_out.ready_in"] = both(inv(reset),both(externalBusy,either(externalSent,externalAccept)));
+            externalComplete = both(ports.at("memory_out.ready_in"),ports.at("memory_out.valid_out"));
+        }
         auto ready = both(both(inv(env["booting"]),inv(env["pending"])),both(inv(env["phase"]),inv(env["fault"])));
         ports["command_ready_out"] = ready; ports["response_valid_out"] = env["pending"];
         ports["result_out"] = env["result"]; ports["fault_out"] = env["fault"];
         auto accepted = both(env["command_valid_in"],ready);
         if (pipeline) accepted = {1};
-        if (d.sharedMemory) for (const std::string pin : {"operation_in","index_in","value_in"}) {
+        if (d.sharedMemory || d.externalMemory) for (const std::string pin : {"operation_in","index_in","value_in"}) {
             auto previous = state("accepted_" + pin,32);
             env["accepted_" + pin] = g.mux(reset,Value(32,0),g.mux(accepted,env[pin],previous));
-            env[pin] = g.mux(accepted,env[pin],previous);
+            env[pin] = d.externalMemory ? previous : g.mux(accepted,env[pin],previous);
         }
         std::set<int> reachable, continuations{d.resetEntry};
+        if (d.externalMemory) continuations.insert(d.commandEntry);
         std::function<void(int)> visit = [&](int n) { if (n < 0 || !reachable.insert(n).second) return; visit(d.blocks[n].yes); visit(d.blocks[n].no); };
         if (!pipeline) visit(d.resetEntry);
         visit(initialize ? d.resetEntry : d.commandEntry);
@@ -313,17 +343,19 @@ public:
         }
         std::set<int> todo; for (auto n : reachable) if (!incoming[n]) todo.insert(n);
         Value noFault = inv(env["fault"]), start = both(inv(reset),noFault);
+        start = both(start,inv(externalBusy));
         std::vector<Value> active(d.blocks.size(),Value{0});
-        active[initialize ? d.resetEntry : d.commandEntry] = both(start,accepted);
+        if (!d.externalMemory) active[initialize ? d.resetEntry : d.commandEntry] = both(start,accepted);
         auto phase = env["phase"], legal = inv(phase);
         for (int n : continuations) {
             auto is = g.binary("eq",phase,constant(n+1,32),1); legal = either(legal,is);
-            active[n] = either(active[n],both(start,both(inv(accepted),is)));
+            active[n] = either(active[n],both(start,d.externalMemory ? is : both(inv(accepted),is)));
         }
-        env["fault"] = g.mux(both(start,both(inv(accepted),inv(legal))),constant(4,32),env["fault"]);
+        env["fault"] = g.mux(both(start,d.externalMemory ? inv(legal) : both(inv(accepted),inv(legal))),constant(4,32),env["fault"]);
         env["pending"] = g.mux(both(inv(reset),env["response_ready_in"]),Value{0},env["pending"]);
         for (auto [name,val] : std::map<std::string,uint64_t>{{"phase",uint64_t(d.resetEntry+1)},{"fault",0},{"pending",0},{"result",0},{"booting",1},{"heap_next",d.heapBase}})
             env[name] = g.mux(reset,constant(val,env[name].size()),env[name]);
+        if (d.externalMemory) env["phase"] = g.mux(both(inv(reset),accepted),constant(d.commandEntry+1,32),env["phase"]);
         size_t visited = 0;
         while (!todo.empty()) {
             int n = *todo.begin(); todo.erase(todo.begin()); ++visited; const auto& b = d.blocks[n];
@@ -381,6 +413,21 @@ public:
                 env["memory_read_data"] = g.mux(both(enable,env["memory_read"]),data,states.at("memory_read_data"));
                 for (unsigned lane = 0; lane < 8; ++lane) env["storage_lane"+std::to_string(lane)] = g.mux(both(enable,env["memory_write"]),bankWrite(banks[lane],env["memory_address"],env["memory_write_data"],{0},lane,d.portBytes,env["memory_size"]),banks[lane]);
             }
+        }
+        if (d.externalMemory) {
+            auto issue = either(env["external_read"],env["external_write"]);
+            auto bad = both(inv(reset),both(externalBusy,externalBad));
+            auto fault = g.mux(bad,constant(3,32),
+                g.mux(both(externalComplete,ports.at("memory_out.error_out")),constant(5,32),constant(0,32)));
+            env["fault"] = g.mux(boolean(env["fault"]),env["fault"],fault);
+            auto acceptedIssue = both(issue,inv(env["fault"]));
+            env["external_busy"] = g.mux(either(reset,bad),{0},g.mux(externalComplete,{0},g.mux(acceptedIssue,{1},externalBusy)));
+            env["external_sent"] = g.mux(either(reset,either(externalComplete,acceptedIssue)),{0},either(externalSent,externalAccept));
+            for (const std::string name : {"address","write_data","size","write"}) {
+                auto key = "external_saved_" + name;
+                env[key] = g.mux(reset,Value(states.at(key).size(),0),g.mux(acceptedIssue,env.at("external_" + name),states.at(key)));
+            }
+            env["external_read_data"] = g.mux(reset,Value(64,0),g.mux(externalComplete,ports.at("memory_out.data_out"),states.at("external_read_data")));
         }
         auto newlyFaulted = both(boolean(env["fault"]),inv(states.at("fault")));
         for (const std::string name : {"phase","pending","booting"}) env[name] = g.mux(newlyFaulted,constant(name == "pending",env[name].size()),env[name]);

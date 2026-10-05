@@ -51,13 +51,119 @@ model of variable-duration method execution.
 Implementation: `delayed_scheduler.h/.cpp`. Existing scheduler regressions
 are named `Delayed*.cpp` and registered as `hls_delayed_*`.
 
+### External Memory Pointers
+
+Include `hls/Clocked.h` and use `external_memory<T>(byte_address)` to create
+a pointer into an external controller's address space:
+
+```cpp
+struct LoadWeight {
+    uint64_t command(uint32_t base, uint32_t index, uint32_t unused) {
+        auto weights = cpphdl::hls::external_memory<const uint64_t>(base);
+        return weights[index];
+    }
+};
+cpphdl::hls::ClockedMemory<LoadWeight> loader;
+```
+
+`ClockedMemory<T>` uses the delayed scheduler with an explicit external memory
+channel; it has the same command/response contract as `ClockedDelayer`.
+Pointer indexing, dereferencing, pointer arithmetic, aliases and helper arguments
+of type `cpphdl::hls::external_ptr<T>` retain external address-space identity.
+Local pointers still address local HLS storage. Do not cast external pointers
+to ordinary pointers. Supported elements are integer types of 1, 2, 4 or 8 bytes,
+including signed and const-qualified types. Addresses are 32-bit **byte** addresses;
+each access must be naturally aligned and the caller must keep address arithmetic
+within that address space. No allocation or model-file loading is implied.
+
+A load suspends the generated method until its response is accepted. A store
+also suspends until acknowledgement, before subsequent reads or writes execute.
+The scheduler captures command arguments, saves values needed after the wait,
+and resumes the dependent statements only after completion. Loops and helper
+calls can contain accesses. There is one outstanding request per wrapper, no
+speculation, no bursts, and no implicit cache. `ClockedPipeline` rejects these
+pointer accesses rather than treating a delayed load as combinational logic.
+
+Connect `loader.memory_out` to a controller through `assignIf`. Its
+`ExternalMemoryIf` interface has these controller-side members:
+
+- `valid_in`, `ready_out`: request handshake.
+- `write_in`, `addr_in`, `size_in`, `data_in`: operation, byte address,
+  byte count (1/2/4/8), and 64-bit write data.
+- `valid_out`, `ready_in`: completion handshake for **both reads and writes**.
+- `data_out`, `error_out`: 64-bit read data and completion error.
+
+Data occupies the low `size` bytes, little-endian, regardless of address lane.
+The requester holds the complete request stable until accepted. A controller
+must return exactly one completion per accepted request and hold its response
+stable until accepted; it may complete on the request-acceptance edge. A controller
+with read/write/busy signals needs an adapter to this handshake. AXI4 and DDR
+PHY/controller implementations are not supplied by this interface. They must
+perform their own lane placement, byte strobes, buffering and bus-error handling.
+
+Misaligned accesses set `fault_out=3` without issuing a request. A controller
+error sets `fault_out=5`; execution stops and a fault response is held until
+accepted. Reset is required to clear the fault. Reset **both** requester and
+controller, cancelling outstanding requests and discarding old responses: the
+channel has no transaction ID to distinguish a late pre-reset completion.
+The controller is responsible for range/access checks; the pointer does not
+carry a hardware allocation bound. There is no built-in timeout.
+
+For native functional tests, map a host buffer before running the wrapper:
+
+```cpp
+cpphdl::hls::bind_external_memory(weights.data(), weights.size()*sizeof(uint64_t),
+                                 0x1000);
+```
+
+The native implementation dereferences that buffer and executes a complete
+command as a transaction. It does **not** simulate DDR timing or drive memory
+transactions. The binding is thread-local, one contiguous mapping per simulation
+thread. Pointer creation checks the initial mapped address; ordinary subsequent
+C++ pointer accesses require the usual valid bounds and object lifetimes.
+RTL and gate-level Verilator tests in `hls/tests/ExternalPointer.*` exercise the
+actual waits, stalls, signed/narrow transfers, faults and reset cancellation.
+
+### Separating Loading From Computation
+
+Use a delayed loader and a pipelined arithmetic engine as separate child modules.
+The parent stores loaded operands in two local `memory<>` tiles. It fills one
+tile while the arithmetic engine consumes the other, releasing a tile only
+after its last operand has been captured. Ready/valid handshakes prevent buffer
+overwrite and keep result metadata aligned when retiming changes arithmetic
+latency. This overlaps memory and compute; it does not guarantee that DDR can
+keep the pipeline full.
+
+[`TiledMatVec.cpp`](../hls/examples/llm/TiledMatVec.cpp) implements this arrangement:
+pointer-based weight loading, double-buffered weight tiles, an activation tile,
+`ClockedPipeline` products, full-width accumulation and a pipelined final adder.
+See its [README](../hls/examples/llm/README.md#overlapped-loader-and-compute) for
+the command protocol and native/RTL/retimed gate tests. The parent is explicit
+RTL; automatically partitioning an arbitrary transformer into these components
+is not implemented.
+
 ### pipelined_logic
 
-`ClockedPipeline<T, STAGES>` accepts a new invocation every clock when the
+`ClockedPipeline<T, STAGES, Argument = uint32_t, Result = uint64_t>` accepts a new invocation every clock when the
 consumer keeps `response_ready_in` asserted. Several invocations occupy
 different stages simultaneously. Without stalls, an accepted input produces
 its output after exactly `STAGES` rising edges, including its acceptance edge.
 `STAGES` must be between 1 and 64.
+
+The three `command` arguments must have the unsigned native integer type
+`Argument`, and its return type must be `Result`. Their widths may be 8, 16,
+32, 64 or 128 bits; 128-bit native execution requires compiler support for
+`__uint128_t`. Existing two-parameter instantiations retain the
+`uint64_t command(uint32_t, uint32_t, uint32_t)` contract. For example:
+
+```cpp
+cpphdl::hls::ClockedPipeline<Product, 4, uint64_t, __uint128_t> product;
+```
+
+The [integer LLM prototype](../hls/examples/llm/README.md) uses this form to
+preserve complete signed Q16.48 products. Its external DDR channel is explicit
+RTL around the pipeline, not automatic HLS pointer-to-DDR lowering. The full
+transformer is currently a C++ reference, not a synthesized token processor.
 
 The scheduler translates the method calculations into an acyclic operation
 graph, distributes dependent operations among stages, and registers operands
@@ -116,6 +222,11 @@ Current supported source subset:
   technology-specific frequency or split an individual multiply/divide.
   Function `CPPHDL_ONE_CLOCK` and `CPPHDL_KEEP_BOX` constraints are rejected
   until pipeline placement can preserve them; they are not silently ignored.
+- Pure integer free/static functions marked `CPPHDL_BLACKBOX=module:delay_ns`
+  become opaque combinational calls. Their bodies are not lowered; native C++
+  still runs the supplied body. Retiming preserves each call and uses its
+  declared delay (zero is permitted). RTL simulation and implementation require
+  separately supplied modules. See [the external interface contract](synthesis.md#external-math-blackboxes).
 - State must be trivially copyable and have constant initialization. Arrays
   requiring scheduled memory and dynamic storage remain unsupported.
 - Pipeline retiming rules must include a whole streaming region. Synchronous

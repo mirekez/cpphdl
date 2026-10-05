@@ -28,6 +28,9 @@ std::string clockedName(const clang::CXXRecordDecl* record, const std::string& b
     std::string name = base;
     if (auto* specialization = dyn_cast<ClassTemplateSpecializationDecl>(record)) {
         const auto& args = specialization->getTemplateArgs();
+        for (const auto* attr : record->specific_attrs<AnnotateAttr>())
+            if (attr->getAnnotation() == "CPPHDL_HLS_EXTERNAL_MEMORY")
+                return name + "_A" + std::to_string(args[1].getAsIntegral().getLimitedValue());
         if (isPipeline(record) && args.size() > 1 && args[1].getKind() == TemplateArgument::Integral)
             return name + "_P" + std::to_string(args[1].getAsIntegral().getLimitedValue());
         if (args.size() > 1 && args[1].getKind() == TemplateArgument::Integral) {

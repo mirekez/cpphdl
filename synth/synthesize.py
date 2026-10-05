@@ -86,16 +86,20 @@ def main():
              args.retime_module, str(args.delay_scale)], 'emit')
         manifest['timing'] = json.loads((output / 'timing.json').read_text())
         boxes = {box['module'] for box in manifest['timing']['keep_boxes']}
+        external = {box['module'] for box in manifest['timing']['external_blackboxes']}
         design = json.loads((output / 'gates.json').read_text())
         cells = design['modules'][args.module].get('cells', {})
         counts = {}
         for cell in cells.values():
             kind = cell['type']
-            if not kind.startswith('$_') and kind not in boxes:
+            if not kind.startswith('$_') and kind not in boxes and kind not in external:
                 raise RuntimeError(f'unmapped cell remains: {kind}')
             counts[kind] = counts.get(kind, 0) + 1
         if boxes:
             manifest['mapping'] = 'generic gates with preserved operation-level modules for technology mapping'
+        if external:
+            manifest['mapping'] = 'generic gates with external blackboxes; external implementations required'
+            manifest['external_implementations_required'] = sorted(external)
         manifest.update(status='complete', cells=counts)
         save()
         print(output / 'gates.v')

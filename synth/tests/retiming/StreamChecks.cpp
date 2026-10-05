@@ -10,7 +10,7 @@ using namespace cpphdl::synth;
 static void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
-static void addStream(Graph& top, const std::string& name) {
+static void addStream(Graph& top, const std::string& name, bool parentLogic = false) {
     Graph logic;
     auto input = logic.wire(8,"value","input");
     auto state = logic.wire(8,"state","state");
@@ -30,6 +30,7 @@ static void addStream(Graph& top, const std::string& name) {
         region.pins[pin] = top.wire(width,name+"."+pin,"input");
         top.ports.push_back({name+"_"+pin,region.pins[pin],true});
     }
+    if (parentLogic) region.pins["value_in"] = top.binary("add",region.pins["value_in"],constant(7,8),8);
     buildStreamPipeline(top,region,logic);
     for (const std::string pin : {"result_out","fault_out","command_ready_out","response_valid_out"})
         top.ports.push_back({name+"_"+pin,region.pins.at(pin),false});
@@ -60,7 +61,9 @@ static void simulate(Graph graph) {
             require(sim.output(prefix+"response_valid_out") == r.valid.back(),"stream valid mismatch");
             if (r.valid.back()) require(sim.output(prefix+"result_out") == r.result.back(),"floating feedback mismatch");
             if (advance) {
-                unsigned result = (((r.state+((cycle*37+k*11)&255))*3)&255)^0x59;
+                unsigned value = (cycle*37+k*11)&255;
+                if (graph.pipelines[k].scope == "parent_input") value = (value+7)&255;
+                unsigned result = (((r.state+value)*3)&255)^0x59;
                 if (r.valid[r.valid.size()-2]) r.state = r.result[r.result.size()-2];
                 for (unsigned i=r.valid.size()-1;i;--i) { r.valid[i]=r.valid[i-1]; r.result[i]=r.result[i-1]; }
                 r.valid[0]=valid; r.result[0]=result;
@@ -105,6 +108,11 @@ int main() {
         retime(named,{"fit_pipeline_retiming",0.75,""});
         for (const auto& state:named.states) require(state.clock==0,"stream lost clock ownership");
         simulate(named);
+        Graph parent; parent.clockContract=ClockContract::RisingEdgeStep;
+        addStream(parent,"parent_input",true);
+        auto parentFit=retime(parent,{"fit_pipeline_retiming",1.5,""});
+        require(parentFit.met && parentFit.addedLatency,"parent input delay was not budgeted");
+        simulate(parent);
         auto mixed=original; mixed.clockContract=ClockContract::NamedEdges; mixed.clocks={{"a",100},{"b",50}};
         for (auto& state:mixed.states) state.clock=0;
         mixed.states.front().clock=1; rejected=false;

@@ -1,6 +1,7 @@
 #pragma once
 #include "../include/cpphdl_graph.h"
 #include "../hls/SharedBlocks.h"
+#include "BlackBox.h"
 
 namespace cpphdl::synth {
 // Source scheduler handoff, before SV function sharing/emission. Expressions
@@ -13,6 +14,9 @@ struct ScheduledDesign {
     int resetEntry = 0, commandEntry = 0;
     unsigned addressBits = 16, memoryBytes = 32, heapBase = 32, heapBytes = 64, portBytes = 8;
     bool sharedMemory = false, blockRam = false;
+    unsigned argumentBits = 32, resultBits = 64;
+    std::map<std::string, std::pair<BlackBoxSpec, unsigned>> blackboxes;
+    bool externalMemory = false;
 };
 std::map<std::string, graph::Value> exportScheduledGraph(graph::Graph&, const ScheduledDesign&, const std::string& scope);
 // One transition: state reads and next values are explicit graph boundaries.

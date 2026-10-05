@@ -2,6 +2,7 @@
 
 #include "include/cpphdl_graph.h"
 #include "hls/AstClocked.h"
+#include "synth/BlackBox.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -59,6 +60,8 @@ class Lowering {
     Environment cells;
     std::map<std::string, Value> originals, results;
     std::map<std::string, std::shared_ptr<Closure>> bindings;
+    std::map<std::string, Item> interfaceBindings;
+    std::set<std::string> activeInterfaceReads;
     std::map<std::string, Value> registers;
     std::map<std::string, Value> blockingStates;
     std::map<std::string, const FieldDecl*> moduleFields;
@@ -147,6 +150,15 @@ class Lowering {
         return false;
     }
     bool port(QualType type) { return templateName(type) == "cpphdl::function_ref"; }
+    bool interface(QualType type) {
+        if (type.isNull()) return false;
+        auto record = clean(type)->getAsCXXRecordDecl();
+        if (!record || !record->hasDefinition()) return false;
+        record = record->getDefinition();
+        if (record->getQualifiedNameAsString() == "cpphdl::Interface") return true;
+        for (const auto& base : record->bases()) if (interface(base.getType())) return true;
+        return false;
+    }
     bool packedArray(QualType type) {
         return templateName(type) == "cpphdl::array" &&
             specialization(type)->getTemplateArgs()[2].getAsIntegral().getBoolValue();
@@ -196,12 +208,26 @@ class Lowering {
             if (containsClocked(member->getType(), visited)) return true;
         return false;
     }
+    bool containsOpaqueCall(const Stmt* statement, std::set<const FunctionDecl*>& visited) {
+        if (!statement) return false;
+        if (auto call = dyn_cast<CallExpr>(statement)) if (auto function = call->getDirectCallee()) {
+            for (auto* attr : function->specific_attrs<AnnotateAttr>())
+                if (attr->getAnnotation().starts_with("CPPHDL_BLACKBOX=")) return true;
+            if (function->isConstexpr() && visited.insert(function->getCanonicalDecl()).second &&
+                containsOpaqueCall(function->getBody(), visited)) return true;
+        }
+        for (auto child : statement->children()) if (containsOpaqueCall(child, visited)) return true;
+        return false;
+    }
     std::optional<uint64_t> evaluated(const Expr* expression) {
         Expr::EvalResult result;
         if (!expression || expression->isValueDependent() || expression->isInstantiationDependent()) return {};
         if (expression->EvaluateAsInt(result, context) && !result.HasSideEffects && result.Val.isInt() &&
-            result.Val.getInt().getBitWidth() <= 64)
+            result.Val.getInt().getBitWidth() <= 64) {
+            std::set<const FunctionDecl*> visited;
+            if (synthesisExport && containsOpaqueCall(expression, visited)) return {};
             return result.Val.getInt().getLimitedValue();
+        }
         return {};
     }
     void instantiate(const FunctionDecl* declaration) {
@@ -472,6 +498,12 @@ class Lowering {
         }
         if (item.key.empty()) return item.bits;
         if (port(item.type)) {
+            if (auto it = interfaceBindings.find(item.key); it != interfaceBindings.end()) {
+                if (!activeInterfaceReads.insert(item.key).second) fail("cyclic interface binding: " + item.key);
+                auto result = read(it->second);
+                activeInterfaceReads.erase(item.key);
+                return result;
+            }
             if (bindings.count(item.key)) return read(boundPort(item));
         }
         auto source = cells.count(item.key) ? cells.at(item.key) : initial(item);
@@ -627,8 +659,8 @@ class Lowering {
         }
         auto member = dyn_cast<FieldDecl>(declaration);
         if (!member) fail("unsupported member " + name);
-        if (module(base.type)) {
-            validateModule(base.type);
+        if (module(base.type) || interface(base.type)) {
+            if (module(base.type)) validateModule(base.type);
             Item result; result.key = base.key + "." + name; result.type = member->getType();
             moduleFields[result.key] = member;
             if (templateName(result.type) == "cpphdl::reg" && member->hasInClassInitializer()) fail("initialized C++ register unsupported");
@@ -806,6 +838,23 @@ class Lowering {
         getterReads.at(activeGetters.back())->producers.insert(std::move(reads));
     }
     Item invoke(const FunctionDecl* function, Item receiver, std::vector<Item> arguments) {
+        std::vector<std::string> annotations;
+        for (auto* attr : function->specific_attrs<AnnotateAttr>()) annotations.push_back(attr->getAnnotation().str());
+        if (auto box = synth::blackBoxSpec(annotations); box && synthesisExport) {
+            auto* member = dyn_cast<CXXMethodDecl>(function);
+            if ((member && !member->isStatic()) || function->isVariadic() || arguments.empty() ||
+                arguments.size() != function->getNumParams() || !function->getReturnType()->isIntegerType() ||
+                width(function->getReturnType()) > 64) fail("blackbox requires a free/static scalar integer function (up to 64 bits)");
+            Value inputs;
+            for (size_t i = 0; i < arguments.size(); ++i) {
+                auto type = function->getParamDecl(i)->getType();
+                if (!type->isIntegerType() || width(type) > 64) fail("blackbox arguments must be scalar integers up to 64 bits");
+                auto arg = resize(resize(read(arguments[i]), width(type)), 64, type->isSignedIntegerType());
+                inputs.insert(inputs.end(), arg.begin(), arg.end());
+            }
+            return value(graph.add("blackbox", width(function->getReturnType()), inputs,
+                constant(box->delayPs, 64), {}, box->module), function->getReturnType());
+        }
         if (scheduledExport && module(receiver.type) && hls::isClocked(clean(receiver.type)->getAsCXXRecordDecl())) {
             const auto name = function->getNameAsString();
             if (name == "_assign") {
@@ -816,7 +865,9 @@ class Lowering {
                 auto pins = hls::exportClockedGraph(context, sema, clean(receiver.type)->getAsCXXRecordDecl(), graph, receiver.key);
                 for (size_t m = firstMemory; m < graph.memories.size(); ++m) scheduledMemories[receiver.key].push_back(m);
                 graph.currentScope = savedScope;
-                for (const auto& [pin,bits] : pins) if (pin.ends_with("_out")) cells.set(receiver.key + "." + pin, bits);
+                for (const auto& [pin,bits] : pins)
+                    if (pin.starts_with("memory_out.") ? pin.ends_with("_in") : pin.ends_with("_out"))
+                        cells.set(receiver.key + "." + pin, bits);
                 scheduledPorts[receiver.key] = std::move(pins);
             } else if (name == "_work") {
                 if (!working || graph.resolved(executionGuard()) != Value{1})
@@ -824,11 +875,25 @@ class Lowering {
                 if (!scheduledPorts.count(receiver.key) || !scheduledWork.insert(receiver.key).second) fail("missing or repeated Clocked lifecycle binding");
                 for (const auto& [pin,bits] : scheduledPorts.at(receiver.key)) {
                     if (pin == "reset") graph.connect(bits, read(arguments.at(0)));
-                    else if (pin.ends_with("_in")) {
-                        const FieldDecl* member = nullptr;
-                        for (auto* f : clean(receiver.type)->getAsCXXRecordDecl()->fields()) if (f->getNameAsString() == pin) member = f;
-                        if (!member) fail("missing Clocked input: " + pin);
-                        graph.connect(bits, read(field(receiver, member)));
+                    else if (pin.starts_with("memory_out.") ? pin.ends_with("_out") : pin.ends_with("_in")) {
+                        Item leaf = receiver;
+                        size_t begin = 0;
+                        do {
+                            auto end = pin.find('.', begin);
+                            auto part = pin.substr(begin, end == std::string::npos ? end : end - begin);
+                            std::function<const FieldDecl*(const CXXRecordDecl*)> find = [&](const CXXRecordDecl* record) -> const FieldDecl* {
+                                for (auto* f : record->fields()) if (f->getNameAsString() == part) return f;
+                                for (const auto& base : record->bases())
+                                    if (auto* f = find(base.getType()->getAsCXXRecordDecl())) return f;
+                                return nullptr;
+                            };
+                            auto* member = find(clean(leaf.type)->getAsCXXRecordDecl());
+                            if (!member) fail("missing Clocked input: " + pin);
+                            leaf = field(leaf, member);
+                            if (end == std::string::npos) break;
+                            begin = end + 1;
+                        } while (true);
+                        graph.connect(bits, read(leaf));
                     }
                 }
             } else if (name == "_strobe") {
@@ -1383,6 +1448,56 @@ class Lowering {
             cells.set(receiver.key, Value(width(receiver.type), 0));
             return {};
         }
+        if (qualified == "cpphdl::Module::assignIf") {
+            if (!structural || arguments.size() != 4 || !interface(arguments[2].type) || !interface(arguments[3].type))
+                fail("assignIf requires two structural interface endpoints", call);
+            using Endpoint = std::pair<Item, bool>;
+            std::map<std::string, Endpoint> endpoints[2];
+            std::function<void(Item, std::string, bool, unsigned)> collect;
+            collect = [&](Item item, std::string prefix, bool flip, unsigned side) {
+                auto record = clean(item.type)->getAsCXXRecordDecl();
+                for (const auto& base : record->bases()) if (interface(base.getType())) {
+                    auto inherited = item; inherited.type = base.getType();
+                    collect(inherited, prefix, flip, side);
+                }
+                for (auto member : record->fields()) {
+                    auto leaf = member->getNameAsString();
+                    auto child = field(item, member);
+                    if (interface(child.type)) collect(child, prefix + leaf + ".", flip != std::string_view(leaf).ends_with("_out"), side);
+                    else if (port(child.type)) {
+                        if (!std::string_view(leaf).ends_with("_in") && !std::string_view(leaf).ends_with("_out"))
+                            fail("interface port requires a direction suffix", call);
+                        endpoints[side][prefix + leaf] = {child, flip != std::string_view(leaf).ends_with("_out")};
+                    }
+                }
+            };
+            for (unsigned side = 0; side < 2; ++side) {
+                const auto& owner = arguments[side];
+                const auto& endpoint = arguments[side + 2];
+                if (!module(owner.type) || !endpoint.key.starts_with(owner.key + "."))
+                    fail("assignIf endpoint does not belong to its module", call);
+                if (owner.key != receiver.key && (!owner.key.starts_with(receiver.key + ".") ||
+                    owner.key.find('.', receiver.key.size() + 1) != std::string::npos))
+                    fail("assignIf may connect only this module and its immediate children", call);
+                collect(endpoint, "", std::string_view(endpoint.key).ends_with("_out"), side);
+            }
+            if (endpoints[0].size() != endpoints[1].size()) fail("assignIf interface shape mismatch", call);
+            bool parent0 = arguments[0].key == receiver.key, parent1 = arguments[1].key == receiver.key;
+            if (parent0 && parent1) fail("assignIf requires a child endpoint", call);
+            for (const auto& [leaf, a] : endpoints[0]) {
+                if (!endpoints[1].count(leaf)) fail("assignIf interface member mismatch", call);
+                const auto& b = endpoints[1].at(leaf);
+                if (!context.hasSameType(payload(a.first.type), payload(b.first.type))) fail("assignIf port type mismatch", call);
+                bool drivesA = a.second != parent0, drivesB = b.second != parent1;
+                if (drivesA == drivesB) fail("assignIf direction mismatch", call);
+                const auto& target = drivesA ? b.first : a.first;
+                if (interfaceBindings.count(target.key)) fail("interface port connected more than once: " + target.key, call);
+                interfaceBindings[target.key] = drivesA ? a.first : b.first;
+            }
+            for (unsigned side = 0; side < 2; ++side) if (arguments[side].key != receiver.key)
+                if (auto assign = method(arguments[side].type, "_assign")) invoke(assign, arguments[side], {});
+            return {};
+        }
         if (qualified == "cpphdl::sv_assign_field") { write(arguments.at(0), arguments.at(1)); return {}; }
         if (qualified == "cpphdl::sv_assign_bit") { write(index(arguments.at(0), arguments.at(1), context.BoolTy), arguments.at(2)); return {}; }
         if (qualified == "cpphdl::pack_value" || qualified == "cpphdl::unpack_value" || qualified == "cpphdl::convert_packed" || qualified == "cpphdl::sv_cast" || qualified == "cpphdl::sv_unsigned" || name == "__hdlcpp_array_cast") return cast(arguments.at(0), call->getType());
@@ -1713,9 +1828,27 @@ public:
         auto rootObject = object;
         auto record = clean(root->getType())->getAsCXXRecordDecl();
         std::vector<std::pair<std::string, Item>> outputs;
-        for (auto member : record->fields()) if (port(member->getType())) {
-            auto item = field(object, member);
-            auto name = member->getNameAsString();
+        std::function<void(Item, const CXXRecordDecl*, std::string, bool)> collectPorts;
+        collectPorts = [&](Item parent, const CXXRecordDecl* owner, std::string prefix, bool flip) {
+          for (const auto& base : owner->bases()) if (interface(base.getType())) {
+            Item inherited = parent; inherited.type = base.getType();
+            collectPorts(inherited, clean(base.getType())->getAsCXXRecordDecl(), prefix, flip);
+          }
+          for (auto member : owner->fields()) {
+            if (interface(member->getType())) {
+                auto name = member->getNameAsString();
+                collectPorts(field(parent, member), clean(member->getType())->getAsCXXRecordDecl(),
+                             prefix + name + "__", flip != std::string_view(name).ends_with("_out"));
+                continue;
+            }
+            if (!port(member->getType())) continue;
+            auto item = field(parent, member);
+            auto leaf = member->getNameAsString();
+            if (flip) {
+                if (std::string_view(leaf).ends_with("_out")) leaf.replace(leaf.size() - 4, 4, "_in");
+                else if (std::string_view(leaf).ends_with("_in")) leaf.replace(leaf.size() - 3, 3, "_out");
+            }
+            auto name = prefix + leaf;
             auto projection = name.find("__field_");
             auto directionEnd = name.size();
             if (projection != std::string::npos) {
@@ -1732,7 +1865,9 @@ public:
                 originals[item.key] = bits; cells.set(item.key, bits);
                 graph.ports.push_back({name, bits, true});
             } else outputs.emplace_back(name, item);
-        }
+          }
+        };
+        collectPorts(object, record, "", false);
         structural = true;
         if (auto assign = method(rootObject.type, "_assign")) invoke(assign, rootObject, {});
         structural = false;

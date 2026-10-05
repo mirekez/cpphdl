@@ -129,7 +129,7 @@ public:
             const auto& op = node.op;
             unsigned width = node.width;
             Value result;
-            if (boxes.owner.count(n) || (partial && !expanded.count(n))) result = out.add(op, width, a, b, s, node.name);
+            if (op == "blackbox" || boxes.owner.count(n) || (partial && !expanded.count(n))) result = out.add(op, width, a, b, s, node.name);
             else if (op == "memory_read") {
                 auto memory = number(node.right), part = number(node.select);
                 if (!memory || !part || *memory >= memories.size()) throw std::runtime_error("invalid mapped memory read");
@@ -224,9 +224,20 @@ void writeGateReport(Graph& graph, const std::string& path, const std::string& m
     for (auto n : graph.dependencyOrder()) {
         const auto& node = graph.nodes[n];
         if (node.op == "input" || node.op == "state" || boxes.owner.count(n)) continue;
+        if (node.op == "blackbox") {
+            Value result;
+            for (unsigned bit = 0; bit < node.width; ++bit) result.push_back((n+1)*64+2+bit);
+            out << (comma ? "," : "") << std::quoted("g" + std::to_string(n))
+                << ":{\"type\":" << std::quoted(node.name) << ",\"parameters\":{\"INPUT_BITS\":"
+                << node.left.size() << ",\"OUTPUT_BITS\":" << node.width << "},\"connections\":{\"args\":";
+            bits(node.left); out << ",\"result\":"; bits(result); out << "}}";
+            comma = true;
+            continue;
+        }
         std::string kind = node.op;
         for (auto& c : kind) c = std::toupper(static_cast<unsigned char>(c));
-        out << (comma ? "," : "") << std::quoted("g" + std::to_string(n)) << ":{\"type\":\"$_" << kind << "_\",\"connections\":{\"A\":";
+        out << (comma ? "," : "") << std::quoted("g" + std::to_string(n)) << ":{\"type\":"
+            << std::quoted("$_" + kind + "_") << ",\"connections\":{\"A\":";
         bits(node.left); out << ",\"B\":"; bits(node.right);
         if (!node.select.empty()) { out << ",\"S\":"; bits(node.select); }
         out << ",\"Y\":"; bits({(n+1)*64+2}); out << "}}"; comma = true;

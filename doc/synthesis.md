@@ -128,6 +128,7 @@ Each run keeps its intermediates and diagnostics in `--output`:
 | `operations.v` | Operation-level design after any requested retiming. |
 | `gates.json` | Mapped ports, cells and connections. |
 | `timing.json` | Estimated timing, retiming results, keep boxes and HLS regions. |
+| `blackboxes.v` | Empty declarations for explicitly external implementations, when used. |
 | `manifest.json` | Run status, commands, clock arguments, cell counts and timing. |
 | `graph.cc` | Original graph-construction program with `makeGraph()`. |
 | `retimed_graph.cc` | Graph after processing, including retiming when enabled. |
@@ -143,6 +144,44 @@ alternative representation of the same design, and the separate box file
 duplicates definitions already included in the netlist. Preserved boxes are
 deliberate exceptions to generic gate expansion, not a claim that a DSP or
 other technology primitive has already been selected.
+
+### External Math Blackboxes
+
+Use `CPPHDL_BLACKBOX=<module>:<delay_ns>` on a pure free/static function when
+its implementation must remain outside synthesis:
+
+```cpp
+[[clang::annotate("CPPHDL_BLACKBOX=my_inverse_sqrt:0")]]
+int64_t inverse_sqrt(int64_t value); // Or a body for native simulation.
+```
+
+Unlike `CPPHDL_KEEP_BOX`, this annotation prevents lowering the function body.
+It works in the synthesis AST frontend and in `ClockedPipeline` calls, including
+ordinary HLS RTL conversion. A declaration without a body is sufficient for
+synthesis. Native C++ execution still requires a definition. `ClockedDelayer`
+calls, reference/pointer arguments, non-static methods, and floating-point or
+greater-than-64-bit arguments/results are currently rejected.
+
+The external module must provide `INPUT_BITS` and `OUTPUT_BITS` parameters,
+an input `args[INPUT_BITS-1:0]`, and an output `result[OUTPUT_BITS-1:0]`.
+Each integer argument occupies 64 bits (argument zero is least significant),
+sign-extended or zero-extended from its declared C++ type. Results use their
+declared integer width. Functions must have no externally visible side effects.
+
+Instances carry `keep` and `keep_hierarchy` attributes. Mapping preserves the
+call, even with constant arguments, rather than evaluating its body or replacing
+it with zero. `blackboxes.v` contains **empty declarations**, not functional
+models. Provide your own implementations when linking or simulating the design;
+do not compile these declarations alongside those implementations.
+
+The annotation specifies combinational delay in nanoseconds, not cycle latency.
+Zero is allowed as an explicit abstraction. All such boxes have zero cycle
+latency; registered implementations require a separate handshake/latency adapter.
+`timing.json` lists `external_blackboxes`, while `manifest.json` lists
+`external_implementations_required`. Gate counts exclude their unknown internal
+cost. A timing result with zero-delay boxes does not establish physical timing.
+See [the LLM arithmetic example](../hls/examples/llm/README.md) for real add/mul
+logic surrounding external nonlinear functions and test-only Verilator models.
 
 On failure, read the log named by the error and `manifest.json`. Intermediate
 files may exist even when the run failed; their presence alone does not mean

@@ -9,7 +9,7 @@ using namespace graph;
 
 unsigned pipelineStages(const clang::CXXRecordDecl* record) {
     auto* specialization = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record);
-    if (!specialization || specialization->getTemplateArgs().size() != 2)
+    if (!specialization || specialization->getTemplateArgs().size() < 2)
         throw std::runtime_error("ClockedPipeline requires a method class and a stage count");
     auto stages = specialization->getTemplateArgs()[1].getAsIntegral().getLimitedValue();
     if (!stages || stages > 64) throw std::runtime_error("ClockedPipeline STAGES must be in 1..64");
@@ -46,7 +46,7 @@ std::map<std::string,Value> exportPipelineGraph(clang::ASTContext& ctx, clang::S
     std::ostringstream serialized; command.save(serialized); pipeline.logic = serialized.str();
     output.currentScope = scope;
     for (auto [name,width] : std::map<std::string,unsigned>{{"reset",1},{"command_valid_in",1},
-         {"response_ready_in",1},{"operation_in",32},{"index_in",32},{"value_in",32}})
+         {"response_ready_in",1},{"operation_in",design.argumentBits},{"index_in",design.argumentBits},{"value_in",design.argumentBits}})
         pipeline.pins[name] = output.wire(width,scope + "." + name);
     synth::buildStreamPipeline(output,pipeline,std::move(command));
     auto result = pipeline.pins;

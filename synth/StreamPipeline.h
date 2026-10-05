@@ -6,7 +6,8 @@ namespace cpphdl::synth {
 // muxes. HLS supplies stage boundaries; synthesis optionally supplies delays.
 inline void buildStreamPipeline(graph::Graph& out, graph::StreamPipeline& region,
     graph::Graph logic, const std::function<double(const graph::Node&)>& delay = {},
-    double budget = 0, double clockToQ = 0) {
+    double budget = 0, double clockToQ = 0,
+    const std::map<std::string, double>& inputArrival = {}) {
     using namespace graph;
     if (!region.stages || region.stages > 64)
         throw std::runtime_error("invalid streaming HLS stage count");
@@ -44,8 +45,12 @@ inline void buildStreamPipeline(graph::Graph& out, graph::StreamPipeline& region
             p.versions[0][Graph::lane(b)] = to.at(i);
         }
     };
-    for (const auto& port : logic.ports) if (port.input)
+    for (const auto& port : logic.ports) if (port.input) {
         bind(port.bits,out.resolved(region.pins.at(port.name)));
+        auto arrival = inputArrival.find(port.name);
+        if (arrival != inputArrival.end()) for (auto b : logic.resolved(port.bits)) if (b > 1)
+            producers[Graph::owner(b)].arrival = std::max(producers[Graph::owner(b)].arrival, arrival->second);
+    }
     std::vector<Value> feedback;
     for (const auto& state : logic.states) {
         auto q = reg(state.bits.size(),"feedback_" + std::to_string(feedback.size()));

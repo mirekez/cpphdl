@@ -218,6 +218,29 @@ public:
         return result;
     }
     Value binary(std::string op, Value left, Value right, unsigned width) {
+        if (op == "mul") {
+            // Constant power-of-two multiplication is wiring, not an adder
+            // tree. Canonicalize before timing as well as gate mapping.
+            auto power = [&](Value value) {
+                int shift = -1;
+                value = resolved(value);
+                for (size_t i = 0; i < value.size(); ++i) {
+                    if (value[i] > 1) return -1;
+                    if (value[i]) {
+                        if (shift >= 0) return -1;
+                        shift = int(i);
+                    }
+                }
+                return shift;
+            };
+            int shift = power(right);
+            if (shift < 0) { shift = power(left); if (shift >= 0) std::swap(left, right); }
+            if (shift >= 0) {
+                Value result(std::min<unsigned>(shift, width), 0);
+                result.insert(result.end(), left.begin(), left.end());
+                return resize(result, width);
+            }
+        }
         if (op == "and" || op == "or" || op == "xor" || op == "mux") {
             left = resize(left, width); right = resize(right, width);
             Value result;
@@ -230,8 +253,58 @@ public:
             simplifyLast(result);
             return resolved(result);
         }
-        if (left.size() > 64 || right.size() > 64 || width > 64)
+        if (left.size() > 64 || right.size() > 64 || width > 64) {
+            if (op == "shl" || op == "shr" || op == "sar") {
+                const Bit fill = op == "sar" && !left.empty() ? left.back() : 0;
+                // Keep the source width until after a right shift: narrowing
+                // the result must not discard source bits that shift into it.
+                left.resize(std::max<size_t>(left.size(), width), fill);
+                for (unsigned stage = 0; stage < right.size(); ++stage) {
+                    Value moved(left.size(), fill);
+                    if (stage < 63) {
+                        uint64_t amount = uint64_t(1) << stage;
+                        for (size_t i = 0; i < left.size(); ++i)
+                            if (op == "shl" ? amount <= i : amount < left.size() - i)
+                                moved[i] = left[op == "shl" ? i - amount : i + amount];
+                    }
+                    left = mux({right[stage]}, moved, left);
+                }
+                return resize(left, width);
+            }
+            // Arithmetic limbs keep every node evaluable by the native 64-bit
+            // executor while preserving carries above bit 63 for synthesis.
+            if (op == "add" || op == "sub") {
+                left = resize(left, width); right = resize(right, width);
+                Value result, carry{Bit(op == "sub")};
+                for (unsigned offset = 0; offset < width; offset += 32) {
+                    unsigned count = std::min(32u, width - offset);
+                    auto a = resize(slice(left, offset, count), count + 1);
+                    auto b = slice(right, offset, count);
+                    if (op == "sub") b = unary("not", b);
+                    auto sum = binary("add", binary("add", a, resize(b, count + 1), count + 1),
+                                      resize(carry, count + 1), count + 1);
+                    auto part = slice(sum, 0, count);
+                    result.insert(result.end(), part.begin(), part.end());
+                    carry = slice(sum, count, 1);
+                }
+                return result;
+            }
+            if (op == "mul") {
+                left = resize(left, width); right = resize(right, width);
+                Value result(width, 0);
+                for (unsigned a = 0; a < width; a += 32)
+                    for (unsigned b = 0; a + b < width; b += 32) {
+                        auto lhs = slice(left, a, std::min(32u, width - a));
+                        auto rhs = slice(right, b, std::min(32u, width - b));
+                        auto product = binary("mul", resize(lhs, 64), resize(rhs, 64), 64);
+                        Value row(a + b, 0);
+                        row.insert(row.end(), product.begin(), product.end());
+                        result = binary("add", result, resize(row, width), width);
+                    }
+                return result;
+            }
             throw std::runtime_error("wide arithmetic not supported: " + op);
+        }
         if (auto lhs = number(left)) if (auto rhs = number(right)) {
             auto result = calculate(op, *lhs, *rhs, left.size());
             return constant(result, width);
@@ -288,7 +361,7 @@ public:
         auto& node = nodes[index];
         node.left = resolved(node.left); node.right = resolved(node.right);
         node.select = resolved(node.select);
-        if (node.hostEffect() || node.op == "memory_read") return false;
+        if (node.hostEffect() || node.op == "memory_read" || node.op == "blackbox") return false;
         bool changed = false;
         auto redirect = [&](unsigned offset, Bit bit) {
             Bit target = (index + 1) * 64 + 2 + offset;
@@ -369,6 +442,7 @@ public:
             node.left = resolved(node.left); node.right = resolved(node.right); node.select = resolved(node.select);
             std::ostringstream key;
             key << node.scope << ':' << node.op << ':' << node.width;
+            if (node.op == "blackbox") key << ':' << node.name;
             for (auto* value : {&node.left, &node.right, &node.select}) {
                 key << '/'; for (auto bit : *value) key << bit << ',';
             }

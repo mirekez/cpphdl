@@ -29,7 +29,7 @@ bool sameDomain(const State& a, const State& b) {
     return a.clock == b.clock && a.falling == b.falling && a.reset == b.reset && a.trigger == b.trigger;
 }
 bool operation(const Node& n) {
-    return n.op != "state" && n.op != "input" && n.op != "wire" && n.op != "memory_read" && !n.hostEffect();
+    return n.op != "state" && n.op != "input" && n.op != "wire" && n.op != "memory_read" && n.op != "blackbox" && !n.hostEffect();
 }
 Value copyOperation(Graph& g, const Node& n, Value left, Value right, Value select) {
     auto result = g.add(n.op, n.width, std::move(left), std::move(right), std::move(select), n.name);
@@ -551,6 +551,12 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
             throw std::runtime_error("streaming target period is below register/control overhead");
         for (auto& p : g.pipelines) if (inside(p.scope,rule.scope)) {
             if (estimateTiming(g,model,p.scope).worst <= rule.period + 1e-9) continue;
+            // The region may be fed by combinational logic in its parent.
+            // Its first stage has only the remaining timing budget available.
+            const auto boundaryTiming = estimateTiming(g,model);
+            std::map<std::string,double> inputArrival;
+            for (const auto& [name,bits] : p.pins) for (auto bit : g.resolved(bits)) if (bit > 1)
+                inputArrival[name] = std::max(inputArrival[name],boundaryTiming.arrival.at(Graph::owner(bit)));
             auto oldPins = p.pins;
             for (auto& [name,bits] : oldPins) bits = g.resolved(bits);
             for (auto& [name,bits] : p.pins) bits = g.resolved(bits);
@@ -572,13 +578,17 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
             std::set<size_t> expand;
             for (auto n : logic.dependencyOrder()) {
                 const auto& cell = logic.nodes[n];
-                if (cell.op != "input" && cell.op != "state" &&
-                    cellDelay(logic,cell,model) + model.clockToQ > budget + 1e-9) expand.insert(n);
+                // Place boundaries on the same gate network that will be
+                // emitted. Word-level adder/multiplier estimates need not
+                // match the ripple implementation used by the generic mapper.
+                if (cell.op != "input" && cell.op != "state" && cell.op != "blackbox" &&
+                    cell.op != "and" && cell.op != "or" && cell.op != "xor" && cell.op != "mux")
+                    expand.insert(n);
             }
             if (!expand.empty()) logic = expandGates(std::move(logic),expand);
             const auto oldLatency = p.latency;
             const auto firstState = g.states.size();
-            buildStreamPipeline(g,p,logic,[&](const Node& cell) { return cellDelay(logic,cell,model); },budget,model.clockToQ);
+            buildStreamPipeline(g,p,logic,[&](const Node& cell) { return cellDelay(logic,cell,model); },budget,model.clockToQ,inputArrival);
             for (size_t i = firstState; i < g.states.size(); ++i) {
                 g.states[i].clock = clock; g.states[i].falling = falling;
             }
@@ -611,7 +621,7 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
                 }
                 if (!latest) break;
                 const auto& node = g.nodes[owner];
-                path += "\n  " + node.op + "[" + std::to_string(node.width) + "] " + node.name +
+                path += "\n  " + node.op + "[" + std::to_string(node.width) + "] " + node.name + " scope=" + node.scope +
                     " arrival=" + std::to_string(latest);
                 if (node.op == "state" || node.op == "input") break;
                 edge = node.left;

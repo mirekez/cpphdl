@@ -11,7 +11,7 @@ def main():
     parser = argparse.ArgumentParser()
     for key in ('cpphdl', 'cxx', 'verilator', 'work'):
         parser.add_argument('--' + key, required=True)
-    parser.add_argument('--case', choices=('math', 'pipeline', 'main_and_secondary', 'two_main_clocks', 'memory', 'async_reset', 'memory_async_reset'), default='math')
+    parser.add_argument('--case', choices=('math', 'pipeline', 'blackbox', 'interface_proxy', 'main_and_secondary', 'two_main_clocks', 'memory', 'async_reset', 'memory_async_reset'), default='math')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     work = Path(args.work).resolve()
@@ -20,6 +20,8 @@ def main():
     module = 'Synth' + args.case.title()
     define = 'SYNTH_' + args.case.upper()
     clocks = []
+    if args.case == 'blackbox':
+        module = 'BlackBoxTest'
     if args.case in ('main_and_secondary', 'two_main_clocks', 'memory', 'async_reset', 'memory_async_reset'):
         source = Path(__file__).parent / 'multiclock' / (args.case + '.cpp')
         define = 'SYNTH_MULTICLOCK'
@@ -60,15 +62,37 @@ def main():
 
     run([args.cpphdl, '--synth', '--top', 'cpphdl_top', '--module', module,
          '--cxx', args.cxx, '--output', work / 'rtl', *clocks, source], 'synthesis')
-    run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+    if args.case != 'blackbox':
+      run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
          '--output', work / 'native', '--runner', source, *clocks, source, '--',
          '-D' + define + '_RUN', '-D' + define + '_GRAPH', '-I' + str(root / 'include')], 'native-build')
-    run([work / 'native/run'], 'native-test')
+      run([work / 'native/run'], 'native-test')
+    extra_sources = [Path(__file__).with_name('BlackBoxModels.sv')] if args.case == 'blackbox' else []
+    test_define = 'BLACKBOX_RUN' if args.case == 'blackbox' else define + '_RUN'
     run([args.verilator, '--cc', '--exe', '--build', '-j', '2', '--top-module', module,
-         '-Wno-fatal', '--Mdir', work / 'obj', work / 'rtl/gates.v', source,
-         '-CFLAGS', f'-std=c++17 -D{define}_RUN -D{define}_VERILATOR -I{root / "include"}',
+         '-Wno-fatal', '--Mdir', work / 'obj', work / 'rtl/gates.v', *extra_sources, source,
+         '-CFLAGS', f'-std=c++17 -D{test_define} -D{define}_VERILATOR -I{root / "include"}',
          '-MAKEFLAGS', f'CXX={args.cxx} LINK={args.cxx} AR=ar LDFLAGS=-L{compiler_lib}'], 'verilator-build')
     run([work / ('obj/V' + module)], 'gate-test')
+    if args.case == 'blackbox':
+        import json
+        report = json.loads((work / 'rtl/manifest.json').read_text())
+        assert set(report['external_implementations_required']) == {'opaque_a', 'opaque_b', 'opaque_c'}
+        cells = json.loads((work / 'rtl/gates.json').read_text())['modules'][module]['cells']
+        boxes = [cell for cell in cells.values() if cell['type'].startswith('opaque_')]
+        assert sorted(cell['type'] for cell in boxes) == ['opaque_a', 'opaque_a', 'opaque_b', 'opaque_c']
+        for cell in boxes:
+            assert len(cell['connections']['args']) == 128 and len(cell['connections']['result']) == 16
+        for case, message in {1: 'invalid blackbox delay', 2: 'invalid blackbox delay',
+                              3: 'blackbox arguments must be scalar integers',
+                              4: 'blackbox requires a free/static scalar integer function'}.items():
+            target = work / f'rejected-{case}.cc'
+            target.unlink(missing_ok=True)
+            result = subprocess.run([args.cpphdl, '--lower-synthesis-graph', str(source), str(target), 'cpphdl_top',
+                '--', '-I' + str(root / 'include'), f'-DBLACKBOX_ERROR={case}'],
+                cwd=work, env=env, text=True, capture_output=True, timeout=60)
+            if result.returncode == 0 or message not in result.stderr or target.exists():
+                raise RuntimeError(f'blackbox error {case} was not rejected: ' + result.stderr)
     if clocks:
         import json
         design = json.loads((work / 'rtl/gates.json').read_text())['modules'][module]
