@@ -204,7 +204,9 @@ if(Python3_Interpreter_FOUND)
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
             --cxx "${CMAKE_CXX_COMPILER}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph")
-        set_tests_properties(cpp_graph_pipeline PROPERTIES TIMEOUT 300
+        # This pipeline compiles dozens of sanitized graph runners. Allow the
+        # complete matrix to finish on the same low-parallelism test machines.
+        set_tests_properties(cpp_graph_pipeline PROPERTIES TIMEOUT 900
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     add_test(NAME netlist_driver COMMAND "${Python3_EXECUTABLE}"

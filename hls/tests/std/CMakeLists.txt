@@ -1,6 +1,11 @@
 add_delayed_test(Array)
 add_delayed_test(Vector)
 add_delayed_test(Map)
+# The register-backed recursive map emits a much larger model than the shared
+# memory variants; allow its host C++ compilation to finish on smaller machines.
+if(HLS_VERILATOR)
+    set_tests_properties(hls_delayed_Map_verilator PROPERTIES TIMEOUT 900 LABELS "slow")
+endif()
 add_delayed_test(MapSmall)
 add_delayed_test(Array TRUE)
 add_delayed_test(Vector TRUE)

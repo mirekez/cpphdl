@@ -485,6 +485,35 @@ static void testIndexedNestedMemberProjection()
     auto groupedInsideCast = hdlcpp::projectedMemberAccesses(
         "logic<8>((req_comb_func())[i].aw.id)", "req_comb_func()");
     assert(groupedInsideCast.size() == 1);
+    auto materialized = hdlcpp::projectedMemberAccesses(
+        "(cpphdl::convert_packed<packet_t>(rows_comb_func()[i])).tag", "rows_comb_func()");
+    assert(materialized.size() == 1);
+    assert(materialized[0].begin == 0 && materialized[0].field == "tag");
+    assert(materialized[0].indices == "[i]");
+    auto reinterpreted = hdlcpp::projectedMemberAccesses(
+        "(cpphdl::sv_cast<other_packet_t>(rows_comb_func()[i])).tag", "rows_comb_func()");
+    assert(reinterpreted.empty());
+    auto packedMaterialized = hdlcpp::projectedMemberAccesses(
+        "(cpphdl::unpack_value<packet_t>(cpphdl::pack_value<cpphdl::type_width<packet_t>()>(rows_comb_func()[i]))).tag",
+        "rows_comb_func()");
+    assert(packedMaterialized.size() == 1 && packedMaterialized[0].begin == 0);
+    assert(packedMaterialized[0].field == "tag" && packedMaterialized[0].indices == "[i]");
+    auto truncatedMaterialized = hdlcpp::projectedMemberAccesses(
+        "(cpphdl::unpack_value<packet_t>(cpphdl::pack_value<8>(rows_comb_func()[i]))).tag",
+        "rows_comb_func()");
+    assert(truncatedMaterialized.empty());
+    const std::vector<std::string> checkedWrite = {
+        "auto __cpphdl_write_value = source_in()[i];",
+        "const uint64_t __cpphdl_write_index_0 = i;",
+        "if (__cpphdl_write_index_0 < 2) {",
+        "rows_comb[__cpphdl_write_index_0] = __cpphdl_write_value;",
+        "other_comb[__cpphdl_write_index_0] = __cpphdl_write_value;",
+        "}",
+    };
+    auto exposed = hdlcpp::exposeCheckedWriteValues(checkedWrite, "rows_comb");
+    assert(exposed[3] == "rows_comb[__cpphdl_write_index_0] = source_in()[i];");
+    assert(exposed[2] == checkedWrite[2] && exposed[4] == checkedWrite[4]);
+    assert(checkedWrite[3] == "rows_comb[__cpphdl_write_index_0] = __cpphdl_write_value;");
     assert(groupedInsideCast[0].indices == "[i]");
     assert(groupedInsideCast[0].field == "aw.id");
 

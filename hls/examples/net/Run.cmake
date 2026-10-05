@@ -16,6 +16,11 @@ set(packages "${WORK}/generated/Predef_pkg.sv"
     "${WORK}/generated/HftQuote_pkg.sv" "${WORK}/generated/HftCollection_pkg.sv"
     "${WORK}/generated/HftFrameCheck_pkg.sv" "${WORK}/generated/HftFoldedFrame_pkg.sv"
     "${WORK}/generated/HftCandidate_pkg.sv" "${WORK}/generated/HftWordParts_pkg.sv")
+# Keep the explicitly ordered data packages first, followed by helper packages
+# added by conversion, before any importing modules.
+file(GLOB generated_packages "${WORK}/generated/*_pkg.sv")
+list(REMOVE_ITEM generated_packages ${packages})
+list(APPEND packages ${generated_packages})
 list(REMOVE_ITEM rtl ${packages})
 list(PREPEND rtl ${packages})
 file(REMOVE_RECURSE "${WORK}/obj_dir")

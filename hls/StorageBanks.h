@@ -46,19 +46,21 @@ inline void emitBankLoad(std::ostream& out, unsigned count) {
 
 inline void emitBankWrite(std::ostream& out, unsigned count, unsigned bank, bool port = false) {
     auto name = "hls_bank_write_" + std::string(port ? "port" : std::to_string(count * 8)) + "_" + std::to_string(bank);
-    out << "  function static bank_t " << name << "(input bank_t old_bank,\n"
+    // Pad the function-local write target to the index's power-of-two domain.
+    // Truncate on return: writes outside BANK_BYTES remain unobservable. This
+    // avoids older Verilator's module-scoped bounds temporaries in pure helpers.
+    out << "  function static bank_t " << name << "(input logic [(1 << BANK_INDEX_BITS)-1:0][7:0] old_bank,\n"
         << "    input logic [ADDR_BITS-1:0] address, input logic [" << count * 8 - 1
-        << ":0] value, input logic [31:0] fault" << (port ? ", input int unsigned valid_bytes" : "") << ");\n"
-        << "    " << name << " = old_bank;\n";
+        << ":0] value, input logic [31:0] fault" << (port ? ", input int unsigned valid_bytes" : "") << ");\n";
     for (unsigned group = 0; group < (count + 7) / 8; ++group) {
         std::string lane = "3'(3'd" + std::to_string(bank) + " - address[2:0])";
         std::string offset = "(32'(" + lane + ") + " + std::to_string(group * 8) + ")";
         out << "    if (fault == 0";
         if (port) out << " && " << offset << " < valid_bytes";
         else if (group * 8 + 8 > count) out << " && " << offset << " < " << count;
-        out << ") " << name << "[BANK_INDEX_BITS'((address >> 3) + " << group
+        out << ") old_bank[BANK_INDEX_BITS'((address >> 3) + " << group
             << " + (address[2:0] > 3'd" << bank << "))] = 8'(value >> (" << offset << " * 8));\n";
     }
-    out << "  endfunction\n";
+    out << "    " << name << " = bank_t'(old_bank);\n  endfunction\n";
 }
 }

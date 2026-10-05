@@ -127,3 +127,9 @@ add_test(NAME hdlcpp_test_modules COMMAND test_modules)
 add_executable(test_structs tests/test_structs.cpp)
 target_include_directories(test_structs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_structs COMMAND test_structs)
+
+# These executables use assert for their test expectations; Release builds
+# must check them too, rather than silently turning failures into successes.
+foreach(test_target test_combs test_modules test_structs)
+    target_compile_options(${test_target} PRIVATE -UNDEBUG)
+endforeach()

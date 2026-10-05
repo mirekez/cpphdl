@@ -15,6 +15,10 @@ if(NOT result EQUAL 0)
     message(FATAL_ERROR "Pipeline conversion failed:\n${output}\n${error}")
 endif()
 file(GLOB sources "${WORK}/generated/*.sv")
+# Packages must precede modules that import them, regardless of filename order.
+file(GLOB packages "${WORK}/generated/*_pkg.sv")
+list(REMOVE_ITEM sources ${packages})
+list(PREPEND sources ${packages})
 if(SYNTH)
     file(REMOVE_RECURSE "${WORK}/synth")
     execute_process(COMMAND "${CPPHDL}" --synth --top PipelineTop --module PipelineTop

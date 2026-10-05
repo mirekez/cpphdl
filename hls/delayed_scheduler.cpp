@@ -1806,7 +1806,11 @@ public:
                 << " " << body.name << "(\n";
             for (size_t i = 0; i < formals.size(); ++i) {
                 if (i) out << ",\n";
-                out << "    input " << (formals[i].find("storage_lane") == 0 ? "bank_t" : "logic [" + widths[i] + "-1:0]")
+                // The function-local active vector is indexed by STATE_BITS.
+                // Padding avoids artificial non-local bounds-check temporaries
+                // in older Verilator; returned state keeps its original width.
+                out << "    input " << (formals[i].find("storage_lane") == 0 ? "bank_t" :
+                    formals[i] == "active" ? "logic [(1 << STATE_BITS)-1:0]" : "logic [" + widths[i] + "-1:0]")
                     << " " << formals[i];
             }
             if (!formals.empty()) out << ",\n";
@@ -1831,7 +1835,8 @@ public:
                 out << "      " << body.name << " = {";
                 for (size_t i = 0; i < outputs.size(); ++i) {
                     if (i) out << (i % 8 == 0 ? ",\n        " : ", ");
-                    out << formals[outputs[i]];
+                    auto index = outputs[i];
+                    out << (formals[index] == "active" ? widths[index] + "'(active)" : formals[index]);
                 }
                 out << "};\n";
             }

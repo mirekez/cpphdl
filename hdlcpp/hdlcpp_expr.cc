@@ -163,6 +163,33 @@
         return emitExpr(expr);
     }
 
+    std::string scopedSelectionType(const ScopedNameSyntax& scoped, bool* bitSelect = nullptr)
+    {
+        if (tok(scoped.separator) != "." || scoped.right->kind != SyntaxKind::IdentifierSelectName) {
+            return "";
+        }
+        auto& name = scoped.right->as<IdentifierSelectNameSyntax>();
+        auto type = fieldTypeFor(exprType(scoped.left->as<ExpressionSyntax>()), tok(name.identifier));
+        for (auto select : name.selectors) {
+            type = unwrapRegType(resolveAliasValueType(type));
+            if (type.empty() || !select || !select->selector) return "";
+            auto args = templateArgsFor(type, "array");
+            if (args.empty()) args = templateArgsFor(type, "std::array");
+            if (args.size() >= 2) {
+                type = args[0];
+                if (RangeSelectSyntax::isKind(select->selector->kind)) {
+                    type = "array<" + type + "," + selectTemplateWidth(*select) + ",true>";
+                }
+                if (bitSelect) *bitSelect = false;
+            } else {
+                const bool isBit = select->selector->kind == SyntaxKind::BitSelect;
+                type = "logic<" + (isBit ? std::string("1") : selectTemplateWidth(*select)) + ">";
+                if (bitSelect) *bitSelect = isBit;
+            }
+        }
+        return type;
+    }
+
     std::string exprType(const ExpressionSyntax& expr)
     {
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
@@ -203,6 +230,9 @@
             return "";
         }
         if (expr.kind == SyntaxKind::ScopedName) {
+            if (auto type = scopedSelectionType(expr.as<ScopedNameSyntax>()); !type.empty()) {
+                return type;
+            }
             return pathType(expr.toString());
         }
         if (expr.kind == SyntaxKind::InvocationExpression && mod) {
@@ -281,6 +311,10 @@
                 }
                 if (args.size() >= 2) {
                     type = args[0];
+                } else if (mod && mod->typeParamNames.count(type)) {
+                    // The selected element, not its opaque container, determines
+                    // the value width after the C++ type parameter is instantiated.
+                    return "cpphdl::value_type_for_ref_t<decltype(" + emitExpr(expr) + ")>";
                 }
             }
             return type;
@@ -1091,6 +1125,9 @@
         }
         if (expr.kind == SyntaxKind::ScopedName) {
             auto& scoped = expr.as<ScopedNameSyntax>();
+            if (auto type = scopedSelectionType(scoped); !type.empty()) {
+                return foldWidth(resolvedTypeWidth(type));
+            }
             auto selectorWidth = [&]() -> std::string {
                 if (scoped.right->kind == SyntaxKind::IdentifierSelectName) {
                     auto& n = scoped.right->as<IdentifierSelectNameSyntax>();
@@ -1208,7 +1245,7 @@
                                  mod->typeParamNames.count(selectedType)) {
                             auto emitted = emitExpr(expr);
                             if (!emitted.empty()) {
-                                return "cpphdl::type_width<std::remove_cvref_t<decltype(" + emitted + ")>>()";
+                                return "cpphdl::type_width<cpphdl::value_type_for_ref_t<decltype(" + emitted + ")>>()";
                             }
                         }
                         else {
@@ -1778,6 +1815,14 @@
         }
         if (e->kind == SyntaxKind::ElementSelectExpression) {
             auto& sel = e->as<ElementSelectExpressionSyntax>();
+            auto baseType = unwrapRegType(resolveAliasValueType(exprType(*sel.left)));
+            if (templateArgsFor(baseType, "array").size() >= 2 ||
+                templateArgsFor(baseType, "std::array").size() >= 2 ||
+                memoryArgs(baseType).size() == 3) {
+                // An array element select is not a one-bit vector select.
+                // In particular packed struct fields may contain multi-bit lanes.
+                return false;
+            }
             return sel.select && sel.select->selector &&
                    sel.select->selector->kind == SyntaxKind::BitSelect;
         }
@@ -1804,6 +1849,11 @@
                     selectedType = unwrapRegType(resolveAliasValueType(arrayArgs[0]));
                     continue;
                 }
+                if (mod && mod->typeParamNames.count(selectedType)) {
+                    // This can be a multi-bit array element. Its instantiated
+                    // C++ value type resolves the width; do not force one bit.
+                    return false;
+                }
                 return index + 1 == n.selectors.size() && selector && selector->selector &&
                        selector->selector->kind == SyntaxKind::BitSelect;
             }
@@ -1816,6 +1866,8 @@
         }
         if (e->kind == SyntaxKind::ScopedName) {
             auto& scoped = e->as<ScopedNameSyntax>();
+            bool bitSelect = false;
+            if (!scopedSelectionType(scoped, &bitSelect).empty()) return bitSelect;
             if (scoped.right && scoped.right->kind == SyntaxKind::IdentifierSelectName) {
                 return isBitSelectOperand(*scoped.right);
             }
@@ -1917,11 +1969,14 @@
         bool numeric = true;
         bool runtimeWidth = false;
         auto isRuntimeWidth = [&](const std::string& width) {
-            if (textMentionsRuntimeIndex(width)) {
+            // Names inside decltype determine an instantiated type, not a
+            // runtime width. Keep fixed-size array element concatenations fast.
+            const auto valueWidth = stripDecltypeExpressions(width);
+            if (textMentionsRuntimeIndex(valueWidth)) {
                 return true;
             }
             return std::any_of(loopVars.begin(), loopVars.end(), [&](const std::string& name) {
-                return isIdentifierUsed(width, name);
+                return isIdentifierUsed(valueWidth, name);
             });
         };
         for (auto e : c.expressions) {

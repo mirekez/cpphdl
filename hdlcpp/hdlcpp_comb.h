@@ -16,6 +16,33 @@ struct CombExtractionPlan {
 
 inline bool isIdentifierChar(char c);
 
+// Projection analyzes a generated checked write's value, not its temporary's
+// spelling. Keep the original method untouched and retain its bounds guards.
+inline std::vector<std::string> exposeCheckedWriteValues(std::vector<std::string> lines,
+                                                       const std::string& storage)
+{
+    std::string value;
+    const std::string declaration = "auto __cpphdl_write_value = ";
+    for (auto& line : lines) {
+        auto start = line.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        if (line.compare(start, declaration.size(), declaration) == 0) {
+            value = line.substr(start + declaration.size());
+            auto end = value.find_last_not_of(" \t;");
+            value.resize(end == std::string::npos ? 0 : end + 1);
+        } else if (!value.empty() && line.compare(start, storage.size(), storage) == 0 &&
+                   start + storage.size() < line.size() &&
+                   (line[start + storage.size()] == '[' || line[start + storage.size()] == '.')) {
+            const std::string assignment = " = __cpphdl_write_value;";
+            auto pos = line.rfind(assignment);
+            if (pos != std::string::npos && pos + assignment.size() == line.size()) {
+                line.replace(pos, assignment.size(), " = " + value + ";");
+            }
+        }
+    }
+    return lines;
+}
+
 struct ProjectedMemberAccess {
     size_t begin = 0;
     size_t end = 0;
@@ -53,6 +80,51 @@ inline std::vector<ProjectedMemberAccess> projectedMemberAccesses(const std::str
         while (accessBegin > 0 && text[accessBegin - 1] == '(') {
             auto open = accessBegin - 1;
             auto beforeOpen = open == 0 ? '\0' : text[open - 1];
+            if (beforeOpen == '>') {
+                // The emitter materializes a packed-array proxy as its own
+                // element type before accessing a field. This generated identity
+                // adaptation must not hide the source from field projection.
+                // Do not cross arbitrary SV casts, which can change the layout.
+                size_t angle = open - 1;
+                unsigned depth = 1;
+                while (angle > 0 && depth) {
+                    --angle;
+                    if (text[angle] == '>') ++depth;
+                    else if (text[angle] == '<') --depth;
+                }
+                const std::string marker = "cpphdl::convert_packed";
+                if (!depth && angle >= marker.size() &&
+                    text.compare(angle - marker.size(), marker.size(), marker) == 0) {
+                    accessBegin = angle - marker.size();
+                    ++groupingDepth;
+                    continue;
+                }
+                const std::string pack = "cpphdl::pack_value";
+                const std::string unpack = "cpphdl::unpack_value";
+                if (!depth && angle > pack.size() &&
+                    text.compare(angle - pack.size(), pack.size(), pack) == 0 &&
+                    text[angle - pack.size() - 1] == '(') {
+                    const auto unpackOpen = angle - pack.size() - 1;
+                    if (unpackOpen && text[unpackOpen - 1] == '>') {
+                        auto outerAngle = unpackOpen - 1;
+                        unsigned outerDepth = 1;
+                        while (outerAngle > 0 && outerDepth) {
+                            --outerAngle;
+                            if (text[outerAngle] == '>') ++outerDepth;
+                            else if (text[outerAngle] == '<') --outerDepth;
+                        }
+                        const auto target = text.substr(outerAngle + 1, unpackOpen - outerAngle - 2);
+                        const auto width = text.substr(angle + 1, open - angle - 2);
+                        if (!outerDepth && outerAngle >= unpack.size() &&
+                            text.compare(outerAngle - unpack.size(), unpack.size(), unpack) == 0 &&
+                            width == "cpphdl::type_width<" + target + ">()") {
+                            accessBegin = outerAngle - unpack.size();
+                            groupingDepth += 2;
+                            continue;
+                        }
+                    }
+                }
+            }
             if (isIdentifierChar(beforeOpen) || beforeOpen == ')' || beforeOpen == ']' ||
                 beforeOpen == '>') {
                 break;

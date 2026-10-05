@@ -1633,7 +1633,12 @@
                             }
                             continue;
                         }
-                        auto init = d->assignment ? trim(cppTypeFromSvText(d->assignment->toString())) : "bool";
+                        // Use the structural type lowering here just as for local
+                        // typedefs. Text conversion drops packed dimensions from
+                        // type-parameter defaults and changes scalar assignment into
+                        // element-wise broadcasting.
+                        auto init = d->assignment && d->assignment->type
+                            ? typeText(*d->assignment->type) : "bool";
                         auto assignmentText = d->assignment ? d->assignment->toString() : std::string();
                         auto defaultIt = typeParamDefaults.find(name);
                         if (d->assignment && d->assignment->type &&
