@@ -19,20 +19,81 @@ date: "2026"
 **Part I. Describe RTL in C++**
 
 - [1. Introduction](#chapter-1)
+    - [1.1 The design we are going to build](#section-1-1)
+    - [1.2 Seven reasons to use C++ for RTL](#section-1-2)
+    - [1.3 The book's two parts](#section-1-3)
+    - [1.4 Prerequisites and notation](#section-1-4)
+    - [1.5 Three rules for every module and testbench](#section-1-5)
 - [2. Capture a Sample](#chapter-2)
+    - [2.1 The example's behavior](#section-2-1)
+    - [2.2 Define when a sample transfers](#section-2-2)
+    - [2.3 Build the module](#section-2-3)
+    - [2.4 C++ calls and register updates](#section-2-4)
+    - [2.5 Execute one edge correctly](#section-2-5)
+    - [2.6 Write the first waveform](#section-2-6)
+    - [2.7 Build and test the sample stage](#section-2-7)
 - [3. Absorb Bursts with Memory and Child Modules](#chapter-3)
+    - [3.1 The queue behavior used here](#section-3-1)
+    - [3.2 Use `memory<>` and width-dependent C++ types](#section-3-2)
+    - [3.3 Implement the queue](#section-3-3)
+    - [3.4 Add the stage and queue as members of a parent](#section-3-4)
+    - [3.5 Understand hierarchy and latency](#section-3-5)
+    - [3.6 Link the model into a C++ test](#section-3-6)
+    - [3.7 Test the buffer and inspect its generated RTL](#section-3-7)
 - [4. Connect Reusable Interface Endpoints](#chapter-4)
+    - [4.1 Declare a CppHDL interface](#section-4-1)
+    - [4.2 Learn the two direction conventions](#section-4-2)
+    - [4.3 Divide work between components and subclasses](#section-4-3)
+    - [4.4 Define local signals, then connect interfaces](#section-4-4)
+    - [4.5 How the parent connects its three child modules](#section-4-5)
+    - [4.6 Test the interface-based buffer with the existing testbench](#section-4-6)
 - [5. Cross Clock Domains and Test Both Flows](#chapter-5)
+    - [5.1 Separate the architecture from its C++ execution](#section-5-1)
+    - [5.2 Scope of this example](#section-5-2)
+    - [5.3 Give every register one clock owner](#section-5-3)
+    - [5.4 Map the pointer equations to the listing](#section-5-4)
+    - [5.5 Decide how both sides reset and restart](#section-5-5)
+    - [5.6 Implement the two-clock FIFO](#section-5-6)
+    - [5.7 Relate the methods to generated RTL](#section-5-7)
+    - [5.8 Run the same transfer test against C++ and SystemVerilog](#section-5-8)
+    - [5.9 Build and run both flows](#section-5-9)
+    - [5.10 What this test checks, and what to add next](#section-5-10)
 - [6. Conclusion to Part I](#chapter-6)
 
 **Part II. Schedule C++ Algorithms and Synthesize Hardware**
 
 - [7. HLS Principles](#chapter-7)
-- [7.1. HLS modes](#hls-modes)
-- [7.2. Memory types](#hls-memory-types)
+    - [7.1. HLS modes](#hls-modes)
+    - [7.2. Memory types](#hls-memory-types)
+    - [7.3 Follow a word through the HFT example](#section-7-3)
+    - [7.4 Keep the algorithm in C++; choose its execution in the wrapper](#section-7-4)
+    - [7.5 Pipeline independent words; keep feedback deliberate](#section-7-5)
+    - [7.6 Retain quote fields, not whole packets](#section-7-6)
+    - [7.7 Use HLS without CppHDL synthesis or retiming](#section-7-7)
 - [8. Synthesis and Retiming](#chapter-8)
+    - [8.1 Turn the scheduled design into gates](#section-8-1)
+    - [8.2 Separate HLS stage placement from timing-driven retiming](#section-8-2)
+    - [8.3 Preserve behavior by moving existing boundaries](#section-8-3)
+    - [8.4 Add stages when latency may change](#section-8-4)
+    - [8.5 Apply timing rules at the intended boundary](#section-8-5)
+    - [8.6 Read the HFT result without confusing latency and throughput](#section-8-6)
+    - [8.7 Verify the transformed implementation](#section-8-7)
+    - [8.8 Take the result back to the C++ design](#section-8-8)
 - [9. Developing Hardware-Friendly HLS C++ Design](#chapter-9)
+    - [9.1 Start with rates and bounds](#section-9-1)
+    - [9.2 Replace whole-packet storage with the state the next step needs](#section-9-2)
+    - [9.3 Match the work unit to the interface width](#section-9-3)
+    - [9.4 Choose widths from value ranges, including intermediates](#section-9-4)
+    - [9.5 Carry only live data through a pipeline](#section-9-5)
+    - [9.6 Distinguish storage bits from access logic](#section-9-6)
+    - [9.7 Update a field, not a reconstructed store](#section-9-7)
+    - [9.8 Make repeated reads and helper reuse visible, then verify sharing](#section-9-8)
+    - [9.9 Bound allocations and recursion separately](#section-9-9)
+    - [9.10 Separate unpredictable loading from regular computation](#section-9-10)
+    - [9.11 Remove hidden cursors from overlapping calls](#section-9-11)
+    - [9.12 Measure the implementation, not the prettiness of the source](#section-9-12)
 - [Conclusion to Part II](#part-ii-conclusion)
+- [Materials and Example Sources](#materials)
 
 \clearpage
 
@@ -42,7 +103,7 @@ date: "2026"
 
 # 1. Introduction {#chapter-1}
 
-## 1.1 The design we are going to build
+## 1.1 The design we are going to build {#section-1-1}
 
 A sensor produces one-byte measurements. Its consumer sometimes pauses.
 We first use one clock for both, then implement a queue with separate write
@@ -84,7 +145,7 @@ C++ methods into hardware, and synthesis maps the design to gates, optionally
 retiming its register boundaries. We use a streaming packet processor to show
 where each tool helps and where the designer still chooses the architecture.
 
-## 1.2 Seven reasons to use C++ for RTL
+## 1.2 Seven reasons to use C++ for RTL {#section-1-2}
 
 1. **Run the RTL directly as C++.** Compile the design with its testbench and
    use a C++ debugger, sanitizer, or profiler without an intermediate RTL
@@ -129,7 +190,7 @@ of C++. At the end of development, the generated SystemVerilog still needs
 acceptance verification in a timing/event-driven simulator and synthesis
 testing with the target synthesis tools.
 
-## 1.3 The book's two parts
+## 1.3 The book's two parts {#section-1-3}
 
 In Part I we build and test a sample stage, add a memory queue, connect the modules
 through interfaces, and finally implement a two-clock FIFO. Each chapter
@@ -160,7 +221,7 @@ transfer rules before its code, (3) demonstrate native execution immediately,
 (4) introduce child modules before interface inheritance, and (5) reuse checks
 across implementations.
 
-## 1.4 Prerequisites and notation
+## 1.4 Prerequisites and notation {#section-1-4}
 
 This book assumes basic SystemVerilog RTL knowledge and familiarity with C++
 classes, functions, and references. Explanations focus on CppHDL's syntax and
@@ -250,7 +311,7 @@ the Verilator build-and-run flow.
 CppHDL emits struct definitions in packages and adds `Predef_pkg.sv` for its
 supporting declarations. The commands list these before the importing modules.
 
-## 1.5 Three rules for every module and testbench
+## 1.5 Three rules for every module and testbench {#section-1-5}
 
 These three rules say where to connect ports, where to assign register values,
 and which methods the test calls. All later examples use them.
@@ -321,7 +382,7 @@ are needed for asynchronous reset.
 This example maps a one-slot RTL stage to CppHDL ports, combs, and registers,
 then runs a native test and writes VCD without generating SystemVerilog first.
 
-## 2.1 The example's behavior
+## 2.1 The example's behavior {#section-2-1}
 
 Suppose a sensor provides an eight-bit measurement. We want to flag values at
 or above a threshold and deliver the measurement and flag together.
@@ -336,7 +397,7 @@ accept = enable AND input_valid AND space_available
 Capture the measurement and its alarm flag together. `en_in` controls capture,
 not the clock signal.
 
-## 2.2 Define when a sample transfers
+## 2.2 Define when a sample transfers {#section-2-2}
 
 The example uses rising-edge valid/ready handshakes. In CppHDL, parentheses
 read a port's current value:
@@ -357,7 +418,7 @@ The payload is one struct with two byte fields:
 
 A byte-sized flag keeps the C++ layout and later 16-bit encoding simple.
 
-## 2.3 Build the module
+## 2.3 Build the module {#section-2-3}
 
 Derive the class from `Module`; declare public signals with `_PORT(T)` and
 direction suffixes `_in` or `_out`. Use `reg<SampleWord>` for the payload and
@@ -471,7 +532,7 @@ public:
 };
 ```
 
-## 2.4 C++ calls and register updates
+## 2.4 C++ calls and register updates {#section-2-4}
 
 The two combs answer separate questions:
 
@@ -519,7 +580,7 @@ After conversion, expect a struct package, module ports, combinational logic,
 and an `always_ff @(posedge clk)` process. The converter may express the body
 through generated tasks and temporary variables for the next register values.
 
-## 2.5 Execute one edge correctly
+## 2.5 Execute one edge correctly {#section-2-5}
 
 Native simulation uses a global counter to decide when cached port values must be
 recalculated:
@@ -557,7 +618,7 @@ The checks cover:
 | Capture | Enabled again, input 17 | Holds 17 with alarm 0 |
 | Drain | No new valid input | Empty |
 
-## 2.6 Write the first waveform
+## 2.6 Write the first waveform {#section-2-6}
 
 CppHDL's `VcdFile` reads values from addresses supplied by the testbench.
 We copy the three outputs into ordinary testbench variables and
@@ -665,7 +726,7 @@ int main()
 }
 ```
 
-## 2.7 Build and test the sample stage
+## 2.7 Build and test the sample stage {#section-2-7}
 
 Compile and run `sample_test.cpp` to check capture, hold, drain, and enable
 behavior and produce a VCD file. Then convert `SampleStage.h` to SystemVerilog
@@ -709,7 +770,7 @@ while the consumer is paused.
 This chapter adds `memory<>` and child modules. The main CppHDL concern is
 preserving simultaneous register and memory updates despite sequential C++ calls.
 
-## 3.1 The queue behavior used here
+## 3.1 The queue behavior used here {#section-3-1}
 
 Add an eight-word queue after the stage. Its behavior is:
 
@@ -725,7 +786,7 @@ queue therefore cannot accept a replacement on the edge that removes a word.
 The example uses show-ahead reads;
 `memory<>` does not automatically adapt that behavior to synchronous-read RAM.
 
-## 3.2 Use `memory<>` and width-dependent C++ types
+## 3.2 Use `memory<>` and width-dependent C++ types {#section-3-2}
 
 We need to store each measurement and its alarm byte together. Declare a
 memory with two bytes per row and use `DEPTH` to select the number of rows:
@@ -755,7 +816,7 @@ Use `uint32_t` when indexing RTL storage. A host `size_t` may be 64 bits;
 unnecessarily wide runtime RTL indices can cause synthesis-tool problems.
 Template size parameters can remain `size_t`.
 
-## 3.3 Implement the queue
+## 3.3 Implement the queue {#section-3-3}
 
 When the queue is empty, the module returns zero on its data output and false
 on its valid output. The data comb reads memory only when the count is nonzero,
@@ -845,7 +906,7 @@ The queue uses the same implicit `clk` and synchronous reset as the sample stage
 `_assign()` is empty because the queue has no children or interface bundles;
 its output bindings live in the port declarations.
 
-## 3.4 Add the stage and queue as members of a parent
+## 3.4 Add the stage and queue as members of a parent {#section-3-4}
 
 The parent sets the threshold, converts the measurement and alarm flag into a
 16-bit word, and connects the stage to the queue. We can still test either child
@@ -932,7 +993,7 @@ public:
 };
 ```
 
-## 3.5 Understand hierarchy and latency
+## 3.5 Understand hierarchy and latency {#section-3-5}
 
 `TelemetryBuffer` applies the three rules to a hierarchy: `_assign()` connects
 the children, `_work()` calls their work methods, and `_strobe()` calls their
@@ -949,7 +1010,7 @@ Starting empty, with the consumer ready, the first sample moves as follows:
 
 The parent adds no register stage. Total capacity remains nine samples.
 
-## 3.6 Link the model into a C++ test
+## 3.6 Link the model into a C++ test {#section-3-6}
 
 The test directly instantiates the C++ RTL class and uses `std::deque<uint16_t>`
 as its scoreboard. Only RTL headers go to the converter; the host test can use
@@ -1042,7 +1103,7 @@ int main()
 }
 ```
 
-## 3.7 Test the buffer and inspect its generated RTL
+## 3.7 Test the buffer and inspect its generated RTL {#section-3-7}
 
 Run `buffer_test.cpp` to check that the stage and queue deliver samples in
 order while the consumer pauses. Then convert `TelemetryBuffer.h` and lint
@@ -1090,7 +1151,7 @@ so developers can connect and extend modules without handling every wire separat
 This chapter replaces scalar connections with CppHDL interfaces and uses
 C++ inheritance to extend a synthesizable endpoint. The native test stays the same.
 
-## 4.1 Declare a CppHDL interface
+## 4.1 Declare a CppHDL interface {#section-4-1}
 
 Derive `StreamIf<WIDTH>` from `Interface` and declare its signals with `_PORT`.
 It carries the same streaming protocol as before:
@@ -1100,7 +1161,7 @@ It carries the same streaming protocol as before:
 CppHDL determines interface directions from the member name's `_in` or `_out`
 suffix instead of a SystemVerilog modport. Both endpoints use the same C++ type.
 
-## 4.2 Learn the two direction conventions
+## 4.2 Learn the two direction conventions {#section-4-2}
 
 Declare `valid_in`, `data_in`, and `ready_out` in the interface type.
 
@@ -1130,7 +1191,7 @@ becomes an RTL input named `source_out__ready_in`.
 The important CppHDL detail is that the source binds `source_out.data_in`
 despite its `_in` leaf suffix. Interface reuse itself is not a new RTL capability.
 
-## 4.3 Divide work between components and subclasses
+## 4.3 Divide work between components and subclasses {#section-4-3}
 
 We will keep the existing capture and queue behavior:
 
@@ -1156,7 +1217,7 @@ the alarm calculation after reset is unchanged. Also, `StreamMonitor` is
 only a port adapter despite its name. The host scoreboard, not that adapter,
 checks correctness.
 
-## 4.4 Define local signals, then connect interfaces
+## 4.4 Define local signals, then connect interfaces {#section-4-4}
 
 `QueueEndpoint::_assign()` binds `sink_in.ready_out` to `queue.ready_out()`
 and its output data/valid fields to the queue's corresponding outputs.
@@ -1349,7 +1410,7 @@ public:
 };
 ```
 
-## 4.5 How the parent connects its three child modules
+## 4.5 How the parent connects its three child modules {#section-4-5}
 
 `InterfaceTelemetry` contains three child modules: `producer`, `buffer`, and
 `monitor`. Its `_assign()` connects them with two `assignIf` calls:
@@ -1388,7 +1449,7 @@ a producer's output interface to a consumer's input interface in sibling modules
 See [AssignIfHierarchyProxy.cpp](../tests/interface/AssignIfHierarchyProxy.cpp)
 for a complete example.
 
-## 4.6 Test the interface-based buffer with the existing testbench
+## 4.6 Test the interface-based buffer with the existing testbench {#section-4-6}
 
 We changed the connections and added a counter; sample delivery should still
 behave as in chapter 3. Reuse `buffer_test.cpp` to check this without rewriting
@@ -1445,20 +1506,20 @@ is how CppHDL assigns methods to clocks, how a native test schedules coincident
 edges, and how one C++ test can exercise both native and generated RTL models.
 The FIFO is tested separately from chapter 4's adapters.
 
-## 5.1 Separate the architecture from its C++ execution
+## 5.1 Separate the architecture from its C++ execution {#section-5-1}
 
 Use `write_clk` for writes and `read_clk` for reads. Replace chapter 3's shared
 occupancy count with local pointers and synchronized remote pointers; retain
 16-bit memory words. The two-clock adapter applies Rule 3 to coincident edges.
 
-## 5.2 Scope of this example
+## 5.2 Scope of this example {#section-5-2}
 
 The example implements a memory-backed FIFO with two-stage pointer
 synchronizers. CppHDL examples for single-bit, toggle, and mailbox crossings
 are in [TwoClocksCdc.cpp](../tests/cdc/TwoClocksCdc.cpp). CppHDL does not choose
 a CDC architecture for you or simulate analog metastability.
 
-## 5.3 Give every register one clock owner
+## 5.3 Give every register one clock owner {#section-5-3}
 
 For 16 rows, use four address bits and five-bit binary/Gray pointers.
 The diagram shows which clock updates each pointer and synchronizer:
@@ -1480,7 +1541,7 @@ Use this table to review both the C++ methods and generated edge blocks:
 | Neither | Ready, valid, and the oldest word are calculated combinationally; they are not separate registers |
 
 
-## 5.4 Map the pointer equations to the listing
+## 5.4 Map the pointer equations to the listing {#section-5-4}
 
 Each clock domain sends a Gray-coded pointer to the other domain. Calculate
 that pointer from the local binary pointer with:
@@ -1494,7 +1555,7 @@ compares `write_gray_reg` with `read_sync2_reg` after inverting its top two bits
 The full mask is `0b11000` for this depth and extra-wrap-bit scheme.
 These comparisons use current synchronizer values, as specified by Rule 2.
 
-## 5.5 Decide how both sides reset and restart
+## 5.5 Decide how both sides reset and restart {#section-5-5}
 
 During reset, the test calls `_work_write_clk(true)` on write-clock edges and
 `_work_read_clk(true)` on read-clock edges. Both sides reset their pointers,
@@ -1516,7 +1577,7 @@ the third edge, subject to ready and valid. This example does not support
 resetting only one side. If a clock stops, that side cannot reset until the
 clock restarts. Section 5.7 shows handlers for asynchronous reset instead.
 
-## 5.6 Implement the two-clock FIFO
+## 5.6 Implement the two-clock FIFO {#section-5-6}
 
 We can now combine the pointer checks, memory access, and reset logic into
 `AsyncSamples`. Its write method accepts words on write-clock edges; its read
@@ -1691,7 +1752,7 @@ public:
 };
 ```
 
-## 5.7 Relate the methods to generated RTL
+## 5.7 Relate the methods to generated RTL {#section-5-7}
 
 Generate SystemVerilog with separate write-clock and read-clock processes.
 Pass both clock names and frequencies to the converter so it can match them
@@ -1787,7 +1848,7 @@ Making reset asynchronous does not make it safe to reset only one side. See
 [the asynchronous reset tests](../tests/reset/AsyncReset.cpp) and
 [the specification](spec.md#asynchronous-reset) for the complete API behavior.
 
-## 5.8 Run the same transfer test against C++ and SystemVerilog
+## 5.8 Run the same transfer test against C++ and SystemVerilog {#section-5-8}
 
 Native execution tests the C++ model. Verilator execution tests the generated
 SystemVerilog. Running both is valuable because a working native model alone
@@ -2005,7 +2066,7 @@ int main()
 }
 ```
 
-## 5.9 Build and run both flows
+## 5.9 Build and run both flows {#section-5-9}
 
 First compile and execute the native model:
 
@@ -2060,7 +2121,7 @@ that register, using the table in section 5.3. If two domains really do write
 one register, fix the design. The warnings about these generated temporary
 variables are not a reason to ignore other multiple-driver warnings.
 
-## 5.10 What this test checks, and what to add next
+## 5.10 What this test checks, and what to add next {#section-5-10}
 
 Before reusing this FIFO, distinguish what the supplied test checks from what
 still needs testing. The table links each covered behavior to its stimulus or
@@ -2698,7 +2759,7 @@ putting a memory wait in every input-word calculation.
 
 ![](cpphdl_book_images/schema-hft-cpp-architecture.png)
 
-## 7.3 Follow a word through the HFT example
+## 7.3 Follow a word through the HFT example {#section-7-3}
 
 High-frequency trading (HFT) responds to market updates with trading decisions.
 Our example receives a restricted Ethernet/IPv4/UDP feed containing an SBE
@@ -2734,7 +2795,7 @@ are retained. There is no complete RX or TX packet array. This avoids both
 store-and-scan latency and large dynamic byte selectors. Section 9.2 compares
 these architectures and explains when a packet buffer is actually necessary.
 
-## 7.4 Keep the algorithm in C++; choose its execution in the wrapper
+## 7.4 Keep the algorithm in C++; choose its execution in the wrapper {#section-7-4}
 
 We first write a method that checks one part of a word. This excerpt is the
 UDP check from `HftWordMethods`:
@@ -2791,7 +2852,7 @@ connects the other arguments and handshakes, and calls `receiver._assign()`.
 Its work and strobe methods invoke the corresponding child methods. HLS
 replaces the implementation **inside** the wrapper, not the parent's wiring.
 
-## 7.5 Pipeline independent words; keep feedback deliberate
+## 7.5 Pipeline independent words; keep feedback deliberate {#section-7-5}
 
 The HFT word method needs no preceding word's state to perform its header
 checks. Therefore successive commands can occupy four stages concurrently.
@@ -2827,7 +2888,7 @@ This separates dependent protocol state from overlapping calculations.
 Neither the execution mode nor a different memory type would automatically
 make a packet-scanning loop into this streaming design.
 
-## 7.6 Retain quote fields, not whole packets
+## 7.6 Retain quote fields, not whole packets {#section-7-6}
 
 The collector needs sequence, instrument, bid, ask, and two quantities, along
 with validation state. It can discard each header word after extracting its
@@ -2861,7 +2922,7 @@ frame's EOF before loading another order, so it cannot replace the descriptor
 while old words still use it. Words within a frame can be consecutive;
 order loading and pipeline draining still create a gap between frames.
 
-## 7.7 Use HLS without CppHDL synthesis or retiming
+## 7.7 Use HLS without CppHDL synthesis or retiming {#section-7-7}
 
 HLS alone already replaces a handwritten loop FSM or distributes independent
 calculations among a chosen number of stages. It emits synthesizable
@@ -2909,7 +2970,7 @@ retiming in the next chapter.
 
 # 8. Synthesis and Retiming {#chapter-8}
 
-## 8.1 Turn the scheduled design into gates
+## 8.1 Turn the scheduled design into gates {#section-8-1}
 
 The HFT example now has explicit RTL around three scheduled HLS pipelines.
 We want to implement that complete design and determine where additional
@@ -2945,7 +3006,7 @@ flip-flops and muxes, not BRAM or SRAM macros. A buffered-packet design can
 therefore become expensive before any retiming is attempted; selecting a
 different retiming mode cannot repair that architectural choice.
 
-## 8.2 Separate HLS stage placement from timing-driven retiming
+## 8.2 Separate HLS stage placement from timing-driven retiming {#section-8-2}
 
 `ClockedPipeline<HftWordMethods, 4>` gives HLS four initial stages. HLS groups
 dependent operations and carries data and control across those boundaries.
@@ -2975,7 +3036,7 @@ placement, fanout, or clock skew. A declared clock frequency alone does not
 enable retiming: explicitly select a mode and period. Treat an estimated fit
 as a result to take into implementation, not proof of physical timing closure.
 
-## 8.3 Preserve behavior by moving existing boundaries
+## 8.3 Preserve behavior by moving existing boundaries {#section-8-3}
 
 Choose `keep_behaviour_retiming` when existing clock-cycle behavior is part of
 the interface contract. It moves register boundaries across eligible pure
@@ -2999,7 +3060,7 @@ For HLS streaming regions the current implementation is stricter: keep mode
 leaves a region unchanged if it already fits, and otherwise rejects it rather
 than changing its feedback latency. Use fit mode to lengthen the HFT pipelines.
 
-## 8.4 Add stages when latency may change
+## 8.4 Add stages when latency may change {#section-8-4}
 
 Choose `fit_pipeline_retiming` for a feed-forward or latency-tolerant pipeline.
 It adds register boundaries when the next operation would exceed the estimated
@@ -3054,7 +3115,7 @@ control work, but not a substitute for the one-word-per-clock HFT pipeline.
 The full contract and restrictions are in
 [retiming.md](retiming.md#scheduled-hls-graphs).
 
-## 8.5 Apply timing rules at the intended boundary
+## 8.5 Apply timing rules at the intended boundary {#section-8-5}
 
 A CLI rule can cover the whole design, as above, or a particular instance and
 its descendants using `--retime-module INSTANCE_PATH`. Use the actual instance
@@ -3095,7 +3156,7 @@ for simulation and implementation, with a realistic timing contract. See
 [external math blackboxes](synthesis.md#external-math-blackboxes) for the
 supported port and type restrictions.
 
-## 8.6 Read the HFT result without confusing latency and throughput
+## 8.6 Read the HFT result without confusing latency and throughput {#section-8-6}
 
 The current HFT example's documented 315 MHz run estimates a worst path of
 3.15 ns against a 3.174603175 ns target. Its initial four-stage HLS regions
@@ -3129,7 +3190,7 @@ Retiming did not remove a packet array: the source had already removed it.
 Chapter 9 examines how that source decision, value widths, and memory-port
 choices affect storage and selection logic before timing is considered.
 
-## 8.7 Verify the transformed implementation
+## 8.7 Verify the transformed implementation {#section-8-7}
 
 Start by reading the generated reports, then simulate the gates. In the
 selected synthesis output directory:
@@ -3173,7 +3234,7 @@ uses a mock established TCP session, not a complete exchange connection or
 risk system. Neither additional pipeline stages nor a passing gate simulation
 removes those requirements.
 
-## 8.8 Take the result back to the C++ design
+## 8.8 Take the result back to the C++ design {#section-8-8}
 
 Use explicit C++ RTL for cycle-sensitive protocol state. Use delayed HLS for
 ordered methods and memory waits. Use pipeline HLS for independent or
@@ -3210,7 +3271,7 @@ packet processor. Unless identified as a repository excerpt, a snippet is an
 isolated design example. Fragments use the local variables described immediately
 before them; they are not additional files needed to build the HFT example.
 
-## 9.1 Start with rates and bounds
+## 9.1 Start with rates and bounds {#section-9-1}
 
 For each method, first decide what one accepted call represents: a word,
 a quote, an entire packet, or a configuration operation. Then determine how
@@ -3236,7 +3297,7 @@ Include burst rate and downstream pauses. A finite FIFO absorbs a bounded
 burst; it cannot fix a permanent input/output bandwidth mismatch. Likewise,
 making a delayed operation's physical clock faster does not imply II=1.
 
-## 9.2 Replace whole-packet storage with the state the next step needs
+## 9.2 Replace whole-packet storage with the state the next step needs {#section-9-2}
 
 A software-style receive routine often stores all bytes, then parses them.
 With `rx`, `used`, and parsing helpers declared elsewhere, the problematic
@@ -3290,7 +3351,7 @@ also require buffering. Choose that contract explicitly, use an appropriate
 memory port, and budget its bandwidth. Our example generates a new order
 after validation; it does not need to replay the received frame.
 
-## 9.3 Match the work unit to the interface width
+## 9.3 Match the work unit to the interface width {#section-9-3}
 
 A byte-oriented CRC loop is a useful software reference. It is not a suitable
 four-clock implementation for an input that delivers four bytes every clock:
@@ -3321,7 +3382,7 @@ network without checking delay and area, but do make the intended word rate
 explicit. Storing the packet and performing the byte loop after EOF only
 moves the bottleneck.
 
-## 9.4 Choose widths from value ranges, including intermediates
+## 9.4 Choose widths from value ranges, including intermediates {#section-9-4}
 
 Wide C++ types can create wide adders, comparators, dividers, and saved
 temporaries. A host `size_t` is often 64 bits; that is seldom necessary for a
@@ -3367,7 +3428,7 @@ does not change `uint64_t` payloads, `size_t`, or host-layout pointer slots in
 stored nodes. Do not estimate the arena size as if every node field had become
 16 bits. Check `MEM_BYTES`, field offsets, and the emitted address widths.
 
-## 9.5 Carry only live data through a pipeline
+## 9.5 Carry only live data through a pipeline {#section-9-5}
 
 Each value that must survive a stage boundary needs storage unless it can be
 recomputed or otherwise eliminated. A wide input retained until the last
@@ -3403,7 +3464,7 @@ building a complete frame and retaining it while earlier work proceeds. This
 is what `HftTxMethods` does. Retiming should register the necessary computation,
 not snapshots of a packet that the algorithm never needed to retain.
 
-## 9.6 Distinguish storage bits from access logic
+## 9.6 Distinguish storage bits from access logic {#section-9-6}
 
 An array's payload size is only one part of its hardware cost. Four parallel
 dynamic reads can need four selection networks in direct-register mode:
@@ -3482,7 +3543,7 @@ a shared port gives serialization, while duplicated storage requires coherent
 writes to every copy. Neither should appear accidentally because the C++
 passed a large table by value to several helpers.
 
-## 9.7 Update a field, not a reconstructed store
+## 9.7 Update a field, not a reconstructed store {#section-9-7}
 
 Avoid source that describes a whole-store read/modify/write when the intended
 effect is a byte or word update. In direct register logic, this pattern asks
@@ -3518,7 +3579,7 @@ match the interface. Ethernet's final word may contain fewer than four valid
 bytes, so the HFT design carries a byte count instead of treating padding
 as received data. Do not improve a memory shape by changing those semantics.
 
-## 9.8 Make repeated reads and helper reuse visible, then verify sharing
+## 9.8 Make repeated reads and helper reuse visible, then verify sharing {#section-9-8}
 
 When a value is unchanged during a calculation, one sample should serve its
 uses. Compare these fragments, where `p` points into scheduled memory and
@@ -3568,7 +3629,7 @@ file alone. Conversely, removing a C++ local declaration need not save a
 register: the compiler may already have eliminated it, or its value may
 still be live across a clock under another name.
 
-## 9.9 Bound allocations and recursion separately
+## 9.9 Bound allocations and recursion separately {#section-9-9}
 
 A maximum number of live entries is not always a maximum number of allocated
 bytes. Consider a software loop that repeatedly inserts and clears a vector:
@@ -3627,7 +3688,7 @@ not an arbitrarily large number "to be safe", and test the bound violation.
 The source scheduler emits finite continuations and depth-specific bodies,
 not an unbounded processor stack.
 
-## 9.10 Separate unpredictable loading from regular computation
+## 9.10 Separate unpredictable loading from regular computation {#section-9-10}
 
 A pipeline cannot promise an input every clock if each input waits for an
 unpredictable external response. The following ordinary C++ method belongs
@@ -3674,7 +3735,7 @@ packet merely because configuration comes from external memory. If a fresh
 external read really is required per quote, budget the resulting admission
 rate and provide the corresponding buffering or rejection policy.
 
-## 9.11 Remove hidden cursors from overlapping calls
+## 9.11 Remove hidden cursors from overlapping calls {#section-9-11}
 
 A formatter that reads and increments a member cursor depends immediately on
 the previous call:
@@ -3710,7 +3771,7 @@ is the required interface rate. Use delayed scheduling when waiting is
 acceptable. Do not rely on changing the native test's stage count until a
 state-dependent failure happens to disappear.
 
-## 9.12 Measure the implementation, not the prettiness of the source
+## 9.12 Measure the implementation, not the prettiness of the source {#section-9-12}
 
 After each architectural change, compare the same workload and capacity in
 both implementations. A smaller test dataset is not an optimization of the
@@ -3767,3 +3828,74 @@ required results, ordering, and backpressure behavior. Then compare throughput,
 latency, area, and timing. C++ keeps the algorithm readable and directly testable;
 the generated design still needs final acceptance verification and physical
 implementation timing checks.
+
+\clearpage
+
+# Materials and Example Sources {#materials .unnumbered}
+
+All links below point to the CppHDL repository on GitHub. They follow the
+`main` branch, so source files may change after this edition.
+
+**Book listings, chapters 2-5**
+
+These examples are included in [the book source](https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl_book.md),
+not stored as separate source files in the repository:
+
+- Chapter 2: `SampleStage.h` and `sample_test.cpp`, including VCD output.
+- Chapter 3: `MemoryQueue.h`, `TelemetryBuffer.h`, and `buffer_test.cpp`.
+- Chapter 4: `InterfaceTelemetry.h`, tested with `buffer_test.cpp`.
+- Chapter 5: `AsyncSamples.h` and `async_test.cpp`, with native and Verilator flows.
+
+The short teaching examples in Part II, including `AccumulateFour`,
+`ScaleValue`, `Counter`, `BatchSum`, `LimitList`, and `ReadAndBias`,
+also live in the book. They are excerpts illustrating individual features;
+the repository examples below provide complete build and test flows.
+
+**RTL, interfaces, and clock-domain crossing**
+
+- [Fifo2clk.cpp](https://github.com/mirekez/cpphdl/blob/main/examples/cdc/Fifo2clk.cpp): memory-backed asynchronous FIFO; [generated SystemVerilog](https://github.com/mirekez/cpphdl/blob/main/examples/cdc/generated/Fifo2clk.sv).
+- [TwoClocksCdc.cpp](https://github.com/mirekez/cpphdl/blob/main/tests/cdc/TwoClocksCdc.cpp): synchronization, mailbox, FIFO, reset-release, and multi-clock tests.
+- [AsyncReset.cpp](https://github.com/mirekez/cpphdl/blob/main/tests/reset/AsyncReset.cpp): asynchronous reset examples and tests.
+- [AssignIfHierarchyProxy.cpp](https://github.com/mirekez/cpphdl/blob/main/tests/interface/AssignIfHierarchyProxy.cpp): parent-to-child interface connections.
+- [TemplateHelperInstantiation.cpp](https://github.com/mirekez/cpphdl/blob/main/tests/templates/TemplateHelperInstantiation.cpp): template helpers used by an RTL module.
+
+**Streaming HFT example, chapters 7-9**
+
+- [HFT README](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/README.md): supported packet formats, restrictions, and build instructions.
+- [hft.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/hft.cpp): C++ parsing, decision, and transmit methods with their RTL wrappers.
+- [HftCollector.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/HftCollector.h): staged collection and validation of application fields.
+- [EthernetCrc.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/EthernetCrc.h): word-based Ethernet CRC processing.
+- [FrameSize.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/FrameSize.h) and [ReceiveMetadata.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/ReceiveMetadata.h): frame-size checking and receive metadata.
+- [WordMath.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/WordMath.h): word-processing helpers.
+- [market.xml](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/market.xml): example SBE market-data schema.
+- [HftTest.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/HftTest.h): packet generation and response checks.
+- [HFT test runner](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/Run.cmake) and [synthesis test runner](https://github.com/mirekez/cpphdl/blob/main/synth/tests/hls/Run.py): scheduled RTL and gate-level verification flows.
+- [Generated HFT SystemVerilog](https://github.com/mirekez/cpphdl/tree/main/hls/examples/net/generated): checked-in scheduled modules and packages.
+
+**Containers and external memory**
+
+- [DelayedArray.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/std/DelayedArray.cpp) and [DelayedVector.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/std/DelayedVector.cpp): array and vector methods.
+- [DelayedList.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/std/DelayedList.cpp): linked-list methods.
+- [DelayedMap.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/std/DelayedMap.cpp) and [DelayedMapSmall.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/std/DelayedMapSmall.cpp): map examples with different bounds.
+- [DelayedMultimap.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/std/DelayedMultimap.cpp) and [DelayedUnorderedMap.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/std/DelayedUnorderedMap.cpp): multimap and hash-map methods.
+- [Standard-container test directory](https://github.com/mirekez/cpphdl/tree/main/hls/tests/std): shared configuration and supporting sources for these examples.
+- [ExternalPointer.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/tests/ExternalPointer.cpp) and [its SystemVerilog testbench](https://github.com/mirekez/cpphdl/blob/main/hls/tests/ExternalPointer.sv): pointer-based external memory with delayed responses.
+- [TiledMatVec.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/examples/llm/TiledMatVec.cpp): external-memory loading separated from pipelined computation.
+- [WeightProduct.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/llm/WeightProduct.h), [WeightProduct.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/examples/llm/WeightProduct.cpp), and [TiledMatVecTest.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/llm/TiledMatVecTest.h): compute wrapper and tiled matrix-vector verification.
+- [Integer LLM example README](https://github.com/mirekez/cpphdl/blob/main/hls/examples/llm/README.md): memory contracts, math support, and test commands.
+
+**Synthesis and retiming companion tests**
+
+- [logic_retiming.cpp](https://github.com/mirekez/cpphdl/blob/main/synth/tests/retiming/logic_retiming.cpp): retiming logic paths.
+- [ram_retiming.cpp](https://github.com/mirekez/cpphdl/blob/main/synth/tests/retiming/ram_retiming.cpp): retiming around memory.
+- [keep_box.cpp](https://github.com/mirekez/cpphdl/blob/main/synth/tests/retiming/keep_box.cpp): preserved module boundaries with declared delay.
+- [one_clock.cpp](https://github.com/mirekez/cpphdl/blob/main/synth/tests/retiming/one_clock.cpp): one-clock execution constraints.
+- [feedback_frames.cpp](https://github.com/mirekez/cpphdl/blob/main/synth/tests/retiming/feedback_frames.cpp): feedback and corresponding frame metadata.
+
+**Tool and API references**
+
+- [Repository README](https://github.com/mirekez/cpphdl/blob/main/README.md): obtain, build, and test CppHDL.
+- [RTL specification](https://github.com/mirekez/cpphdl/blob/main/doc/spec.md) and [best practices](https://github.com/mirekez/cpphdl/blob/main/doc/best_practice.md): RTL APIs and design conventions.
+- [Clocked.h](https://github.com/mirekez/cpphdl/blob/main/hls/Clocked.h): clocked HLS wrapper declarations.
+- [HLS guide](https://github.com/mirekez/cpphdl/blob/main/doc/hls.md): scheduling and memory options.
+- [Synthesis guide](https://github.com/mirekez/cpphdl/blob/main/doc/synthesis.md), [retiming guide](https://github.com/mirekez/cpphdl/blob/main/doc/retiming.md), and [lowering design](https://github.com/mirekez/cpphdl/blob/main/doc/lowering.md): graph conversion, timing, and implementation details.
