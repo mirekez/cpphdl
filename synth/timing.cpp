@@ -1,5 +1,6 @@
 #include "timing.h"
 #include "KeepBoxes.h"
+#include "BlackBox.h"
 #include <cmath>
 
 namespace cpphdl::synth {
@@ -9,6 +10,7 @@ double cellDelay(const Graph& graph, const Node& node, const DelayModel& m) {
     auto width = std::max(node.left.size(), node.right.size());
     if (node.op == "input" || node.op == "wire") return 0;
     if (node.op == "state") return m.clockToQ;
+    if (node.op == "blackbox") return blackBoxDelay(node);
     if (node.op == "and" || node.op == "or") return m.gate;
     if (node.op == "xor") return 2 * m.gate;
     if (node.op == "mux") return m.mux;

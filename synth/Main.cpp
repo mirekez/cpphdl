@@ -1,5 +1,6 @@
 #include "Verilog.h"
 #include "retiming.h"
+#include "BlackBox.h"
 #include "KeepBoxes.h"
 #include "Mapping.h"
 #include <filesystem>
@@ -51,6 +52,15 @@ int main(int argc, char** argv) {
         for (const auto& box : boxes.boxes) if (!box.outputs.empty()) {
             report << (comma ? "," : "") << "{\"module\":" << std::quoted(box.module)
                    << ",\"scope\":" << std::quoted(box.scope) << ",\"delay_ns\":" << box.delay << "}";
+            comma = true;
+        }
+        report << "],\"external_blackboxes\":[";
+        comma = false;
+        for (auto n : graph.dependencyOrder()) if (graph.nodes[n].op == "blackbox") {
+            const auto& box = graph.nodes[n];
+            report << (comma ? "," : "") << "{\"module\":" << std::quoted(box.name)
+                   << ",\"delay_ns\":" << cpphdl::synth::blackBoxDelay(box)
+                   << ",\"latency_cycles\":0,\"input_bits\":" << box.left.size() << ",\"output_bits\":" << box.width << "}";
             comma = true;
         }
         report << "],\"streaming_regions\":[";

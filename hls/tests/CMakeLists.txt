@@ -119,7 +119,7 @@ foreach(case RANGE 0 22)
     set_tests_properties(hls_delayed_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;expected-rejection")
 endforeach()
 
-foreach(case RANGE 0 12)
+foreach(case RANGE 0 17)
     add_test(NAME hls_pipeline_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-reject-${case}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
@@ -130,6 +130,7 @@ endforeach()
 add_subdirectory(std)
 add_subdirectory(../examples/map "${CMAKE_BINARY_DIR}/hls/examples/map")
 add_subdirectory(../examples/net "${CMAKE_BINARY_DIR}/hls/examples/net")
+add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 
 add_executable(hls_shared_blocks SharedBlocks_test.cpp ../SharedBlocks.cpp ../Combinational.cpp)
 set_target_properties(hls_shared_blocks PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
@@ -141,7 +142,21 @@ add_dependencies(hls_tests hls_memory_effects)
 add_test(NAME hls_memory_effects COMMAND hls_memory_effects)
 add_hls_native(hls_memory_port MemoryPort.cpp)
 add_test(NAME hls_memory_port_native COMMAND "${HLS_NATIVE_BINARY}")
+add_hls_native(hls_external_pointer ExternalPointer.cpp)
+add_test(NAME hls_external_pointer_native COMMAND "${HLS_NATIVE_BINARY}")
 if(HLS_VERILATOR)
+    foreach(flow rtl gates)
+        set(synth OFF)
+        if(flow STREQUAL "gates")
+            set(synth ON)
+        endif()
+        add_test(NAME hls_external_pointer_${flow} COMMAND "${CMAKE_COMMAND}"
+            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-pointer-${flow}"
+            "-DVERILATOR=${HLS_VERILATOR}" "-DCXX=${CMAKE_CXX_COMPILER}" "-DSYNTH=${synth}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
+        set_tests_properties(hls_external_pointer_${flow} PROPERTIES TIMEOUT 300)
+    endforeach()
     add_test(NAME hls_override_policy_verilator COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/override-policy"

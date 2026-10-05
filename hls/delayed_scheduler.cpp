@@ -98,6 +98,7 @@ class DelayedScheduler {
     bool sharedMemory = false;
     bool blockRam = false;
     bool pipelineMode = false;
+    bool externalMemory = false;
     unsigned portBytes = 1;
     int current = 0;
     std::ostringstream symbols;
@@ -125,8 +126,11 @@ class DelayedScheduler {
     unsigned effectSerial = 0, reusedLoads = 0;
 
     std::vector<std::string> memoryState() const {
-        return sharedMemory ? std::vector<std::string>{"memory_address", "memory_write_data", "memory_size",
+        auto names = sharedMemory ? std::vector<std::string>{"memory_address", "memory_write_data", "memory_size",
             "memory_write", "memory_read", "memory_read_data"} : storageBankNames();
+        if (externalMemory) for (const auto* name : {"external_address", "external_write_data", "external_size",
+            "external_write", "external_read", "external_read_data"}) names.emplace_back(name);
+        return names;
     }
     std::string memoryArguments() const {
         std::string result;
@@ -233,6 +237,27 @@ class DelayedScheduler {
             auto object = location ? objects.find(location->object) : objects.end();
             auto address = resolveAccesses(item.address, uses, definitions, prefix);
             auto data = resolveAccesses(item.data, uses, definitions, prefix);
+            if (item.type.getAddressSpace() == static_cast<LangAS>(static_cast<unsigned>(LangAS::FirstTargetAddressSpace) + 1)) {
+                if (!externalMemory) reject(nullptr, "external pointer access requires ClockedMemory (not ClockedPipeline)");
+                if (!item.type->isIntegerType() || bytes(item.type) > 8)
+                    reject(nullptr, "external memory access requires integer elements up to 64 bits");
+                effects.clock();
+                prefix.push_back("external_address = " + addressCast(address) + ";");
+                prefix.push_back("external_size = " + std::to_string(bytes(item.type)) + ";");
+                if (item.write) {
+                    prefix.push_back("external_write_data = 64'(" + castTo(item.type, data) + ");");
+                    prefix.push_back("external_write = 1;");
+                } else prefix.push_back("external_read = 1;");
+                prefix.push_back("@external_clock@");
+                if (!item.write) {
+                    auto saved = "scratch.external_value_" + std::to_string(tempCount++);
+                    blockSymbols[saved] = {bits(item.type), "external_value", true};
+                    prefix.push_back(saved + " = " + castTo(item.type, "external_read_data") + ";");
+                    result += saved;
+                }
+                cursor = end + 1;
+                continue;
+            }
             bool local = object != objects.end() && !object->second.memory;
             MemoryEffects::Address key{local ? effects.atom(location->object) : effects.expression(address, addressWidth),
                 local ? location->offset : 0, bytes(item.type), bits(item.type), local};
@@ -473,7 +498,7 @@ class DelayedScheduler {
         } while (changed);
         for (const auto& b : blocks) if (b.suspend && !b.sharedCallBoundary && b.yes >= 0)
             clockedValues.insert(liveIn[b.yes].begin(), liveIn[b.yes].end());
-        if (sharedMemory) {
+        if (sharedMemory || externalMemory) {
             // Accesses are the resource boundaries, not individual arithmetic
             // instructions. Preserve original block indices used by call regions.
             const auto originalSize = blocks.size();
@@ -482,7 +507,7 @@ class DelayedScheduler {
                 int part = n;
                 blocks[part].statements.clear();
                 for (const auto& s : original.statements) {
-                    if (s != "@memory_clock@") { blocks[part].statements.push_back(s); continue; }
+                    if (s != "@memory_clock@" && s != "@external_clock@") { blocks[part].statements.push_back(s); continue; }
                     int next = blocks.size();
                     auto tail = original;
                     tail.statements.clear();
@@ -836,6 +861,32 @@ class DelayedScheduler {
 
     Value invoke(FunctionDecl* fn, const std::vector<Value>& args, std::string self = "", Value constructed = {}) {
         std::string name = fn->getQualifiedNameAsString();
+        std::vector<std::string> annotations;
+        for (const auto* attr : fn->specific_attrs<AnnotateAttr>()) annotations.push_back(attr->getAnnotation().str());
+        if (std::find(annotations.begin(), annotations.end(), "CPPHDL_EXTERNAL_POINTER") != annotations.end()) {
+            if (!externalMemory) reject(nullptr, "external pointer access requires ClockedMemory (not ClockedPipeline)");
+            if (args.size() != 1 || !fn->getReturnType()->isPointerType() ||
+                fn->getReturnType()->getPointeeType().getAddressSpace() != static_cast<LangAS>(static_cast<unsigned>(LangAS::FirstTargetAddressSpace) + 1))
+                reject(nullptr, "invalid external pointer intrinsic signature");
+            return {addressCast(read(args[0])), fn->getReturnType()};
+        }
+        if (auto box = synth::blackBoxSpec(annotations)) {
+            if (!pipelineMode) reject(nullptr, "external blackbox calls currently require ClockedPipeline");
+            auto* member = dyn_cast<CXXMethodDecl>(fn);
+            if ((member && !member->isStatic()) || fn->isVariadic() || args.empty() || args.size() != fn->getNumParams() ||
+                !fn->getReturnType()->isIntegerType() || bits(fn->getReturnType()) > 64)
+                reject(nullptr, "blackbox requires a free/static scalar integer function (up to 64 bits)");
+            std::string id = "hls_external_" + std::to_string(blackboxes.size()), call = id + "(";
+            for (size_t i = 0; i < args.size(); ++i) {
+                auto type = fn->getParamDecl(i)->getType();
+                if (!type->isIntegerType() || bits(type) > 64) reject(nullptr, "blackbox arguments must be scalar integers up to 64 bits");
+                auto text = castTo(type,read(args[i]));
+                if (type->isSignedIntegerType()) text = "$signed(" + text + ")";
+                call += (i ? "," : "") + std::string("64'(") + text + ")";
+            }
+            blackboxes[id] = {*box,bits(fn->getReturnType())};
+            return {call + ")",fn->getReturnType()};
+        }
         if (pipelineMode) {
             auto check = [&](const Decl* declaration) {
                 for (const auto* attr : declaration->specific_attrs<AnnotateAttr>())
@@ -1572,21 +1623,29 @@ public:
     DelayedScheduler(ASTContext& context, Sema& sema) : ctx(context), sema(sema), overrides(context) { block(); }
     std::map<std::string, graph::Value> graphPorts;
     std::map<std::string, graph::Value> graphConstants;
+    std::map<std::string, std::pair<synth::BlackBoxSpec,unsigned>> blackboxes;
     std::string generate(const CXXRecordDecl* wrapper, const std::string& name, graph::Graph* graph = nullptr,
                          synth::ScheduledDesign* pipeline = nullptr) {
         pipelineMode = pipeline != nullptr;
+        for (const auto* attr : wrapper->specific_attrs<AnnotateAttr>())
+            externalMemory |= attr->getAnnotation() == "CPPHDL_HLS_EXTERNAL_MEMORY";
         if (auto* specialization = dyn_cast<ClassTemplateSpecializationDecl>(wrapper); specialization && !pipeline) {
             const auto& args = specialization->getTemplateArgs();
-            if (args.size() > 1) recursionLimit = args[1].getAsIntegral().getLimitedValue();
-            if (recursionLimit > 16) reject(nullptr, "MAX_RECURSION must be in 0..16");
-            if (args.size() > 2) addressWidth = args[2].getAsIntegral().getLimitedValue();
-            if (addressWidth < 8 || addressWidth > 64) reject(nullptr, "ADDRESS_BITS must be in 8..64");
-            if (args.size() > 3) heapBytes = args[3].getAsIntegral().getLimitedValue();
-            if (heapBytes < 16 || heapBytes > 16777216 || heapBytes % 16)
-                reject(nullptr, "HEAP_BYTES must be a multiple of 16 in 16..16777216");
-            if (args.size() > 4) sharedMemory = args[4].getAsIntegral().getBoolValue();
-            if (args.size() > 5) blockRam = args[5].getAsIntegral().getBoolValue();
-            if (blockRam && !sharedMemory) reject(nullptr, "BLOCK_RAM requires SHARED_MEMORY");
+            if (externalMemory) {
+                addressWidth = args[1].getAsIntegral().getLimitedValue();
+                if (addressWidth != 32) reject(nullptr, "external memory currently requires 32-bit byte addresses");
+            } else {
+                if (args.size() > 1) recursionLimit = args[1].getAsIntegral().getLimitedValue();
+                if (recursionLimit > 16) reject(nullptr, "MAX_RECURSION must be in 0..16");
+                if (args.size() > 2) addressWidth = args[2].getAsIntegral().getLimitedValue();
+                if (addressWidth < 8 || addressWidth > 64) reject(nullptr, "ADDRESS_BITS must be in 8..64");
+                if (args.size() > 3) heapBytes = args[3].getAsIntegral().getLimitedValue();
+                if (heapBytes < 16 || heapBytes > 16777216 || heapBytes % 16)
+                    reject(nullptr, "HEAP_BYTES must be a multiple of 16 in 16..16777216");
+                if (args.size() > 4) sharedMemory = args[4].getAsIntegral().getBoolValue();
+                if (args.size() > 5) blockRam = args[5].getAsIntegral().getBoolValue();
+                if (blockRam && !sharedMemory) reject(nullptr, "BLOCK_RAM requires SHARED_MEMORY");
+            }
         }
         const FieldDecl* object = nullptr;
         for (auto* field : wrapper->fields()) if (field->getName() == "object") object = field;
@@ -1598,10 +1657,23 @@ public:
         for (auto* method : record->methods()) if (method->getNameAsString() == "command") {
             if (command) reject(nullptr, "overloaded command entry"); command = method;
         }
-        if (!command || command->getNumParams() != 3 || !command->getReturnType()->isUnsignedIntegerType() || bits(command->getReturnType()) != 64)
+        if (!command || command->getNumParams() != 3 || !command->getReturnType()->isUnsignedIntegerType() ||
+            (!pipeline && bits(command->getReturnType()) != 64))
             reject(nullptr, "clocked object requires uint64_t command(uint32_t, uint32_t, uint32_t)");
-        for (auto* param : command->parameters()) if (!param->getType()->isUnsignedIntegerType() || bits(param->getType()) != 32)
-            reject(nullptr, "clocked command arguments must be uint32_t");
+        unsigned argumentBits = pipeline ? bits(command->getParamDecl(0)->getType()) : 32;
+        unsigned commandResultBits = bits(command->getReturnType());
+        if (pipeline) {
+            auto* specialization = cast<ClassTemplateSpecializationDecl>(wrapper);
+            const auto& args = specialization->getTemplateArgs();
+            if (args.size() != 4 || !ctx.hasSameType(args[2].getAsType(), command->getParamDecl(0)->getType()) ||
+                !ctx.hasSameType(args[3].getAsType(), command->getReturnType()))
+                reject(nullptr, "ClockedPipeline Argument/Result must match command signature");
+            if ((argumentBits != 8 && argumentBits != 16 && argumentBits != 32 && argumentBits != 64 && argumentBits != 128) ||
+                (commandResultBits != 8 && commandResultBits != 16 && commandResultBits != 32 && commandResultBits != 64 && commandResultBits != 128))
+                reject(nullptr, "ClockedPipeline requires native unsigned integer argument/result types up to 128 bits");
+        }
+        for (auto* param : command->parameters()) if (!param->getType()->isUnsignedIntegerType() || bits(param->getType()) != argumentBits)
+            reject(nullptr, "clocked command arguments must have the same unsigned integer width as the wrapper");
         contexts.push_back({});
         int resetEntry = current;
         if (!object->getInClassInitializer() && object->hasInClassInitializer()) {
@@ -1612,7 +1684,8 @@ public:
         initialize(state, object->getInClassInitializer());
         emit("booting = 0; phase = 0;");
         current = block(); int commandEntry = current;
-        Value result = invoke(command, {{"operation_in", ctx.UnsignedIntTy}, {"index_in", ctx.UnsignedIntTy}, {"value_in", ctx.UnsignedIntTy}}, state.text);
+        auto argumentType = command->getParamDecl(0)->getType();
+        Value result = invoke(command, {{"operation_in", argumentType}, {"index_in", argumentType}, {"value_in", argumentType}}, state.text);
         emit("result = " + read(result) + "; pending = 1; phase = 0;");
         contexts.pop_back();
         lowerSourceValues(resetEntry, commandEntry);
@@ -1624,9 +1697,14 @@ public:
                 reject(nullptr, "clocked storage and its end address do not fit ADDRESS_BITS");
             synth::ScheduledDesign design{blocks, blockSymbols, graphConstants, clockedValues,
                 resetEntry, commandEntry, addressWidth, memoryBytes, heapBase, heapBytes, portBytes, sharedMemory, blockRam};
+            design.argumentBits = argumentBits;
+            design.resultBits = commandResultBits;
+            design.blackboxes = blackboxes;
+            design.externalMemory = externalMemory;
             if (pipeline) {
-                if (heap || std::any_of(objects.begin(), objects.end(), [](const auto& item) { return item.second.memory; }))
-                    reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule");
+                if (heap) reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule");
+                for (const auto& [address, item] : objects) if (item.memory)
+                    reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule: " + address);
                 for (const auto& b : blocks) if (b.suspend)
                     reject(nullptr, "ClockedPipeline cannot achieve II=1 for loops or suspended calls; use ClockedDelayer");
                 if (record->isEmpty()) design.clocked.clear();
@@ -1716,8 +1794,17 @@ public:
     output wire response_valid_out,
     output wire [63:0] result_out,
     output wire [31:0] fault_out
-);
 )SV";
+        if (externalMemory) out << R"SV(  , output wire memory_out__valid_out, memory_out__write_out
+  , output wire [31:0] memory_out__addr_out
+  , output wire [7:0] memory_out__size_out
+  , output wire [63:0] memory_out__data_out
+  , input wire memory_out__ready_in, memory_out__valid_in
+  , input wire [63:0] memory_out__data_in
+  , input wire memory_out__error_in
+  , output wire memory_out__ready_out
+)SV";
+        out << ");\n";
         out << "  localparam int ADDR_BITS = " << addressWidth << ";\n" << symbols.str();
         out << "  localparam int HEAP_BYTES = " << heapBytes << ";\n";
         std::map<std::string, size_t> stateBits{
@@ -1731,6 +1818,12 @@ public:
             stateBits["memory_write_data"] = stateBits["memory_read_data"] = portBytes * 8;
             stateBits["memory_size"] = 32;
             stateBits["memory_read"] = stateBits["memory_write"] = 1;
+        }
+        if (externalMemory) {
+            stateBits["external_address"] = addressWidth;
+            stateBits["external_size"] = 8;
+            stateBits["external_write_data"] = stateBits["external_read_data"] = 64;
+            stateBits["external_read"] = stateBits["external_write"] = 1;
         }
         // Shared-port methods return scalar state, never the whole arena.
         // Oversizing this scratch value multiplies frontend work at every call.
@@ -1763,11 +1856,29 @@ public:
             out << "  logic [ADDR_BITS-1:0] memory_address;\n"
                 << "  logic [" << portBytes * 8 - 1 << ":0] memory_write_data, memory_read_data;\n"
                 << "  logic [31:0] memory_size;\n  logic memory_read, memory_write;\n";
+        }
+        if (sharedMemory || externalMemory) {
             for (const std::string pin : {"operation_in", "index_in", "value_in"})
                 out << "  logic [31:0] hls_accepted_" << pin << ";\n"
-                    << "  wire [31:0] hls_command_" << pin << " = command_valid_in && command_ready_out ? "
-                    << pin << " : hls_accepted_" << pin << ";\n";
+                    << "  wire [31:0] hls_command_" << pin << " = "
+                    << (externalMemory ? "" : "command_valid_in && command_ready_out ? " + pin + " : ")
+                    << "hls_accepted_" << pin << ";\n";
         }
+        if (externalMemory) out << R"SV(  logic [31:0] external_address, external_address_reg;
+  logic [63:0] external_write_data, external_data_reg, external_read_data;
+  logic [7:0] external_size, external_size_reg;
+  logic external_read, external_write, external_write_reg, external_busy, external_sent;
+  wire external_accept = memory_out__valid_out && memory_out__ready_in;
+  wire external_complete = memory_out__ready_out && memory_out__valid_in;
+  wire external_bad_address = (external_address_reg[0] && external_size_reg > 1) ||
+    (external_address_reg[1] && external_size_reg > 2) || (external_address_reg[2] && external_size_reg > 4);
+  assign memory_out__valid_out = external_busy && !external_sent && !external_bad_address && !reset;
+  assign memory_out__write_out = external_write_reg;
+  assign memory_out__addr_out = external_address_reg;
+  assign memory_out__size_out = external_size_reg;
+  assign memory_out__data_out = external_data_reg;
+  assign memory_out__ready_out = external_busy && (external_sent || external_accept) && !reset;
+)SV";
         if (blockRam) emitBlockRamDeclarations(out);
         // These are independent combinational source values, not an aggregate
         // data object. Avoid huge unused struct comparison operators in host RTL.
@@ -1784,7 +1895,7 @@ public:
             {"result", "64"}, {"pending", "1"}, {"booting", "1"},
             {"active", std::to_string(blocks.size())}, {"next_block", "32"}, {"else_block", "32"}};
         for (const auto& bank : storageBankNames()) stateWidths[bank] = "BANK_BYTES*8";
-        if (sharedMemory) for (const auto& name : memoryState()) stateWidths[name] = std::to_string(stateBits.at(name));
+        if (sharedMemory || externalMemory) for (const auto& name : memoryState()) stateWidths[name] = std::to_string(stateBits.at(name));
         for (const auto& function : shared.functions) {
             const auto& body = function.body;
             std::vector<std::string> formals = function.stateArguments;
@@ -1853,21 +1964,24 @@ public:
 )SV";
         if (!blockRam) for (const auto& bank : storageBankNames()) out << "    " << bank << " = " << bank << "_reg;\n";
         if (sharedMemory) out << "    memory_address = '0; memory_write_data = '0; memory_size = 0; memory_read = 0; memory_write = 0;\n";
+        if (externalMemory) out << "    external_address = 0; external_write_data = 0; external_size = 0; external_read = 0; external_write = 0;\n";
         for (const auto& name : usedValues) if (name.find('.') != std::string::npos)
             out << "    " << signalName(name) << " = '0;\n";
         for (const auto& name : clockedValues)
             out << "    " << signalName(name) << " = values_reg." << registerName(name) << ";\n";
         out << "    if (reset) begin\n      phase = " << resetEntry + 1 << "; fault = 0; pending = 0; result = 0; booting = 1; heap_next = " << heapBase << ";\n"
-            << "    end else if (fault == 0) begin\n      if (pending && response_ready_in) pending = 0;\n"
-            << "      if (command_valid_in && command_ready_out) active[" << commandEntry << "] = 1;\n"
+            << "    end else if (fault == 0" << (externalMemory ? " && !external_busy" : "") << ") begin\n      if (pending && response_ready_in) pending = 0;\n"
+            << "      if (command_valid_in && command_ready_out) "
+            << (externalMemory ? "phase = " + std::to_string(commandEntry+1) + ";\n" : "active[" + std::to_string(commandEntry) + "] = 1;\n")
             << "      else case (phase_reg)\n";
+        if (externalMemory) continuations.insert(commandEntry);
         for (int n : continuations) out << "        " << n + 1 << ": active[" << n << "] = 1;\n";
         out << "        0: begin end\n        default: fault = 4;\n      endcase\n    end else if (response_ready_in) pending = 0;\n  end\n";
         // Give each same-clock block its own combinational process. Successive
         // versions carry blocking-assignment semantics without making synthesis
         // prune every temporary in one enormous, deeply nested process.
         std::map<std::string, std::string> versions;
-        if (sharedMemory) for (const std::string pin : {"operation_in", "index_in", "value_in"})
+        if (sharedMemory || externalMemory) for (const std::string pin : {"operation_in", "index_in", "value_in"})
             versions[pin] = "hls_command_" + pin;
         auto current = [&](const std::string& value) {
             auto found = versions.find(value);
@@ -1913,8 +2027,24 @@ public:
         }
         if (blockRam) emitBlockRamPorts(out, name, current("memory_address"), current("memory_write_data"),
             current("memory_size"), current("memory_read"), current("memory_write"), commitFault);
+        if (externalMemory) {
+            out << "  wire external_issue = " << current("external_read") << " || " << current("external_write") << ";\n"
+                << "  wire [31:0] external_commit_fault = " << commitFault << " != 0 ? " << commitFault
+                << " : external_busy && external_bad_address && !reset ? 32'd3 : external_complete && memory_out__error_in ? 32'd5 : 0;\n";
+            commitFault = "external_commit_fault";
+        }
         out << "  always_ff @(posedge clk) begin\n";
-        if (sharedMemory) for (const std::string pin : {"operation_in", "index_in", "value_in"})
+        if (externalMemory) {
+            out << "    if (reset) begin external_busy <= 0; external_sent <= 0; external_address_reg <= 0; external_data_reg <= 0; external_size_reg <= 0; external_write_reg <= 0; external_read_data <= 0; end\n"
+                << "    else begin\n"
+                << "      if (external_issue && external_commit_fault == 0) begin\n"
+                << "        external_busy <= 1; external_sent <= 0; external_address_reg <= " << current("external_address") << ";\n"
+                << "        external_data_reg <= " << current("external_write_data") << "; external_size_reg <= " << current("external_size") << "; external_write_reg <= " << current("external_write") << ";\n"
+                << "      end\n      if (external_accept) external_sent <= 1;\n"
+                << "      if (external_complete) begin external_busy <= 0; external_sent <= 0; external_read_data <= memory_out__data_in; end\n    end\n";
+            out << "    if (!reset && external_busy && external_bad_address) external_busy <= 0;\n";
+        }
+        if (sharedMemory || externalMemory) for (const std::string pin : {"operation_in", "index_in", "value_in"})
             out << "    if (reset) hls_accepted_" << pin << " <= 0;\n"
                 << "    else if (command_valid_in && command_ready_out) hls_accepted_" << pin << " <= " << pin << ";\n";
         out << "    values_reg.unused_bit <= 0;\n";

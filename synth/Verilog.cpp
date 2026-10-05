@@ -1,5 +1,6 @@
 #include "Verilog.h"
 #include "KeepBoxes.h"
+#include "BlackBox.h"
 #include <filesystem>
 
 namespace cpphdl::synth {
@@ -82,6 +83,14 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
     for (auto index : order) {
         const auto& node = graph.nodes[index];
         if (node.op == "state" || node.op == "input") continue;
+        if (node.op == "blackbox") {
+            blackBoxDelay(node);
+            auto& destination = boxes.owner.count(index) ? boxBodies[boxes.owner.at(index)] : out;
+            destination << "(* keep = 1, keep_hierarchy = 1 *) " << identifier(node.name)
+                << "#(.INPUT_BITS(" << node.left.size() << "), .OUTPUT_BITS(" << node.width << ")) external_" << index
+                << "(.args(" << bits(node.left) << "), .result(" << nodeName(index) << "));\n";
+            continue;
+        }
         std::string expr;
         auto left = bits(node.left);
         if (node.op == "memory_read") {
@@ -182,6 +191,16 @@ void emitVerilog(Graph& graph, const std::string& path, const std::string& modul
         std::ofstream bodies(std::filesystem::path(path).parent_path() / "keep_boxes.v");
         if (!bodies || !(bodies << implementations))
             throw std::runtime_error("cannot write keep box implementations");
+    }
+    std::set<std::string> external;
+    for (auto n : graph.dependencyOrder()) if (graph.nodes[n].op == "blackbox") external.insert(graph.nodes[n].name);
+    if (!external.empty()) {
+        std::ofstream stubs(std::filesystem::path(path).parent_path() / "blackboxes.v");
+        stubs << "// External implementation required. Do not use these empty declarations as simulation models.\n";
+        for (const auto& name : external)
+            stubs << "(* blackbox = 1, keep_hierarchy = 1 *) module \\" << name << ' '
+                  << " #(parameter INPUT_BITS=64, OUTPUT_BITS=64) (input wire [INPUT_BITS-1:0] args, output wire [OUTPUT_BITS-1:0] result);\nendmodule\n";
+        if (!stubs) throw std::runtime_error("cannot write blackbox declarations");
     }
 }
 }

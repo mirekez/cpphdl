@@ -17,7 +17,15 @@ PipelineUnsupported {
 #if PIPELINE_REJECT == 11 && defined(__clang__)
     [[clang::annotate("CPPHDL_ONE_CLOCK")]]
 #endif
+#if PIPELINE_REJECT == 13
+    uint64_t command(uint64_t op, uint64_t index, uint64_t value) {
+#elif PIPELINE_REJECT == 14
+    __uint128_t command(uint32_t op, uint32_t index, uint32_t value) {
+#elif PIPELINE_REJECT == 15
+    uint64_t command(uint32_t op, uint16_t index, uint32_t value) {
+#else
     uint64_t command(uint32_t op, uint32_t index, uint32_t value) {
+#endif
 #if PIPELINE_REJECT == 0
         while (index) { value += index; --index; }
         return value;
@@ -42,6 +50,8 @@ PipelineUnsupported {
         return uint64_t(float(value) * 1.25f);
 #elif PIPELINE_REJECT == 9
         return unavailable(value);
+#elif PIPELINE_REJECT == 16 || PIPELINE_REJECT == 17
+        return cpphdl::hls::external_memory<uint64_t>(index)[value];
 #else
         return value;
 #endif
@@ -53,6 +63,8 @@ public:
     cpphdl::hls::ClockedPipeline<PipelineUnsupported,0> worker;
 #elif PIPELINE_REJECT == 10
     cpphdl::hls::ClockedPipeline<PipelineUnsupported,65> worker;
+#elif PIPELINE_REJECT == 17
+    cpphdl::hls::ClockedDelayer<PipelineUnsupported> worker;
 #else
     cpphdl::hls::ClockedPipeline<PipelineUnsupported,3> worker;
 #endif
