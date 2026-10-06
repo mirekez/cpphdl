@@ -111,10 +111,18 @@ class DelayedScheduler {
         std::string address, data;
         QualType type;
         bool write = false, checked = true;
+        bool conditional = false;
     };
     std::map<std::string, SourceObject> objects;
     struct ObjectLocation { std::string object; int64_t offset; };
     std::map<std::string, ObjectLocation> locations;
+    struct ArraySelection { std::string index; std::vector<std::string> elements; };
+    std::map<std::string, ArraySelection> arraySelections;
+    std::string arraySelection(ArraySelection selection) {
+        auto name = "hls_array_selection_" + std::to_string(arraySelections.size());
+        arraySelections.emplace(name, std::move(selection));
+        return name;
+    }
     std::string persistentObject;
     std::vector<Access> accesses;
     std::map<int, std::vector<size_t>> sourceWrites;
@@ -189,6 +197,12 @@ class DelayedScheduler {
         return result;
     }
     std::string offsetAddress(const std::string& base, int64_t offset, const std::string& symbol = "") {
+        if (auto selected = arraySelections.find(base); selected != arraySelections.end()) {
+            ArraySelection result{selected->second.index, {}};
+            for (const auto& element : selected->second.elements)
+                result.elements.push_back(offsetAddress(element, offset, symbol));
+            return arraySelection(std::move(result));
+        }
         auto text = "(" + base + (offset < 0 ? " - " : " + ") +
             (symbol.empty() ? addressLiteral(unsigned(offset < 0 ? -offset : offset)) : symbol) + ")";
         auto found = locations.find(base);
@@ -207,6 +221,21 @@ class DelayedScheduler {
         return &location;
     }
     std::string access(Access value) {
+        if (auto selected = arraySelections.find(value.address); selected != arraySelections.end()) {
+            // A bounded, nonescaping array is a bank of registers, not a byte-addressed
+            // memory. Decode writes and mux reads using the source element index.
+            std::string result;
+            for (size_t i = 0; i < selected->second.elements.size(); ++i) {
+                auto element = value;
+                element.address = selected->second.elements[i];
+                element.conditional |= value.write;
+                auto condition = "(" + selected->second.index + " == " + std::to_string(i) + ")";
+                auto operation = access(std::move(element));
+                if (value.write) result += "if " + condition + " begin " + operation + " end ";
+                else result += condition + " ? " + operation + " : ";
+            }
+            return value.write ? result : "(" + result + std::to_string(bits(value.type)) + "'d0)";
+        }
         if (value.write) sourceWrites[current].push_back(accesses.size());
         accesses.push_back(std::move(value));
         return "@hls_access_" + std::to_string(accesses.size() - 1) + "@";
@@ -217,6 +246,8 @@ class DelayedScheduler {
             size_t begin = i++;
             while (i < text.size() && (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_')) ++i;
             auto found = objects.find(text.substr(begin, i - begin));
+            if (arraySelections.count(text.substr(begin, i - begin)))
+                reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule");
             if (found != objects.end()) found->second.memory = true;
         }
     }
@@ -282,8 +313,8 @@ class DelayedScheduler {
                 auto selected = whole ? name : name + "[" + std::to_string(low) + " +: " + std::to_string(accessWidth) + "]";
                 if (item.write) {
                     result += selected + " = " + std::to_string(accessWidth) + "'(" + castTo(item.type, data) + ");";
-                    if (reusable) effects.remember(key, effects.expression(castTo(item.type, data), bits(item.type)), "");
-                    if (whole) definitions.insert(name);
+                    if (reusable && !item.conditional) effects.remember(key, effects.expression(castTo(item.type, data), bits(item.type)), "");
+                    if (whole && !item.conditional) definitions.insert(name);
                     else if (!definitions.count(name)) uses.insert(name);
                 } else {
                     if (!definitions.count(name)) uses.insert(name);
@@ -618,14 +649,14 @@ class DelayedScheduler {
     Value capture(Value value) {
         if (value.type->isVoidType()) return value;
         if (value.location) return reference(value);
-        if (value.type->isPointerType() && locations.count(value.text)) return value;
+        if (value.type->isPointerType() && (locations.count(value.text) || arraySelections.count(value.text))) return value;
         Value saved = slot(value.type); store(saved, value); return saved;
     }
     Value reference(Value value) {
         if (!value.location) {
             Value saved = slot(value.type); store(saved, value); value = saved;
         }
-        if (locations.count(value.text)) return value;
+        if (locations.count(value.text) || arraySelections.count(value.text)) return value;
         // A reference must retain its address if its index variable changes.
         Value address = slot(ctx.getPointerType(value.type));
         store(address, {value.text, address.type});
@@ -1377,6 +1408,21 @@ class DelayedScheduler {
         }
         if (auto* index = dyn_cast<ArraySubscriptExpr>(expr)) {
             Value base = capture(expression(index->getBase())), i = expression(index->getIdx());
+            if (pipelineMode && (locations.count(base.text) || arraySelections.count(base.text))) {
+                const auto* array = ctx.getAsConstantArrayType(index->getBase()->IgnoreParenImpCasts()->getType());
+                if (array && array->getSize().getLimitedValue() <= 64) {
+                    E::EvalResult known;
+                    if (!index->getIdx()->HasSideEffects(ctx) && index->getIdx()->EvaluateAsInt(known, ctx)) {
+                        auto n = known.Val.getInt().getLimitedValue();
+                        if (n < array->getSize().getLimitedValue())
+                            return {offsetAddress(base.text, n * bytes(type)), type, true};
+                    }
+                    ArraySelection selection{read(i), {}};
+                    for (unsigned n = 0; n < array->getSize().getLimitedValue(); ++n)
+                        selection.elements.push_back(offsetAddress(base.text, n * bytes(type)));
+                    return {arraySelection(std::move(selection)), type, true};
+                }
+            }
             return {addressCast("(" + read(base) + " + " + addressCast(read(i)) + " * " + addressLiteral(bytes(type)) + ")"), type, true};
         }
         if (auto* unary = dyn_cast<UnaryOperator>(expr)) {

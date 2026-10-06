@@ -61,8 +61,33 @@ static_assert(offsetof(CRawLogic9, guard) == offsetof(CpphdlLogic9, guard));
 static_assert(sizeof(CRawLogic64) == sizeof(CpphdlLogic64));
 static_assert(offsetof(CRawLogic64, guard) == offsetof(CpphdlLogic64, guard));
 
+template<unsigned BITS>
+bool unaligned_shifts()
+{
+    // logic<> intentionally has byte alignment, including values wider than 64.
+    struct alignas(8) OffsetValue { uint8_t prefix; logic<BITS> value; } input{};
+    static_assert(offsetof(OffsetValue, value) == 1);
+    auto* bytes = reinterpret_cast<uint8_t*>(&input.value);
+    for (unsigned i = 0; i < sizeof(input.value); ++i) bytes[i] = uint8_t(0x5b + 37*i);
+    for (unsigned shift = 0; shift <= BITS+1; ++shift) {
+        const auto left = input.value << shift;
+        const auto right = input.value >> shift;
+        const auto* l = reinterpret_cast<const uint8_t*>(&left);
+        const auto* r = reinterpret_cast<const uint8_t*>(&right);
+        for (unsigned bit = 0; bit < BITS; ++bit) {
+            const bool expected_l = bit >= shift && ((bytes[(bit-shift)/8] >> ((bit-shift)%8)) & 1);
+            const bool expected_r = bit+shift < BITS && ((bytes[(bit+shift)/8] >> ((bit+shift)%8)) & 1);
+            if (bool((l[bit/8] >> (bit%8)) & 1) != expected_l ||
+                bool((r[bit/8] >> (bit%8)) & 1) != expected_r) return false;
+        }
+    }
+    return true;
+}
+
 int main()
 {
+    if (!unaligned_shifts<64>() || !unaligned_shifts<72>() ||
+        !unaligned_shifts<128>() || !unaligned_shifts<512>()) return 5;
     logic<9> all_ones = 0xffffu;
     uint8_t raw_ones[2] = {0xffu, 0x01u};
     if (std::memcmp(&all_ones, raw_ones, sizeof(raw_ones)) != 0) {

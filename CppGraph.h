@@ -181,14 +181,14 @@ class Lowering {
             return specialization(type)->getTemplateArgs()[0].getAsType();
         return clean(type);
     }
-    bool containsModule(QualType type) {
+    bool containsHierarchy(QualType type) {
         if (type.isNull()) return false;
         type = payload(type);
-        if (module(type)) return true;
+        if (module(type) || interface(type)) return true;
         auto name = templateName(type);
-        if (name == "cpphdl::array") return containsModule(specialization(type)->getTemplateArgs()[1].getAsType());
-        if (name == "std::array") return containsModule(specialization(type)->getTemplateArgs()[0].getAsType());
-        if (auto array = context.getAsConstantArrayType(type)) return containsModule(array->getElementType());
+        if (name == "cpphdl::array") return containsHierarchy(specialization(type)->getTemplateArgs()[1].getAsType());
+        if (name == "std::array") return containsHierarchy(specialization(type)->getTemplateArgs()[0].getAsType());
+        if (auto array = context.getAsConstantArrayType(type)) return containsHierarchy(array->getElementType());
         return false;
     }
     bool containsClocked(QualType type, std::set<const CXXRecordDecl*>& visited) {
@@ -715,9 +715,9 @@ class Lowering {
             count = array->getSize().getLimitedValue(); elementType = array->getElementType();
         } else if (name == "cpphdl::logic" || integerWrapperWidth(sourceType)) { count = width(sourceType); base.bitSelection = true; }
         else fail("unsupported C++ indexing: " + sourceType.getAsString());
-        // An intermediate dimension of a module array is still hierarchy,
+        // An intermediate dimension of a module/interface array is hierarchy,
         // not a packed value whose element needs a bit width.
-        if (containsModule(elementType)) {
+        if (containsHierarchy(elementType)) {
             base.key += "[" + std::to_string(integer(indexValue)) + "]";
             base.type = elementType;
             return base;
@@ -1075,7 +1075,7 @@ class Lowering {
             auto result = expr(castExpr->getSubExpr());
             if (castExpr->getCastKind() == CK_ToVoid) return {};
             // Module arrays are hierarchy paths, not packed values or host pointers.
-            if (castExpr->getCastKind() == CK_ArrayToPointerDecay && containsModule(result.type)) return result;
+            if (castExpr->getCastKind() == CK_ArrayToPointerDecay && containsHierarchy(result.type)) return result;
             if (result.closure || castExpr->getCastKind() == CK_NoOp || castExpr->getCastKind() == CK_LValueToRValue || castExpr->getCastKind() == CK_DerivedToBase || castExpr->getCastKind() == CK_UncheckedDerivedToBase) return result;
             return cast(result, castExpr->getType());
         }
@@ -1479,7 +1479,9 @@ class Lowering {
                 if (owner.key != receiver.key && (!owner.key.starts_with(receiver.key + ".") ||
                     owner.key.find('.', receiver.key.size() + 1) != std::string::npos))
                     fail("assignIf may connect only this module and its immediate children", call);
-                collect(endpoint, "", std::string_view(endpoint.key).ends_with("_out"), side);
+                auto memberName = endpoint.key.substr(endpoint.key.find_last_of('.') + 1);
+                if (auto bracket = memberName.find('['); bracket != std::string::npos) memberName.resize(bracket);
+                collect(endpoint, "", std::string_view(memberName).ends_with("_out"), side);
             }
             if (endpoints[0].size() != endpoints[1].size()) fail("assignIf interface shape mismatch", call);
             bool parent0 = arguments[0].key == receiver.key, parent1 = arguments[1].key == receiver.key;
@@ -1544,7 +1546,7 @@ class Lowering {
         if (from.result && !dead(returning)) {
             if (!into.result) into.result = from.result;
             else if (!from.result->type.isNull()) {
-                if (from.result->closure || into.result->closure || containsModule(from.result->type))
+                if (from.result->closure || into.result->closure || containsHierarchy(from.result->type))
                     fail("dynamic C++ object return unsupported");
                 into.result = value(graph.mux(returning, read(*from.result), read(*into.result)),
                                     from.result->type);
@@ -1593,7 +1595,7 @@ class Lowering {
         }
         if (auto returned = dyn_cast<ReturnStmt>(body)) {
             auto result = expr(returned->getRetValue());
-            if (!structural && !containsModule(result.type) && !result.closure && !result.type.isNull()) {
+            if (!structural && !containsHierarchy(result.type) && !result.closure && !result.type.isNull()) {
                 auto frozen = value(read(result), result.type);
                 frozen.memory = result.memory; frozen.memoryAddress = result.memoryAddress;
                 result = frozen;

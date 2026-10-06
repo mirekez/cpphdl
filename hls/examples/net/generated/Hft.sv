@@ -29,7 +29,9 @@ module Hft (
 
 
     // regs and combs
-    reg[4-1:0][65-1:0] orders;
+    reg[4-1:0][67-1:0] orders;
+    reg[1-1:0] decision_busy_reg;
+    reg[2-1:0] decision_security_reg;
     reg[2-1:0] read_reg;
     reg[2-1:0] write_reg;
     reg[3-1:0] count_reg;
@@ -46,7 +48,8 @@ module Hft (
     reg[1-1:0] tx_command_valid_reg;
     reg[2-1:0] tx_phase_reg;
     logic tx_command_ready_comb;
-    logic[65-1:0] order_comb;
+    logic decision_available_comb;
+    logic[67-1:0] order_comb;
     logic[31:0] rx_flags_comb;
     logic[31:0] rx_position_comb;
     logic[31:0] tx_crc_comb;
@@ -62,7 +65,7 @@ module Hft (
     wire receiver__response_valid_out;
     wire[63:0] receiver__result_out;
     wire[31:0] receiver__fault_out;
-    cpphdl_hls_ClockedPipelineHftWordMethods_P4      receiver (
+    cpphdl_hls_ClockedPipelineHftWordMethods_logic31_0_logic63_0_P4      receiver (
         .clk(clk)
 ,       .reset(reset)
 ,       .command_valid_in(receiver__command_valid_in)
@@ -79,8 +82,9 @@ module Hft (
     wire collector__valid_in;
     wire collector__ready_out;
     wire[31:0] collector__sequence_out;
-    wire[31:0] collector__bid_out;
-    wire[31:0] collector__ask_out;
+    wire[31:0] collector__symbol_out;
+    wire[63:0] collector__bid_out;
+    wire[63:0] collector__ask_out;
     wire collector__valid_out;
     wire collector__ready_in;
     wire collector__size_error_out;
@@ -92,6 +96,7 @@ module Hft (
 ,       .valid_in(collector__valid_in)
 ,       .ready_out(collector__ready_out)
 ,       .sequence_out(collector__sequence_out)
+,       .symbol_out(collector__symbol_out)
 ,       .bid_out(collector__bid_out)
 ,       .ask_out(collector__ask_out)
 ,       .valid_out(collector__valid_out)
@@ -100,15 +105,15 @@ module Hft (
 ,       .crc_error_out(collector__crc_error_out)
     );
     wire decision__command_valid_in;
-    wire[31:0] decision__operation_in;
-    wire[31:0] decision__index_in;
-    wire[31:0] decision__value_in;
+    wire[63:0] decision__operation_in;
+    wire[63:0] decision__index_in;
+    wire[63:0] decision__value_in;
     wire decision__command_ready_out;
     wire decision__response_ready_in;
     wire decision__response_valid_out;
     wire[63:0] decision__result_out;
     wire[31:0] decision__fault_out;
-    cpphdl_hls_ClockedPipelineHftDecisionMethods_P4      decision (
+    cpphdl_hls_ClockedPipelineHftDecisionMethods_logic63_0_logic63_0_P4      decision (
         .clk(clk)
 ,       .reset(reset)
 ,       .command_valid_in(decision__command_valid_in)
@@ -130,7 +135,7 @@ module Hft (
     wire transmitter__response_valid_out;
     wire[63:0] transmitter__result_out;
     wire[31:0] transmitter__fault_out;
-    cpphdl_hls_ClockedPipelineHftTxMethods_P4      transmitter (
+    cpphdl_hls_ClockedPipelineHftTxMethods_logic31_0_logic63_0_P4      transmitter (
         .clk(clk)
 ,       .reset(reset)
 ,       .command_valid_in(transmitter__command_valid_in)
@@ -145,7 +150,9 @@ module Hft (
     );
 
     // tmp variables
-    logic[4-1:0][65-1:0] orders_tmp;
+    logic[4-1:0][67-1:0] orders_tmp;
+    logic[1-1:0] decision_busy_reg_tmp;
+    logic[2-1:0] decision_security_reg_tmp;
     logic[2-1:0] read_reg_tmp;
     logic[2-1:0] write_reg_tmp;
     logic[3-1:0] count_reg_tmp;
@@ -165,6 +172,10 @@ module Hft (
 
     always_comb begin : tx_command_ready_comb_func  // tx_command_ready_comb_func
         tx_command_ready_comb=!((tx_command_valid_reg) != '0) || transmitter__command_ready_out;
+    end
+
+    always_comb begin : decision_available_comb_func  // decision_available_comb_func
+        decision_available_comb=!((decision_busy_reg) != '0) || ((decision__response_valid_out && decision__response_ready_in));
     end
 
     always_comb begin : order_comb_func  // order_comb_func
@@ -349,9 +360,9 @@ module Hft (
         assign rx_ready_out = ((!((count_reg[64'h2]) != '0) && ((!((ingress_valid_reg) != '0) || receiver__command_ready_out))) != '0);
         assign collector__data_in = receiver__result_out;
         assign collector__valid_in = ((receiver__response_valid_out) != '0);
-        assign collector__ready_in = ((decision__command_ready_out) != '0);
-        assign decision__command_valid_in = ((collector__valid_out) != '0);
-        assign decision__operation_in = collector__sequence_out;
+        assign collector__ready_in = ((decision_available_comb && decision__command_ready_out) != '0);
+        assign decision__command_valid_in = ((collector__valid_out && decision_available_comb) != '0);
+        assign decision__operation_in = unsigned'(64'(collector__sequence_out)) | ((unsigned'(64'(collector__symbol_out)) <<< 'h20));
         assign decision__index_in = collector__bid_out;
         assign decision__value_in = collector__ask_out;
         assign decision__response_ready_in = ((!((count_reg[64'h2]) != '0) || (decision__result_out == 64'h0)) != '0);
@@ -394,11 +405,20 @@ module Hft (
             tx_value_reg_tmp = '0;
             tx_command_valid_reg_tmp = '0;
             orders_tmp = '0;
+            decision_busy_reg_tmp = '0;
+            decision_security_reg_tmp = '0;
         end
         else begin
+            if (decision__response_valid_out && decision__response_ready_in) begin
+                decision_busy_reg_tmp = 64'h0;
+            end
+            if (decision__command_valid_in && decision__command_ready_out) begin
+                decision_busy_reg_tmp = 64'h1;
+                decision_security_reg_tmp = 32'(collector__symbol_out - 'h1);
+            end
             if (tx_command_ready_comb) begin
                 tx_command_valid_reg_tmp = (((tx_phase_reg == 64'h0) && (count_reg != 64'h0))) || (tx_phase_reg == 64'h2);
-                tx_operation_reg_tmp = unsigned'(32'((tx_phase_reg == 64'h0) ? (((((order_comb[64'h40]) != '0)) ? ('h1) : ('h2))) : ('h0)));
+                tx_operation_reg_tmp = unsigned'(32'((tx_phase_reg == 64'h0) ? (((((order_comb[64'h40]) != '0)) ? ('h1) : ('h2)) | ((((unsigned'(32'((order_comb >> 'h41))) + 'h1)) <<< 'h8))) : ('h0)));
                 tx_index_reg_tmp = unsigned'(32'((tx_phase_reg == 64'h0) ? (unsigned'(32'(unsigned'(64'(order_comb)) >>> 32'sh20))) : (unsigned'(32'(tx_offset_reg)))));
                 tx_value_reg_tmp = unsigned'(64'(order_comb));
             end
@@ -417,7 +437,7 @@ module Hft (
             if (push) begin
                 for (i=32'h0;i < unsigned'(32'(ORDER_DEPTH));i=i+1) begin
                     if (write_reg == 64'(i)) begin
-                        orders_tmp[64'(i)] = {1'(unsigned'(32'(decision__result_out)) < 'h186A0), unsigned'(64'(decision__result_out))};
+                        orders_tmp[64'(i)] = {unsigned'(2'(decision_security_reg)), 1'(unsigned'(32'(decision__result_out)) < 'h186A0), unsigned'(64'(decision__result_out))};
                     end
                 end
                 write_reg_tmp = 32'(unsigned'(32'(write_reg)) + 'h1);
@@ -448,6 +468,8 @@ module Hft (
 
     always @(posedge clk) begin
         orders_tmp = orders;
+        decision_busy_reg_tmp = decision_busy_reg;
+        decision_security_reg_tmp = decision_security_reg;
         read_reg_tmp = read_reg;
         write_reg_tmp = write_reg;
         count_reg_tmp = count_reg;
@@ -467,6 +489,8 @@ module Hft (
         _work(reset);
 
         orders <= orders_tmp;
+        decision_busy_reg <= decision_busy_reg_tmp;
+        decision_security_reg <= decision_security_reg_tmp;
         read_reg <= read_reg_tmp;
         write_reg <= write_reg_tmp;
         count_reg <= count_reg_tmp;

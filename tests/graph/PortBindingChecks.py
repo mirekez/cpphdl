@@ -41,6 +41,7 @@ def main():
              '--top-module', 'PortBinding', '--Mdir', work / 'obj',
              '-CFLAGS', '-std=c++23 -DPORT_BINDING_RTL -I' + str(include),
              generated / 'Predef_pkg.sv', generated / 'PortBindingChild.sv',
+             generated / 'BindingArraySource.sv', generated / 'BindingArraySink.sv',
              generated / 'PortBinding.sv', runner], 'verilator')
         print(run([work / 'obj/VPortBinding'], 'rtl-run'), end='')
     else:

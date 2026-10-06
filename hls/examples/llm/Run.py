@@ -11,7 +11,9 @@ for name in ('cpphdl', 'cxx', 'verilator', 'work'):
     p.add_argument('--' + name, required=True)
 p.add_argument('--bus', type=int, choices=(64, 128, 256, 512), default=512)
 p.add_argument('--gates', action='store_true')
-p.add_argument('--top', choices=('WeightProduct', 'ScalarMath', 'MatrixMath', 'TiledMatVec'), default='WeightProduct')
+p.add_argument('--depth', type=int, default=8)
+p.add_argument('--window', type=int, default=8)
+p.add_argument('--top', choices=('WeightProduct', 'ScalarMath', 'MatrixMath', 'TiledMatVec', 'StreamingMatVec'), default='WeightProduct')
 args = p.parse_args()
 root = Path(__file__).resolve().parents[3]
 source = Path(__file__).with_name(args.top + '.cpp')
@@ -21,6 +23,8 @@ atomic = Path(subprocess.check_output([args.cxx, '-print-file-name=libatomic.so'
 runtime = Path(subprocess.check_output([args.cxx, '-print-file-name=libstdc++.so'], text=True).strip()).resolve().parent
 env = dict(os.environ, LD_LIBRARY_PATH=str(runtime) + ':' + os.environ.get('LD_LIBRARY_PATH', ''))
 flags = ['-DLLM_DDR_BITS=' + str(args.bus), '-I' + str(root / 'include')]
+if args.top in ('TiledMatVec', 'StreamingMatVec'):
+    flags += ['-DLLM_TILE_DEPTH=' + str(args.depth), '-DLLM_READ_WINDOW=' + str(args.window)]
 
 
 def run(command, label, timeout=600):

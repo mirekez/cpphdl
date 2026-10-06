@@ -18,8 +18,9 @@ module HftCollector (
 ,   input wire valid_in
 ,   output wire ready_out
 ,   output wire[31:0] sequence_out
-,   output wire[31:0] bid_out
-,   output wire[31:0] ask_out
+,   output wire[31:0] symbol_out
+,   output wire[63:0] bid_out
+,   output wire[63:0] ask_out
 ,   output wire valid_out
 ,   input wire ready_in
 ,   output wire size_error_out
@@ -267,11 +268,14 @@ module HftCollector (
         HftCandidate result;
         result = 0;
         result._sequence=frame.quote._sequence;
-        result.bid=(!HftWordMath___less(frame.quote.bid_size, 32'h64)) ? (frame.quote.bid) : ('h0);
-        result.ask=(!HftWordMath___less(frame.quote.ask_size, 32'h64)) ? (frame.quote.ask) : ('h0);
+        result.symbol=frame.quote.symbol;
+        result.bid=frame.quote.bid;
+        result.ask=frame.quote.ask;
+        result.bid_liquid=!HftWordMath___less(frame.quote.bid_size, 32'h64);
+        result.ask_liquid=!HftWordMath___less(frame.quote.ask_size, 32'h64);
         result.size_error=frame.size_error;
         result.crc_error=frame.crc_error;
-        result.valid=(((((frame.valid && (frame.ip_sum == 32'hFFFF)) && ((!frame.udp_checksum_present || (frame.udp_sum == 32'hFFFF)))) && (frame.quote.symbol == 32'h1)) && (frame.quote._sequence != 32'h0)) && (frame.quote.bid != 32'h0)) && HftWordMath___less(frame.quote.bid, frame.quote.ask);
+        result.valid=((((((frame.valid && (frame.ip_sum == 32'hFFFF)) && ((!frame.udp_checksum_present || (frame.udp_sum == 32'hFFFF)))) && frame.quote.symbol>=32'h1) && frame.quote.symbol<=32'h4) && (frame.quote._sequence != 32'h0)) && (frame.quote.bid != 32'h0)) && HftWordMath___less(frame.quote.bid, frame.quote.ask);
         return result;
     endfunction
 
@@ -296,8 +300,9 @@ module HftCollector (
         assign valid_out = ((((valid_reg[64'h4]) != '0) && offer_reg.valid) != '0);
         assign ready_out = ((!valid_out || ready_in) != '0);
         assign sequence_out = offer_reg._sequence;
-        assign bid_out = offer_reg.bid;
-        assign ask_out = offer_reg.ask;
+        assign symbol_out = offer_reg.symbol;
+        assign bid_out = 64'(offer_reg.bid) | ((64'(offer_reg.bid_liquid) <<< 'h20));
+        assign ask_out = 64'(offer_reg.ask) | ((64'(offer_reg.ask_liquid) <<< 'h20));
         assign size_error_out = (((((valid_reg[64'h4]) != '0) && ready_out) && offer_reg.size_error) != '0);
         assign crc_error_out = (((((valid_reg[64'h4]) != '0) && ready_out) && offer_reg.crc_error) != '0);
     endgenerate

@@ -2,6 +2,26 @@ find_program(HLS_VERILATOR NAMES verilator HINTS "${CMAKE_SOURCE_DIR}/.conda/bin
 find_program(HLS_MAKE NAMES gmake make REQUIRED)
 add_custom_target(hls_tests DEPENDS cpphdl)
 include(Libcxx.cmake)
+foreach(stages 1 3)
+    add_hls_native(hls_pipeline_array_${stages} PipelineArray.cpp PIPELINE_STAGES=${stages})
+    add_test(NAME hls_pipeline_array_${stages}_native COMMAND "${HLS_NATIVE_BINARY}")
+    if(HLS_VERILATOR)
+        add_test(NAME hls_pipeline_array_${stages}_verilator COMMAND "${CMAKE_COMMAND}"
+            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-array-${stages}" "-DSTAGES=${stages}"
+            -DSOURCE=PipelineArray.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
+        set_tests_properties(hls_pipeline_array_${stages}_verilator PROPERTIES TIMEOUT 180)
+    endif()
+endforeach()
+if(HLS_VERILATOR)
+    add_test(NAME hls_pipeline_array_synth_verilator COMMAND "${CMAKE_COMMAND}"
+        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-array-synth" -DSTAGES=3 -DSYNTH=ON -DPERIOD_NS=2.0
+        -DSOURCE=PipelineArray.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
+    set_tests_properties(hls_pipeline_array_synth_verilator PROPERTIES TIMEOUT 300)
+endif()
 foreach(stages 1 3 7)
     add_hls_native(hls_pipeline_${stages} Pipeline.cpp PIPELINE_STAGES=${stages})
     add_test(NAME hls_pipeline_${stages}_native COMMAND "${HLS_NATIVE_BINARY}")
@@ -131,6 +151,7 @@ add_subdirectory(std)
 add_subdirectory(../examples/map "${CMAKE_BINARY_DIR}/hls/examples/map")
 add_subdirectory(../examples/net "${CMAKE_BINARY_DIR}/hls/examples/net")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
+add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 
 add_executable(hls_shared_blocks SharedBlocks_test.cpp ../SharedBlocks.cpp ../Combinational.cpp)
 set_target_properties(hls_shared_blocks PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)

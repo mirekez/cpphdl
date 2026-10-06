@@ -7,13 +7,15 @@
 
 - `HftWordMethods` checks Ethernet, IPv4, UDP and SBE headers for each
   independent 32-bit word. Frame position and framing flags travel with the word.
-- `HftDecisionMethods` selects a buy or sell price from a validated quote.
+- `HftDecisionMethods` keeps two previous ask prices per security and applies
+  a trend filter to a validated quote before selecting a buy or sell price.
 - `HftTxMethods` calculates an order's TCP checksum and generates its output
   words from explicit offsets. It does not advance a hidden cursor per call.
 
 `HFT_PIPELINE_STAGES` selects the initial depth (default four).
 The RTL regression also runs with eight stages. Each pipeline can accept one
-command per clock when its output is not stalled.
+command per clock when its output is not stalled. The wrapper admits only one
+decision at a time so a new quote observes the preceding history update.
 
 ```text
 RX -> ingress register -> word/header pipeline -> collector -> decision pipeline
@@ -47,6 +49,47 @@ with reads for the previous frame. There are no internal bubbles within a TX
 frame when the consumer remains ready, but a load/drain gap remains between
 frames. This is not a claim of minimum Ethernet interpacket spacing.
 
+## Per-security price history
+
+The decision class owns a small ordinary C++ array:
+
+```cpp
+uint32_t prices[4][2]{};
+// After checking that security is in 1..4:
+index = (security - 1) & 3u;
+previous = prices[index][0];
+older = prices[index][1];
+falling = (previous == 0 || ask <= previous) && (older == 0 || ask <= older);
+rising = (previous == 0 || ask >= previous) && (older == 0 || ask >= older);
+prices[index][1] = previous;
+prices[index][0] = ask;
+```
+
+HLS lowers these bounded array accesses to register selections and decoded
+writes. The history itself is 256 bits; pipeline snapshots and control add
+registers beyond that. No RAM or packet-sized storage is introduced.
+The mask makes the two-bit row index explicit after validating the full ID.
+The expressions above show the decision rule. The implementation uses an
+equivalent parallel byte comparator and evaluates both history comparisons
+together, avoiding a long ripple path and short-circuit dependencies.
+Zero entries mean warm-up, since accepted prices are nonzero. Reset clears all
+rows. A valid fresh quote updates its row even if it produces no order.
+Malformed frames, unsupported IDs and duplicate sequences leave history alone.
+
+The three 64-bit decision arguments carry sequence/security, bid/liquidity,
+and ask/liquidity. Prices and sequences retain all 32 bits. Liquidity does not
+replace the price with zero: insufficient quantity must not erase a historical
+sample. The order FIFO carries the security index alongside price, sequence
+and side, keeping the outgoing stock identifier aligned during stalls.
+
+`ClockedPipeline` commits a whole object snapshot, not just the changed row.
+Consequently `decision_busy_reg` prevents overlapping history updates even
+when they address different securities. It releases on the result handshake,
+including a zero/no-order result. This also works when retiming changes the
+decision latency. The word parser and transmitter remain independent streaming
+pipelines. Sustained quote rate is limited by this decision handshake as well
+as output capacity; a deeper decision pipeline can backpressure RX.
+
 ## 315 MHz Timing Estimate
 
 The target is **3.174603175 ns**, corresponding to 315 MHz and 10.08 Gbit/s
@@ -59,7 +102,7 @@ within frames. Most quotes in that throughput test deliberately generate no
 order: a 110-byte response cannot be emitted for every 78-byte request
 indefinitely at the same word rate.
 
-Full-design `fit_pipeline_retiming` now reports **3.15 ns** against the
+Full-design `fit_pipeline_retiming` now reports **3.12 ns** against the
 3.174603175 ns target. The former 8.32 ns collector/validation path was
 split manually outside the HLS regions. Word-wide CRC and parallel-carry
 arithmetic keep the per-word feedback paths within one clock; no timing
@@ -69,11 +112,15 @@ For the default four-stage HLS configuration, retiming produces:
 
 | HLS region | Retimed latency, clocks | Initiation interval |
 | --- | ---: | ---: |
-| RX header checks | 12 | 1 |
-| Trading decision | 6 | 1 |
-| TX word formatting | 30 | 1 |
+| RX header checks | 10 | 1 |
+| Trading decision | 13 | 1 |
+| TX word formatting | 29 | 1 |
 
-Retiming inserts 30,155 register bits. These are pipeline registers, not packet
+The decision region itself has II=1, but its wrapper admits only one quote
+per completed decision (13 clocks in this retimed design) to preserve history.
+This is faster than the arrival rate of one valid 78-byte quote per 20 words.
+
+Retiming inserts 28,673 register bits. These are pipeline registers, not packet
 RAM. The seven manually added stages (ingress, five collector stages and TX
 command) are outside these region latencies. Packet latency also includes word
 arrival, queueing and the order-load handshake; it is not simply this table's
@@ -114,11 +161,14 @@ Receive formats are deliberately restricted:
   header (block length 24, template 1, schema 42, version 0), followed by
   sequence, instrument, bid, ask, bid quantity and ask quantity as uint32 values.
 
-Instrument 1 represents TEST; prices are in units of 0.0001. For a fresh
+Instruments 1..4 represent TEST, TES2, TES3 and TES4; prices are in units of
+0.0001. The sequence filter is global to this market-data feed. For a fresh
 sequence with `0 < bid < ask`, buy 100 shares if ask is below 100000 and
-ask quantity is at least 100; otherwise sell 100 if bid exceeds 100020 and
-bid quantity is at least 100. Other quotes produce no order. Valid fresh
-quotes advance the sequence filter even without an order.
+ask quantity is at least 100, provided ask is no higher than either available
+history sample. Otherwise sell 100 if bid exceeds 100020 and bid quantity is
+at least 100, provided ask is no lower than either available sample. Other
+quotes produce no order. Valid fresh quotes advance the sequence filter and
+their security's history even without an order.
 
 Responses contain an OUCH 4.2 Enter Order in a SoupBinTCP unsequenced-data
 message and an Ethernet/IPv4/TCP envelope. The token is SIM000 plus eight
@@ -159,7 +209,11 @@ It covers 1,000 random quotes, invalid headers, every FCS bit, corrupted data
 lanes, all final-word lengths, sequence filtering, oversized/truncated frames,
 concurrent RX/TX, FIFO saturation/wraparound, backpressure and resets with
 active/queued work, including cancellation at each pipeline phase followed by
-reuse of the same sequence number. CRC expectations use a separate bit-serial reference and
+reuse of the same sequence number. Directed history tests cover all four rows,
+both history entries, rollover, no-trade updates, invalid IDs and reset.
+The independent oracle uses variable-length per-security histories and checks
+the stock identifier and checksums in every emitted order.
+CRC expectations use a separate bit-serial reference and
 the standard 123456789 check vector. A further 1,000-frame run verifies
 20,000 uninterrupted RX words and TX intra-frame throughput.
 Direct helper checks also compare parallel carry/compare results against C++
@@ -168,9 +222,10 @@ each byte count from zero to four.
 
 Generated SV and logs are under `build/hls/examples/net/rtl4/` and
 `rtl8/`. Pipeline modules are named
-`cpphdl_hls_ClockedPipelineHftWordMethods_P4.sv`,
-`cpphdl_hls_ClockedPipelineHftDecisionMethods_P4.sv` and
-`cpphdl_hls_ClockedPipelineHftTxMethods_P4.sv` for the default depth.
+`cpphdl_hls_ClockedPipelineHftWordMethods_logic31_0_logic63_0_P4.sv`,
+`cpphdl_hls_ClockedPipelineHftDecisionMethods_logic63_0_logic63_0_P4.sv` and
+`cpphdl_hls_ClockedPipelineHftTxMethods_logic31_0_logic63_0_P4.sv`
+for the default depth.
 
 [generated/](generated/) contains the default four-stage SystemVerilog snapshot,
 including `Hft.sv`, `HftCollector.sv`, all three HLS pipelines and their packages.

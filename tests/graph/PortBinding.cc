@@ -1,6 +1,34 @@
 #include <cpphdl.h>
 using namespace cpphdl;
 
+struct BindingIf : public Interface {
+    _PORT(uint32_t) data_in;
+    _PORT(uint32_t) data_out;
+};
+
+class BindingArraySink : public Module {
+public:
+    BindingIf links_in[2];
+    void _assign() {
+        unsigned i;
+        for (i = 0; i < 2; ++i)
+            links_in[i].data_out = _ASSIGN_I(links_in[i].data_in() + i);
+    }
+};
+
+class BindingArraySource : public Module {
+public:
+    BindingIf links_out[2];
+    _PORT(uint32_t) seed_in;
+    _PORT(uint32_t) sum_out;
+    void _assign() {
+        unsigned i;
+        for (i = 0; i < 2; ++i)
+            links_out[i].data_in = _ASSIGN_I(seed_in() + 10u * i);
+        sum_out = _ASSIGN(links_out[0].data_out() + links_out[1].data_out());
+    }
+};
+
 class PortBindingChild : public Module {
 public:
     _PORT(logic<32>) address_in;
@@ -37,6 +65,8 @@ public:
 
 class PortBinding : public Module {
 public:
+    BindingArraySink sink;
+    BindingArraySource source;
     _PORT(logic<64>) data_in;
     _PORT(int32_t) source_signed_in;
     _PORT(uint32_t) source_unsigned_in;
@@ -52,9 +82,15 @@ public:
     _PORT(bool) truth_out;
     _PORT(logic<64>) scalar_out;
     _PORT(logic<8>) pointer_out;
+    _PORT(uint32_t) interface_sum_out;
     PortBindingChild child;
 
     void _assign() {
+        unsigned i;
+        source.seed_in = _ASSIGN(source_unsigned_in());
+        for (i = 0; i < 2; ++i)
+            assignIf(source, sink, source.links_out[i], sink.links_in[i]);
+        interface_sum_out = _ASSIGN(source.sum_out());
         // Top-level output evaluation uses read(port), not operator().
         direct_narrow_out = _ASSIGN(uint64_t(data_in()));
         direct_truth_out = _ASSIGN(uint64_t(data_in()));

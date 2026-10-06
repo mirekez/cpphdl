@@ -89,13 +89,19 @@ inline Bytes market(const Quote& q, bool udpChecksum) {
 // Independent transaction oracle: no DUT method calls or implementation helpers.
 struct Reference {
     uint32_t last = 0, orders = 0, buys = 0, sells = 0;
+    std::vector<uint32_t> history[4];
     Bytes expected(const Quote& q, bool malformed = false) {
-        if (malformed || q.symbol != 1 || !q.sequence || q.sequence <= last || !q.bid || q.ask <= q.bid) return {};
+        if (malformed || q.symbol < 1 || q.symbol > 4 || !q.sequence || q.sequence <= last || !q.bid || q.ask <= q.bid) return {};
         last = q.sequence;
         char side = 0;
         uint32_t price = 0;
-        if (q.ask < 100000 && q.askSize >= 100) { side = 'B'; price = q.ask; ++buys; }
-        else if (q.bid > 100020 && q.bidSize >= 100) { side = 'S'; price = q.bid; ++sells; }
+        auto& samples = history[q.symbol - 1];
+        bool low = std::all_of(samples.begin(), samples.end(), [&](uint32_t p) { return q.ask <= p; });
+        bool high = std::all_of(samples.begin(), samples.end(), [&](uint32_t p) { return q.ask >= p; });
+        if (q.ask < 100000 && q.askSize >= 100 && low) { side = 'B'; price = q.ask; ++buys; }
+        else if (q.bid > 100020 && q.bidSize >= 100 && high) { side = 'S'; price = q.bid; ++sells; }
+        samples.push_back(q.ask);
+        if (samples.size() > 2) samples.erase(samples.begin());
         if (!side) return {};
         Bytes b(106, 0);
         b[0] = 2; b[5] = 2; b[6] = 2; b[11] = 1; be(b, 12, 0x0800, 2);
@@ -107,6 +113,7 @@ struct Reference {
         char token[15]; std::snprintf(token, sizeof(token), "SIM000%08X", q.sequence);
         std::copy(token, token + 14, b.begin() + 58); b[72] = uint8_t(side); be(b, 73, 100, 4);
         const char stock[] = "TEST    "; std::copy(stock, stock + 8, b.begin() + 77);
+        if (q.symbol != 1) b[80] = uint8_t('0' + q.symbol);
         be(b, 85, price, 4); std::fill(b.begin() + 93, b.begin() + 97, ' '); b[97] = 'Y';
         b[98] = 'P'; b[99] = 'N'; b[104] = 'N'; b[105] = 'N';
         be(b, 50, checksum(pseudo(b, 6, 72)), 2);
@@ -333,7 +340,8 @@ public:
         uint64_t begin = cycles;
         for (unsigned sequence = 1; sequence <= 1000; ++sequence) {
             uint32_t bid = sequence % 2 ? 99000u : 100030u;
-            Quote quote{sequence, sequence % 7 ? 2u : 1u, bid, bid + 1, 100, 100};
+            uint32_t quantity = sequence % 7 ? 0u : 100u;
+            Quote quote{sequence, 1u + sequence % 4, bid, bid + 1, quantity, quantity};
             Bytes response = oracle.expected(quote);
             expected.insert(expected.end(), response.begin(), response.end());
             Bytes packet = market(quote, sequence % 2);
@@ -360,8 +368,8 @@ public:
         Reference oracle;
         Bytes expected;
         auto order = [&](unsigned sequence) {
-            Quote q{sequence, 1, sequence % 2 ? 99000u : 100030u,
-                sequence % 2 ? 99001u : 100031u, 100, 100};
+            Quote q{sequence, 1u + (sequence / 2) % 4, sequence % 2 ? 1u : 0xfffffffdu,
+                sequence % 2 ? 2u : 0xfffffffeu, 100, 100};
             Bytes response = oracle.expected(q);
             expected.insert(expected.end(), response.begin(), response.end());
             return market(q, true);
@@ -397,7 +405,7 @@ public:
         std::mt19937 quotes{0x636f6e63};
         for (unsigned i = 7; i <= 262; ++i) {
             uint32_t bid = i % 7 == 0 ? 0x80000000u + (quotes() & 0xffffffu) : 99800u + quotes() % 400;
-            Quote q{i, i % 9 ? 1u : 2u, bid, uint32_t(bid + 1 + quotes() % 30),
+            Quote q{i, 1u + i % 4, bid, uint32_t(bid + 1 + quotes() % 30),
                 uint32_t(quotes() % 300), uint32_t(quotes() % 300)};
             Bytes response = oracle.expected(q);
             expected.insert(expected.end(), response.begin(), response.end());
@@ -473,6 +481,51 @@ inline void hftStreamingTest(hft_test::Simulation& sim) {
     }
 }
 
+inline void hftHistoryTest(hft_test::Simulation& sim) {
+    using namespace hft_test;
+    Reference oracle;
+    sim.reset();
+    auto check = [&](Quote quote, bool trades) {
+        Bytes expected = oracle.expected(quote);
+        require(!expected.empty() == trades, "history scenario has an incorrect expected decision");
+        sim.frame(market(quote, true), expected);
+    };
+    check({1, 1, 99000, 99001, 100, 100}, true); // Warm-up.
+    check({2, 1, 99500, 99501, 100, 100}, false);
+    check({3, 1, 99200, 99201, 100, 100}, false); // Older sample prevents a buy.
+    for (uint32_t security = 2; security <= 4; ++security)
+        check({security + 2, security, 99200, 99201, 100, 100}, true);
+    check({7, 1, 99100, 99101, 100, 100}, true); // Both previous samples roll forward.
+    check({8, 1, 98000, 98001, 0, 0}, false); // No liquidity still updates history.
+    check({9, 1, 99000, 99001, 100, 100}, false);
+    check({10, 0, 1, 2, 100, 100}, false);
+    check({10, 5, 1, 2, 100, 100}, false);
+    check({10, 0xffffffffu, 1, 2, 100, 100}, false); // No truncated-ID aliasing.
+    check({9, 2, 1, 2, 100, 100}, false); // Duplicate must not update row 2.
+    check({10, 2, 99100, 99101, 100, 100}, true);
+    Bytes broken = market({11, 2, 1, 2, 100, 100}, true);
+    broken.back() ^= 1;
+    sim.frame(broken, {}, true, 0, 1);
+    check({11, 2, 99000, 99001, 100, 100}, true); // CRC failure leaves history intact.
+    check({12, 3, 100100, 100101, 100, 100}, true);
+    check({13, 3, 100050, 100051, 100, 100}, false);
+    check({14, 3, 100070, 100071, 100, 100}, false); // Older sample prevents a sell.
+    check({15, 3, 100060, 100061, 100, 100}, false);
+    check({16, 3, 100080, 100081, 100, 100}, true);
+    // Exercise comparison byte boundaries and the full unsigned price range.
+    uint32_t sequence = 17;
+    for (uint32_t ask : {0xffu, 0x100u, 0xffffu, 0x10000u, 0xffffffu,
+                         0x1000000u, 0x7fffffffu, 0x80000000u, 0xffffffffu}) {
+        for (uint32_t security = 1; security <= 4; ++security) {
+            Quote quote{sequence++, security, ask - 1, ask, 100, 100};
+            sim.frame(market(quote, true), oracle.expected(quote));
+        }
+    }
+    sim.reset(); oracle = Reference{};
+    check({1, 1, 99998, 99999, 100, 100}, true); // Reset removes the old lower prices.
+    std::puts("PASS: per-security two-price history, rollover, no-trade updates, invalid IDs, duplicates and reset");
+}
+
 inline int hftTest() {
     using namespace hft_test;
     try {
@@ -483,7 +536,7 @@ inline int hftTest() {
         require(crcReference(Bytes{'1','2','3','4','5','6','7','8','9'}) == 0xcbf43926u,
             "CRC reference does not match the standard check vector");
         for (unsigned i = 1; i <= 1000; ++i) {
-            Quote q{i, random() % 10 ? 1u : 2u, uint32_t(99800 + random() % 400), 0,
+            Quote q{i, uint32_t(1 + random() % 4), uint32_t(99800 + random() % 400), 0,
                 uint32_t(random() % 300), uint32_t(random() % 300)};
             q.ask = q.bid + 1 + random() % 30;
             if (i % 19 == 0) q.sequence = i - 1;
@@ -564,6 +617,7 @@ inline int hftTest() {
             sim.frame(b, {}, true, 0, 1);
         }
         hftStreamingTest(sim);
+        hftHistoryTest(sim);
         sim.concurrent();
         sim.lineRate();
         sim.resetStages();

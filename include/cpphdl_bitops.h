@@ -172,7 +172,7 @@ public:
                 size_t src_index = i - word_shift;
 
                 if (src_index < word_count) {
-                    cur = ((const uint64_t*)src8)[src_index];
+                    std::memcpy(&cur, src8 + src_index * step, step);
                 }
                 else if (src_index == word_count && remainder) {
                     std::memcpy(&cur, src8 + word_count * step, remainder);
@@ -183,7 +183,7 @@ public:
                 size_t prev_index = i - word_shift - 1;
 
                 if (prev_index < word_count) {
-                    prev = ((const uint64_t*)src8)[prev_index];
+                    std::memcpy(&prev, src8 + prev_index * step, step);
                 }
                 else if (prev_index == word_count && remainder) {
                     std::memcpy(&prev, src8 + word_count * step, remainder);
@@ -197,7 +197,7 @@ public:
             }
 
             if (i < word_count) {
-                ((uint64_t*)dst8)[i] = value;
+                std::memcpy(dst8 + i * step, &value, step);
             }
             else if (i == word_count && remainder) {
                 std::memcpy(dst8 + word_count * step, &value, remainder);
@@ -243,7 +243,7 @@ public:
             size_t src_index = i + word_shift;
 
             if (src_index < word_count) {
-                cur = ((const uint64_t*)src8)[src_index];
+                std::memcpy(&cur, src8 + src_index * step, step);
             }
             else if (src_index == word_count && remainder) {
                 std::memcpy(&cur, src8 + word_count * step, remainder);
@@ -253,7 +253,7 @@ public:
                 size_t next_index = src_index + 1;
 
                 if (next_index < word_count) {
-                    next = ((const uint64_t*)src8)[next_index];
+                    std::memcpy(&next, src8 + next_index * step, step);
                 }
                 else if (next_index == word_count && remainder) {
                     std::memcpy(&next, src8 + word_count * step, remainder);
@@ -267,7 +267,7 @@ public:
             }
 
             if (i < word_count) {
-                ((uint64_t*)dst8)[i] = value;
+                std::memcpy(dst8 + i * step, &value, step);
             }
             else if (i == word_count && remainder) {
                 std::memcpy(dst8 + word_count * step, &value, remainder);
