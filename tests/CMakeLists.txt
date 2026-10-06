@@ -533,6 +533,12 @@ endforeach()
 
 # Exercise the byte-oriented fallback even on little-endian development hosts.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(datatypes_LogicLayoutAlignment datatypes/LogicLayout.cpp)
+    set_target_properties(datatypes_LogicLayoutAlignment PROPERTIES CXX_STANDARD 17)
+    target_include_directories(datatypes_LogicLayoutAlignment PRIVATE "${CMAKE_SOURCE_DIR}/include")
+    target_compile_options(datatypes_LogicLayoutAlignment PRIVATE -fsanitize=alignment -fno-sanitize-recover=alignment)
+    target_link_options(datatypes_LogicLayoutAlignment PRIVATE -fsanitize=alignment)
+    add_test(NAME datatypes_LogicLayoutAlignment COMMAND datatypes_LogicLayoutAlignment)
     add_executable(datatypes_PackedWritebackPortable datatypes/PackedWriteback.cpp)
     set_target_properties(datatypes_PackedWritebackPortable PROPERTIES CXX_STANDARD 17)
     target_include_directories(datatypes_PackedWritebackPortable PRIVATE "${CMAKE_SOURCE_DIR}/include")

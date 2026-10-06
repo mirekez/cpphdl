@@ -20,10 +20,13 @@ file(GLOB packages "${WORK}/generated/*_pkg.sv")
 list(REMOVE_ITEM sources ${packages})
 list(PREPEND sources ${packages})
 if(SYNTH)
+    if(NOT PERIOD_NS)
+        set(PERIOD_NS 3.205128205)
+    endif()
     file(REMOVE_RECURSE "${WORK}/synth")
     execute_process(COMMAND "${CPPHDL}" --synth --top PipelineTop --module PipelineTop
         --output "${WORK}/synth" --cxx "${CXX}" --retiming fit_pipeline_retiming
-        --clock-period-ns 3.205128205 "${ROOT}/hls/tests/${SOURCE}" -- "-I${ROOT}/include"
+        --clock-period-ns "${PERIOD_NS}" "${ROOT}/hls/tests/${SOURCE}" -- "-I${ROOT}/include"
         "-DPIPELINE_STAGES=${STAGES}" ${HLS_PARSE_FLAGS}
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
     if(NOT result EQUAL 0)

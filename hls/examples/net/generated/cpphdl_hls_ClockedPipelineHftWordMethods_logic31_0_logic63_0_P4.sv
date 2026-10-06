@@ -1,6 +1,6 @@
 // HLS pipelined_logic: II=1, STAGES=4; stage boundaries balance operation depth, not technology delay.
 // CppHDL operation graph; explicit register clock/edge ownership.
-module \cpphdl_hls_ClockedPipelineHftWordMethods_P4 (input wire \clk ,
+module \cpphdl_hls_ClockedPipelineHftWordMethods_logic31_0_logic63_0_P4 (input wire \clk ,
 output wire [0:0] \command_ready_out ,
 input wire [0:0] \command_valid_in ,
 output wire [31:0] \fault_out ,

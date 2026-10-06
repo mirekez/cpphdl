@@ -29,7 +29,8 @@ struct HftFoldedFrame {
 };
 
 struct HftCandidate {
-    uint32_t sequence, bid, ask;
+    uint32_t sequence, symbol, bid, ask;
+    bool bid_liquid, ask_liquid;
     bool valid, size_error, crc_error;
 };
 
@@ -40,8 +41,9 @@ public:
     _PORT(bool) valid_in;
     _PORT(bool) ready_out;
     _PORT(uint32_t) sequence_out;
-    _PORT(uint32_t) bid_out;
-    _PORT(uint32_t) ask_out;
+    _PORT(uint32_t) symbol_out;
+    _PORT(uint64_t) bid_out;
+    _PORT(uint64_t) ask_out;
     _PORT(bool) valid_out;
     _PORT(bool) ready_in;
     _PORT(bool) size_error_out;
@@ -124,13 +126,16 @@ private:
     static HftCandidate validate(HftFoldedFrame frame) {
         HftCandidate result{};
         result.sequence = frame.quote.sequence;
-        result.bid = !HftWordMath::less(frame.quote.bid_size, 100) ? frame.quote.bid : 0u;
-        result.ask = !HftWordMath::less(frame.quote.ask_size, 100) ? frame.quote.ask : 0u;
+        result.symbol = frame.quote.symbol;
+        result.bid = frame.quote.bid;
+        result.ask = frame.quote.ask;
+        result.bid_liquid = !HftWordMath::less(frame.quote.bid_size, 100);
+        result.ask_liquid = !HftWordMath::less(frame.quote.ask_size, 100);
         result.size_error = frame.size_error;
         result.crc_error = frame.crc_error;
         result.valid = frame.valid && frame.ip_sum == 65535 &&
             (!frame.udp_checksum_present || frame.udp_sum == 65535) &&
-            frame.quote.symbol == 1 && frame.quote.sequence != 0 &&
+            frame.quote.symbol >= 1 && frame.quote.symbol <= 4 && frame.quote.sequence != 0 &&
             frame.quote.bid != 0 && HftWordMath::less(frame.quote.bid, frame.quote.ask);
         return result;
     }
@@ -159,8 +164,9 @@ public:
         valid_out = _ASSIGN(bool(valid_reg[4]) && offer_reg.valid);
         ready_out = _ASSIGN(!valid_out() || ready_in());
         sequence_out = _ASSIGN(offer_reg.sequence);
-        bid_out = _ASSIGN(offer_reg.bid);
-        ask_out = _ASSIGN(offer_reg.ask);
+        symbol_out = _ASSIGN(offer_reg.symbol);
+        bid_out = _ASSIGN(uint64_t(offer_reg.bid) | (uint64_t(offer_reg.bid_liquid) << 32));
+        ask_out = _ASSIGN(uint64_t(offer_reg.ask) | (uint64_t(offer_reg.ask_liquid) << 32));
         size_error_out = _ASSIGN(bool(valid_reg[4]) && ready_out() && offer_reg.size_error);
         crc_error_out = _ASSIGN(bool(valid_reg[4]) && ready_out() && offer_reg.crc_error);
     }

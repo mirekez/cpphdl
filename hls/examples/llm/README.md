@@ -30,9 +30,14 @@ in hardware. Nonlinear scalar functions have explicit external blackbox contract
   scheduling of the C++ matrix loops over DDR is not implemented.
 - `ScalarMath.cpp`: pipelined add and Q48 multiply, plus calls to the external
   division, exponential, inverse-square-root and SiLU modules below.
-- `TiledMatVec.cpp`: a pointer-based `ClockedDelayer` weight loader, two local
+- `TiledMatVec.cpp`: a pointer-based `ClockedMemory` weight loader, two local
   weight buffers and independent `ClockedPipeline` arithmetic. Loading the next
   row overlaps computation on the current row. See below.
+- `StreamingMatVec.cpp`: the preferred throughput example. Eight outstanding
+  512-bit reads feed a continuous product stream; completed row sums enter a
+  separate reduction pipeline without waiting for the previous row's answer.
+  See [Streaming Architecture and Performance](Streaming.md) for measured
+  comparisons, the protocol, timing, hardware costs and limitations.
 - `../../ExternalMemory.h`: pointer binding and a request/completion interface
   for delayed external reads and writes, plus the older wide-beat read interface
   used by `WeightProduct` and `MatrixMath`. Neither implements AXI or a DDR PHY.
@@ -136,7 +141,7 @@ and more product lanes remain subsequent work.
 
 ## Memory Contract
 
-The example uses one read channel with a configurable 64, 128, 256 or 512-bit
+`WeightProduct` and `MatrixMath` use one read channel with a configurable 64, 128, 256 or 512-bit
 beat and a 32-bit byte address. A request transfers when request-valid and
 request-ready are both asserted. The responder returns one aligned beat,
 little-endian, and holds response-valid/data/error until response-ready.
@@ -274,10 +279,12 @@ cannot be supplied by adding pipeline registers to the product alone:
 
 1. **External memory bandwidth and integration.** Delayed pointer loads/stores
    now work through `ClockedMemory`, including dependent operations across calls.
-   Add controller adapters, bursts, multiple outstanding requests, channel
+   Add controller adapters, bursts, automatic pointer-loop prefetch, channel
    selection and hardware allocation bounds. The initial scalar 64-bit channel
    cannot feed eight product lanes at DDR line rate. The existing shared-memory
    arena remains local fixed-latency RAM, separate from external pointers.
+   `StreamingMatVec` now demonstrates multiple outstanding 512-bit reads using
+   an explicit RTL prefetch frontend, not automatic pointer-loop scheduling.
 2. **Loop scheduling around pipelined operations.** Matrix/vector loops must
    issue work, track completions and preserve dependencies. Normalization,
    attention and the next token must wait for their inputs. Floating feedback
@@ -290,7 +297,9 @@ cannot be supplied by adding pipeline registers to the product alone:
 4. **Local memory and parallel lanes.** Store activations and KV data in
    banked RAM. An initial practical target is eight product lanes per 512-bit
    weight beat. `TiledMatVec` now demonstrates double-buffered rows and a reused
-   activation vector with one product lane.
+   activation vector with one product lane. `StreamingMatVec` removes the row
+   barriers and adds a multi-outstanding prefetch queue; it still uses one
+   product lane, not eight.
    Port count must follow measured compute and DDR bandwidth, not merely
    expose more ports. The full 2048-token KV cache is approximately 96 MiB,
    so it cannot generally be assumed to fit in FPGA block RAM.

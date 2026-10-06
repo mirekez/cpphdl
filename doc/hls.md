@@ -142,6 +142,22 @@ the command protocol and native/RTL/retimed gate tests. The parent is explicit
 RTL; automatically partitioning an arbitrary transformer into these components
 is not implemented.
 
+The [DDR stream example](../hls/examples/dram/README.md) shows another arrangement:
+four `ClockedMemory` pointer-loop loaders share an ordered controller channel,
+allowing four reads in flight. An ordered completion stage feeds a separate
+`ClockedPipeline` calculation. Its native, RTL and retimed-gate tests check
+results and backpressure; the Verilator flows also exercise variable memory
+latency. Retiming is scoped to the calculation child, leaving the external
+memory protocol unchanged. Multiple outstanding reads come from explicit
+loader replication, not automatic parallelization within one pointer loop.
+
+For higher sequential-read bandwidth, the LLM
+[streaming matrix-vector example](../hls/examples/llm/Streaming.md) uses an RTL
+prefetch engine with multiple outstanding 512-bit reads and a bounded response
+FIFO. Its single HLS product pipeline and final-adder pipeline overlap different
+rows, so a row's reduction does not block the next row's products. This explicit
+RTL memory frontend is not automatic `ClockedMemory` pointer-loop pipelining.
+
 ### pipelined_logic
 
 `ClockedPipeline<T, STAGES, Argument = uint32_t, Result = uint64_t>` accepts a new invocation every clock when the
@@ -229,6 +245,13 @@ Current supported source subset:
   separately supplied modules. See [the external interface contract](synthesis.md#external-math-blackboxes).
 - State must be trivially copyable and have constant initialization. Arrays
   requiring scheduled memory and dynamic storage remain unsupported.
+- Bounded, nonescaping C++ member arrays support dynamic register indexing
+  (up to 64 elements per dimension), including multidimensional arrays.
+  Reads become multiplexers and writes become decoded register assignments;
+  this is not block RAM inference. Large arrays can therefore be expensive.
+  The floating-feedback contract still applies to the whole object, not each
+  array row independently. The [HFT history example](../hls/examples/net/README.md#per-security-price-history)
+  orders decision invocations explicitly so each quote sees committed history.
 - Pipeline retiming rules must include a whole streaming region. Synchronous
   reset is supported; asynchronous reset for these regions is not yet supported.
   Unachievable cell/control delays produce an error, not a false timing success.
@@ -262,12 +285,14 @@ exports their hardware graph. The C++ wrapper selects the scheduling policy. The
 and feedback behavior before integrating the design.
 
 The [HFT example](../hls/examples/net/README.md) uses `ClockedPipeline` for independent
-word/header parsing, decisions and explicitly indexed TX words. Its short
+word/header parsing, per-security history decisions and explicitly indexed TX words.
+History updates are ordered by a result handshake; different security rows
+still belong to the same object snapshot. Its short
 per-word stream recurrences remain in the RTL wrapper, with explicit registers
 separating checksum accumulation, validation and sequence filtering. Native and
 four/eight-stage Verilator regressions check 20,000 uninterrupted input words,
 packet contents, backpressure and reset. Full-design retiming now estimates
-3.15 ns against the 315 MHz target while keeping II=1; the gate regression
+3.12 ns against the 315 MHz target while keeping word-level II=1; the gate regression
 checks the retimed design with the same packet testbench. This is an estimated
 timing result, not physical timing closure.
 

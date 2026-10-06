@@ -21,6 +21,7 @@ class TiledBench : public cpphdl::Module {
     std::mt19937_64 rng{1973};
     bool load=false, command=false, ready=true, mem_ready=false, mem_valid=false, mem_error=false;
     bool pending=false, held=false, expect_fault=false, inject_error=false;
+    unsigned fixed_latency=0;
     uint32_t load_address=0, rows=0, base=0x1000, request=0;
     uint64_t load_data=0, mem_data=0;
     unsigned delay=0, outputs=0, request_wait=0;
@@ -60,7 +61,7 @@ public:
 #ifndef VERILATOR
         if(reset) { dut._work(true); dut._strobe(); ++_system_clock; ++clocks; return false; }
 #endif
-        mem_ready = !pending && !mem_valid && request_wait==0 && rng()%4!=0;
+        mem_ready = !pending && !mem_valid && request_wait==0 && (fixed_latency || rng()%4!=0);
         if(request_wait) --request_wait;
         if(pending && !mem_valid) {
             if(delay) --delay;
@@ -113,7 +114,7 @@ public:
         if(!reset && req && mem_ready) {
             if(pending || address<0x1000 || address>=0x1000+sizeof(weights) || address%8)
                 throw std::runtime_error("duplicate or out-of-range DDR request");
-            pending=true; request=address; delay=1+rng()%19; ++reads;
+            pending=true; request=address; delay=fixed_latency ? fixed_latency-1 : 1+rng()%19; ++reads;
         }
 #else
         dut._work(reset); dut._strobe();
@@ -174,6 +175,15 @@ public:
         if(outputs) throw std::runtime_error("DDR error produced valid result");
 #endif
     }
+    void benchmark(unsigned latency) {
+        reset(); fixed_latency=latency; prepare(255);
+        unsigned begin=clocks, before=reads;
+        while(outputs!=rows && clocks-begin<1000000) tick();
+        if(outputs!=rows) throw std::runtime_error("baseline benchmark timeout");
+        std::printf("BENCH tiled depth=%u latency=%u rows=%u cycles=%u reads=%u\n",
+            unsigned(LLM_TILE_DEPTH),latency,rows,clocks-begin,reads-before);
+        fixed_latency=0;
+    }
 };
 int main() {
     TiledBench bench;
@@ -182,6 +192,9 @@ int main() {
     bench.matrix(255);
     bench.matrix(5,false,false);
     bench.cancel(); bench.error(); bench.matrix(3);
+#ifdef VERILATOR
+    bench.benchmark(1); bench.benchmark(20); bench.benchmark(60); bench.benchmark(120);
+#endif
     std::printf("PASS: %u tiled matrices; %u DDR reads; %u overlapping loader/compute clocks; %u clocks\n",
         bench.matrices,bench.reads,bench.overlaps,bench.clocks);
 }

@@ -33,7 +33,7 @@ PipelineUnsupported {
         return helper(value);
 #elif PIPELINE_REJECT == 2
         values[index & 31] = value;
-        return values[op & 31];
+        return uint64_t(&values[op & 31]); // Escaping address, not a register-array read.
 #elif PIPELINE_REJECT == 3
         return index ? command(op,index-1,value) : value;
 #elif PIPELINE_REJECT == 4

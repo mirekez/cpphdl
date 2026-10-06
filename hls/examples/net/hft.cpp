@@ -43,10 +43,36 @@ public:
 #include "HftCollector.h"
 
 class HftDecisionMethods {
+    // Rows correspond to security IDs 1..4; zero means no previous quote.
+    uint32_t prices[4][2]{};
+    static bool less(uint32_t a, uint32_t b) {
+        // Parallel byte comparisons avoid a 32-bit ripple comparison path.
+        uint32_t equal = a ^ b;
+        return (uint8_t(a >> 24) < uint8_t(b >> 24)) |
+            (((equal >> 24) == 0) & (uint8_t(a >> 16) < uint8_t(b >> 16))) |
+            (((equal >> 16) == 0) & (uint8_t(a >> 8) < uint8_t(b >> 8))) |
+            (((equal >> 8) == 0) & (uint8_t(a) < uint8_t(b)));
+    }
 public:
-    uint64_t command(uint32_t sequence, uint32_t bid, uint32_t ask) {
-        if (ask != 0 && ask < 100000) return (uint64_t(sequence) << 32) | ask;
-        if (bid > 100020) return (uint64_t(sequence) << 32) | bid;
+    // Three wrapper arguments: sequence/security, bid/liquidity, ask/liquidity.
+    uint64_t command(uint64_t quote, uint64_t bid_info, uint64_t ask_info) {
+        uint32_t security = uint32_t(quote >> 32);
+        uint32_t bid = uint32_t(bid_info), ask = uint32_t(ask_info);
+        uint32_t index, previous, older;
+        bool falling, rising;
+        if (security < 1 || security > 4) return 0;
+        index = (security - 1) & 3u;
+        previous = prices[index][0];
+        older = prices[index][1];
+        falling = ((previous == 0) | !less(previous, ask)) & ((older == 0) | !less(older, ask));
+        rising = ((previous == 0) | !less(ask, previous)) & ((older == 0) | !less(ask, older));
+        prices[index][1] = previous;
+        prices[index][0] = ask;
+        // Record every accepted quote, even if liquidity or trend prevents a trade.
+        if (ask < 100000 && (ask_info >> 32) != 0 && falling)
+            return (uint64_t(uint32_t(quote)) << 32) | ask;
+        if (bid > 100020 && (bid_info >> 32) != 0 && rising)
+            return (uint64_t(uint32_t(quote)) << 32) | bid;
         return 0;
     }
 };
@@ -57,6 +83,7 @@ class HftTxMethods {
         uint32_t sequence = 0, price = 0, tcp_sequence = 0;
         uint16_t checksum = 0;
         bool buy = false;
+        uint8_t stock_suffix = 'T';
     } order;
     uint32_t tcp_sequence = 1000;
     static uint32_t fold(uint32_t sum) {
@@ -70,8 +97,9 @@ class HftTxMethods {
     static uint32_t tokenPair(uint32_t value) {
         return (hex(value >> 4) << 8) | hex(value);
     }
-    void ouch(uint32_t sequence, uint32_t price, bool buy) {
+    void ouch(uint32_t sequence, uint32_t price, bool buy, uint32_t security) {
         order.sequence = sequence; order.price = price; order.buy = buy;
+        order.stock_suffix = uint8_t(security == 1 ? 'T' : '0' + security);
     }
     void tcpEthernet() {
         uint32_t sum;
@@ -84,7 +112,7 @@ class HftTxMethods {
         sum += tokenPair(order.sequence >> 24) + tokenPair(order.sequence >> 16) +
             tokenPair(order.sequence >> 8) + tokenPair(order.sequence);
         sum += (order.buy ? 'B' : 'S') * 256;
-        sum += (100 * 256 + 'T') + ('E' * 256 + 'S') + ('T' * 256 + ' ') + (' ' * 256 + ' ');
+        sum += (100 * 256 + 'T') + ('E' * 256 + 'S') + (order.stock_suffix * 256 + ' ') + (' ' * 256 + ' ');
         // Price starts on an odd byte, between the stock and time-in-force.
         sum += (' ' * 256) + (order.price >> 24) + ((order.price >> 8) & 65535) + ((order.price & 255) << 8);
         sum += ' ' + (' ' * 256 + ' ') + (' ' * 256 + 'Y') + ('P' * 256 + 'N') + ('N' * 256 + 'N');
@@ -128,7 +156,7 @@ class HftTxMethods {
             (hex(order.sequence >> 4) << 16) | (hex(order.sequence) << 24);
         if (offset == 72) return order.buy ? 'B' : 'S';
         if (offset == 76) return 100 | ('T' << 8) | ('E' << 16) | ('S' << 24);
-        if (offset == 80) return 'T' | (' ' << 8) | (' ' << 16) | (' ' << 24);
+        if (offset == 80) return order.stock_suffix | (' ' << 8) | (' ' << 16) | (' ' << 24);
         if (offset == 84) return ' ' | ((order.price >> 24) << 8) |
             (((order.price >> 16) & 255) << 16) | (((order.price >> 8) & 255) << 24);
         if (offset == 88) return order.price & 255;
@@ -152,7 +180,7 @@ public:
     // Commit one order before issuing its independent, explicitly indexed words.
     uint64_t command(uint32_t operation, uint32_t sequence, uint32_t price) {
         if (operation != 0) {
-            ouch(sequence, price, operation == 1);
+            ouch(sequence, price, (operation & 255u) == 1, operation >> 8);
             tcpEthernet();
             return 0;
         }
@@ -169,7 +197,7 @@ class Hft : public cpphdl::Module {
 public:
     cpphdl::hls::ClockedPipeline<HftWordMethods, HFT_PIPELINE_STAGES> receiver;
     HftCollector collector;
-    cpphdl::hls::ClockedPipeline<HftDecisionMethods, HFT_PIPELINE_STAGES> decision;
+    cpphdl::hls::ClockedPipeline<HftDecisionMethods, HFT_PIPELINE_STAGES, uint64_t> decision;
     cpphdl::hls::ClockedPipeline<HftTxMethods, HFT_PIPELINE_STAGES> transmitter;
     _PORT(uint32_t) rx_data_in;
     _PORT(bool) rx_valid_in;
@@ -189,8 +217,10 @@ public:
 private:
     // Four slots: two-bit indices wrap naturally and count_reg[2] means full.
     static constexpr unsigned ORDER_DEPTH = 4;
-    // Low 32 bits: price; next 32: market sequence; bit 64: buy.
-    cpphdl::reg<cpphdl::array<ORDER_DEPTH, cpphdl::logic<65>>> orders;
+    // Price, sequence, buy, then the two-bit security index.
+    cpphdl::reg<cpphdl::array<ORDER_DEPTH, cpphdl::logic<67>>> orders;
+    cpphdl::reg<cpphdl::u<1>> decision_busy_reg;
+    cpphdl::reg<cpphdl::u<2>> decision_security_reg;
     cpphdl::reg<cpphdl::u<2>> read_reg, write_reg;
     cpphdl::reg<cpphdl::u<3>> count_reg;
     cpphdl::reg<cpphdl::u<9>> rx_position_reg;
@@ -207,8 +237,16 @@ private:
         tx_command_ready_comb = !bool(tx_command_valid_reg) || transmitter.command_ready_out();
         return tx_command_ready_comb;
     }
-    cpphdl::logic<65> order_comb;
-    const cpphdl::logic<65>& order_comb_func() {
+    bool decision_available_comb;
+    const bool& decision_available_comb_func() {
+        // ClockedPipeline commits whole-object snapshots. Order all history updates,
+        // including different rows, before accepting another decision invocation.
+        decision_available_comb = !bool(decision_busy_reg) ||
+            (decision.response_valid_out() && decision.response_ready_in());
+        return decision_available_comb;
+    }
+    cpphdl::logic<67> order_comb;
+    const cpphdl::logic<67>& order_comb_func() {
         // A four-way descriptor mux, not a variable shift of the entire FIFO.
         order_comb = orders[0];
         if (read_reg == 1) order_comb = orders[1];
@@ -253,10 +291,10 @@ public:
 
         collector.data_in = _ASSIGN(receiver.result_out());
         collector.valid_in = _ASSIGN(receiver.response_valid_out());
-        collector.ready_in = _ASSIGN(decision.command_ready_out());
+        collector.ready_in = _ASSIGN(decision_available_comb_func() && decision.command_ready_out());
         collector._assign();
-        decision.command_valid_in = _ASSIGN(collector.valid_out());
-        decision.operation_in = _ASSIGN(collector.sequence_out());
+        decision.command_valid_in = _ASSIGN(collector.valid_out() && decision_available_comb_func());
+        decision.operation_in = _ASSIGN(uint64_t(collector.sequence_out()) | (uint64_t(collector.symbol_out()) << 32));
         decision.index_in = _ASSIGN(collector.bid_out());
         decision.value_in = _ASSIGN(collector.ask_out());
         decision.response_ready_in = _ASSIGN(!bool(count_reg[2]) || decision.result_out() == 0);
@@ -293,10 +331,18 @@ public:
             tx_offset_reg.clr(); tx_crc_reg.clr();
             tx_operation_reg.clr(); tx_index_reg.clr(); tx_value_reg.clr(); tx_command_valid_reg.clr();
             orders.clr();
+            decision_busy_reg.clr(); decision_security_reg.clr();
         } else {
+            if (decision.response_valid_out() && decision.response_ready_in()) decision_busy_reg._next = 0;
+            if (decision.command_valid_in() && decision.command_ready_out()) {
+                decision_busy_reg._next = 1;
+                decision_security_reg._next = collector.symbol_out() - 1u;
+            }
             if (tx_command_ready_comb_func()) {
                 tx_command_valid_reg._next = (tx_phase_reg == 0 && count_reg != 0) || tx_phase_reg == 2;
-                tx_operation_reg._next = tx_phase_reg == 0 ? (bool(order_comb_func()[64]) ? 1u : 2u) : 0u;
+                tx_operation_reg._next = tx_phase_reg == 0 ?
+                    (bool(order_comb_func()[64]) ? 1u : 2u) |
+                    ((uint32_t(order_comb_func() >> 65) + 1u) << 8) : 0u;
                 tx_index_reg._next = tx_phase_reg == 0 ? uint32_t(uint64_t(order_comb_func()) >> 32) : uint32_t(tx_offset_reg);
                 tx_value_reg._next = uint32_t(uint64_t(order_comb_func()));
             }
@@ -312,6 +358,7 @@ public:
             if (push) {
                 for (i = 0; i < ORDER_DEPTH; ++i) {
                     if (write_reg == i) orders._next[i] = cpphdl::cat(
+                        cpphdl::logic<2>(decision_security_reg),
                         cpphdl::logic<1>(uint32_t(decision.result_out()) < 100000u), cpphdl::logic<64>(decision.result_out()));
                 }
                 write_reg._next = uint32_t(write_reg) + 1u;
@@ -338,6 +385,7 @@ public:
         tx_offset_reg.strobe(); tx_crc_reg.strobe();
         tx_operation_reg.strobe(); tx_index_reg.strobe(); tx_value_reg.strobe(); tx_command_valid_reg.strobe();
         orders.strobe();
+        decision_busy_reg.strobe(); decision_security_reg.strobe();
     }
 };
 

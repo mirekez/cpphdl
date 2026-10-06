@@ -59,7 +59,8 @@ struct ExternalMemoryIf : public Interface {
     _PORT(bool) ready_in;
 };
 
-// Read-only, ordered, one-outstanding-request channel to a DDR controller.
+// Read-only, ordered channel to a DDR controller. The connected modules define
+// the outstanding-request limit; responses must preserve acceptance order.
 // Addresses are bytes; data contains DATA_BITS/8 consecutive little-endian bytes.
 // This is a controller-side channel, not DDR pins or an AXI implementation.
 template<unsigned DATA_BITS = 512, unsigned ADDRESS_BITS = 32>
