@@ -23,6 +23,7 @@ def main():
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
     def lower(source):
+        print(f'Lowering {source.name}', flush=True)
         result = subprocess.run([str(args.cpphdl.resolve()), '--lower-cpp-graph', str(source),
                                  str(source.with_suffix('.graph.cc')), 'cpphdl_top', '--',
                                  '-std=c++23', '-I' + str(include)],
@@ -91,16 +92,26 @@ def main():
         assert growth < 40 * 1024**2, ('excessive template AST growth', growth)
         print(f'256 templated port instances: {growth} additional AST bytes')
 
-        source = work / 'construction.cc'
-        source.write_text(Path(__file__).with_name('CppGraphConstruction.cc').read_text())
-        diagnostics = lower(source)
-        counts = re.search(r'nodes=(\d+)', diagnostics)
-        assert counts and int(counts[1]) < 20000, diagnostics[-5000:]
-        graph_text = source.with_suffix('.graph.cc').read_text()
-        incoming = re.search(r'^"data" (.*) 1$', graph_text, re.MULTILINE)
-        outgoing = re.search(r'^"result" (.*) 0$', graph_text, re.MULTILINE)
-        assert incoming and outgoing and incoming[1] == outgoing[1], 'masked writes changed the data'
-        print('4096 repeated masked writes: ' + counts[0])
+        peaks = []
+        for stages in (256, 4096):
+            source = work / f'construction-{stages}.cc'
+            source.write_text(f'#define GRAPH_CONSTRUCTION_STAGES {stages}\n' +
+                              Path(__file__).with_name('CppGraphConstruction.cc').read_text())
+            started = time.monotonic()
+            diagnostics = lower(source)
+            counts = re.search(r'nodes=(\d+)', diagnostics)
+            assert counts and int(counts[1]) < 20000, diagnostics[-5000:]
+            peak = re.search(r'peak_locals=(\d+)', diagnostics)
+            assert peak, diagnostics[-5000:]
+            peaks.append(int(peak[1]))
+            assert peaks[-1] < 32, ('dead loop locals retained', stages, peaks[-1])
+            graph_text = source.with_suffix('.graph.cc').read_text()
+            incoming = re.search(r'^"data" (.*) 1$', graph_text, re.MULTILINE)
+            outgoing = re.search(r'^"result" (.*) 0$', graph_text, re.MULTILINE)
+            assert incoming and outgoing and incoming[1] == outgoing[1], 'masked writes changed the data'
+            print(f'{stages} repeated masked writes: {counts[0]}, {peak[0]}, '
+                  f'{time.monotonic() - started:.3f}s', flush=True)
+        assert peaks[0] == peaks[1], ('live locals scale with unrolled iterations', peaks)
 
 
 if __name__ == '__main__':

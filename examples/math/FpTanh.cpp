@@ -8,13 +8,16 @@
 using namespace cpphdl;
 
 // Combinational floating-point hyperbolic tangent. The core uses the bounded
-// rational approximation x*(27+x*x)/(27+9*x*x) for |x| < 3 and saturates to
-// one outside that range. All arithmetic is fixed-point and synthesizable.
+// [5/4] Pade approximation x*(945+105*x*x+x^4)/(945+420*x*x+15*x^4)
+// for |x| < 4 and saturates to one outside that range. The older [3/2]
+// approximation had up to 0.026 absolute error, which moved GELU across FP8
+// rounding midpoints. All arithmetic is fixed-point and synthesizable.
 template<size_t W=32, size_t EW=8>
 class FpTanh : public Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;
-    static constexpr size_t FIXED_BITS = MANT_WIDTH + 4 < 26 ? MANT_WIDTH + 4 : 26;
+    // At |x| < 4 the largest numerator is below 11524 * 2^(2*FIXED_BITS).
+    static constexpr size_t FIXED_BITS = MANT_WIDTH + 4 < 25 ? MANT_WIDTH + 4 : 25;
     static constexpr uint64_t MANT_MASK = (uint64_t(1) << MANT_WIDTH) - 1;
     static constexpr uint64_t EXP_MAX = (uint64_t(1) << EW) - 1;
     static constexpr uint64_t SIGN_MASK = uint64_t(1) << (W - 1);
@@ -40,6 +43,7 @@ private:
         uint64_t significand;
         uint64_t x_fixed;
         uint64_t x_squared;
+        uint64_t x_fourth;
         uint64_t numerator;
         uint64_t denominator;
         uint64_t y_fixed;
@@ -64,6 +68,7 @@ private:
         significand = 0;
         x_fixed = 0;
         x_squared = 0;
+        x_fourth = 0;
         numerator = 0;
         denominator = 1;
         y_fixed = 0;
@@ -118,17 +123,13 @@ private:
                     }
                 }
 
-                if (x_fixed >= 3 * ONE_FIXED) {
+                x_squared = (x_fixed * x_fixed) >> FIXED_BITS;
+                x_fourth = (x_squared * x_squared) >> FIXED_BITS;
+                numerator = x_fixed * (945 * ONE_FIXED + 105 * x_squared + x_fourth);
+                denominator = 945 * ONE_FIXED + 420 * x_squared + 15 * x_fourth;
+                y_fixed = (numerator + denominator / 2) / denominator;
+                if (y_fixed > ONE_FIXED) {
                     y_fixed = ONE_FIXED;
-                }
-                else {
-                    x_squared = (x_fixed * x_fixed) >> FIXED_BITS;
-                    numerator = x_fixed * (27 * ONE_FIXED + x_squared);
-                    denominator = 27 * ONE_FIXED + 9 * x_squared;
-                    y_fixed = (numerator + denominator / 2) / denominator;
-                    if (y_fixed > ONE_FIXED) {
-                        y_fixed = ONE_FIXED;
-                    }
                 }
 
                 if (y_fixed == 0) {
@@ -203,7 +204,7 @@ template<size_t W, size_t EW>
 class TestFpTanh
 {
     using Format = FpMathTestFormat<W, EW>;
-    static constexpr double MAX_ABS_ERROR = 0.026;
+    static constexpr double MAX_ABS_ERROR = 0.0025;
 
 #ifdef VERILATOR
     VERILATOR_MODEL dut;

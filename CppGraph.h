@@ -82,6 +82,17 @@ class Lowering {
     unsigned oneClockSerial = 0, oneClockDepth = 0;
     unsigned oneClockSerialBegin = 0;
     std::vector<std::string> localNames;
+    size_t peakLocals = 0;
+    void trackLocal(const std::string& key) {
+        localNames.push_back(key);
+        peakLocals = std::max(peakLocals, localNames.size());
+    }
+    void releaseLocals(size_t begin) {
+        if (structural) return;
+        while (localNames.size() > begin) {
+            cells.erase(localNames.back()); originals.erase(localNames.back()); localNames.pop_back();
+        }
+    }
     bool structural = false;
     bool committing = false;
     bool working = false;
@@ -390,7 +401,7 @@ class Lowering {
         }
         Item result; result.key = "$memoryrow" + std::to_string(++serial); result.type = type;
         result.memory = identity; result.memoryAddress = address;
-        originals[result.key] = bits; cells.set(result.key, bits); localNames.push_back(result.key);
+        originals[result.key] = bits; cells.set(result.key, bits); trackLocal(result.key);
         return result;
     }
     void queueMemory(const Item& row) {
@@ -478,7 +489,7 @@ class Lowering {
             auto count = item.extent ? item.extent : width(item.type);
             bool state = templateName(item.type) == "cpphdl::reg" && !item.key.starts_with("$");
             originals[item.key] = graph.wire(count, item.key, state ? "state" : "wire");
-            if (item.key.starts_with("$")) localNames.push_back(item.key);
+            if (item.key.starts_with("$")) trackLocal(item.key);
             if (state) registers[item.key] = originals[item.key];
         }
         return originals.at(item.key);
@@ -817,9 +828,7 @@ class Lowering {
         auto result = statement(function->getBody()).result;
         stack.pop_back();
         object = savedObject; locals = std::move(savedLocals);
-        if (!structural) while (localNames.size() > localBegin) {
-            cells.erase(localNames.back()); originals.erase(localNames.back()); localNames.pop_back();
-        }
+        releaseLocals(localBegin);
         if (!result && !function->getReturnType()->isVoidType()) fail("port closure has no return");
         return result.value_or(Item{});
     }
@@ -1045,9 +1054,7 @@ class Lowering {
             inheritGetterReads(key);
         }
         stack.pop_back(); object = savedObject; locals = std::move(savedLocals);
-        if (!structural) while (localNames.size() > localBegin) {
-            cells.erase(localNames.back()); originals.erase(localNames.back()); localNames.pop_back();
-        }
+        releaseLocals(localBegin);
         if (cache) return value(output, function->getReturnType());
         return result.value_or(Item{});
     }
@@ -1155,7 +1162,7 @@ class Lowering {
                 } else if (auto record = type->getAsCXXRecordDecl()) {
                     Item temporary; temporary.key = "$aggregate" + std::to_string(++serial); temporary.type = type;
                     originals[temporary.key] = result; cells.set(temporary.key, result);
-                    localNames.push_back(temporary.key);
+                    trackLocal(temporary.key);
                     unsigned index = 0;
                     for (auto member : record->fields()) {
                         if (index >= init->getNumInits()) break;
@@ -1671,8 +1678,13 @@ class Lowering {
         // Only its exact clock-guard/update shape is removed here.
         if (memoStatement(body)) return {};
         if (auto compound = dyn_cast<CompoundStmt>(body)) {
+            auto localBegin = localNames.size();
+            llvm::SaveAndRestore localScope(locals);
             Flow flow;
             for (auto child : compound->body()) appendStatement(flow, child);
+            // Returns already freeze their values. Keep writes to outer storage,
+            // but do not carry dead block locals into later branch snapshots.
+            releaseLocals(localBegin);
             return flow;
         }
         if (auto returned = dyn_cast<ReturnStmt>(body)) {
@@ -1932,6 +1944,7 @@ public:
                      << " node_bytes=" << graph.nodes.size() * sizeof(Node)
                      << " operand_bytes=" << operandBytes
                      << " aliases=" << graph.aliases.size() << '\n';
+        llvm::errs() << "C++ graph: peak_locals=" << peakLocals << '\n';
     }
     void run(const VarDecl* root, const std::string& output) {
         object.key = root->getNameAsString(); object.type = root->getType();
