@@ -1,13 +1,13 @@
 diff --git a/scripts/build-cpphdl-rocket64.sh b/scripts/build-cpphdl-rocket64.sh
 new file mode 100755
-index 00000000..36c3f1c0
+index 0000000000000000000000000000000000000000..6600d112d7a2851985e2f81cd3f769153b10b8ac
 --- /dev/null
 +++ b/scripts/build-cpphdl-rocket64.sh
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,143 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
-+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 +export RISCV=${RISCV:-"$root/.conda-env/riscv-tools"}
 +export PATH="$RISCV/bin:$root/.conda-env/bin:$PATH"
 +
@@ -15,11 +15,30 @@ index 00000000..36c3f1c0
 +long_name="chipyard.harness.TestHarness.${config}"
 +generated_root="$root/sims/verilator/generated-src/$long_name"
 +fir_file="$generated_root/$long_name.fir"
-+output_dir=${CPPHDL_OUTPUT_DIR:-"$root/cpphdl-build/$config/generated"}
-+build_dir=${CPPHDL_BUILD_DIR:-"$root/cpphdl-build/$config/runtime"}
++# Explicit backend takes precedence over the legacy comb switch.
++backend=${CPPHDL_BACKEND:-}
++if [[ -z "$backend" ]]; then
++  case ${CPPHDL_OPTIMIZE_COMBS:-0} in
++    0) backend=plain ;;
++    1) backend=optimize-combs ;;
++    *) echo 'error: CPPHDL_OPTIMIZE_COMBS must be 0 or 1' >&2; exit 1 ;;
++  esac
++fi
++case "$backend" in
++  plain) mode_dir=plain; target=cpphdl-rocket64-sim; default_opt=-O2 ;;
++  optimize-combs) mode_dir=optimize-combs; target=cpphdl-rocket64-optimized-sim; default_opt=-O2 ;;
++  native-graph) mode_dir=native-graph; target=cpphdl-rocket64-graph-sim; default_opt=-O2 ;;
++  *) echo "error: unknown CPPHDL_BACKEND: $backend" >&2; exit 1 ;;
++esac
++# Each backend owns its generated sources and build cache.
++mode_root="$root/cpphdl-build/$config/$mode_dir"
++# Preserve the existing comb build and its CMake cache in place.
++[[ "$backend" != optimize-combs ]] || mode_root="$root/cpphdl-build/$config"
++output_dir=${CPPHDL_OUTPUT_DIR:-"$mode_root/generated"}
++build_dir=${CPPHDL_BUILD_DIR:-"$mode_root/runtime"}
 +program=${1:-"$root/tests/build/rocket64-mmul.riscv"}
 +cpphdl_include=${CPPHDL_INCLUDE_DIR:-${HOME:?HOME must be set}/cpphdl/include}
-+cpphdl_opt_level=${CPPHDL_OPT_LEVEL:--O2}
++cpphdl_opt_level=${CPPHDL_OPT_LEVEL:-$default_opt}
 +cpphdl_use_pch=${CPPHDL_USE_OPTIMIZED_PCH:-ON}
 +cpphdl_optimize_threads=${CPPHDL_OPTIMIZE_THREADS:-}
 +
@@ -51,7 +70,7 @@ index 00000000..36c3f1c0
 +  "$firtool" --split-cpphdl -o="$output_dir" "$fir_file"
 +fi
 +
-+if [[ "${CPPHDL_OPTIMIZE_COMBS:-1}" == 1 ]]; then
++if [[ "$backend" == optimize-combs ]]; then
 +  cpphdl_tool=${CPPHDL_TOOL:-${HOME:?HOME must be set}/cpphdl/build/cpphdl}
 +  if [[ ! -x "$cpphdl_tool" ]]; then
 +    echo "error: cpphdl comb optimizer is not executable: $cpphdl_tool" >&2
@@ -94,10 +113,11 @@ index 00000000..36c3f1c0
 +  fi
 +fi
 +
++if [[ "$backend" == optimize-combs ]]; then
 +optimized_api="$output_dir/TestHarness_optimized_combs.cpp"
 +if [[ ! -s "$optimized_api" ]] || \
 +   ! grep -qF 'void bind_optimized_ports(TestHarness& obj)' "$optimized_api" || \
-+   ! grep -qF 'void calc_all(TestHarness& obj)' "$optimized_api" || \
++   ! grep -Eq 'void calc_all\(TestHarness& obj(, bool reset)?\)' "$optimized_api" || \
 +   ! grep -qF 'void commit_optimized_regs(TestHarness& obj)' "$optimized_api"; then
 +  echo "error: complete optimized TestHarness API was not generated" >&2
 +  exit 1
@@ -108,28 +128,36 @@ index 00000000..36c3f1c0
 +  exit 1
 +fi
 +
++fi
++
++if [[ "$backend" == native-graph ]]; then
++  exec "$root/scripts/build-cpphdl-rocket64-graph.sh" "$output_dir" "$build_dir"
++fi
++
 +cmake -S "$root/tools/firtool-cpphdl/runtime" -B "$build_dir" \
++  -DCPPHDL_BACKEND="$backend" \
 +  -DCPPHDL_GENERATED_DIR="$output_dir" \
 +  -DCHIPYARD_DIR="$root" \
 +  -DCPPHDL_INCLUDE_DIR="$cpphdl_include" \
 +  -DCPPHDL_OPT_LEVEL="$cpphdl_opt_level" \
 +  -DCPPHDL_USE_OPTIMIZED_PCH="$cpphdl_use_pch"
-+cmake --build "$build_dir" --target cpphdl-rocket64-optimized-sim \
++cmake --build "$build_dir" --target "$target" \
 +  --parallel "${CPPHDL_BUILD_JOBS:-2}"
 +
-+echo "Optimized C++HDL simulator: $build_dir/cpphdl-rocket64-optimized-sim"
++echo "C++HDL backend: $backend (compiler $cpphdl_opt_level)"
++echo "Simulator: $build_dir/$target"
 +echo "RV64 matrix ELF: $program"
 diff --git a/scripts/build-firtool-cpphdl.sh b/scripts/build-firtool-cpphdl.sh
 new file mode 100755
-index 00000000..5d11df2e
+index 0000000000000000000000000000000000000000..46df2473d1b40f2364094273da0e1d87127ee700
 --- /dev/null
 +++ b/scripts/build-firtool-cpphdl.sh
 @@ -0,0 +1,17 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +
-+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-+prefix=${RISCV:-"$root/.conda-env/riscv-tools"}
++root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
++prefix=${CPPHDL_CIRCT_PREFIX:-"$root/tools/circt-cpphdl-sdk"}
 +build_dir=${CPPHDL_FIRTOOL_BUILD_DIR:-"$root/tools/firtool-cpphdl/build"}
 +source_dir=${CIRCT_CPPHDL_SOURCE_DIR:-"$root/tools/circt"}
 +
@@ -146,25 +174,17 @@ diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
 index 27b2d7e1..9a35becc 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -83,6 +83,7 @@ add_executable(spiflashwrite spiflashwrite.c)
- add_executable(fft fft.c)
- add_executable(gcd gcd.c)
+@@ -86,2 +86,3 @@
  add_executable(hello hello.c)
 +add_executable(rocket64-mmul rocket64_mmul.c)
  add_executable(mt-hello mt-hello.c)
- add_executable(symmetric symmetric.c)
- add_executable(ctc-test ctc-test.c)
-@@ -124,6 +125,7 @@ add_dump_target(spiflashwrite)
- add_dump_target(fft)
- add_dump_target(gcd)
+@@ -127,2 +128,3 @@
  add_dump_target(hello)
 +add_dump_target(rocket64-mmul)
  add_dump_target(mt-hello)
- add_dump_target(symmetric)
- add_dump_target(ctc-test)
 diff --git a/tests/rocket64_mmul.c b/tests/rocket64_mmul.c
 new file mode 100644
-index 00000000..08fe5b8e
+index 0000000000000000000000000000000000000000..08fe5b8e6d2318f053550a469ed410a2a2e74075
 --- /dev/null
 +++ b/tests/rocket64_mmul.c
 @@ -0,0 +1,148 @@
@@ -318,7 +338,7 @@ index 00000000..08fe5b8e
 +}
 diff --git a/tools/firtool-cpphdl/CMakeLists.txt b/tools/firtool-cpphdl/CMakeLists.txt
 new file mode 100644
-index 00000000..5cf08068
+index 0000000000000000000000000000000000000000..5cf080684ecce689e4fd3bb5cd7c735905621da2
 --- /dev/null
 +++ b/tools/firtool-cpphdl/CMakeLists.txt
 @@ -0,0 +1,52 @@
@@ -376,10 +396,10 @@ index 00000000..5cf08068
 +endif()
 diff --git a/tools/firtool-cpphdl/runtime/CMakeLists.txt b/tools/firtool-cpphdl/runtime/CMakeLists.txt
 new file mode 100644
-index 00000000..c5d6dd40
+index 0000000000000000000000000000000000000000..9d464c9ce2f5d89a4a5f30a9d224155d5c85aff7
 --- /dev/null
 +++ b/tools/firtool-cpphdl/runtime/CMakeLists.txt
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,79 @@
 +cmake_minimum_required(VERSION 3.20)
 +project(chipyard_cpphdl_runtime LANGUAGES CXX)
 +
@@ -388,15 +408,26 @@ index 00000000..c5d6dd40
 +set(CHIPYARD_DIR "" CACHE PATH "Chipyard source directory")
 +set(CPPHDL_INCLUDE_DIR "$ENV{HOME}/cpphdl/include" CACHE PATH
 +    "C++HDL include directory")
-+set(CPPHDL_OPT_LEVEL "-O2" CACHE STRING "C++HDL simulator optimization flag")
++set(CPPHDL_BACKEND "plain" CACHE STRING "plain or optimize-combs")
++if(CPPHDL_BACKEND STREQUAL "plain")
++  set(SIM_TARGET cpphdl-rocket64-sim)
++  set(DEFAULT_OPT_LEVEL "-O2")
++elseif(CPPHDL_BACKEND STREQUAL "optimize-combs")
++  set(SIM_TARGET cpphdl-rocket64-optimized-sim)
++  set(DEFAULT_OPT_LEVEL "-O2")
++else()
++  message(FATAL_ERROR "Unsupported runtime backend: ${CPPHDL_BACKEND}")
++endif()
++set(CPPHDL_OPT_LEVEL "${DEFAULT_OPT_LEVEL}" CACHE STRING "C++HDL simulator optimization flag")
 +option(CPPHDL_USE_OPTIMIZED_PCH
 +  "Precompile the shared optimized C++HDL model declarations" ON)
 +
 +if(NOT CPPHDL_GENERATED_DIR OR NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness.h")
 +  message(FATAL_ERROR "CPPHDL_GENERATED_DIR must name firtool --split-cpphdl output")
 +endif()
-+if(NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.cpp" OR
-+   NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.h")
++if(CPPHDL_BACKEND STREQUAL "optimize-combs" AND
++   (NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.cpp" OR
++    NOT EXISTS "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.h"))
 +  message(FATAL_ERROR "Rocket runtime requires cpphdl --optimize-combs output")
 +endif()
 +if(NOT CHIPYARD_DIR)
@@ -405,43 +436,52 @@ index 00000000..c5d6dd40
 +
 +set(COLLATERAL
 +    "${CHIPYARD_DIR}/generators/testchipip/src/main/resources/testchipip/csrc")
-+add_executable(cpphdl-rocket64-optimized-sim
++add_executable(${SIM_TARGET}
 +  sim_main.cpp
 +  cpphdl_runtime.cpp
 +  cpphdl_external_models.cpp
 +  "${COLLATERAL}/mm.cc"
 +  "${COLLATERAL}/testchip_tsi.cc"
 +  "${COLLATERAL}/testchip_htif.cc")
-+file(GLOB CPPHDL_OPTIMIZED_SOURCES CONFIGURE_DEPENDS
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.cpp"
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_[0-9]*.cpp"
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_prefix_[0-9]*.cpp"
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_thread_[0-9]*_[0-9]*_[0-9]*.cpp"
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_bind_[0-9]*.cpp"
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_work_[0-9]*.cpp"
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_strobe_[0-9]*.cpp"
-+  "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_model_[0-9]*.cpp")
-+target_sources(cpphdl-rocket64-optimized-sim PRIVATE ${CPPHDL_OPTIMIZED_SOURCES})
-+target_compile_options(cpphdl-rocket64-optimized-sim PRIVATE ${CPPHDL_OPT_LEVEL})
-+if(CPPHDL_USE_OPTIMIZED_PCH)
-+  target_precompile_headers(cpphdl-rocket64-optimized-sim PRIVATE
-+    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_internal.h")
++if(CPPHDL_BACKEND STREQUAL "optimize-combs")
++  set_source_files_properties(sim_main.cpp PROPERTIES COMPILE_DEFINITIONS CPPHDL_OPTIMIZE_COMBS=1)
++  file(GLOB CPPHDL_OPTIMIZED_SOURCES CONFIGURE_DEPENDS
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_prefix_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_thread_[0-9]*_[0-9]*_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_bind_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_work_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_strobe_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_model_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_memory_[0-9]*.cpp"
++    "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_dynamic_[0-9]*.cpp")
++  target_sources(${SIM_TARGET} PRIVATE ${CPPHDL_OPTIMIZED_SOURCES})
++  if(CPPHDL_USE_OPTIMIZED_PCH)
++    target_precompile_headers(${SIM_TARGET} PRIVATE
++      "${CPPHDL_GENERATED_DIR}/TestHarness_optimized_combs_internal.h")
++  endif()
++else()
++  add_subdirectory("${CPPHDL_GENERATED_DIR}" generated-model)
++  target_sources(${SIM_TARGET} PRIVATE $<TARGET_OBJECTS:firtool_generated_cpphdl>)
++  target_include_directories(firtool_generated_cpphdl PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 +endif()
-+target_include_directories(cpphdl-rocket64-optimized-sim PRIVATE
++target_compile_options(${SIM_TARGET} PRIVATE ${CPPHDL_OPT_LEVEL})
++target_include_directories(${SIM_TARGET} PRIVATE
 +  "${CMAKE_CURRENT_SOURCE_DIR}"
 +  "${CPPHDL_GENERATED_DIR}"
 +  "${CPPHDL_INCLUDE_DIR}"
 +  "${COLLATERAL}"
 +  "${CHIPYARD_DIR}/.conda-env/riscv-tools/include")
-+target_link_directories(cpphdl-rocket64-optimized-sim PRIVATE
++target_link_directories(${SIM_TARGET} PRIVATE
 +  "${CHIPYARD_DIR}/.conda-env/riscv-tools/lib")
-+target_link_libraries(cpphdl-rocket64-optimized-sim PRIVATE
++target_link_libraries(${SIM_TARGET} PRIVATE
 +  fesvr riscv dl pthread)
-+target_link_options(cpphdl-rocket64-optimized-sim PRIVATE
++target_link_options(${SIM_TARGET} PRIVATE
 +  "-Wl,-rpath,${CHIPYARD_DIR}/.conda-env/riscv-tools/lib")
 diff --git a/tools/firtool-cpphdl/runtime/cpphdl_external_models.cpp b/tools/firtool-cpphdl/runtime/cpphdl_external_models.cpp
 new file mode 100644
-index 00000000..fee64ada
+index 0000000000000000000000000000000000000000..fee64adacf20b671b7c2b534f04efa7f06ddc048
 --- /dev/null
 +++ b/tools/firtool-cpphdl/runtime/cpphdl_external_models.cpp
 @@ -0,0 +1,98 @@
@@ -545,7 +585,7 @@ index 00000000..fee64ada
 +} // namespace firtool_cpphdl_external
 diff --git a/tools/firtool-cpphdl/runtime/cpphdl_external_models.h b/tools/firtool-cpphdl/runtime/cpphdl_external_models.h
 new file mode 100644
-index 00000000..6f0698fe
+index 0000000000000000000000000000000000000000..6f0698fef623f5a03653a182728530ec5324b244
 --- /dev/null
 +++ b/tools/firtool-cpphdl/runtime/cpphdl_external_models.h
 @@ -0,0 +1,25 @@
@@ -576,7 +616,7 @@ index 00000000..6f0698fe
 +} // namespace firtool_cpphdl_external
 diff --git a/tools/firtool-cpphdl/runtime/cpphdl_runtime.cpp b/tools/firtool-cpphdl/runtime/cpphdl_runtime.cpp
 new file mode 100644
-index 00000000..8aa42068
+index 0000000000000000000000000000000000000000..8aa42068d069222a94584ecdf7c24f495506e1b4
 --- /dev/null
 +++ b/tools/firtool-cpphdl/runtime/cpphdl_runtime.cpp
 @@ -0,0 +1,172 @@
@@ -754,7 +794,7 @@ index 00000000..8aa42068
 +} // namespace firtool_cpphdl_runtime
 diff --git a/tools/firtool-cpphdl/runtime/cpphdl_runtime.h b/tools/firtool-cpphdl/runtime/cpphdl_runtime.h
 new file mode 100644
-index 00000000..ee288d3d
+index 0000000000000000000000000000000000000000..ee288d3dd17dbe3fbed1fa075c932344e2b0c4c3
 --- /dev/null
 +++ b/tools/firtool-cpphdl/runtime/cpphdl_runtime.h
 @@ -0,0 +1,74 @@
@@ -834,13 +874,15 @@ index 00000000..ee288d3d
 +} // namespace firtool_cpphdl_runtime
 diff --git a/tools/firtool-cpphdl/runtime/sim_main.cpp b/tools/firtool-cpphdl/runtime/sim_main.cpp
 new file mode 100644
-index 00000000..577f937c
+index 0000000000000000000000000000000000000000..40de41d0210ac99df209be79464b8d19a461cc33
 --- /dev/null
 +++ b/tools/firtool-cpphdl/runtime/sim_main.cpp
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,78 @@
 +#include "cpphdl_support.h"
 +#include "TestHarness.h"
++#ifdef CPPHDL_OPTIMIZE_COMBS
 +#include "TestHarness_optimized_combs.h"
++#endif
 +#include "cpphdl_runtime.h"
 +
 +#include <cstdio>
@@ -871,7 +913,11 @@ index 00000000..577f937c
 +  cpphdl::logic<1> reset = 1;
 +  top.clock = [&clock]() { return std::addressof(clock); };
 +  top.reset = [&reset]() { return std::addressof(reset); };
++#ifdef CPPHDL_OPTIMIZE_COMBS
 +  bind_optimized_ports(top);
++#else
++  top._assign();
++#endif
 +
 +  uint64_t maxCycles = 50000000;
 +  if (const char *value = std::getenv("CPPHDL_MAX_CYCLES"))
@@ -884,8 +930,13 @@ index 00000000..577f937c
 +    for (uint64_t cycle = 0; cycle < maxCycles; ++cycle) {
 +      reset = cycle < 10;
 +      ++_system_clock;
++#ifdef CPPHDL_OPTIMIZE_COMBS
 +      calc_all(top);
 +      commit_optimized_regs(top);
++#else
++      top._work(false);
++      top._strobe();
++#endif
 +      if (progressCycles && (cycle + 1) % progressCycles == 0)
 +        std::fprintf(stderr, "[CPPHDL] cycle %llu\n",
 +                     static_cast<unsigned long long>(cycle + 1));
@@ -907,7 +958,7 @@ index 00000000..577f937c
 +}
 diff --git a/tools/firtool-cpphdl/test/register.fir b/tools/firtool-cpphdl/test/register.fir
 new file mode 100644
-index 00000000..c029ab77
+index 0000000000000000000000000000000000000000..c029ab77af300d2d4941e9f30d99d51c8ff13f19
 --- /dev/null
 +++ b/tools/firtool-cpphdl/test/register.fir
 @@ -0,0 +1,11 @@
@@ -924,7 +975,7 @@ index 00000000..c029ab77
 +    count <= value
 diff --git a/tools/firtool-cpphdl/test/simple.fir b/tools/firtool-cpphdl/test/simple.fir
 new file mode 100644
-index 00000000..64f1e172
+index 0000000000000000000000000000000000000000..64f1e17262a033999efbfce430c3793ed4dec92d
 --- /dev/null
 +++ b/tools/firtool-cpphdl/test/simple.fir
 @@ -0,0 +1,9 @@
@@ -937,3 +988,81 @@ index 00000000..64f1e172
 +
 +    node sum = add(a, b)
 +    y <= mux(select, sum, a)
+diff --git a/scripts/build-cpphdl-rocket64-graph.sh b/scripts/build-cpphdl-rocket64-graph.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..c469c7bda8b23cd10b605d75b65f665e10095700
+--- /dev/null
++++ b/scripts/build-cpphdl-rocket64-graph.sh
+@@ -0,0 +1,72 @@
++#!/usr/bin/env bash
++# Lower C++ modules separately, link their graphs, then build the host runner.
++set -euo pipefail
++root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
++output_dir=${1:?generated model directory required}
++build_dir=${2:?graph build directory required}
++cpphdl_tool=${CPPHDL_TOOL:-"$HOME/cpphdl/build/cpphdl"}
++cpphdl_include=${CPPHDL_INCLUDE_DIR:-"$HOME/cpphdl/include"}
++cpphdl_root=$(cd "$cpphdl_include/.." && pwd -P)
++partition_tool=${CPPHDL_GRAPH_PARTITION_TOOL:-"$cpphdl_root/firtool/graph_partitions.py"}
++link_source=${CPPHDL_GRAPH_LINK_SOURCE:-"$cpphdl_root/tools/cpphdl-graph-link.cpp"}
++cxx=${CPPHDL_GRAPH_CXX:-clang++}
++[[ -x "$cpphdl_tool" && -f "$partition_tool" && -f "$link_source" ]] || {
++  echo "error: current cpphdl compiler and graph partition tools are required" >&2; exit 1;
++}
++ulimit -c 0
++if [[ -n "${CPPHDL_GRAPH_MAX_VMEM_KB:-}" ]]; then
++  [[ "$CPPHDL_GRAPH_MAX_VMEM_KB" =~ ^[1-9][0-9]*$ ]] || {
++    echo "error: CPPHDL_GRAPH_MAX_VMEM_KB must be a positive integer" >&2; exit 1;
++  }
++  ulimit -v "$CPPHDL_GRAPH_MAX_VMEM_KB"
++fi
++mkdir -p "$build_dir"
++attempt=$(mktemp -d "$build_dir/attempt.XXXXXX")
++trap 'status=$?; if (( status )); then echo "error: graph build failed; diagnostics: $attempt" >&2; fi' EXIT
++partitions="$build_dir/partitions"
++echo "Native graph partitions and host runner; diagnostics: $attempt"
++python3 "$partition_tool" --source "$output_dir" --output "$partitions" \
++  --cpphdl "$cpphdl_tool" --include "$cpphdl_include" \
++  --jobs "${CPPHDL_GRAPH_JOBS:-1}" 2>&1 | tee "$attempt/extract.log"
++linker="$build_dir/graph-link"
++if [[ ! -x "$linker" || "$link_source" -nt "$linker" || \
++      "$cpphdl_include/cpphdl_graph.h" -nt "$linker" || \
++      "$cpphdl_include/cpphdl_graph_native.h" -nt "$linker" ]]; then
++  "$cxx" -std=c++23 -O2 -I"$cpphdl_include" "$link_source" -o "$linker" \
++    > "$attempt/build-linker.log" 2>&1
++fi
++"$linker" "$partitions/link.plan" "$attempt/model.h" 2>&1 | tee "$attempt/link.log"
++cp "$partitions/runner.cpp" "$partitions/hosts.json" "$attempt/"
++python3 - "$attempt" "$root" "$output_dir" "$cpphdl_include" <<'PY'
++import json
++from pathlib import Path
++import sys
++attempt, root, generated, include = map(Path, sys.argv[1:])
++hosts = json.loads((attempt / 'hosts.json').read_text())
++runtime = root / 'tools/firtool-cpphdl/runtime'
++collateral = root / 'generators/testchipip/src/main/resources/testchipip/csrc'
++riscv = root / '.conda-env/riscv-tools'
++sources = [attempt / 'runner.cpp', runtime / 'cpphdl_runtime.cpp',
++           runtime / 'cpphdl_external_models.cpp', collateral / 'mm.cc',
++           collateral / 'testchip_tsi.cc', collateral / 'testchip_htif.cc']
++sources += [generated / (name + '.cpp') for name in sorted({h['type'] for h in hosts})]
++quote = lambda paths: '\n'.join(json.dumps(str(p)) for p in paths)
++(attempt / 'CMakeLists.txt').write_text(
++    'cmake_minimum_required(VERSION 3.16)\nproject(RocketNativeGraph LANGUAGES CXX)\n'
++    'set(CMAKE_CXX_STANDARD 23)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n'
++    'add_executable(cpphdl-rocket64-graph-sim\n' + quote(sources) + ')\n'
++    'target_compile_options(cpphdl-rocket64-graph-sim PRIVATE -O2)\n'
++    'target_include_directories(cpphdl-rocket64-graph-sim PRIVATE\n' +
++    quote([attempt, runtime, generated, include, collateral, riscv / 'include']) + ')\n'
++    'target_link_directories(cpphdl-rocket64-graph-sim PRIVATE ' + json.dumps(str(riscv / 'lib')) + ')\n'
++    'target_link_libraries(cpphdl-rocket64-graph-sim PRIVATE fesvr riscv dl pthread)\n'
++    'target_link_options(cpphdl-rocket64-graph-sim PRIVATE ' + json.dumps('-Wl,-rpath,' + str(riscv / 'lib')) + ')\n')
++PY
++cmake -S "$attempt" -B "$attempt/cmake" -DCMAKE_CXX_COMPILER="$cxx" \
++  2>&1 | tee "$attempt/configure.log"
++cmake --build "$attempt/cmake" --parallel "${CPPHDL_BUILD_JOBS:-1}" \
++  2>&1 | tee "$attempt/compile.log"
++test -x "$attempt/cmake/cpphdl-rocket64-graph-sim"
++ln -sfn "$attempt/cmake/cpphdl-rocket64-graph-sim" "$build_dir/cpphdl-rocket64-graph-sim"
++printf '%s\n' "$attempt" > "$build_dir/latest-success"
++echo "Native graph Rocket simulator: $build_dir/cpphdl-rocket64-graph-sim"

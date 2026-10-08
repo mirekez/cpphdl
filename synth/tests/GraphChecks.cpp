@@ -35,6 +35,14 @@ int main(int argc, char** argv) {
     cpphdl::synth::emitVerilog(graph, argv[1], "Test");
     graph.memoryWrites.push_back({1, constant(0, 4), constant(0, 8), {1}});
     if (!rejected(graph, "invalid graph memory write")) return 1;
+    graph = simple();
+    auto romAddress=graph.ports[0].bits;
+    graph.ports.push_back({"rom",graph.constantArray(constant(0x12345abc,36),romAddress,9),false});
+    auto romText=cpphdl::synth::verilogText(graph,"Rom");
+    if(romText.find("__cpphdl_memory_0[0] = 9'b010111100;")==std::string::npos ||
+       romText.find("__cpphdl_memory_0[3] = 9'b000000010;")==std::string::npos) return 1;
+    graph.memoryWrites.push_back({0,constant(0,8),constant(0,9),{1}});
+    if(!rejected(graph,"write to graph ROM")) return 1;
     graph = simple(); graph.add("host_random", 32, {}, {}, {1});
     if (!rejected(graph, "host effects")) return 1;
     graph = simple(); graph.ports[0].name = "clk";

@@ -129,6 +129,24 @@ if(Python3_Interpreter_FOUND)
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/hierarchy-imports")
     set_tests_properties(interface_hierarchy_imports_cpp PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_owned_hierarchy COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/OwnedHierarchyChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/owned-hierarchy")
+    set_tests_properties(cpp_graph_owned_hierarchy PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_firtool_partitions COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_graph_partitions.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_firtool_partitions PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_wide_shift COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideShiftChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_wide_shift PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_constant_memory COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/ConstantMemoryChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/constant-memory")
+    set_tests_properties(cpp_graph_constant_memory PROPERTIES TIMEOUT 300)
     add_test(NAME cpp_graph_zero_concat COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/ZeroConcatChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -827,6 +845,15 @@ add_test(
             "${CPPHDL_STDCXXEXP}"
 )
 set_tests_properties(optimizer_projected_handshake PROPERTIES TIMEOUT 120)
+
+add_test(
+    NAME optimizer_external_binding_state
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/ExternalBindingStateTest.sh"
+            "$<TARGET_FILE:cpphdl>"
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+)
+set_tests_properties(optimizer_external_binding_state PROPERTIES TIMEOUT 120)
 
 # A helper called from _work may mutate module storage by non-const reference.
 # Readers of that storage must remain lazy until their original demand point

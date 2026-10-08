@@ -1,0 +1,5 @@
+backend	previous_build_seconds	build_scope	new_run_seconds	cycles	signature	result
+plain	947.931	previous successful build attempt	345.562	695720	0xe49d58d75696cd28	PASS
+optimize-combs	1782.762	previous successful build attempt	197.352	695870	0xe49d58d75696cd28	PASS
+native-graph	786.160	module extraction (2 workers; TLROM cached), graph linking and runner compilation (1 worker); generated model reused	84.190	695870	0xe49d58d75696cd28	PASS
+verilator	361.027	previous successful build attempt	246.082		0xe49d58d75696cd28	PASS

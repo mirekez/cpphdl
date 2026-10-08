@@ -7571,7 +7571,8 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
     }
     for (size_t chunk = 0; chunk < bindChunkCount; ++chunk) {
       internal << "void " << shortRoot << "_optimized_combs_bind_chunk_"
-               << chunk << "(" << shortRoot << "&);\n";
+               << chunk << "(" << shortRoot << "&, " << shortRoot
+               << "_optimized_combs_state&);\n";
     }
     for (size_t chunk = 0; chunk < workChunks.size(); ++chunk) {
       internal << "void " << shortRoot << "_optimized_combs_work_chunk_"
@@ -7611,7 +7612,8 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
       chunkSource << "#include \"" << shortRoot
                   << "_optimized_combs_internal.h\"\n\nvoid " << shortRoot
                   << "_optimized_combs_bind_chunk_" << chunk << "("
-                  << shortRoot << "& obj) {\n";
+                  << shortRoot << "& obj, " << shortRoot
+                  << "_optimized_combs_state& s) {\n";
       emitAliases(chunkSource, referencedInstances({}, usedInstances));
       chunkSource << body.str() << "}\n";
       if (!finishOutput(chunkSource, chunkPath)) {
@@ -8150,12 +8152,16 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
              << "  return *runtime;\n}\n\n";
     }
     source << "}\n\nvoid bind_optimized_ports(" << shortRoot << "& obj) {\n";
+    // External input bindings can demand lazy evaluators. Their lambdas must
+    // retain the same per-root state used by calc_all, including in split files.
+    if (bindChunkCount || !rootOutputPorts.empty()) {
+      source << "  auto& s = optimized_state(obj);\n";
+    }
     for (size_t chunk = 0; chunk < bindChunkCount; ++chunk) {
       source << "  " << shortRoot << "_optimized_combs_bind_chunk_" << chunk
-             << "(obj);\n";
+             << "(obj, s);\n";
     }
     if (!rootOutputPorts.empty()) {
-      source << "  auto& s = optimized_state(obj);\n";
       std::set<size_t> usedInstances{0};
       for (const RootOutputPort &port : rootOutputPorts) {
         usedInstances.insert(nodes[port.value].instance->id);

@@ -10,6 +10,7 @@
 #include "clang/Basic/DiagnosticLex.h"
 #include "clang/Basic/DiagnosticSema.h"
 #include "clang/Basic/Stack.h"
+#include "clang/Lex/Lexer.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Tooling/Tooling.h"
@@ -126,6 +127,8 @@ class Lowering {
     std::set<size_t> appliedMemories;
     std::set<std::string> memoryGetters;
     std::set<const CXXRecordDecl*> validatedModules;
+    std::set<const FieldDecl*> ownedModulePointers;
+    std::set<const Stmt*> firtoolMemoStatements;
     std::set<std::string> annotatedInstances;
     struct NetWrites { std::string key; std::vector<unsigned> counts; };
     std::vector<NetWrites> netWrites;
@@ -272,7 +275,33 @@ class Lowering {
             }
             instantiate(definition);
             auto body = dyn_cast<CompoundStmt>(definition->getBody());
-            if (!body || !body->body_empty()) fail("nonempty module constructor unsupported", definition->getBody());
+            if (!body) fail("missing module constructor body");
+            // firtool emits owned child instances as pointer fields allocated
+            // once by the constructor. These are static hierarchy, not runtime
+            // allocation. Accept only that exact shape; never skip arbitrary
+            // constructor effects or infer aliases between child instances.
+            std::set<const FieldDecl*> allocated;
+            for (auto statement : body->body()) {
+                auto expression = dyn_cast<Expr>(statement);
+                auto assignment = expression ? dyn_cast<BinaryOperator>(expression->IgnoreImplicit()) : nullptr;
+                auto destination = assignment && assignment->getOpcode() == BO_Assign
+                    ? dyn_cast<MemberExpr>(assignment->getLHS()->IgnoreParenImpCasts()) : nullptr;
+                auto member = destination ? dyn_cast<FieldDecl>(destination->getMemberDecl()) : nullptr;
+                auto allocation = assignment ? dyn_cast<CXXNewExpr>(assignment->getRHS()->IgnoreParenImpCasts()) : nullptr;
+                auto construction = allocation ? allocation->getConstructExpr() : nullptr;
+                if (!member || !isa<CXXThisExpr>(destination->getBase()->IgnoreParenImpCasts()) ||
+                    !member->getType()->isPointerType() || !module(member->getType()->getPointeeType()) ||
+                    member->hasInClassInitializer() || !allocation || allocation->isArray() ||
+                    allocation->getNumPlacementArgs() || isa<CXXMethodDecl>(allocation->getOperatorNew()) ||
+                    !construction || construction->getNumArgs() ||
+                    !context.hasSameType(member->getType()->getPointeeType(), allocation->getAllocatedType()) ||
+                    !allocated.insert(member).second)
+                    fail("nonempty module constructor unsupported: expected unique child allocation", statement);
+            }
+            for (auto member : record->fields())
+                if (member->getType()->isPointerType() && module(member->getType()->getPointeeType()) && !allocated.count(member))
+                    fail("module pointer is not initialized by a unique child allocation: " + member->getNameAsString());
+            ownedModulePointers.insert(allocated.begin(), allocated.end());
             for (auto initializer : definition->inits()) if (initializer->isWritten()) fail("explicit module initialization unsupported");
         }
         for (auto candidate : record->methods()) {
@@ -350,7 +379,7 @@ class Lowering {
         auto element = spec->getTemplateArgs()[0].getAsType();
         auto count = spec->getTemplateArgs()[1].getAsIntegral().getLimitedValue();
         auto bits = width(element);
-        if (templateName(element) != "cpphdl::logic" || context.getTypeSize(element) != bits)
+        if ((templateName(element) != "cpphdl::logic" && !integerWrapperWidth(element)) || context.getTypeSize(element) != bits)
             fail("C++ memory requires unpadded logic elements");
         if (!count || count > 1048576 / bits) fail("unsupported C++ memory row width");
         return count * bits;
@@ -708,7 +737,15 @@ class Lowering {
             if (module(base.type)) validateModule(base.type);
             Item result; result.key = base.key + "." + name; result.type = member->getType();
             moduleFields[result.key] = member;
-            if (templateName(result.type) == "cpphdl::reg" && member->hasInClassInitializer()) fail("initialized C++ register unsupported");
+            if (result.type->isPointerType() && module(result.type->getPointeeType())) {
+                if (!ownedModulePointers.count(member)) fail("unowned module pointer: " + name);
+                result.type = result.type->getPointeeType();
+            }
+            if (templateName(result.type) == "cpphdl::reg" && member->hasInClassInitializer()) {
+                auto initializer = member->getInClassInitializer()->IgnoreImplicit();
+                auto construction = dyn_cast<CXXConstructExpr>(initializer);
+                if (!construction || construction->getNumArgs()) fail("initialized C++ register unsupported");
+            }
             if (templateName(result.type) == "cpphdl::memory" && member->hasInClassInitializer()) fail("initialized C++ memory unsupported");
             if (port(result.type) && !bindings.count(result.key) && member->hasInClassInitializer()) {
                 if (!member->getInClassInitializer() &&
@@ -756,7 +793,7 @@ class Lowering {
             elementType = spec->getTemplateArgs()[0].getAsType();
         } else if (auto array = context.getAsConstantArrayType(sourceType)) {
             count = array->getSize().getLimitedValue(); elementType = array->getElementType();
-        } else if (name == "cpphdl::logic" || integerWrapperWidth(sourceType)) { count = width(sourceType); base.bitSelection = true; }
+        } else if (name == "cpphdl::logic" || name == "cpphdl::cat" || integerWrapperWidth(sourceType)) { count = width(sourceType); base.bitSelection = true; }
         else fail("unsupported C++ indexing: " + sourceType.getAsString());
         // An intermediate dimension of a module/interface array is hierarchy,
         // not a packed value whose element needs a bit width.
@@ -832,6 +869,43 @@ class Lowering {
         if (!result && !function->getReturnType()->isVoidType()) fail("port closure has no return");
         return result.value_or(Item{});
     }
+    const FieldDecl* returnedMember(const Expr* expression) {
+        if (!expression) return nullptr;
+        expression = expression->IgnoreImplicit();
+        if (auto assignment = dyn_cast<CXXOperatorCallExpr>(expression))
+            if (assignment->getOperator() == OO_Equal && assignment->getNumArgs() == 2)
+                expression = assignment->getArg(0)->IgnoreParenImpCasts();
+        auto member = dyn_cast<MemberExpr>(expression);
+        if (!member || !isa<CXXThisExpr>(member->getBase()->IgnoreParenImpCasts())) return nullptr;
+        return dyn_cast<FieldDecl>(member->getMemberDecl());
+    }
+    void recognizeFirtoolMemo(const FunctionDecl* function) {
+        auto body = dyn_cast_or_null<CompoundStmt>(function->getBody());
+        if (!body || body->size() != 3 || !function->param_empty() || !function->getReturnType()->isReferenceType()) return;
+        auto first = body->body_begin();
+        auto guard = dyn_cast<IfStmt>(*first);
+        auto update = dyn_cast<BinaryOperator>(*(first + 1));
+        auto final = dyn_cast<ReturnStmt>(*(first + 2));
+        if (!guard || guard->getElse() || guard->getInit() || guard->getConditionVariable() || !update || !final) return;
+        auto condition = dyn_cast<BinaryOperator>(guard->getCond()->IgnoreParenImpCasts());
+        auto cached = dyn_cast<ReturnStmt>(guard->getThen());
+        if (!condition || condition->getOpcode() != BO_EQ || !cached || update->getOpcode() != BO_Assign ||
+            !cached->getRetValue() || !isa<MemberExpr>(cached->getRetValue()->IgnoreParenImpCasts())) return;
+        auto stamp = returnedMember(condition->getLHS());
+        auto storage = returnedMember(cached->getRetValue());
+        auto isClock = [](const Expr* e) {
+            auto reference = dyn_cast<DeclRefExpr>(e->IgnoreParenImpCasts());
+            return reference && reference->getDecl()->getNameAsString() == "_system_clock";
+        };
+        auto assigned = dyn_cast<CXXOperatorCallExpr>(final->getRetValue()->IgnoreImplicit());
+        if (!stamp || !storage || stamp->getNameAsString() != function->getNameAsString() + "_clock" ||
+            storage->getNameAsString() != function->getNameAsString() + "_cache" ||
+            !isClock(condition->getRHS()) || !isClock(update->getRHS()) ||
+            returnedMember(update->getLHS()) != stamp || !assigned || assigned->getOperator() != OO_Equal ||
+            returnedMember(final->getRetValue()) != storage) return;
+        firtoolMemoStatements.insert(*first);
+        firtoolMemoStatements.insert(*(first + 1));
+    }
     const FieldDecl* returnedField(const FunctionDecl* function) {
         const FieldDecl* result = nullptr;
         bool valid = true;
@@ -842,9 +916,8 @@ class Lowering {
             if (isa<LambdaExpr>(body)) return;
             if (auto returned = dyn_cast<ReturnStmt>(body)) {
                 auto expression = returned->getRetValue();
-                auto member = expression ? dyn_cast<MemberExpr>(expression->IgnoreParenImpCasts()) : nullptr;
-                auto field = member ? dyn_cast<FieldDecl>(member->getMemberDecl()) : nullptr;
-                if (!field || !isa<CXXThisExpr>(member->getBase()->IgnoreParenImpCasts()) || (result && result != field)) valid = false;
+                auto field = returnedMember(expression);
+                if (!field || (result && result != field)) valid = false;
                 else result = field;
                 return;
             }
@@ -976,6 +1049,7 @@ class Lowering {
                     fail("cross-clock lifecycle call: " + name);
         if (name.starts_with("_reset_") && !resetting) fail("reset handler called outside reset phase");
         std::string key = receiver.key + "::" + name;
+        recognizeFirtoolMemo(function);
         auto returnStorage = function->getReturnType()->isReferenceType() ? returnedField(function) : nullptr;
         bool cache = isa<CXXMethodDecl>(function) && module(receiver.type) && function->param_empty() && returnStorage;
         bool refresh = false;
@@ -1074,6 +1148,10 @@ class Lowering {
         return result;
     }
     Item exprImpl(const Expr* expression) {
+        // C++20 can reverse an overloaded comparison or rewrite != through ==.
+        // Clang's semantic form retains the selected overload and negation.
+        if (auto rewritten = dyn_cast<CXXRewrittenBinaryOperator>(expression))
+            return expr(rewritten->getSemanticForm());
         if (auto wrapper = dyn_cast<ExprWithCleanups>(expression)) return expr(wrapper->getSubExpr());
         if (auto wrapper = dyn_cast<MaterializeTemporaryExpr>(expression)) return expr(wrapper->getSubExpr());
         if (auto wrapper = dyn_cast<CXXBindTemporaryExpr>(expression)) return expr(wrapper->getSubExpr());
@@ -1237,6 +1315,18 @@ class Lowering {
         auto function = call->getDirectCallee();
         if (!function) fail("indirect C++ call", call);
         std::string name = function->getNameAsString();
+        // Evaluate constexpr hardware-value factories using Clang, including
+        // initializer-list helpers. Their STL implementation is not hardware.
+        if (function->isConstexpr() && !isa<CXXMethodDecl>(function) &&
+            !function->getReturnType()->isReferenceType() && templateName(call->getType()) == "cpphdl::logic" &&
+            specialization(call->getType())->getTemplateArgs()[0].getAsIntegral() != 0) {
+            instantiate(function);
+            std::set<const FunctionDecl*> visited;
+            Expr::EvalResult constantResult;
+            if ((!synthesisExport || !containsOpaqueCall(call, visited)) &&
+                call->EvaluateAsConstantExpr(constantResult, context) && !constantResult.HasSideEffects)
+                return constantObject(constantResult.Val, call->getType());
+        }
         Item receiver;
         unsigned start = 0;
         if (auto member = dyn_cast<CXXMemberCallExpr>(call)) {
@@ -1304,6 +1394,37 @@ class Lowering {
         std::vector<Item> arguments;
         for (unsigned index = start; index < call->getNumArgs(); ++index) arguments.push_back(expr(call->getArg(index)));
         auto qualified = function->getQualifiedNameAsString();
+        if (qualified == "firtool_cpphdl::array_get" && arguments.size() == 2 && firtoolArrayLookup(function)) {
+            auto params = function->getTemplateSpecializationArgs();
+            if (params && params->size() == 3 &&
+                (*params)[0].getKind() == TemplateArgument::Integral &&
+                (*params)[1].getKind() == TemplateArgument::Integral) {
+                auto rowWidth = (*params)[0].getAsIntegral().getLimitedValue();
+                auto depth = (*params)[1].getAsIntegral().getLimitedValue();
+                auto data = graph.resolved(read(arguments[0]));
+                if (rowWidth && rowWidth <= 1048576 && depth && depth <= 1048576 / rowWidth &&
+                    data.size() == rowWidth * depth && width(call->getType()) == rowWidth &&
+                    std::all_of(data.begin(), data.end(), [](Bit bit) { return bit < 2; })) {
+                    auto address = graph.resolved(read(cast(arguments[1], context.UnsignedLongLongTy)));
+                    // array_get multiplies its uint64_t index by rowWidth.
+                    // Preserve wrapping multiplication for power-of-two rows.
+                    // For other widths, retain the helper if overflow is possible
+                    // (wrapping could select an unaligned slice of the ROM).
+                    bool safe = !(rowWidth & (rowWidth - 1));
+                    if (safe) {
+                        unsigned shift = 0;
+                        for (auto w = rowWidth; w > 1; w >>= 1) ++shift;
+                        address = resize(slice(address, 0, 64 - shift), 64);
+                    } else {
+                        uint64_t maximum = 0;
+                        for (unsigned bit = 0; bit < 64; ++bit)
+                            if (address[bit]) maximum |= uint64_t(1) << bit;
+                        safe = maximum <= (~uint64_t(0) - (rowWidth - 1)) / rowWidth;
+                    }
+                    if (safe) return value(graph.constantArray(std::move(data), std::move(address), rowWidth), call->getType());
+                }
+            }
+        }
         if (!receiver.type.isNull() && templateName(receiver.type) == "cpphdl::memory") {
             if (name == "pending" && arguments.size() == 1)
                 return memoryRow(receiver, arguments[0], call->getType(), true);
@@ -1396,7 +1517,7 @@ class Lowering {
             return value(hostEffect("host_random", width(call->getType())), call->getType());
         }
         if (name == "bits" && !receiver.type.isNull() && arguments.size() == 2 &&
-            (templateName(payload(receiver.type)) == "cpphdl::logic" || packedArray(payload(receiver.type)) ||
+            (templateName(payload(receiver.type)) == "cpphdl::logic" || templateName(payload(receiver.type)) == "cpphdl::cat" || packedArray(payload(receiver.type)) ||
              templateName(receiver.type) == "cpphdl::memory_row" ||
              integerWrapperWidth(payload(receiver.type)))) {
             // Packed arrays share logic's bit layout, independent of byte or
@@ -1447,6 +1568,29 @@ class Lowering {
             receiver.selectedWidth = high - low + 1;
             receiver.type = call->getType();
             return receiver;
+        }
+        if (!receiver.type.isNull() && (templateName(payload(receiver.type)) == "cpphdl::logic" ||
+                                      templateName(payload(receiver.type)) == "cpphdl::cat")) {
+            // get() returns a value, so select the bit directly for both
+            // addressable storage and temporary concatenations.
+            if (name == "get" && arguments.size() == 1)
+                return cast(value(graph.binary("shr", read(receiver), read(arguments[0]), 1), context.BoolTy), call->getType());
+            if (name == "set" && arguments.size() == 2) {
+                auto position = number(graph.resolved(read(arguments[0])));
+                auto count = width(receiver.type);
+                if (!position) fail("dynamic logic::set index unsupported", call);
+                if (*position >= count) {
+                    auto bit = number(graph.resolved(slice(read(arguments[1]), 0, 1)));
+                    // firtool clears unused bits in the last storage byte.
+                    // Those zero padding bits are absent from the value graph.
+                    if (*position >= (count + 7) / 8 * 8 || !bit || *bit)
+                        fail("nonzero or out-of-storage logic padding write", call);
+                    return {};
+                }
+                write(index(receiver, arguments[0], context.BoolTy),
+                      value(slice(read(arguments[1]), 0, 1), context.BoolTy));
+                return {};
+            }
         }
         if (qualified == "cpphdl::byteswap") {
             // Like concatenation, byte reversal only rewires logical bits.
@@ -1602,6 +1746,37 @@ class Lowering {
         if (qualified == "std::move" || qualified == "std::forward") return arguments.at(0);
         return invoke(function, receiver, arguments);
     }
+    bool firtoolArrayLookup(const FunctionDecl* function) {
+        // Recognize the shipped helper's complete body, not just its name.
+        // An edited helper must continue through ordinary C++ lowering.
+        auto primary = function->getPrimaryTemplate();
+        if (!primary || primary->getTemplateParameters()->size() != 3 || function->getNumParams() != 2 || !function->hasBody()) return false;
+        std::map<std::string, std::string> names;
+        for (unsigned i = 0; i < 3; ++i)
+            names[primary->getTemplateParameters()->getParam(i)->getNameAsString()] = std::string(1, "WNI"[i]);
+        names[function->getParamDecl(0)->getNameAsString()] = "V";
+        names[function->getParamDecl(1)->getNameAsString()] = "A";
+        auto location = function->getBody()->getBeginLoc();
+        if (location.isMacroID()) return false;
+        auto text = Lexer::getSourceText(CharSourceRange::getTokenRange(function->getBody()->getSourceRange()),
+                                         context.getSourceManager(), context.getLangOpts());
+        if (text.empty()) return false;
+        const auto buffer = text.str(); // Raw lexing requires a NUL-terminated buffer.
+        Lexer lexer(location, context.getLangOpts(), buffer.data(), buffer.data(), buffer.data() + buffer.size());
+        lexer.SetCommentRetentionState(true);
+        std::string normalized;
+        for (;;) {
+            Token token; lexer.LexFromRawLexer(token);
+            if (token.is(tok::eof)) break;
+            auto offset = token.getLocation().getRawEncoding() - location.getRawEncoding();
+            if (offset > buffer.size() || token.getLength() > buffer.size() - offset) return false;
+            auto word = buffer.substr(offset, token.getLength());
+            normalized += (names.count(word) ? names.at(word) : word) + " ";
+        }
+        return normalized == "{ cpphdl :: logic < W > result = 0 ; size_t first = static_cast < uint64_t > ( A ) * W ; "
+            "for ( size_t bit = 0 ; bit < W ; ++ bit ) if ( first + bit < W * N ) "
+            "result . set ( bit , V . get ( first + bit ) ) ; return result ; } ";
+    }
     Value hostEffect(const std::string& operation, unsigned count, Value inputs = {}) {
         auto enabled = executionGuard();
         auto result = graph.add(operation, count, previousEffect, inputs, enabled);
@@ -1610,6 +1785,7 @@ class Lowering {
         return result;
     }
     bool memoStatement(const Stmt* statement) {
+        if (firtoolMemoStatements.count(statement)) return true;
         const Expr* expression = dyn_cast<Expr>(statement);
         if (auto branch = dyn_cast<IfStmt>(statement)) expression = branch->getCond();
         if (!expression) return false;

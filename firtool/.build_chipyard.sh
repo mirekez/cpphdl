@@ -1,36 +1,38 @@
 #!/usr/bin/env bash
-#
-# Starting point used for this script:
-#   chipyard/chipyard commit: 0acc1e1de2d3284bcd4d876956932a013ffe1949
-#   rocket-chip:             8f1e33b253e3bce741861c0a2e3ba8b7ff85b292
-#   riscv-isa-sim:           9c190a07c6838f6392bafa4ad83acea462c7f759
-#   libgloss:                39234a16247ab1fa234821b251f1f1870c3de343
-#   install-circt:           3f8dda6e1c1965537b5801a43c81c287bac4eae4
-#
-# Optional fresh checkout:
-#   git clone <chipyard-repo-url> chipyard
-#   cd chipyard
-#   git checkout 0acc1e1de2d3284bcd4d876956932a013ffe1949
-#   bash .build.sh
-
+# Reuse a prepared Chipyard checkout without cloning, resetting, or cleaning it.
 set -euo pipefail
-
-PRODUCT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-if [ ! -d "$PRODUCT_ROOT/chipyard" ]; then
-    echo "Cloning chipyard"
-    git clone https://github.com/ucb-bar/chipyard "$PRODUCT_ROOT/chipyard"
+product_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+cpphdl_root=$(cd -- "$product_root/.." && pwd -P)
+link="$product_root/chipyard"
+source_dir=${CHIPYARD_SOURCE_DIR:-"$HOME/chipyard/chipyard"}
+if [[ ! -e "$link" && ! -L "$link" ]]; then
+  [[ -f "$source_dir/build.sbt" && -d "$source_dir/sims/verilator" ]] || {
+    echo "error: set CHIPYARD_SOURCE_DIR to an existing, prepared Chipyard checkout" >&2
+    exit 1
+  }
+  source_dir=$(cd -- "$source_dir" && pwd -P)
+  ln -s -- "$source_dir" "$link"
 fi
-
-cd "$PRODUCT_ROOT/chipyard"
-
+[[ -f "$link/build.sbt" && -d "$link/sims/verilator" ]] || {
+  echo "error: $link does not resolve to a Chipyard checkout; left untouched" >&2
+  exit 1
+}
+root=$(cd -- "$link" && pwd -P)
+if [[ -n "${CHIPYARD_SOURCE_DIR:-}" && "$root" != "$(cd -- "$source_dir" && pwd -P)" ]]; then
+  echo "error: $link points to $root, not CHIPYARD_SOURCE_DIR; left untouched" >&2
+  exit 1
+fi
+printf '\n==> Reusing Chipyard: %s\n' "$root"
+PRODUCT_ROOT="$product_root"
+ROOT="$root"
+cd "$ROOT"
 TOP_COMMIT="0acc1e1de2d3284bcd4d876956932a013ffe1949"
 ROCKET_COMMIT="8f1e33b253e3bce741861c0a2e3ba8b7ff85b292"
 RISCV_ISA_SIM_COMMIT="9c190a07c6838f6392bafa4ad83acea462c7f759"
 LIBGLOSS_COMMIT="39234a16247ab1fa234821b251f1f1870c3de343"
 INSTALL_CIRCT_COMMIT="3f8dda6e1c1965537b5801a43c81c287bac4eae4"
 
-ROOT="$(git rev-parse --show-toplevel)"
+ROOT="$root"
 cd "$ROOT"
 
 step() {
@@ -448,7 +450,12 @@ apply_local_fixes() {
   # their config-only sources out of the same compilation and remove optional
   # type references from the shared DigitalTop/TileFragments sources.
   if ! grep -q 'config/ShuttleConfigs.scala' build.sbt; then
-    perl -0pi -e 's#"generators/chipyard/src/main/scala/upf",\n(?:[ \t]*"tools/stage/src/main/scala/phases/LegacyFirrtl2.scala",?\n)?#"generators/chipyard/src/main/scala/upf",\n        "generators/chipyard/src/main/scala/config/ShuttleConfigs.scala",\n        "generators/chipyard/src/main/scala/config/RoCCAcceleratorConfigs.scala",\n        "tools/stage/src/main/scala/phases/LegacyFirrtl2.scala"\n#' build.sbt
+    # Insert only the missing path. The other exclusions can already be present
+    # in a prepared checkout; repeating them can also remove a required comma.
+    perl -0pi -e 's#"generators/chipyard/src/main/scala/upf",\n#"generators/chipyard/src/main/scala/upf",\n        "generators/chipyard/src/main/scala/config/ShuttleConfigs.scala",\n#' build.sbt
+  fi
+  if ! grep -q 'config/RoCCAcceleratorConfigs.scala' build.sbt; then
+    perl -0pi -e 's#"generators/chipyard/src/main/scala/upf",\n#"generators/chipyard/src/main/scala/upf",\n        "generators/chipyard/src/main/scala/config/RoCCAcceleratorConfigs.scala",\n#' build.sbt
   fi
   sed -i '/with rerocc\.CanHaveReRoCCTiles/d' \
     generators/chipyard/src/main/scala/DigitalTop.scala
@@ -836,27 +843,29 @@ build_and_run_rocket64_mmul() {
 }
 
 main() {
-  require_clean_enough_checkout
-  early_cleanup_for_fresh_build
-  apply_local_fixes
-  init_critical_submodules
-  make_conda_env
-  configure_host_compilers
-  install_circt
-  install_fesvr_and_libgloss
-  build_rocket
-  build_and_run_hello
-  build_and_run_rocket64_mmul
-
-  step "Done"
-  ls -lh \
-    sims/verilator/simulator-chipyard.harness-RocketConfig \
-    tests/build/hello.riscv \
-    tests/build/rocket64-mmul.riscv \
-    sims/verilator/output/chipyard.harness.TestHarness.RocketConfig/hello.log \
-    sims/verilator/output/chipyard.harness.TestHarness.RocketConfig/rocket64-mmul.log
+  export RISCV="$root/.conda-env/riscv-tools"
+  export PATH="$RISCV/bin:$root/.conda-env/bin:$PATH"
+  export CHIPYARD_DISABLE_OPTIONAL_MODULES=1
+  export JAVA_HEAP_SIZE=${JAVA_HEAP_SIZE:-3G}
+  # Serial builds keep memory and disk pressure down on shared workstations.
+  export CPPHDL_BUILD_JOBS=${CPPHDL_BUILD_JOBS:-1}
+  export CPPHDL_FIRTOOL_JOBS=${CPPHDL_FIRTOOL_JOBS:-1}
+  export CPPHDL_USE_OPTIMIZED_PCH=${CPPHDL_USE_OPTIMIZED_PCH:-OFF}
+  export CPPHDL_TOOL=${CPPHDL_TOOL:-"$cpphdl_root/build/cpphdl"}
+  for input in "$RISCV/lib/libfesvr.a" "$RISCV/bin/riscv64-unknown-elf-gcc"; do
+    [[ -f "$input" ]] || { echo "error: missing prepared Chipyard dependency: $input" >&2; exit 1; }
+  done
+  case ${CHIPYARD_RUN_SMOKE_TESTS:-1} in
+    0|1) ;;
+    *) echo 'error: CHIPYARD_RUN_SMOKE_TESTS must be 0 or 1' >&2; exit 1 ;;
+  esac
+  "$product_root/.build_rocket64_cpphdl.sh"
+  if [[ ${CHIPYARD_RUN_SMOKE_TESTS:-1} == 1 ]]; then
+    "$product_root/.run_rocket64_cpphdl.sh"
+  fi
+  printf '\n==> C++HDL Chipyard integration ready: %s\n' "$link"
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"
 fi

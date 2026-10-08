@@ -73,7 +73,7 @@ checks C++/graph values, wide packing, evaluation order and invalid storage;
 and original RTL with equal and unequal extension widths when both tools are built.
 
 This frontend remains an explicit subset, not a general C++ optimizer. It
-rejects nonempty module constructors, explicit register initialization,
+rejects constructor side effects other than fixed child allocation, nonzero explicit register initialization,
 negative-phase lifecycle methods, dynamic structural/commit conditions,
 unsupported calls and control flow, incomplete writes and live cycles.
 Keep legacy optimization available while expanding coverage. The
@@ -84,6 +84,112 @@ An external function without a C++ body is rejected with a named diagnostic
 unless explicitly supported as a host effect. It is never replaced with a
 constant or silently skipped. Full testharness DPI/host services still need
 backend support before the small bus replay can become a full-system simulation.
+
+### Owned child modules emitted by firtool
+
+Default constructors may assign each module pointer field exactly once from
+`new Child()` of the matching type. This describes fixed hierarchy; the graph
+frontend does not execute allocation. Aliases, missing or repeated allocations,
+constructor arguments and other constructor effects are rejected. Empty-braced
+register defaults and unpadded `cpphdl::u8`/integer-wrapper memory elements are
+also accepted. The `cpp_graph_owned_hierarchy` regression compares two independent
+children and their byte-based memories against ordinary C++ and an explicit
+cycle oracle, and checks the rejection cases.
+
+The frontend lowers logical bit reads and constant-index bit writes without
+interpreting `logic`'s byte storage. Clearing padding bits in the final byte,
+as firtool's truncation helpers do, is accepted; setting nonzero padding or
+writing beyond storage is rejected. Dynamic `get()` reads use a shift and bit
+selection for both stored values and temporary concatenations. The same
+regression compares narrow helper results, 128-bit concatenation reads and
+dynamic bit reads over 4,096 samples. These checks establish frontend
+support for those constructs, not full Rocket graph simulation.
+
+Firtool's out-of-line cached getters use `<method>_clock` and
+`<method>_cache` instead of `_LAZY_COMB`. Their exact three-statement
+clock-guard/update/return-assignment pattern is recognized as memoization.
+Other clock guards retain their normal diagnostics. The regression compares
+4,096 getter samples and rejects a guard that writes its result before returning.
+C++20 rewritten comparisons lower through Clang's semantic expression, preserving
+the selected overload and any negation; a register/constant counter fixture
+checks equality and inequality for 1,024 cycles. Constexpr free functions
+returning nonempty logic values use Clang's constant-expression evaluator when
+possible, including firtool's initializer-list word factories. This preserves
+the factory's C++ semantics without lowering the standard library's pointer
+representation. The narrow-bit regression also checks a 65-bit two-word mask.
+
+### Partitioned firtool hierarchy
+
+`firtool/graph_partitions.py` lowers each reachable generated module type with
+its original method bodies and explicit child port boundaries. Small child
+wrappers capture conditional `_work` calls and their boolean arguments. The
+linker in `tools/cpphdl-graph-link.cpp` instantiates the serialized graphs,
+connects the boundaries, and gates register and memory transactions with the
+captured enables. Child memories and state remain independent per instance.
+External modules become explicit host input/output boundaries.
+
+The `.graph` extraction output is a compact serialized graph with resolved
+aliases and dead nodes removed. It avoids retaining a whole-hierarchy Clang AST.
+Native emission optionally splits operations into bounded, non-inlined C++
+functions sharing intermediate storage; register and memory updates still use
+one simultaneous transaction commit. Chunked emission rejects implicit host
+effects: the Rocket runner explicitly snapshots graph/host ports and invokes
+the existing TSI, DRAM and UART models. Hardware modules execute in the graph.
+
+`cpp_graph_firtool_partitions` compares linked execution against ordinary C++
+for 2,048 cycles each, including conditional child calls, reset arguments,
+independent memories, and host callbacks. It forces tiny two-node chunks to
+exercise dependencies across functions. Firtool bit tests also cover masked
+168-bit concatenation slices; comparison tests cover 129-bit equality and
+unsigned ordering, including bits above 63 and 127.
+
+The Chipyard native-graph build helper generates and compiles its runner at
+`-O2`. Each failed stage retains diagnostics and returns failure. Successful
+module extractions are cached by compiler, header and wrapper contents; the
+default extraction job count is one. See `firtool/README.md` for build/run
+commands and full-system validation results.
+
+Wide right shifts visit the largest shift stages first and discard bits that
+remaining stages cannot move into the requested result. Oversized shift amounts
+select zero or the arithmetic sign fill directly. This is especially important
+for indexed bit reads from firtool's packed ROM constants. `cpp_graph_wide_shift`
+checks 33,024 samples against a bit oracle, including a 32768-bit ROM, signed and
+unsigned shifts, wider and narrower results, oversized amounts, and a graph
+node-count bound. Before preserving ROM lookups, Rocket's boot-ROM partition
+lowered with 32273 nodes.
+
+Constant `firtool_cpphdl::array_get` lookups now retain read-only memory in the
+graph. The frontend recognizes the supported helper's complete tokenized body;
+edited bodies fall back to ordinary C++ lowering. ROM contents are serialized
+as row-major 64-bit words in optional `roms_v1` metadata, with older graph
+records still readable. Native code emits static constant arrays and indexed
+loads; Verilog emits initialized memory, and explicit gate mapping retains the
+constant values. Writes to ROM are rejected. Existing mutable RAM transactions,
+write masks and read/write ordering are unchanged.
+
+Rows wider than 64 bits use multiple reads of the same row. The frontend retains
+the helper's zero result for out-of-range reads and wrapping uint64_t index
+multiplication for power-of-two row widths. For other widths it uses the ROM
+path only when index multiplication and per-bit offsets cannot overflow;
+otherwise the original helper is lowered. Nonconstant packed arrays also keep
+their existing lowering. `cpp_graph_constant_memory` compares original C++ and
+both monolithic and chunked graph models for narrow, 64-bit, 65-bit and 129-bit
+rows, large indices, duplicate tables, serialization and changed helper bodies.
+The partition regression combines independent writable RAMs and ROM lookups.
+
+Before ROM preservation, on 2026-10-08, the complete linked Rocket graph passed the existing 16x16,
+eight-round RV64 matrix workload in 695870 cycles with signature
+`0xe49d58d75696cd28`, matching the direct and comb backends. The graph run took
+240.30 seconds; the successful build with cached extraction took 371.10 seconds
+at `-O2`, with peak RSS 2428984 KiB and a 4 GiB virtual-memory cap.
+
+After preserving constant ROM lookups, the boot-ROM partition has 18 nodes
+and the linked Rocket graph has 106103 nodes, with 5397 state groups unchanged.
+The full matrix test still passes in 695870 cycles with the same signature.
+A sequential comparison of the saved old runner and rebuilt runner measured
+275.38 seconds before and 84.19 seconds after (3.27x faster), both at `-O2`.
+These are single runs on the shared host; raw logs, hashes and regression
+results are under `firtool/benchmarks/20261008-memory-preserved/`.
 
 ### Switches and early exits
 

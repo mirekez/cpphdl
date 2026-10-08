@@ -1,0 +1,114 @@
+Rocket native graph profile after ROM preservation — 2026-10-08
+
+Both existing O2 runners passed the complete RV64 matrix test, each at 695870
+cycles, signature 0xe49d58d75696cd28. Binary and workload SHA256 hashes were
+unchanged during execution (results.json).
+
+Backend          Profiled wall time   CPU samples
+native-graph              87.016 s         21580
+optimize-combs           190.633 s         47131
+
+These are single instrumented runs, not replacements for latest-summary.tsv.
+Native graph used Clang 21.1.3; optimize-combs used GCC 13.2. The observed
+2.19x wall-time difference is not a controlled compiler comparison.
+
+Method
+Hardware perf events are unavailable (perf_event_paranoid=4). sample.so uses
+ITIMER_PROF/SIGPROF to sample the interrupted PC, accumulating counts in memory
+and writing them at exit. Requested interval 1 ms; observed sampling ~249 Hz.
+Bins are 16 bytes and resolved against ELF symbols with nm. Percentages are
+self CPU samples, not inclusive call stacks. Library samples outside the main
+executable are aggregated. No cache-miss or branch-misprediction measurements
+were taken. Small function-boundary attribution errors and sampling overhead
+are possible. profile.py runs the two binaries sequentially with the same ELF.
+
+Native graph hotspots
+  9.88% evaluate<true>() self: state next-values/commit, output assembly,
+        memory-write handling, and chunk dispatch.
+  9.50% chunks wholly in debug-module hardware.
+  8.85% chunks wholly in FPU hardware.
+  6.83% chunks wholly in instruction frontend / TLB hardware.
+  6.04% chunks wholly in integer ALU hardware.
+  5.76% chunks wholly in data-cache hardware.
+  4.43% runner main self.
+  3.99% chunks wholly in TileLink monitor hardware.
+
+Hardware percentages above are conservative: 26.87% is in chunks containing
+multiple hardware categories, reported separately rather than apportioned by
+node count. The table is not exhaustive. See hardware-groups.json for all
+groups and native-graph-functions.tsv for symbol-level samples.
+
+The former pure boot-ROM hotspot is gone. The two hottest individual graph
+chunks are ALU chunks 127 and 128 (3.03% and 2.45%). Their 512-node operation
+mixes include 404 and 335 muxes. Several frontend/TLB and dcache chunks have
+510 or 511 muxes per 512 nodes. Hot FPU chunks contain hundreds of muxes too.
+These are graph operations, not counted machine instructions.
+
+Recommended experiments, in order
+1. Preserve wide shifts and variable packed-array selection as word operations.
+   The generated RocketALU calls ashr<65>; FPU preMul calls ashr<78> and
+   ashr<165>. cpphdl_support.h implements ashr as a loop over bits, each with
+   a variable get(). Nonconstant array_get also extracts one bit at a time;
+   dcache TLB entry selection includes array_get<42,4>. This loses operation
+   structure and creates large mux networks. Extend the existing guarded
+   helper recognition to lower these operations directly into bounded word
+   operations or word-level selects. Preserve signedness, out-of-bounds and
+   unsigned index arithmetic semantics; the ROM work already demonstrated
+   why these details need differential tests. Hot scope percentages are not
+   exact shift/array-operation costs; speedup remains to be measured.
+
+2. Keep chunk-local intermediates local instead of persistent.
+   model.h emits 97858 intermediate assignments into a 106103-slot uint64_t
+   array (848824 bytes, about 829 KiB). Static use analysis finds 81359 values
+   (83.1%) consumed only by their defining chunk, and 16499 live outside it.
+   Emit local scalar temporaries for the former and retain shared storage only
+   for live-outs, with slot reuse as a later improvement. The compiler may
+   already forward some local loads, so these counts do not measure actual
+   memory traffic or establish a cache bottleneck. This is a focused codegen
+   experiment with less scheduling complexity than runtime dirty tracking.
+
+3. Add guarded evaluation regions for inactive combinational logic.
+   include/cpphdl_graph_native.h currently invokes all 192 generated chunks
+   unconditionally on each evaluation. FPU/debug/TLB costs make this worth
+   investigating, but samples alone do not prove those blocks can be skipped.
+   Build regions around demand/enable conditions and prove that no live output,
+   state update, memory effect or host callback is lost. Arbitrary current
+   chunks cross block boundaries and cannot simply be guarded by one enable.
+   Prefer coarse generated regions before adding per-node dirty bookkeeping.
+
+Combining optimize-combs and native-graph
+There is value in sharing analysis and optimization ideas, but the existing
+flags select alternative compilation pipelines, not composable passes.
+cpphdl.cpp dispatches --native-graph to its graph driver before the general
+--optimize-combs option processing. Graph extraction operates on Module
+hierarchy and _assign/_work/_strobe semantics; optimize-combs generates source
+schedules, lazy evaluators, and per-cycle caches around the C++ model.
+
+Combs.cpp (around lines 4956-5060) retains conditional dependency cones on
+demand and accounts for unresolved calls, feedback, and imperative mutations.
+Those correctness analyses can inform guarded graph regions. Conversely,
+native graph already computes its scheduled DAG nodes once per evaluation;
+adding optimize-combs-style per-cycle caches wholesale would duplicate that
+job and add overhead. Feeding its generated C++ back through graph lowering
+is not a supported shortcut and can discard laziness again.
+
+The useful combination is native graph's compact word/memory representation
+plus demand-aware scheduling where it is safe and profitable. Start with the
+word operations and local-temporary experiments above; neither requires
+merging the two runtime implementations.
+
+Fresh optimize-combs profile
+Its hottest functions remain distributed: work chunks 10 (3.92%), 12 (3.70%),
+8 (3.05%), and 2 (2.96%), plus dynamic comb evaluator 6889 (3.09%). There is no
+single function whose replacement explains the full gap. See its functions
+TSV and profile JSON for all sampled symbols.
+
+Artifacts / reproduction
+  cc -O2 -shared -fPIC -Wall -Wextra -o sample.so sample.c -ldl
+  python3 profile.py
+  python3 analyze.py
+  python3 analyze_details.py
+Run from this directory. profile.py reruns the benchmarks; the analysis
+scripts only read the stored profiles and referenced model/binaries.
+results.json records paths, hashes, elapsed time, exit codes, and validation.
+No compiler or simulator source changes were made for this profiling task.

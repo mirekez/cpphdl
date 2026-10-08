@@ -3,8 +3,11 @@
 #include "cpphdl_graph.h"
 
 namespace cpphdl::graph {
-inline void Graph::emit(const std::string& path) {
+inline void Graph::emit(const std::string& path, unsigned chunkSize) {
         validateClocks();
+        if (chunkSize)
+            for (const auto& node : nodes) if (node.hostEffect())
+                throw std::runtime_error("chunked native evaluation requires explicit host boundaries");
         if (clockContract == ClockContract::NamedEdges) {
             for (const auto& node : nodes) if (node.hostEffect())
                 throw std::runtime_error("multiclock host effects are not implemented");
@@ -50,6 +53,20 @@ inline void Graph::emit(const std::string& path) {
         // Memory depth belongs to runtime storage, never to the bit graph or
         // the C++ stack. Reads observe committed rows throughout evaluation.
         for (size_t index = 0; index < memories.size(); ++index) {
+            const auto& memory = memories[index];
+            if (!memory.contents.empty()) {
+                const auto words = (memory.width + 63) / 64;
+                output << "inline static constexpr std::array<std::array<uint64_t," << words << ">,"
+                       << memory.depth << "> memory" << index << " = {{\n";
+                for (size_t row = 0; row < memory.depth; ++row) {
+                    output << "{{";
+                    for (unsigned word = 0; word < words; ++word)
+                        output << (word ? "," : "") << memory.contents[row * words + word] << "ull";
+                    output << "}},\n";
+                }
+                output << "}};\n";
+                continue;
+            }
             auto type = "std::vector<std::array<uint64_t," + std::to_string((memories[index].width + 63) / 64) + ">>";
             output << type << " memory" << index << " = " << type << '(' << memories[index].depth << "ull);\n";
         }
@@ -67,6 +84,10 @@ inline void Graph::emit(const std::string& path) {
             names[index] = "state" + std::to_string(index);
             output << "uint64_t " << names[index] << " = " << number(nodes[index].left).value_or(0) << "ull;\n";
         }
+        if (chunkSize) output << "std::array<uint64_t," << nodes.size() << "> __cpphdl_values{};\n";
+        auto valueName = [&](size_t index) {
+            return chunkSize ? "__cpphdl_values[" + std::to_string(index) + "]" : "value" + std::to_string(index);
+        };
         auto assembly = [&](Value value) {
             value = resolved(value);
             if (value.size() > 64) throw std::runtime_error("wide assembly");
@@ -78,7 +99,7 @@ inline void Graph::emit(const std::string& path) {
                 auto index = owner(bit); auto first = lane(bit);
                 unsigned count = 1;
                 while (offset + count < value.size() && value[offset+count] == bit+count && first+count < nodes[index].width) ++count;
-                std::string term = names.count(index) ? names.at(index) : "value" + std::to_string(index);
+                std::string term = names.count(index) ? names.at(index) : valueName(index);
                 if (first) term = "(" + term + " >> " + std::to_string(first) + ")";
                 if (count < 64) term = "(" + term + " & " + std::to_string(mask(count)) + "ull)";
                 if (offset) term = "(" + term + " << " + std::to_string(offset) + ")";
@@ -90,17 +111,23 @@ inline void Graph::emit(const std::string& path) {
         // Output settling does not need next-state logic. Make the two phases
         // compile-time distinct so the host compiler can remove that work,
         // rather than testing a runtime flag after computing both schedules.
-        output << "template<bool Commit> void evaluate() {\n";
+        unsigned chunks = 0, chunkNodes = 0;
+        if (!chunkSize) output << "template<bool Commit> void evaluate() {\n";
         for (auto index : order) {
             const auto& node = nodes[index];
             if (node.op == "state" || node.op == "input") continue;
+            if (chunkSize && chunkNodes % chunkSize == 0) {
+                if (chunks) output << "}\n";
+                output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks++ << "() {\n";
+            }
+            ++chunkNodes;
             if (node.op == "memory_read") {
                 auto memory = number(node.right), word = number(node.select);
                 if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||
                     node.left.empty() || node.left.size() > 64 || node.width != std::min<uint64_t>(64, memories[*memory].width - *word * 64))
                     throw std::runtime_error("invalid graph memory read");
                 auto address = assembly(node.left);
-                output << "const uint64_t value" << index << " = " << address << " < " << memories[*memory].depth
+                output << (chunkSize ? "" : "const uint64_t ") << valueName(index) << " = " << address << " < " << memories[*memory].depth
                        << "ull ? memory" << *memory << '[' << address << "][" << *word << "] : 0ull;\n";
                 continue;
             }
@@ -187,7 +214,13 @@ inline void Graph::emit(const std::string& path) {
                 expr = left + " " + operators.at(op) + " " + right;
                 if (op == "div" || op == "mod") expr = right + " ? (" + expr + ") : 0ull";
             }
-            output << "const uint64_t value" << index << " = (" << expr << ") & " << mask(node.width) << "ull;\n";
+            output << (chunkSize ? "" : "const uint64_t ") << valueName(index) << " = (" << expr << ") & " << mask(node.width) << "ull;\n";
+        }
+        if (chunkSize) {
+            if (chunks) output << "}\n";
+            output << "template<bool Commit> [[gnu::noinline]] void evaluate() {\n";
+            for (unsigned index = 0; index < chunks; ++index)
+                output << "__cpphdl_chunk_" << index << "();\n";
         }
         auto clockEdge = [&](int clock, bool falling) {
             if (clock < 0) return std::string("true");

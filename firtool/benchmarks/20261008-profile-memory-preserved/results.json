@@ -1,0 +1,22 @@
+[
+  {
+    "backend": "native-graph",
+    "binary": "/home/me/chipyard/chipyard/cpphdl-build/RocketConfig/native-graph/runtime/attempt.I0fQbc/cmake/cpphdl-rocket64-graph-sim",
+    "binary_sha256": "7adec70a21e68222c731b0fc333d411a773ebee0a6e08cbc1dbfcfb618e5c9ef",
+    "elf_sha256": "bb801b7a30cff0fcfebdc44f749fa9e7c72c6c3e77d6d39ee9ff313cc41668fd",
+    "seconds": 87.01636909507215,
+    "exit_code": 0,
+    "passed": true,
+    "unchanged": true
+  },
+  {
+    "backend": "optimize-combs",
+    "binary": "/home/me/chipyard/chipyard/cpphdl-build/RocketConfig/runtime/cpphdl-rocket64-optimized-sim",
+    "binary_sha256": "c247d100ea1d958074e804bc0ec0679e2db9258f2d70c6f19524c3a12316dd0c",
+    "elf_sha256": "bb801b7a30cff0fcfebdc44f749fa9e7c72c6c3e77d6d39ee9ff313cc41668fd",
+    "seconds": 190.6329746360425,
+    "exit_code": 0,
+    "passed": true,
+    "unchanged": true
+  }
+]

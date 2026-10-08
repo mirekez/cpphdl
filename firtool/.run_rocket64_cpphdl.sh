@@ -3,29 +3,49 @@ set -euo pipefail
 
 product_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 chipyard_root="$product_root/chipyard"
-sim="$chipyard_root/cpphdl-build/RocketConfig/runtime/cpphdl-rocket64-optimized-sim"
-elf="$chipyard_root/tests/build/rocket64-mmul.riscv"
-log=${CPPHDL_TEST_LOG:-"$chipyard_root/cpphdl-build/RocketConfig/rocket64-mmul.log"}
+backend=${1:-plain}
+case "$backend" in
+  plain)
+    mode_root="$chipyard_root/cpphdl-build/RocketConfig/plain"
+    target=cpphdl-rocket64-sim
+    build_script=.build_rocket64_cpphdl.sh ;;
+  optimize-combs)
+    mode_root="$chipyard_root/cpphdl-build/RocketConfig"
+    target=cpphdl-rocket64-optimized-sim
+    build_script=.build_rocket64_cpphdl-optimize-combs.sh ;;
+  native-graph)
+    mode_root="$chipyard_root/cpphdl-build/RocketConfig/native-graph"
+    target=cpphdl-rocket64-graph-sim
+    build_script=.build_rocket64_cpphdl-native-graph.sh ;;
+  *) echo "error: run backend must be plain, optimize-combs or native-graph" >&2; exit 2 ;;
+esac
+build_dir=${CPPHDL_BUILD_DIR:-"$mode_root/runtime"}
+output_dir=${CPPHDL_OUTPUT_DIR:-"$mode_root/generated"}
+sim="$build_dir/$target"
+elf=${2:-"$chipyard_root/tests/build/rocket64-mmul.riscv"}
+log=${CPPHDL_TEST_LOG:-"$mode_root/rocket64-mmul.log"}
 expected='ROCKET RV64 MMUL TEST PASSED:'
 
 [[ -x "$sim" ]] || {
-  echo "error: missing optimized C++HDL Rocket simulator: $sim" >&2
-  echo "run $product_root/.build_rocket64_cpphdl.sh first" >&2
+  echo "error: missing $backend C++HDL Rocket simulator: $sim" >&2
+  echo "run $product_root/$build_script first" >&2
   exit 1
 }
-optimized_source="$chipyard_root/cpphdl-build/RocketConfig/generated/TestHarness_optimized_combs.cpp"
+if [[ "$backend" == optimize-combs ]]; then
+optimized_source="$output_dir/TestHarness_optimized_combs.cpp"
 [[ -s "$optimized_source" ]] || {
   echo "error: missing optimized comb schedule: $optimized_source" >&2
   exit 1
 }
 if grep -Eq -- '->_(work|assign)\(|\._(work|assign)\(' \
-    "$chipyard_root"/cpphdl-build/RocketConfig/generated/TestHarness_optimized_combs*.cpp; then
+    "$output_dir"/TestHarness_optimized_combs*.cpp; then
   echo "error: optimized sources call _work or _assign" >&2
   exit 1
 fi
+fi
 [[ -s "$elf" ]] || {
   echo "error: missing RV64 matrix executable: $elf" >&2
-  echo "run $product_root/.build_rocket64_cpphdl.sh first" >&2
+  echo "run $product_root/$build_script first" >&2
   exit 1
 }
 
@@ -33,7 +53,7 @@ mkdir -p "$(dirname "$log")"
 wall_timeout=${CPPHDL_TIMEOUT:-3600s}
 max_cycles=${CPPHDL_MAX_CYCLES:-100000000}
 
-echo "Running optimized C++HDL Rocket matrix test"
+echo "Running $backend C++HDL Rocket matrix test"
 echo "Wall timeout: $wall_timeout; simulation cycle limit: $max_cycles"
 set +e
 timeout "$wall_timeout" env \

@@ -1,0 +1,6 @@
+Refreshed after constant ROM preservation, 2026-10-08.
+Native graph uses the new uninstrumented 84.190-second run and successful 786.16-second build.
+Other backends retain the previous uninstrumented runs and build measurements. No new builds or runs were performed for this table refresh.
+Native graph build includes module extraction with two workers (the separately verified TLROM was cached), linking and runner compilation with one worker. The FIRRTL-exported model was reused. The older 371.10-second graph build excluded initial extraction.
+Measurements are single runs on a shared host and were not all collected in one session. Instrumented profiling runs are excluded.
+Original measurement directories and the paired old/new graph comparison are unchanged.
