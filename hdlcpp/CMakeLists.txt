@@ -53,6 +53,58 @@ add_test(NAME hdlcpp_expression_helpers COMMAND bash
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME hdlcpp_byte_string_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ByteStringChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/byte-string")
+    set_tests_properties(hdlcpp_byte_string_cpp PROPERTIES TIMEOUT 240)
+    if(HDLCPP_WIDTHS_VERILATOR)
+        add_test(NAME hdlcpp_byte_string_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ByteStringChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${HDLCPP_WIDTHS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/byte-string")
+        set_tests_properties(hdlcpp_byte_string_verilator PROPERTIES TIMEOUT 240)
+    endif()
+    add_test(NAME hdlcpp_array_write_bounds_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ArrayWriteBoundsChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/array-write-bounds")
+    set_tests_properties(hdlcpp_array_write_bounds_cpp PROPERTIES TIMEOUT 600)
+    if(HDLCPP_WIDTHS_VERILATOR)
+        add_test(NAME hdlcpp_array_write_bounds_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ArrayWriteBoundsChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${HDLCPP_WIDTHS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/array-write-bounds")
+        set_tests_properties(hdlcpp_array_write_bounds_verilator PROPERTIES TIMEOUT 600)
+    endif()
+    add_test(NAME hdlcpp_nested_packed_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NestedPackedChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/nested-packed")
+    set_tests_properties(hdlcpp_nested_packed_cpp PROPERTIES TIMEOUT 600)
+    if(HDLCPP_WIDTHS_VERILATOR)
+        add_test(NAME hdlcpp_nested_packed_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NestedPackedChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${HDLCPP_WIDTHS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/nested-packed")
+        set_tests_properties(hdlcpp_nested_packed_verilator PROPERTIES TIMEOUT 600)
+    endif()
+    add_test(NAME hdlcpp_declared_ranges_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/DeclaredRangesChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/declared-ranges")
+    set_tests_properties(hdlcpp_declared_ranges_cpp PROPERTIES TIMEOUT 240)
+    if(HDLCPP_WIDTHS_VERILATOR)
+        add_test(NAME hdlcpp_declared_ranges_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/DeclaredRangesChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${HDLCPP_WIDTHS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/declared-ranges")
+        set_tests_properties(hdlcpp_declared_ranges_verilator PROPERTIES TIMEOUT 240)
+    endif()
     add_test(NAME hdlcpp_xperm_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/XpermChecks.py"
         --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -75,3 +127,9 @@ add_test(NAME hdlcpp_test_modules COMMAND test_modules)
 add_executable(test_structs tests/test_structs.cpp)
 target_include_directories(test_structs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_structs COMMAND test_structs)
+
+# These executables use assert for their test expectations; Release builds
+# must check them too, rather than silently turning failures into successes.
+foreach(test_target test_combs test_modules test_structs)
+    target_compile_options(${test_target} PRIVATE -UNDEBUG)
+endforeach()

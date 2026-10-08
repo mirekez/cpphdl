@@ -24,20 +24,22 @@ static void writeFile(const fs::path& path, const std::string& text)
     out << text;
 }
 
+static unsigned expectationFailures = 0;
+
 static void expectContains(const std::string& text, const std::string& needle)
 {
     if (text.find(needle) == std::string::npos) {
         std::cerr << "missing expected text:\n" << needle << "\n";
+        ++expectationFailures;
     }
-    assert(text.find(needle) != std::string::npos);
 }
 
 static void expectNotContains(const std::string& text, const std::string& needle)
 {
     if (text.find(needle) != std::string::npos) {
         std::cerr << "unexpected text:\n" << needle << "\n";
+        ++expectationFailures;
     }
-    assert(text.find(needle) == std::string::npos);
 }
 
 static fs::path hdlcppPath(const char* argv0)
@@ -566,7 +568,7 @@ endmodule
 
     auto h = convertModule(argv0, "typedef_element_multi_unpacked_dims", sv);
     expectContains(h, "using word_t = logic<64>;");
-    expectContains(h, ",array<(((uint64_t)(1)");
+    expectContains(h, "array<1,array<2,word_t,true>,true>");
     expectNotContains(h, "_LAZY_COMB(buf_q_comb, array<array<");
     expectContains(h, "buf_q_comb_func()");
 }
@@ -829,7 +831,7 @@ endmodule
     expectContains(h, "using words_t = array<");
     expectContains(h, ",word_t,true>;");
     expectContains(h, ",true>;");
-    expectContains(h, "words_comb = cpphdl::pack_value<cpphdl::type_width<array<");
+    expectContains(h, "words_comb = __hdlcpp_array_cast<words_t>(bytes_i_in());");
     expectNotContains(h, "using words_t = array<2,word_t>;");
 }
 
@@ -880,7 +882,7 @@ endmodule
     expectContains(h, ",entry_t>;");
     expectNotContains(h, "using entries_t = array<2,entry_t,true>;");
     expectNotContains(h, ",true> entries");
-    expectContains(h, "entries_comb[0].hi");
+    expectContains(h, "entries_comb[__cpphdl_write_index_0].hi = __cpphdl_write_value;");
 }
 
 static void testConfiguredAggregatePackedArrayKeepsAddressableElements(const char* argv0)
@@ -931,7 +933,8 @@ endmodule
     auto h = convertModule(argv0, "packed_struct_array_field_write", sv);
     expectContains(h, ",item_t>");
     expectNotContains(h, "array<1,item_t,true>");
-    expectContains(h, "out_comb[0].id = id_i_in();");
+    expectContains(h, "out_comb[__cpphdl_write_index_0].id = __cpphdl_write_value;");
+    expectContains(h, ">>(id_i_in());");
     expectContains(h, "out_id_comb_func()[(unsigned)");
 }
 
@@ -1188,5 +1191,5 @@ int main(int argc, char** argv)
     testPackedStructNestedArrayBitConditionalUsesActualFieldType(argv[0]);
     testDependentPackedFieldConditionalUsesActualDestinationType(argv[0]);
     testPackedStorageWriteBindsCrossCombSources(argv[0]);
-    return 0;
+    return expectationFailures ? 1 : 0;
 }

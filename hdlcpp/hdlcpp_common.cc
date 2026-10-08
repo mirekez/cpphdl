@@ -1,4 +1,5 @@
 #include "hdlcpp.h"
+#include "hdlcpp_comb.h"
 
 struct PortGen {
     std::string name;
@@ -2417,9 +2418,14 @@ static std::string numericLiteralWidth(const std::string& text)
     return "";
 }
 
+static std::string foldDeclaredRangeWidth(const std::string& expression);
+
 static std::string foldWidth(std::string s)
 {
     s = trim(s);
+    if (auto folded = foldDeclaredRangeWidth(s); !folded.empty()) {
+        return folded;
+    }
     if (isNumber(s)) {
         return s;
     }
@@ -3775,6 +3781,7 @@ static std::string postProcessCppLineImpl(std::string line)
 
     auto rhsTrim = trim(rhs);
 	    if (!packedStorageBitsAssign &&
+	        hdlcpp::declarationName(line).empty() &&
 	        rhsTrim.find("std::remove_cvref_t<decltype") == std::string::npos &&
 	        rhsTrim.find("cpphdl::value_type_for_ref_t<decltype") == std::string::npos &&
 	        !lhsTrim.empty() && lhsTrim.rfind("static constexpr", 0) != 0 &&
@@ -5546,6 +5553,62 @@ static size_t findRangeColon(const std::string& range)
     return std::string::npos;
 }
 
+static std::optional<uint64_t> constantRangeBound(std::string expression)
+{
+    expression = stripConfiguredCastsAndParens(std::move(expression));
+    if (expression.rfind("int32_t(", 0) == 0 && expression.back() == ')') {
+        if (auto value = constantRangeBound(expression.substr(8, expression.size() - 9))) {
+            return static_cast<int32_t>(*value);
+        }
+        return std::nullopt;
+    }
+    uint64_t value = 0;
+    if (parseCppIntegralLiteral(expression, value)) {
+        return value;
+    }
+    auto minus = findConfiguredTopLevelOp(expression, "-");
+    if (minus != std::string::npos && expression.find('-', minus + 1) == std::string::npos) {
+        auto left = minus == 0 ? std::optional<uint64_t>(0) : constantRangeBound(expression.substr(0, minus));
+        auto right = constantRangeBound(expression.substr(minus + 1));
+        if (left && right) return *left - *right;
+    }
+    return std::nullopt;
+}
+
+static std::string foldDeclaredRangeWidth(const std::string& expression)
+{
+    const std::string prefix = "__hdlcpp_range_width(";
+    if (expression.rfind(prefix, 0) != 0 || expression.back() != ')') return "";
+    auto bounds = splitCppTemplateArgs(expression.substr(prefix.size(), expression.size() - prefix.size() - 1));
+    if (bounds.size() != 2) return "";
+    auto left = constantRangeBound(bounds[0]);
+    auto right = constantRangeBound(bounds[1]);
+    if (!left || !right) return "";
+    int64_t first = static_cast<int32_t>(*left);
+    int64_t last = static_cast<int32_t>(*right);
+    return std::to_string((first >= last ? first - last : last - first) + 1);
+}
+
+static std::string inclusiveRangeWidth(std::string left, std::string right)
+{
+    auto bound = [](std::string expression) {
+        auto literal = stripBalancedOuterParens(expression);
+        bool negative = !literal.empty() && literal.front() == '-';
+        if (negative) literal = stripBalancedOuterParens(literal.substr(1));
+        uint64_t value = 0;
+        if (parseCppIntegralLiteral(literal, value)) {
+            auto narrowed = static_cast<int32_t>(negative ? uint64_t(0) - value : value);
+            return std::to_string(narrowed);
+        }
+        return "int32_t(" + expression + ")";
+    };
+    left = bound(std::move(left));
+    right = bound(std::move(right));
+    auto expression = "__hdlcpp_range_width(" + left + ", " + right + ")";
+    auto folded = foldDeclaredRangeWidth(expression);
+    return folded.empty() ? expression : folded;
+}
+
 static std::string textRangeWidth(std::string range)
 {
     range = trim(range);
@@ -5558,19 +5621,7 @@ static std::string textRangeWidth(std::string range)
     }
     auto left = trim(range.substr(0, colon));
     auto right = trim(range.substr(colon + 1));
-    auto compactLeft = left;
-    auto compactRight = right;
-    compactLeft.erase(std::remove_if(compactLeft.begin(), compactLeft.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)); }), compactLeft.end());
-    compactRight.erase(std::remove_if(compactRight.begin(), compactRight.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)); }), compactRight.end());
-    if ((compactRight == "0" || compactRight == "0x0") && compactLeft.size() > 2 && compactLeft.substr(compactLeft.size() - 2) == "-1") {
-        return trim(left.substr(0, left.rfind('-')));
-    }
-    if ((compactLeft == "0" || compactLeft == "0x0") && compactRight.size() > 2 && compactRight.substr(compactRight.size() - 2) == "-1") {
-        return trim(right.substr(0, right.rfind('-')));
-    }
-    auto l = cppExprText(left);
-    auto r = cppExprText(right);
-    return "(((uint64_t)(" + l + ") >= (uint64_t)(" + r + ") ? ((uint64_t)(" + l + ") - (uint64_t)(" + r + ")) : ((uint64_t)(" + r + ") - (uint64_t)(" + l + "))) + 1)";
+    return inclusiveRangeWidth(cppExprText(left), cppExprText(right));
 }
 
 static std::vector<std::string> bracketWidths(std::string raw)
@@ -5926,63 +5977,19 @@ static std::string memoryDepth(const std::string& type)
 
 static std::vector<std::string> memoryArgs(const std::string& type)
 {
-    std::vector<std::string> args;
     if (type.rfind("memory<", 0) != 0 || type.empty() || type.back() != '>') {
-        return args;
+        return {};
     }
-    int nested = 0;
-    std::string current;
-    for (size_t i = 7; i + 1 < type.size(); ++i) {
-        char c = type[i];
-        char prev = i > 0 ? type[i - 1] : '\0';
-        char next = i + 1 < type.size() ? type[i + 1] : '\0';
-        if (c == '<' && prev != '<' && next != '<' && next != '=') {
-            ++nested;
-        }
-        else if (c == '>' && prev != '>' && prev != '=' && next != '>' && next != '=') {
-            --nested;
-        }
-        if (c == ',' && nested == 0) {
-            args.push_back(trim(current));
-            current.clear();
-        }
-        else {
-            current += c;
-        }
-    }
-    args.push_back(trim(current));
-    return args;
+    return splitCppTemplateArgs(type.substr(7, type.size() - 8));
 }
 
 static std::vector<std::string> templateArgsFor(const std::string& type, const std::string& prefix)
 {
-    std::vector<std::string> args;
     if (type.rfind(prefix + "<", 0) != 0 || type.empty() || type.back() != '>') {
-        return args;
+        return {};
     }
-    int depth = 0;
-    std::string current;
     auto start = prefix.size() + 1;
-    for (size_t i = start; i + 1 < type.size(); ++i) {
-        char c = type[i];
-        char prev = i > 0 ? type[i - 1] : '\0';
-        char next = i + 1 < type.size() ? type[i + 1] : '\0';
-        if (c == '<' && prev != '<' && next != '<' && next != '=') {
-            ++depth;
-        }
-        else if (c == '>' && prev != '>' && prev != '=' && next != '>' && next != '=') {
-            --depth;
-        }
-        if (c == ',' && depth == 0) {
-            args.push_back(trim(current));
-            current.clear();
-        }
-        else {
-            current += c;
-        }
-    }
-    args.push_back(trim(current));
-    return args;
+    return splitCppTemplateArgs(type.substr(start, type.size() - start - 1));
 }
 
 static bool scalarMemory(const std::string& type)

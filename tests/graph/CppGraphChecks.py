@@ -5,6 +5,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -18,9 +22,10 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='cpp-graph-', dir=args.work) as directory:
         work = Path(directory)
+        toolchain = TestToolchain(args.cxx, None, work)
 
         def run(command, success=True):
-            result = subprocess.run(list(map(str, command)), cwd=work, capture_output=True,
+            result = subprocess.run(toolchain.command(command), cwd=work, env=toolchain.env, capture_output=True,
                                     text=True, timeout=180)
             if (result.returncode == 0) != success:
                 logs = '\n'.join(str(path) + '\n' + path.read_text()[-5000:]
@@ -99,11 +104,11 @@ def main():
         source = work / 'wide-range.cc'
         source.write_text('#include "cpphdl.h"\nclass Bad: public cpphdl::Module { public: '
                           '_PORT(cpphdl::logic<1>) index_in; cpphdl::reg<cpphdl::logic<65>> state; '
-                          'void _work(bool) { state._next = 0; state._next.bits(uint64_t(index_in()),0) = 1; } '
+                          'void _work(bool) { state._next = 0; state.bits(uint64_t(index_in()),0) = 1; } '
                           'void _strobe() { state.strobe(); } }; Bad cpphdl_top;\n')
         run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
              '--output', work / 'wide-range', source], success=False)
-        assert 'wide or nested dynamic C++ bit range unsupported' in (work / 'wide-range/cpp-to-graph.log').read_text()
+        assert 'direct current-state C++ mutation unsupported' in (work / 'wide-range/cpp-to-graph.log').read_text()
         assert not (work / 'wide-range/model.h').exists()
         for native_packed in (False, True):
             destination = work / ('packed-ranges-native' if native_packed else 'packed-ranges')
@@ -131,7 +136,7 @@ def main():
         shutil.rmtree(work / 'packed-converted')
         for name, state_type, target, high, diagnostic in [
             ('packed-wide-range', 'cpphdl::array<2, cpphdl::logic<64>, true>',
-             'state._next', 'uint64_t(index_in())', 'wide or nested dynamic C++ bit range unsupported'),
+             'state', 'uint64_t(index_in())', 'direct current-state C++ mutation unsupported'),
             ('packed-current-range', 'cpphdl::array<1, cpphdl::logic<64>, true>',
              'state', '63', 'direct current-state C++ mutation unsupported'),
         ]:

@@ -67,6 +67,9 @@ endif()
 # SIZE token including its terminator so SIZE=3 cannot match SIZE=32.
 foreach(size 2 3 4 8 32)
     string(REGEX MATCHALL "MLAB_RDW_POISON_EXERCISED SIZE=${size};" hits "${output}")
+    # Under CMP0007 NEW, each matched semicolon also creates an empty list
+    # entry. Count actual reports, not those separator entries (CMake 4).
+    list(FILTER hits EXCLUDE REGEX "^$")
     list(LENGTH hits count)
     if(NOT count EQUAL size)
         message(FATAL_ERROR "SIZE=${size}: expected ${size} poisoned lanes, got ${count}; see ${work}/simulation.log")

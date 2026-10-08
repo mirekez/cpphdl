@@ -1084,6 +1084,20 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 return cpphdl::Expr{"cpphdl_bitnot", cpphdl::Expr::EXPR_CAST, {std::move(call.sub[0])}};
             }
         }
+        if (OCE->getNumArgs() == 1 && (OCE->getOperator() == OO_Plus
+            || OCE->getOperator() == OO_Minus || OCE->getOperator() == OO_Exclaim
+            || OCE->getOperator() == OO_Tilde || OCE->getOperator() == OO_Amp
+            || OCE->getOperator() == OO_Star)) {
+            call.type = cpphdl::Expr::EXPR_UNARY;
+            if ((OCE->getOperator() == OO_Plus || OCE->getOperator() == OO_Minus)
+                && OCE->getType()->isIntegralOrEnumerationType()) {
+                // cat negation operates on uint64_t even when the packed
+                // operand is narrower. Size it before the unary operation,
+                // including when SV uses the result in a self-sized context.
+                call.sub[0] = valueCast(OCE->getType(), OCE->getArg(0));
+            }
+            return call;
+        }
         if (OCE->getOperator() == OO_Equal && OCE->getNumArgs() >= 2) {
             QualType targetType = OCE->getArg(0)->getType().getNonReferenceType();
             if (skipStdFunctionType(targetType) && targetType->isBooleanType()) {

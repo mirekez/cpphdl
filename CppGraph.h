@@ -1,7 +1,10 @@
 #pragma once
 
 #include "include/cpphdl_graph.h"
+#include "hls/AstClocked.h"
+#include "synth/BlackBox.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/RecordLayout.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Basic/DiagnosticLex.h"
@@ -19,6 +22,8 @@ namespace cpphdl::cpp_graph {
 using namespace clang;
 using namespace cpphdl::graph;
 using clang::Expr;
+inline bool scheduledExport = false;
+inline bool synthesisExport = false;
 
 // This frontend consumes the ordinary C++ model, not the original RTL. Keep
 // logical bit layout separate from C++ object layout: padding, proxy objects
@@ -34,13 +39,13 @@ class Lowering {
         unsigned selectedWidth = 0;
         Value rangeMask, rangeLow;
         bool bitSelection = false;
-        bool readOnlyWideRange = false;
         std::shared_ptr<Closure> closure;
         std::optional<size_t> memory;
         Value memoryAddress;
+        std::optional<Value> registerNext;
     };
     using Locals = std::map<const ValueDecl*, Item>;
-    struct Closure { const LambdaExpr* expression; Item object; Locals locals; };
+    struct Closure { const LambdaExpr* expression; Item object; Locals locals; std::string scope; };
     // Branch snapshots share immutable bit vectors. Copying every wide bus at
     // each nested condition makes frontend memory grow with call depth.
     struct Environment : std::map<std::string, std::shared_ptr<const Value>> {
@@ -55,10 +60,15 @@ class Lowering {
     Environment cells;
     std::map<std::string, Value> originals, results;
     std::map<std::string, std::shared_ptr<Closure>> bindings;
+    std::map<std::string, Item> interfaceBindings;
+    std::set<std::string> activeInterfaceReads;
     std::map<std::string, Value> registers;
     std::map<std::string, Value> blockingStates;
     std::map<std::string, const FieldDecl*> moduleFields;
     std::set<std::string> combinationalWrites;
+    std::map<std::string, std::map<std::string, Value>> scheduledPorts;
+    std::map<std::string, std::vector<size_t>> scheduledMemories;
+    std::set<std::string> scheduledWork, scheduledStrobe;
     struct GetterReads {
         Environment fields;
         std::set<std::shared_ptr<const GetterReads>> producers;
@@ -69,11 +79,44 @@ class Lowering {
     std::map<QualType, unsigned> widths;
     std::vector<std::string> stack;
     unsigned serial = 0;
+    unsigned oneClockSerial = 0, oneClockDepth = 0;
+    unsigned oneClockSerialBegin = 0;
     std::vector<std::string> localNames;
+    size_t peakLocals = 0;
+    void trackLocal(const std::string& key) {
+        localNames.push_back(key);
+        peakLocals = std::max(peakLocals, localNames.size());
+    }
+    void releaseLocals(size_t begin) {
+        if (structural) return;
+        while (localNames.size() > begin) {
+            cells.erase(localNames.back()); originals.erase(localNames.back()); localNames.pop_back();
+        }
+    }
     bool structural = false;
     bool committing = false;
     bool working = false;
-    bool concatenating = false;
+    bool allowEmptyValue = false;
+    int activeProcess = -1;
+    bool resetting = false;
+    std::map<std::string, int> resetOwners;
+    std::map<std::string, Value> resetValues;
+    std::map<size_t, int> memoryOwners, memoryCommits, pendingReaders;
+    std::set<int> asyncProcesses;
+    std::map<std::string, int> nextOwners, commitOwners;
+    std::map<std::string, std::set<int>> nextReaders;
+
+    std::string processMethod(int process, bool strobe = false) const {
+        return std::string(strobe ? "_strobe_" : "_work_") + (process % 2 ? "neg_" : "") + graph.clocks.at(process / 2).name;
+    }
+    std::string resetMethod(int process) const {
+        return std::string(process % 2 ? "_reset_neg_" : "_reset_pos_") + graph.clocks.at(process / 2).name;
+    }
+    void claim(std::map<std::string, int>& owners, const std::string& key) {
+        auto [entry, fresh] = owners.emplace(key, activeProcess);
+        if (!fresh && entry->second != activeProcess)
+            fail("multiple clock/edge owners for " + key + ": " + processMethod(entry->second) + " and " + processMethod(activeProcess));
+    }
     std::vector<std::pair<Value, bool>> effectPath;
     Value previousEffect;
     unsigned effectCount = 0;
@@ -83,6 +126,7 @@ class Lowering {
     std::set<size_t> appliedMemories;
     std::set<std::string> memoryGetters;
     std::set<const CXXRecordDecl*> validatedModules;
+    std::set<std::string> annotatedInstances;
     struct NetWrites { std::string key; std::vector<unsigned> counts; };
     std::vector<NetWrites> netWrites;
     std::vector<std::string> producerStorage;
@@ -117,6 +161,15 @@ class Lowering {
         return false;
     }
     bool port(QualType type) { return templateName(type) == "cpphdl::function_ref"; }
+    bool interface(QualType type) {
+        if (type.isNull()) return false;
+        auto record = clean(type)->getAsCXXRecordDecl();
+        if (!record || !record->hasDefinition()) return false;
+        record = record->getDefinition();
+        if (record->getQualifiedNameAsString() == "cpphdl::Interface") return true;
+        for (const auto& base : record->bases()) if (interface(base.getType())) return true;
+        return false;
+    }
     bool packedArray(QualType type) {
         return templateName(type) == "cpphdl::array" &&
             specialization(type)->getTemplateArgs()[2].getAsIntegral().getBoolValue();
@@ -139,22 +192,53 @@ class Lowering {
             return specialization(type)->getTemplateArgs()[0].getAsType();
         return clean(type);
     }
-    bool containsModule(QualType type) {
+    bool containsHierarchy(QualType type) {
         if (type.isNull()) return false;
         type = payload(type);
-        if (module(type)) return true;
+        if (module(type) || interface(type)) return true;
         auto name = templateName(type);
-        if (name == "cpphdl::array") return containsModule(specialization(type)->getTemplateArgs()[1].getAsType());
-        if (name == "std::array") return containsModule(specialization(type)->getTemplateArgs()[0].getAsType());
-        if (auto array = context.getAsConstantArrayType(type)) return containsModule(array->getElementType());
+        if (name == "cpphdl::array") return containsHierarchy(specialization(type)->getTemplateArgs()[1].getAsType());
+        if (name == "std::array") return containsHierarchy(specialization(type)->getTemplateArgs()[0].getAsType());
+        if (auto array = context.getAsConstantArrayType(type)) return containsHierarchy(array->getElementType());
+        return false;
+    }
+    bool containsClocked(QualType type, std::set<const CXXRecordDecl*>& visited) {
+        type = clean(type);
+        if (auto array = context.getAsConstantArrayType(type))
+            return containsClocked(array->getElementType(), visited);
+        auto name = templateName(type);
+        if (name == "cpphdl::array" || name == "std::array")
+            return containsClocked(specialization(type)->getTemplateArgs()[name == "cpphdl::array" ? 1 : 0].getAsType(), visited);
+        if (!module(type)) return false;
+        auto record = type->getAsCXXRecordDecl()->getDefinition();
+        if (!visited.insert(record).second) return false;
+        if (hls::isClocked(record)) return true;
+        for (const auto& base : record->bases())
+            if (containsClocked(base.getType(), visited)) return true;
+        for (const auto* member : record->fields())
+            if (containsClocked(member->getType(), visited)) return true;
+        return false;
+    }
+    bool containsOpaqueCall(const Stmt* statement, std::set<const FunctionDecl*>& visited) {
+        if (!statement) return false;
+        if (auto call = dyn_cast<CallExpr>(statement)) if (auto function = call->getDirectCallee()) {
+            for (auto* attr : function->specific_attrs<AnnotateAttr>())
+                if (attr->getAnnotation().starts_with("CPPHDL_BLACKBOX=")) return true;
+            if (function->isConstexpr() && visited.insert(function->getCanonicalDecl()).second &&
+                containsOpaqueCall(function->getBody(), visited)) return true;
+        }
+        for (auto child : statement->children()) if (containsOpaqueCall(child, visited)) return true;
         return false;
     }
     std::optional<uint64_t> evaluated(const Expr* expression) {
         Expr::EvalResult result;
         if (!expression || expression->isValueDependent() || expression->isInstantiationDependent()) return {};
         if (expression->EvaluateAsInt(result, context) && !result.HasSideEffects && result.Val.isInt() &&
-            result.Val.getInt().getBitWidth() <= 64)
+            result.Val.getInt().getBitWidth() <= 64) {
+            std::set<const FunctionDecl*> visited;
+            if (synthesisExport && containsOpaqueCall(expression, visited)) return {};
             return result.Val.getInt().getLimitedValue();
+        }
         return {};
     }
     void instantiate(const FunctionDecl* declaration) {
@@ -170,6 +254,13 @@ class Lowering {
     void validateModule(QualType type) {
         auto record = clean(type)->getAsCXXRecordDecl();
         if (!validatedModules.insert(record).second) return;
+        // Clocked's C++ body is a transaction reference. Its scheduled RTL has
+        // different state/latency and must not be replaced by this body.
+        if (hls::isClocked(record)) {
+                if (scheduledExport) return;
+                else fail("HLS Clocked requires the scheduled HLS graph; use --synth --top RTL_MODULE instead of lowering its native transaction reference");
+        }
+        for (const auto& base : record->bases()) if (module(base.getType())) validateModule(base.getType());
         for (auto constructor : record->ctors()) if (constructor->isUserProvided() && constructor->isDefaultConstructor()) {
             // We check constructors, but never execute them. Instantiating an
             // empty template constructor also instantiates every child object's
@@ -186,12 +277,22 @@ class Lowering {
         }
         for (auto candidate : record->methods()) {
             auto name = candidate->getNameAsString();
-            if (name == "_work_neg" || name == "_strobe_neg") {
+            if (name.starts_with("_work_") || name.starts_with("_strobe_") || name.starts_with("_reset_")) {
+                bool declared = false;
+                for (size_t process = 0; process < graph.clocks.size() * 2; ++process)
+                    declared |= name == processMethod(process) || name == processMethod(process, true) || name == resetMethod(process);
+                if (declared) continue;
                 instantiate(candidate);
                 auto body = dyn_cast<CompoundStmt>(candidate->getBody());
-                if (!body || !body->body_empty()) fail("negative-phase C++ lifecycle unsupported", candidate->getBody());
+                if (!body || !body->body_empty()) fail("named-clock, reset-event or negative-phase C++ lifecycle unsupported", candidate->getBody());
             }
         }
+    }
+    bool nativeRecordLayout(const CXXRecordDecl* record) {
+        if (!record || !record->isStandardLayout() || record->isUnion() || record->getNumBases()) return false;
+        for (auto method : record->methods())
+            if (method->getNameAsString() == "_size_bits") return false;
+        return true;
     }
     unsigned width(QualType type) {
         type = clean(type);
@@ -222,16 +323,23 @@ class Lowering {
                 object = saved;
                 break;
             }
+            if (!result && nativeRecordLayout(record)) {
+                for (auto field : record->fields()) {
+                    if (field->isBitField() || field->getType()->isPointerType() || field->getType()->isReferenceType())
+                        fail("unsupported native graph record field: " + field->getNameAsString());
+                    width(field->getType());
+                }
+                result = context.getTypeSize(type);
+            }
         }
         if (!result || result > 1048576) fail("unsupported C++ hardware type: " + type.getAsString());
         widths[type] = result;
         return result;
     }
     unsigned valueWidth(QualType type) {
-        // SV permits a zero-count replication as an empty concat operand.
-        // hdlcpp represents it with temporary logic<0> values (including the
-        // repeat() result). Never relax width() for addressable storage/ports.
-        if (concatenating && templateName(type) == "cpphdl::logic" &&
+        // Empty concat operands and scalar conversions may consume temporary
+        // logic<0> values. Never relax width() for addressable storage/ports.
+        if (allowEmptyValue && templateName(type) == "cpphdl::logic" &&
             specialization(type)->getTemplateArgs()[0].getAsIntegral() == 0)
             return 0;
         return width(type);
@@ -264,13 +372,19 @@ class Lowering {
         return enabled;
     }
     Item memoryRow(Item base, Item index, QualType type, bool pending) {
+        if (resetting) fail("asynchronous reset cannot access memory");
         if (structural || committing) fail("C++ memory access outside evaluation");
         if (pending && !working) fail("pending C++ memory read requires a work transaction");
         auto identity = memoryId(base);
         auto address = resize(read(index), 64);
         auto count = graph.memories[identity].width;
         auto enabled = executionGuard();
-        graph.memoryAccesses.push_back({identity, address, enabled, working});
+        graph.memoryAccesses.push_back({identity, address, enabled, working,
+            working && activeProcess >= 0 ? activeProcess / 2 : -1, working && activeProcess >= 0 && bool(activeProcess % 2)});
+        if (pending && activeProcess >= 0) {
+            auto [entry, fresh] = pendingReaders.emplace(identity, activeProcess);
+            if (!fresh && entry->second != activeProcess) fail("cross-clock pending memory read");
+        }
         for (const auto& getter : activeGetters) memoryGetters.insert(getter);
         Value bits;
         for (unsigned offset = 0; offset < count; offset += 64) {
@@ -280,24 +394,34 @@ class Lowering {
         }
         // pending() forwards queued whole rows in program order; ordinary
         // operator[] reads always see committed storage, even after a write.
-        if (pending) for (const auto& write : graph.memoryWrites) if (write.memory == identity) {
+        if (pending) for (const auto& write : graph.memoryWrites) if (write.memory == identity &&
+            (activeProcess < 0 || (write.clock == activeProcess / 2 && write.falling == bool(activeProcess % 2)))) {
             auto match = graph.binary("and", write.enabled, graph.binary("eq", address, write.address, 1), 1);
             bits = graph.mux(match, write.data, bits);
         }
         Item result; result.key = "$memoryrow" + std::to_string(++serial); result.type = type;
         result.memory = identity; result.memoryAddress = address;
-        originals[result.key] = bits; cells.set(result.key, bits); localNames.push_back(result.key);
+        originals[result.key] = bits; cells.set(result.key, bits); trackLocal(result.key);
         return result;
     }
     void queueMemory(const Item& row) {
         if (!working || structural || committing || !producerStorage.empty())
             fail("C++ memory write requires a work transaction outside combinational getters");
         if (!row.memory) fail("C++ memory row lost its destination");
-        graph.memoryWrites.push_back({*row.memory, row.memoryAddress, read(row), executionGuard()});
+        if (activeProcess >= 0) {
+            auto [entry, fresh] = memoryOwners.emplace(*row.memory, activeProcess);
+            if (!fresh && entry->second != activeProcess) fail("multiple clock/edge writers for memory");
+        }
+        graph.memoryWrites.push_back({*row.memory, row.memoryAddress, read(row), executionGuard(),
+            activeProcess < 0 ? -1 : activeProcess / 2, activeProcess >= 0 && bool(activeProcess % 2)});
         ++effectCount;
     }
     uint64_t packedOffset(QualType type, const FieldDecl* field) {
         auto record = clean(type)->getAsCXXRecordDecl();
+        // Handwritten RTL structs have C++ field layout; hdlcpp records carry
+        // explicit logical offsets, which must retain their stricter checks.
+        if (nativeRecordLayout(record))
+            return context.getASTRecordLayout(record).getFieldOffset(field->getFieldIndex());
         for (auto declaration : record->decls()) if (auto variable = dyn_cast<VarDecl>(declaration))
             if (variable->getNameAsString() == "__hdlcpp_offset_" + field->getNameAsString()) {
                 if (!variable->getInit()) sema.InstantiateVariableDefinition(variable->getLocation(), variable, true);
@@ -349,7 +473,8 @@ class Lowering {
                     result[offset + bit] = part[bit]; covered[offset + bit] = true;
                 }
             }
-            if (record->getNumBases() || std::find(covered.begin(), covered.end(), false) != covered.end())
+            if (record->getNumBases() || (!nativeRecordLayout(record) &&
+                std::find(covered.begin(), covered.end(), false) != covered.end()))
                 fail("incomplete constant packed layout: " + type.getAsString());
             return value(result, type);
         }
@@ -357,22 +482,40 @@ class Lowering {
     }
     Value initial(const Item& item) {
         if (!originals.count(item.key)) {
+            if (item.key.ends_with("._next")) {
+                auto state = registers.find(item.key.substr(0, item.key.size() - 6));
+                if (state != registers.end()) return originals[item.key] = state->second;
+            }
             auto count = item.extent ? item.extent : width(item.type);
-            bool state = templateName(item.type) == "cpphdl::reg";
+            bool state = templateName(item.type) == "cpphdl::reg" && !item.key.starts_with("$");
             originals[item.key] = graph.wire(count, item.key, state ? "state" : "wire");
-            if (item.key.starts_with("$")) localNames.push_back(item.key);
+            if (item.key.starts_with("$")) trackLocal(item.key);
             if (state) registers[item.key] = originals[item.key];
         }
         return originals.at(item.key);
     }
     Value read(Item item) {
+        if (activeProcess >= 0 && !item.key.starts_with("$") && item.key.ends_with("._next")) {
+            auto key = item.key.substr(0, item.key.size() - 6);
+            nextReaders[key].insert(activeProcess);
+            if (nextOwners.count(key) && nextOwners.at(key) != activeProcess)
+                fail("cross-clock next-state read: " + key);
+        }
         if (item.closure) return read(invokeClosure(item.closure));
         if (!item.rangeMask.empty()) {
             auto mask = std::move(item.rangeMask); item.rangeMask.clear();
-            return graph.binary("shr", graph.binary("and", read(item), mask, mask.size()), item.rangeLow, mask.size());
+            auto selected = graph.binary("and", read(item), mask, mask.size());
+            if (mask.size() > 64) return wideShiftRight(std::move(selected), item.rangeLow);
+            return graph.binary("shr", selected, item.rangeLow, mask.size());
         }
         if (item.key.empty()) return item.bits;
         if (port(item.type)) {
+            if (auto it = interfaceBindings.find(item.key); it != interfaceBindings.end()) {
+                if (!activeInterfaceReads.insert(item.key).second) fail("cyclic interface binding: " + item.key);
+                auto result = read(it->second);
+                activeInterfaceReads.erase(item.key);
+                return result;
+            }
             if (bindings.count(item.key)) return read(boundPort(item));
         }
         auto source = cells.count(item.key) ? cells.at(item.key) : initial(item);
@@ -394,11 +537,26 @@ class Lowering {
         if (!known) fail("expected a static C++ value");
         return *known;
     }
+    Item nextRegister(Item item) {
+        auto type = payload(item.type);
+        if (item.key.empty()) {
+            if (!item.registerNext) fail("C++ register temporary has no next-state value");
+            return value(*item.registerNext, type);
+        }
+        initial(item);
+        item.key += "._next"; item.type = type; item.extent = width(type);
+        return item;
+    }
     Item cast(Item item, QualType type) {
         auto bits = read(item);
         if (clean(type)->isBooleanType()) bits = graph.unary("any", bits);
         else bits = resize(bits, valueWidth(type), !item.type.isNull() && clean(item.type)->isSignedIntegerOrEnumerationType());
         auto result = value(bits, type);
+        // A reg copy owns both its current payload and its pending payload.
+        // Freeze them before local initialization or a by-value call can write
+        // either source. Only module-owned storage is clocked graph state.
+        if (templateName(type) == "cpphdl::reg" && templateName(item.type) == "cpphdl::reg")
+            result.registerNext = read(nextRegister(item));
         if (templateName(type) == "cpphdl::memory_row") {
             result.memory = item.memory; result.memoryAddress = item.memoryAddress;
         }
@@ -423,6 +581,21 @@ class Lowering {
         // Do not alias oversized offsets by ignoring their upper bits.
         return graph.mux(graph.binary("lt", amount, constant(count, 64), 1), bits, Value(count, 0));
     }
+    Value wideShiftLeft(Value bits, const Value& amount) {
+        const unsigned count = bits.size();
+        // The wide path uses wiring plus word-sized muxes, not wide arithmetic.
+        for (unsigned shift = 1, bit = 0; shift < count; shift <<= 1, ++bit)
+            bits = graph.mux(slice(amount, bit, 1), slice(bits, -int64_t(shift), count), bits);
+        return graph.mux(graph.binary("lt", amount, constant(count, 64), 1), bits, Value(count, 0));
+    }
+    Value wideSliceMask(unsigned count, const Value& high, const Value& low) {
+        auto valid = graph.binary("and", graph.binary("lt", high, constant(count, 64), 1),
+            graph.unary("not", graph.binary("lt", high, low, 1)), 1);
+        auto padding = graph.binary("sub", constant(count - 1, 64), high, 64);
+        auto mask = graph.binary("and", wideShiftRight(Value(count, 1), padding),
+                                 wideShiftLeft(Value(count, 1), low), count);
+        return graph.mux(valid, mask, Value(count, 0));
+    }
     Value wideSliceRead(Value source, const Value& high, const Value& low) {
         const unsigned count = source.size();
         auto valid = graph.binary("and", graph.binary("lt", high, constant(count, 64), 1),
@@ -434,30 +607,39 @@ class Lowering {
         return graph.mux(valid, graph.binary("and", selected, mask, count), Value(count, 0));
     }
     void write(Item target, Item source) {
-        if (target.readOnlyWideRange)
-            fail("wide or nested dynamic C++ bit range unsupported: write to a wide dynamic slice");
         if (source.closure) {
             if (!structural || target.key.empty() || !port(target.type)) fail("closure assignment outside structural port binding");
             bindings[target.key] = source.closure;
             return;
         }
         if (target.key.empty()) fail("assignment to non-addressable C++ value");
+        if (oneClockDepth && !(target.key.starts_with("$local") &&
+            std::stoul(target.key.substr(6)) > oneClockSerialBegin))
+            fail("CPPHDL_ONE_CLOCK requires a pure combinational function: writes " + target.key);
+        if (activeProcess >= 0 && !target.key.starts_with("$") && target.key.ends_with("._next")) {
+            if (!working) fail("next-state assignment outside clock work method");
+            claim(resetting ? resetOwners : nextOwners, target.key.substr(0, target.key.size() - 6));
+        }
         if (!target.rangeMask.empty()) {
             for (const auto& net : netWrites) if (net.key == target.key) fail("dynamic destination in concurrent C++ net");
             auto mask = std::move(target.rangeMask); target.rangeMask.clear();
             auto incoming = resize(read(source), mask.size(),
                 !source.type.isNull() && clean(source.type)->isSignedIntegerOrEnumerationType());
-            incoming = graph.binary("shl", incoming, target.rangeLow, mask.size());
+            incoming = mask.size() > 64 ? wideShiftLeft(std::move(incoming), target.rangeLow) :
+                graph.binary("shl", incoming, target.rangeLow, mask.size());
             auto kept = graph.binary("and", read(target), graph.unary("not", mask), mask.size());
             write(target, value(graph.binary("or", kept, graph.binary("and", incoming, mask, mask.size()), mask.size())));
             return;
         }
         if (!producerStorage.empty() && !target.key.starts_with("$") && target.key != producerStorage.back())
             fail("combinational getter mutates another field: " + target.key);
-        if (templateName(target.type) == "cpphdl::reg" || registers.count(target.key))
+        if ((templateName(target.type) == "cpphdl::reg" && !target.key.starts_with("$")) || registers.count(target.key))
             fail("direct current-state C++ mutation unsupported: " + target.key);
+        if (templateName(target.type) == "cpphdl::reg" && templateName(source.type) == "cpphdl::reg")
+            write(nextRegister(target), value(read(nextRegister(source)), payload(target.type)));
         if (moduleFields.count(target.key)) {
             if (working && producerStorage.empty()) {
+                if (!graph.clocks.empty()) fail("multiclock persistent state must use cpphdl::reg: " + target.key);
                 if (combinationalWrites.count(target.key)) fail("mixed work/combinational C++ writes: " + target.key);
                 if (moduleFields.at(target.key)->hasInClassInitializer()) fail("initialized C++ work storage unsupported: " + target.key);
                 if (!blockingStates.count(target.key)) {
@@ -483,7 +665,9 @@ class Lowering {
         auto previous = cells.count(target.key) ? cells.at(target.key) : initial(target);
         auto offset = number(graph.resolved(target.offset));
         if (offset) {
-            if (*offset + incoming.size() > previous.size()) fail("C++ write out of bounds");
+            if (*offset > previous.size() || incoming.size() > previous.size() - *offset)
+                fail("C++ write out of bounds: " + target.key + " offset=" + std::to_string(*offset) +
+                     " width=" + std::to_string(incoming.size()) + " storage=" + std::to_string(previous.size()));
             for (auto& net : netWrites) if (net.key == target.key)
                 for (unsigned index = 0; index < incoming.size(); ++index)
                     if (graph.resolve(incoming[index]) != graph.resolve(previous[*offset + index])) ++net.counts[*offset + index];
@@ -520,8 +704,8 @@ class Lowering {
         }
         auto member = dyn_cast<FieldDecl>(declaration);
         if (!member) fail("unsupported member " + name);
-        if (module(base.type)) {
-            validateModule(base.type);
+        if (module(base.type) || interface(base.type)) {
+            if (module(base.type)) validateModule(base.type);
             Item result; result.key = base.key + "." + name; result.type = member->getType();
             moduleFields[result.key] = member;
             if (templateName(result.type) == "cpphdl::reg" && member->hasInClassInitializer()) fail("initialized C++ register unsupported");
@@ -539,12 +723,10 @@ class Lowering {
             return result;
         }
         if (name == "_next" && templateName(base.type) == "cpphdl::reg") {
-            initial(base);
-            base.key += "._next"; base.type = member->getType(); base.extent = width(base.type);
-            return base;
+            return nextRegister(base);
         }
         auto record = payload(base.type)->getAsCXXRecordDecl();
-        if (templateName(base.type) == "cpphdl::reg") initial(base);
+        if (templateName(base.type) == "cpphdl::reg" && !base.key.empty()) initial(base);
         if (!record) fail("field of non-record");
         auto offset = packedOffset(payload(base.type), member);
         if (base.key.empty()) return value(slice(read(base), offset, width(member->getType())), member->getType());
@@ -555,7 +737,7 @@ class Lowering {
     }
     Item index(Item base, Item indexValue, QualType resultType) {
         auto sourceType = payload(base.type);
-        if (templateName(base.type) == "cpphdl::reg") initial(base);
+        if (templateName(base.type) == "cpphdl::reg" && !base.key.empty()) initial(base);
         auto name = templateName(sourceType);
         if (name == "cpphdl::memory") return memoryRow(base, indexValue, resultType, false);
         unsigned count = 0, elementWidth = 1;
@@ -576,9 +758,9 @@ class Lowering {
             count = array->getSize().getLimitedValue(); elementType = array->getElementType();
         } else if (name == "cpphdl::logic" || integerWrapperWidth(sourceType)) { count = width(sourceType); base.bitSelection = true; }
         else fail("unsupported C++ indexing: " + sourceType.getAsString());
-        // An intermediate dimension of a module array is still hierarchy,
+        // An intermediate dimension of a module/interface array is hierarchy,
         // not a packed value whose element needs a bit width.
-        if (containsModule(elementType)) {
+        if (containsHierarchy(elementType)) {
             base.key += "[" + std::to_string(integer(indexValue)) + "]";
             base.type = elementType;
             return base;
@@ -612,7 +794,8 @@ class Lowering {
         bool sign = !left.type.isNull() && clean(left.type)->isSignedIntegerOrEnumerationType();
         if (sign && operation == "lt") operation = "slt";
         if (sign && operation == "shr") operation = "sar";
-        if (sign && (operation == "div" || operation == "mod")) fail("signed dynamic division unsupported");
+        if (sign && operation == "div") operation = "sdiv";
+        if (sign && operation == "mod") operation = "smod";
         auto result = graph.binary(operation, lhs, rhs, count);
         if (invert) result = graph.unary("not", result);
         return value(result, type);
@@ -633,6 +816,7 @@ class Lowering {
     }
     Item invokeClosure(std::shared_ptr<Closure> closure, const FunctionDecl* function = nullptr,
                        const std::vector<Item>& arguments = {}) {
+        llvm::SaveAndRestore<std::string> scope(graph.currentScope, oneClockDepth ? graph.currentScope : closure->scope);
         if (!function) function = closure->expression->getCallOperator();
         instantiate(function);
         if (stack.size() > 256) fail("C++ call nesting limit");
@@ -644,9 +828,7 @@ class Lowering {
         auto result = statement(function->getBody()).result;
         stack.pop_back();
         object = savedObject; locals = std::move(savedLocals);
-        if (!structural) while (localNames.size() > localBegin) {
-            cells.erase(localNames.back()); originals.erase(localNames.back()); localNames.pop_back();
-        }
+        releaseLocals(localBegin);
         if (!result && !function->getReturnType()->isVoidType()) fail("port closure has no return");
         return result.value_or(Item{});
     }
@@ -697,9 +879,102 @@ class Lowering {
         getterReads.at(activeGetters.back())->producers.insert(std::move(reads));
     }
     Item invoke(const FunctionDecl* function, Item receiver, std::vector<Item> arguments) {
+        std::vector<std::string> annotations;
+        for (auto* attr : function->specific_attrs<AnnotateAttr>()) annotations.push_back(attr->getAnnotation().str());
+        if (auto box = synth::blackBoxSpec(annotations); box && synthesisExport) {
+            auto* member = dyn_cast<CXXMethodDecl>(function);
+            if ((member && !member->isStatic()) || function->isVariadic() || arguments.empty() ||
+                arguments.size() != function->getNumParams() || !function->getReturnType()->isIntegerType() ||
+                width(function->getReturnType()) > 64) fail("blackbox requires a free/static scalar integer function (up to 64 bits)");
+            Value inputs;
+            for (size_t i = 0; i < arguments.size(); ++i) {
+                auto type = function->getParamDecl(i)->getType();
+                if (!type->isIntegerType() || width(type) > 64) fail("blackbox arguments must be scalar integers up to 64 bits");
+                auto arg = resize(resize(read(arguments[i]), width(type)), 64, type->isSignedIntegerType());
+                inputs.insert(inputs.end(), arg.begin(), arg.end());
+            }
+            return value(graph.add("blackbox", width(function->getReturnType()), inputs,
+                constant(box->delayPs, 64), {}, box->module), function->getReturnType());
+        }
+        if (scheduledExport && module(receiver.type) && hls::isClocked(clean(receiver.type)->getAsCXXRecordDecl())) {
+            const auto name = function->getNameAsString();
+            if (name == "_assign") {
+                if (!structural) fail("Clocked _assign requires structural binding");
+                if (scheduledPorts.count(receiver.key)) fail("repeated Clocked structural binding");
+                auto savedScope = graph.currentScope;
+                auto firstMemory = graph.memories.size();
+                auto pins = hls::exportClockedGraph(context, sema, clean(receiver.type)->getAsCXXRecordDecl(), graph, receiver.key);
+                for (size_t m = firstMemory; m < graph.memories.size(); ++m) scheduledMemories[receiver.key].push_back(m);
+                graph.currentScope = savedScope;
+                for (const auto& [pin,bits] : pins)
+                    if (pin.starts_with("memory_out.") ? pin.ends_with("_in") : pin.ends_with("_out"))
+                        cells.set(receiver.key + "." + pin, bits);
+                scheduledPorts[receiver.key] = std::move(pins);
+            } else if (name == "_work") {
+                if (!working || graph.resolved(executionGuard()) != Value{1})
+                    fail("scheduled Clocked work must be unconditional in the work phase");
+                if (!scheduledPorts.count(receiver.key) || !scheduledWork.insert(receiver.key).second) fail("missing or repeated Clocked lifecycle binding");
+                for (const auto& [pin,bits] : scheduledPorts.at(receiver.key)) {
+                    if (pin == "reset") graph.connect(bits, read(arguments.at(0)));
+                    else if (pin.starts_with("memory_out.") ? pin.ends_with("_out") : pin.ends_with("_in")) {
+                        Item leaf = receiver;
+                        size_t begin = 0;
+                        do {
+                            auto end = pin.find('.', begin);
+                            auto part = pin.substr(begin, end == std::string::npos ? end : end - begin);
+                            std::function<const FieldDecl*(const CXXRecordDecl*)> find = [&](const CXXRecordDecl* record) -> const FieldDecl* {
+                                for (auto* f : record->fields()) if (f->getNameAsString() == part) return f;
+                                for (const auto& base : record->bases())
+                                    if (auto* f = find(base.getType()->getAsCXXRecordDecl())) return f;
+                                return nullptr;
+                            };
+                            auto* member = find(clean(leaf.type)->getAsCXXRecordDecl());
+                            if (!member) fail("missing Clocked input: " + pin);
+                            leaf = field(leaf, member);
+                            if (end == std::string::npos) break;
+                            begin = end + 1;
+                        } while (true);
+                        graph.connect(bits, read(leaf));
+                    }
+                }
+            } else if (name == "_strobe") {
+                if (!committing || !scheduledStrobe.insert(receiver.key).second)
+                    fail("scheduled Clocked strobe must occur once in the strobe phase");
+                for (auto m : scheduledMemories[receiver.key]) appliedMemories.insert(m);
+            }
+            else fail("scheduled Clocked method must be a lifecycle call: " + name);
+            return {};
+        }
+        llvm::SaveAndRestore<std::string> scope(graph.currentScope,
+            module(receiver.type) && !oneClockDepth ? receiver.key : graph.currentScope);
+        bool oneClock = false;
+        for (const auto* attribute : function->specific_attrs<AnnotateAttr>())
+            oneClock |= attribute->getAnnotation() == "CPPHDL_ONE_CLOCK";
+        llvm::SaveAndRestore<unsigned> clockDepth(oneClockDepth, oneClockDepth + unsigned(oneClock));
+        llvm::SaveAndRestore<unsigned> clockLocals(oneClockSerialBegin, oneClock ? serial : oneClockSerialBegin);
+        if (oneClock) {
+            if (oneClockDepth > 1) fail("nested CPPHDL_ONE_CLOCK functions are not supported");
+            graph.currentScope += ".one_clock_" + function->getNameAsString() + "_" + std::to_string(++oneClockSerial);
+            graph.attributes.push_back({graph.currentScope, "one_clock", "0"});
+        }
+        if (module(receiver.type) && annotatedInstances.insert(receiver.key).second) {
+            auto record = clean(receiver.type)->getAsCXXRecordDecl();
+            for (const auto* attribute : record->specific_attrs<AnnotateAttr>()) {
+                auto text = attribute->getAnnotation().str();
+                const std::string prefix = "CPPHDL_RETIMING=";
+                if (text.starts_with(prefix)) graph.attributes.push_back({receiver.key, "retiming", text.substr(prefix.size())});
+                const std::string boxPrefix = "CPPHDL_KEEP_BOX=";
+                if (text.starts_with(boxPrefix)) graph.attributes.push_back({receiver.key, "keep_box", text.substr(boxPrefix.size())});
+            }
+        }
         if (module(receiver.type)) validateModule(receiver.type);
         instantiate(function);
         auto name = function->getNameAsString();
+        if (activeProcess >= 0)
+            for (size_t process = 0; process < graph.clocks.size() * 2; ++process)
+                if ((name == processMethod(process) || name == processMethod(process, true) || name == resetMethod(process)) && int(process) != activeProcess)
+                    fail("cross-clock lifecycle call: " + name);
+        if (name.starts_with("_reset_") && !resetting) fail("reset handler called outside reset phase");
         std::string key = receiver.key + "::" + name;
         auto returnStorage = function->getReturnType()->isReferenceType() ? returnedField(function) : nullptr;
         bool cache = isa<CXXMethodDecl>(function) && module(receiver.type) && function->param_empty() && returnStorage;
@@ -757,6 +1032,7 @@ class Lowering {
         if (cache) activeGetters.push_back(key);
         if (cache) producerStorage.push_back(receiver.key + "." + returnStorage->getNameAsString());
         auto result = statement(function->getBody()).result;
+        if (oneClock && effectCount != effectsBefore) fail("CPPHDL_ONE_CLOCK requires a pure combinational function");
         if (cache) producerStorage.pop_back();
         if (concurrent) {
             auto net = std::move(netWrites.back()); netWrites.pop_back();
@@ -778,9 +1054,7 @@ class Lowering {
             inheritGetterReads(key);
         }
         stack.pop_back(); object = savedObject; locals = std::move(savedLocals);
-        if (!structural) while (localNames.size() > localBegin) {
-            cells.erase(localNames.back()); originals.erase(localNames.back()); localNames.pop_back();
-        }
+        releaseLocals(localBegin);
         if (cache) return value(output, function->getReturnType());
         return result.value_or(Item{});
     }
@@ -813,9 +1087,12 @@ class Lowering {
             for (const auto& capture : lambda->captures())
                 if (capture.capturesVariable() && capture.getCaptureKind() == LCK_ByCopy && captured.count(capture.getCapturedVar())) {
                     auto& item = captured.at(capture.getCapturedVar());
-                    item = value(read(item), item.type);
+                    auto frozen = value(read(item), item.type);
+                    if (templateName(item.type) == "cpphdl::reg") frozen.registerNext = read(nextRegister(item));
+                    item = std::move(frozen);
                 }
-            Item result; result.closure = std::make_shared<Closure>(Closure{lambda, object, std::move(captured)}); return result;
+            Item result; result.closure = std::make_shared<Closure>(Closure{lambda, object, std::move(captured),
+                !object.type.isNull() && module(object.type) ? object.key : graph.currentScope}); return result;
         }
         if (isa<CXXThisExpr>(expression)) return object;
         if (expression->getType()->isIntegralOrEnumerationType())
@@ -838,13 +1115,15 @@ class Lowering {
         if (auto castExpr = dyn_cast<CastExpr>(expression)) {
             auto result = expr(castExpr->getSubExpr());
             if (castExpr->getCastKind() == CK_ToVoid) return {};
+            // Module arrays are hierarchy paths, not packed values or host pointers.
+            if (castExpr->getCastKind() == CK_ArrayToPointerDecay && containsHierarchy(result.type)) return result;
             if (result.closure || castExpr->getCastKind() == CK_NoOp || castExpr->getCastKind() == CK_LValueToRValue || castExpr->getCastKind() == CK_DerivedToBase || castExpr->getCastKind() == CK_UncheckedDerivedToBase) return result;
             return cast(result, castExpr->getType());
         }
         if (auto construct = dyn_cast<CXXConstructExpr>(expression)) {
             if (templateName(construct->getType()) == "cpphdl::cat") {
                 auto count = width(construct->getType()); // An all-empty concat is invalid.
-                llvm::SaveAndRestore scope(concatenating, true);
+                llvm::SaveAndRestore scope(allowEmptyValue, true);
                 std::vector<Item> parts;
                 // Evaluate in C++ braced-initializer order, even for empty
                 // operands, then pack least-significant bits first.
@@ -859,7 +1138,11 @@ class Lowering {
                 }
                 return value(bits, construct->getType());
             }
-            if (!construct->getNumArgs()) return value(Value(valueWidth(construct->getType()), 0), construct->getType());
+            if (!construct->getNumArgs()) {
+                auto result = value(Value(valueWidth(construct->getType()), 0), construct->getType());
+                if (templateName(result.type) == "cpphdl::reg") result.registerNext = result.bits;
+                return result;
+            }
             auto result = expr(construct->getArg(0));
             if (result.closure) return result;
             return cast(result, construct->getType());
@@ -879,7 +1162,7 @@ class Lowering {
                 } else if (auto record = type->getAsCXXRecordDecl()) {
                     Item temporary; temporary.key = "$aggregate" + std::to_string(++serial); temporary.type = type;
                     originals[temporary.key] = result; cells.set(temporary.key, result);
-                    localNames.push_back(temporary.key);
+                    trackLocal(temporary.key);
                     unsigned index = 0;
                     for (auto member : record->fields()) {
                         if (index >= init->getNumInits()) break;
@@ -956,7 +1239,18 @@ class Lowering {
         std::string name = function->getNameAsString();
         Item receiver;
         unsigned start = 0;
-        if (auto member = dyn_cast<CXXMemberCallExpr>(call)) receiver = expr(member->getImplicitObjectArgument());
+        if (auto member = dyn_cast<CXXMemberCallExpr>(call)) {
+            auto source = member->getImplicitObjectArgument();
+            bool emptyConversion = isa<CXXConversionDecl>(function) &&
+                call->getType()->isIntegralOrEnumerationType() &&
+                templateName(source->getType()) == "cpphdl::logic" &&
+                specialization(source->getType())->getTemplateArgs()[0].getAsIntegral() == 0;
+            // Evaluate the receiver normally, including replication operand
+            // side effects. cast() then zero-extends the empty value; storage
+            // still goes through the strict width() path in read()/initial().
+            llvm::SaveAndRestore scope(allowEmptyValue, allowEmptyValue || emptyConversion);
+            receiver = expr(source);
+        }
         if (auto operation = dyn_cast<CXXOperatorCallExpr>(call)) {
             if (isa<CXXMethodDecl>(function)) { receiver = expr(call->getArg(0)); start = 1; }
             auto op = operation->getOperator();
@@ -974,15 +1268,37 @@ class Lowering {
             }
             if (op == OO_Subscript) return index(receiver, expr(call->getArg(start)), call->getType());
             if (op == OO_Equal) {
-                write(receiver, expr(call->getArg(start)));
+                auto source = expr(call->getArg(start));
+                if (templateName(receiver.type) == "cpphdl::reg" &&
+                    templateName(function->getParamDecl(0)->getType()) != "cpphdl::reg")
+                    source = cast(source, payload(receiver.type));
+                write(receiver, source);
                 if (templateName(receiver.type) == "cpphdl::memory_row") queueMemory(receiver);
                 return receiver;
             }
-            if (op == OO_Amp || op == OO_Pipe || op == OO_Caret || op == OO_Plus || op == OO_Minus || op == OO_Star || op == OO_Slash || op == OO_Percent || op == OO_LessLess || op == OO_GreaterGreater || op == OO_EqualEqual || op == OO_ExclaimEqual || op == OO_Less || op == OO_Greater || op == OO_LessEqual || op == OO_GreaterEqual) {
+            // Native-width wrappers expose storage through unary operator&.
+            // _ASSIGN_REG needs this alias, not the bitwise AND operation.
+            if (op == OO_Amp && call->getNumArgs() == 1 && !receiver.type.isNull()
+                && integerWrapperWidth(payload(receiver.type))) return receiver;
+            // Clang uses the same operator kind for unary and binary +/-
+            // (and &/*). Count AST arguments including the member receiver
+            // before accessing a second operand. Free unary operators have
+            // no receiver, so take their operand from argument zero instead.
+            if (call->getNumArgs() == 1 &&
+                (op == OO_Plus || op == OO_Minus || op == OO_Exclaim || op == OO_Tilde)) {
+                auto operand = start ? receiver : expr(call->getArg(0));
+                if (op == OO_Exclaim)
+                    return value(graph.unary("not", graph.unary("any", read(operand))), call->getType());
+                // For example, -cat<1,8> returns uint64_t, not a 9-bit value.
+                operand = cast(operand, call->getType());
+                if (op == OO_Plus) return operand;
+                if (op == OO_Tilde) return value(graph.unary("not", read(operand)), call->getType());
+                return binary("-", value(Value(width(call->getType()), 0), call->getType()), operand, call->getType());
+            }
+            if (call->getNumArgs() == 2 && (op == OO_Amp || op == OO_Pipe || op == OO_Caret || op == OO_Plus || op == OO_Minus || op == OO_Star || op == OO_Slash || op == OO_Percent || op == OO_LessLess || op == OO_GreaterGreater || op == OO_EqualEqual || op == OO_ExclaimEqual || op == OO_Less || op == OO_Greater || op == OO_LessEqual || op == OO_GreaterEqual)) {
                 auto left = start ? receiver : expr(call->getArg(0));
                 return binary(getOperatorSpelling(op), left, expr(call->getArg(1)), call->getType());
             }
-            if (op == OO_Exclaim || op == OO_Tilde) return value(graph.unary("not", op == OO_Exclaim ? graph.unary("any", read(receiver)) : read(receiver)), call->getType());
         }
         if (isa<CXXConversionDecl>(function)) return cast(receiver, call->getType());
         std::vector<Item> arguments;
@@ -993,7 +1309,9 @@ class Lowering {
                 return memoryRow(receiver, arguments[0], call->getType(), true);
             if (name == "apply" && arguments.empty()) {
                 if (!committing) fail("C++ memory apply requires the strobe phase", call);
-                if (!appliedMemories.insert(memoryId(receiver)).second) fail("repeated C++ memory apply unsupported", call);
+                auto identity = memoryId(receiver);
+                if (!appliedMemories.insert(identity).second) fail("repeated C++ memory apply unsupported", call);
+                if (activeProcess >= 0) memoryCommits[identity] = activeProcess;
                 return {};
             }
             fail("unsupported C++ memory method: " + name, call);
@@ -1088,11 +1406,18 @@ class Lowering {
             auto highValue = number(graph.resolved(highBits)), lowValue = number(graph.resolved(lowBits));
             if (!highValue || !lowValue) {
                 if (count > 64 && receiver.rangeMask.empty()) {
-                    auto result = value(wideSliceRead(read(receiver), highBits, lowBits), call->getType());
-                    // A value is sufficient for reads (including a mutable
-                    // source's logic_bits proxy), but never discard writes.
-                    result.readOnlyWideRange = true;
-                    return result;
+                    if (receiver.key.empty() || templateName(call->getType()) != "cpphdl::logic_bits")
+                        return value(wideSliceRead(read(receiver), highBits, lowBits), call->getType());
+                    // Keep addressable proxies tied to the original storage.
+                    // write() reads its latest value, preserving other slices
+                    // and the ordering of consecutive/overlapping updates.
+                    initial(receiver);
+                    if (!receiver.extent) receiver.extent = width(receiver.type);
+                    receiver.selectedWidth = count;
+                    receiver.rangeMask = wideSliceMask(count, highBits, lowBits);
+                    receiver.rangeLow = lowBits;
+                    receiver.type = call->getType();
+                    return receiver;
                 }
                 // A runtime slice is a masked word update, not an array of
                 // aligned elements. Keep both endpoints so unaligned slices
@@ -1172,10 +1497,92 @@ class Lowering {
             target.type = arguments.at(1).type;
             write(target, arguments.at(1)); return {};
         }
+        if (resetting && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg" &&
+            (name == "clr" || name == "set")) {
+            if ((name == "clr" && !arguments.empty()) || (name == "set" && arguments.size() != 1))
+                fail("unsupported asynchronous register reset", call);
+            initial(receiver);
+            claim(resetOwners, receiver.key);
+            cells.set(receiver.key + "._next", name == "clr" ? Value(width(receiver.type), 0) : read(cast(arguments[0], payload(receiver.type))));
+            return {};
+        }
         if (name == "strobe" && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg") {
             if (!committing || !arguments.empty()) fail("unsupported register commit", call);
+            if (receiver.key.starts_with("$")) {
+                auto current = receiver; current.type = payload(receiver.type);
+                write(current, nextRegister(receiver));
+                return {};
+            }
             initial(receiver);
+            if (activeProcess >= 0) {
+                if (graph.resolved(executionGuard()) != Value{1}) fail("conditional multiclock register strobe: " + receiver.key);
+                claim(commitOwners, receiver.key);
+            }
             committed.insert(receiver.key);
+            return {};
+        }
+        if (working && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg" &&
+            name == "clr" && arguments.empty()) {
+            initial(receiver);
+            auto next = receiver;
+            next.key += "._next";
+            next.type = payload(receiver.type);
+            write(next, value(Value(width(next.type), 0), next.type));
+            // clr() also changes the value seen by subsequent statements in
+            // this C++ work call; graph state itself still commits on the edge.
+            cells.set(receiver.key, Value(width(receiver.type), 0));
+            return {};
+        }
+        if (qualified == "cpphdl::Module::assignIf") {
+            if (!structural || arguments.size() != 4 || !interface(arguments[2].type) || !interface(arguments[3].type))
+                fail("assignIf requires two structural interface endpoints", call);
+            using Endpoint = std::pair<Item, bool>;
+            std::map<std::string, Endpoint> endpoints[2];
+            std::function<void(Item, std::string, bool, unsigned)> collect;
+            collect = [&](Item item, std::string prefix, bool flip, unsigned side) {
+                auto record = clean(item.type)->getAsCXXRecordDecl();
+                for (const auto& base : record->bases()) if (interface(base.getType())) {
+                    auto inherited = item; inherited.type = base.getType();
+                    collect(inherited, prefix, flip, side);
+                }
+                for (auto member : record->fields()) {
+                    auto leaf = member->getNameAsString();
+                    auto child = field(item, member);
+                    if (interface(child.type)) collect(child, prefix + leaf + ".", flip != std::string_view(leaf).ends_with("_out"), side);
+                    else if (port(child.type)) {
+                        if (!std::string_view(leaf).ends_with("_in") && !std::string_view(leaf).ends_with("_out"))
+                            fail("interface port requires a direction suffix", call);
+                        endpoints[side][prefix + leaf] = {child, flip != std::string_view(leaf).ends_with("_out")};
+                    }
+                }
+            };
+            for (unsigned side = 0; side < 2; ++side) {
+                const auto& owner = arguments[side];
+                const auto& endpoint = arguments[side + 2];
+                if (!module(owner.type) || !endpoint.key.starts_with(owner.key + "."))
+                    fail("assignIf endpoint does not belong to its module", call);
+                if (owner.key != receiver.key && (!owner.key.starts_with(receiver.key + ".") ||
+                    owner.key.find('.', receiver.key.size() + 1) != std::string::npos))
+                    fail("assignIf may connect only this module and its immediate children", call);
+                auto memberName = endpoint.key.substr(endpoint.key.find_last_of('.') + 1);
+                if (auto bracket = memberName.find('['); bracket != std::string::npos) memberName.resize(bracket);
+                collect(endpoint, "", std::string_view(memberName).ends_with("_out"), side);
+            }
+            if (endpoints[0].size() != endpoints[1].size()) fail("assignIf interface shape mismatch", call);
+            bool parent0 = arguments[0].key == receiver.key, parent1 = arguments[1].key == receiver.key;
+            if (parent0 && parent1) fail("assignIf requires a child endpoint", call);
+            for (const auto& [leaf, a] : endpoints[0]) {
+                if (!endpoints[1].count(leaf)) fail("assignIf interface member mismatch", call);
+                const auto& b = endpoints[1].at(leaf);
+                if (!context.hasSameType(payload(a.first.type), payload(b.first.type))) fail("assignIf port type mismatch", call);
+                bool drivesA = a.second != parent0, drivesB = b.second != parent1;
+                if (drivesA == drivesB) fail("assignIf direction mismatch", call);
+                const auto& target = drivesA ? b.first : a.first;
+                if (interfaceBindings.count(target.key)) fail("interface port connected more than once: " + target.key, call);
+                interfaceBindings[target.key] = drivesA ? a.first : b.first;
+            }
+            for (unsigned side = 0; side < 2; ++side) if (arguments[side].key != receiver.key)
+                if (auto assign = method(arguments[side].type, "_assign")) invoke(assign, arguments[side], {});
             return {};
         }
         if (qualified == "cpphdl::sv_assign_field") { write(arguments.at(0), arguments.at(1)); return {}; }
@@ -1224,10 +1631,14 @@ class Lowering {
         if (from.result && !dead(returning)) {
             if (!into.result) into.result = from.result;
             else if (!from.result->type.isNull()) {
-                if (from.result->closure || into.result->closure || containsModule(from.result->type))
+                if (from.result->closure || into.result->closure || containsHierarchy(from.result->type))
                     fail("dynamic C++ object return unsupported");
-                into.result = value(graph.mux(returning, read(*from.result), read(*into.result)),
+                auto merged = value(graph.mux(returning, read(*from.result), read(*into.result)),
                                     from.result->type);
+                if (templateName(merged.type) == "cpphdl::reg")
+                    merged.registerNext = graph.mux(returning, read(nextRegister(*from.result)),
+                                                   read(nextRegister(*into.result)));
+                into.result = std::move(merged);
             }
         }
         into.returns = either(into.returns, returning);
@@ -1267,14 +1678,21 @@ class Lowering {
         // Only its exact clock-guard/update shape is removed here.
         if (memoStatement(body)) return {};
         if (auto compound = dyn_cast<CompoundStmt>(body)) {
+            auto localBegin = localNames.size();
+            llvm::SaveAndRestore localScope(locals);
             Flow flow;
             for (auto child : compound->body()) appendStatement(flow, child);
+            // Returns already freeze their values. Keep writes to outer storage,
+            // but do not carry dead block locals into later branch snapshots.
+            releaseLocals(localBegin);
             return flow;
         }
         if (auto returned = dyn_cast<ReturnStmt>(body)) {
             auto result = expr(returned->getRetValue());
-            if (!structural && !containsModule(result.type) && !result.closure && !result.type.isNull()) {
+            if (!structural && !containsHierarchy(result.type) && !result.closure && !result.type.isNull() &&
+                !returned->getRetValue()->getType()->isPointerType()) {
                 auto frozen = value(read(result), result.type);
+                if (templateName(result.type) == "cpphdl::reg") frozen.registerNext = read(nextRegister(result));
                 frozen.memory = result.memory; frozen.memoryAddress = result.memoryAddress;
                 result = frozen;
             }
@@ -1341,17 +1759,43 @@ class Lowering {
                 }
                 parts.push_back({child, {}});
             }
+            // Lower each possible entry from the same environment. Sequential
+            // guarded writes retain an unreachable old-value dependency even
+            // when every entry writes (including default). Use the default's
+            // environment as the merge fallback instead; absent a default,
+            // keep the real no-match path and its undriven diagnostics.
+            auto before = cells;
+            auto fallbackCells = before;
+            std::vector<std::pair<Value, Environment>> alternatives;
             Flow flow; flow.normal = {0};
-            for (const auto& part : parts) {
-                if (part.label) {
-                    auto match = part.fallback ? graph.unary("not", matched) : part.match;
-                    flow.normal = either(flow.normal, match);
-                } else appendStatement(flow, part.body);
+            for (size_t entry = 0; entry < parts.size(); ++entry) {
+                if (!parts[entry].label) continue;
+                auto match = parts[entry].fallback ? graph.unary("not", matched) : parts[entry].match;
+                if (dead(match)) continue;
+                if ((structural || committing) && !number(graph.resolved(match)))
+                    fail("dynamic structural/commit C++ condition", body);
+                cells = before;
+                llvm::SaveAndRestore path(effectPath);
+                effectPath.emplace_back(match, true);
+                Flow branch;
+                for (size_t index = entry + 1; index < parts.size() && !dead(branch.normal); ++index)
+                    if (!parts[index].label) appendStatement(branch, parts[index].body);
+                // Break exits only this switch; continue still targets the
+                // enclosing loop. Return values and effects retain entry guards.
+                branch.breaks = {0};
+                collectExits(flow, branch, match);
+                if (parts[entry].fallback) {
+                    fallbackCells = cells;
+                } else {
+                    alternatives.emplace_back(match, cells);
+                }
             }
-            // Consume only this switch's breaks. No-match and end-of-body paths
-            // also continue; returns and enclosing-loop continues do not.
+            cells = fallbackCells;
+            for (const auto& [match, branchCells] : alternatives) {
+                auto accumulated = cells;
+                merge(match, before, branchCells, accumulated);
+            }
             flow.normal = graph.unary("not", either(flow.returns, flow.continues));
-            flow.breaks = {0};
             return flow;
         }
         if (auto loop = dyn_cast<ForStmt>(body)) {
@@ -1417,9 +1861,78 @@ class Lowering {
         return nullptr;
     }
 public:
-    Lowering(ASTContext& context, Sema& sema) : context(context), sema(sema) {}
+    Lowering(ASTContext& context, Sema& sema, std::vector<Clock> clocks = {}) : context(context), sema(sema) {
+        graph.clocks = std::move(clocks);
+    }
+    void runClocks(const Item& root, const Value& reset) {
+        // Each process reads the same current-state nodes. Strobe records
+        // ownership, never committing state during AST lowering.
+        for (size_t process = 0; process < graph.clocks.size() * 2; ++process) {
+            auto work = method(root.type, processMethod(process));
+            auto strobe = method(root.type, processMethod(process, true));
+            auto handler = method(root.type, resetMethod(process));
+            if (process % 2 && !work && !strobe && !handler) continue;
+            if (!work || !strobe) fail("missing clock lifecycle pair: " + processMethod(process) + "/" + processMethod(process, true));
+            activeProcess = int(process);
+            working = true;
+            if (handler) {
+                asyncProcesses.insert(activeProcess);
+                effectPath.emplace_back(reset, false);
+            }
+            invoke(work, root, {value(reset, context.BoolTy)});
+            if (handler) effectPath.pop_back();
+            working = false;
+            committing = true;
+            invoke(strobe, root, {});
+            committing = false;
+        }
+        // Reset handlers are a separate elaboration of the same registers,
+        // not another clock owner or a mutation of their normal next-state cone.
+        for (auto process : asyncProcesses) {
+            activeProcess = process;
+            auto saved = cells;
+            for (const auto& [key, bits] : registers) cells.set(key + "._next", bits);
+            resetting = working = true;
+            invoke(method(root.type, resetMethod(process)), root, {});
+            resetting = working = false;
+            for (const auto& [key, owner] : resetOwners) if (owner == process) {
+                if (!nextOwners.count(key) || nextOwners.at(key) != process)
+                    fail("asynchronous reset clock ownership mismatch: " + key);
+                auto bits = graph.resolved(cells.at(key + "._next"));
+                if (std::any_of(bits.begin(), bits.end(), [](Bit bit) { return bit > 1; }))
+                    fail("asynchronous reset requires an unconditional constant value: " + key);
+                resetValues[key] = std::move(bits);
+            }
+            cells = std::move(saved);
+        }
+        activeProcess = -1;
+        for (const auto& [key, readers] : nextReaders)
+            for (auto process : readers)
+                if (!nextOwners.count(key) || nextOwners.at(key) != process) fail("cross-clock next-state read: " + key);
+        for (const auto& [key, bits] : registers) {
+            if (!nextOwners.count(key) || !commitOwners.count(key)) fail("missing clock work/strobe assignment for " + key);
+            if (nextOwners.at(key) != commitOwners.at(key)) fail("clock work/strobe mismatch for " + key);
+            auto process = nextOwners.at(key);
+            if (asyncProcesses.count(process) && !resetValues.count(key)) fail("missing asynchronous reset assignment: " + key);
+            graph.states.push_back({bits, cells.at(key + "._next"), {1}, process / 2, bool(process % 2),
+                resetValues.count(key) ? reset : Value{}, resetValues.count(key) ? resetValues.at(key) : Value{}});
+        }
+        for (const auto& [memory, process] : memoryOwners)
+            if (!memoryCommits.count(memory) || memoryCommits.at(memory) != process)
+                fail("memory write/apply clock mismatch: " + graph.memories[memory].name);
+        for (const auto& [memory, process] : pendingReaders)
+            if (memoryOwners.count(memory) && memoryOwners.at(memory) != process)
+                fail("cross-clock pending memory read");
+        for (const auto& node : graph.nodes) if (node.hostEffect()) fail("multiclock host effects are not implemented");
+        graph.clockContract = ClockContract::NamedEdges;
+        graph.validateClocks();
+    }
     void statistics() const {
         size_t directReads = 0, producerEdges = 0;
+        size_t operandBytes = 0;
+        for (const auto& node : graph.nodes)
+            for (const auto* value : {&node.left, &node.right, &node.select})
+                operandBytes += value->capacity() * sizeof(Bit);
         for (const auto& [key, reads] : getterReads) {
             directReads += reads->fields.size();
             producerEdges += reads->producers.size();
@@ -1427,7 +1940,11 @@ public:
         llvm::errs() << "C++ graph: nodes=" << graph.nodes.size() << " cells=" << cells.size()
                      << " methods=" << results.size() << " registers=" << registers.size()
                      << " getter_reads=" << directReads << " getter_edges=" << producerEdges
-                     << " ast_bytes=" << context.getASTAllocatedMemory() << '\n';
+                     << " ast_bytes=" << context.getASTAllocatedMemory()
+                     << " node_bytes=" << graph.nodes.size() * sizeof(Node)
+                     << " operand_bytes=" << operandBytes
+                     << " aliases=" << graph.aliases.size() << '\n';
+        llvm::errs() << "C++ graph: peak_locals=" << peakLocals << '\n';
     }
     void run(const VarDecl* root, const std::string& output) {
         object.key = root->getNameAsString(); object.type = root->getType();
@@ -1436,12 +1953,34 @@ public:
         if (sema.RequireCompleteType(root->getLocation(), object.type, diag::err_incomplete_type))
             fail("incomplete C++ graph root type");
         if (!module(object.type)) fail("C++ graph root must derive from cpphdl::Module");
+        if (synthesisExport) {
+            std::set<const CXXRecordDecl*> visited;
+            scheduledExport = containsClocked(object.type, visited);
+        }
         auto rootObject = object;
         auto record = clean(root->getType())->getAsCXXRecordDecl();
         std::vector<std::pair<std::string, Item>> outputs;
-        for (auto member : record->fields()) if (port(member->getType())) {
-            auto item = field(object, member);
-            auto name = member->getNameAsString();
+        std::function<void(Item, const CXXRecordDecl*, std::string, bool)> collectPorts;
+        collectPorts = [&](Item parent, const CXXRecordDecl* owner, std::string prefix, bool flip) {
+          for (const auto& base : owner->bases()) if (interface(base.getType())) {
+            Item inherited = parent; inherited.type = base.getType();
+            collectPorts(inherited, clean(base.getType())->getAsCXXRecordDecl(), prefix, flip);
+          }
+          for (auto member : owner->fields()) {
+            if (interface(member->getType())) {
+                auto name = member->getNameAsString();
+                collectPorts(field(parent, member), clean(member->getType())->getAsCXXRecordDecl(),
+                             prefix + name + "__", flip != std::string_view(name).ends_with("_out"));
+                continue;
+            }
+            if (!port(member->getType())) continue;
+            auto item = field(parent, member);
+            auto leaf = member->getNameAsString();
+            if (flip) {
+                if (std::string_view(leaf).ends_with("_out")) leaf.replace(leaf.size() - 4, 4, "_in");
+                else if (std::string_view(leaf).ends_with("_in")) leaf.replace(leaf.size() - 3, 3, "_out");
+            }
+            auto name = prefix + leaf;
             auto projection = name.find("__field_");
             auto directionEnd = name.size();
             if (projection != std::string::npos) {
@@ -1452,19 +1991,31 @@ public:
             bool outputPort = baseName.ends_with("_out");
             bool inputPort = baseName.ends_with("_in");
             if (!outputPort && !inputPort) fail("top C++ ports require _in/_out direction suffix");
-            name.erase(directionEnd - (outputPort ? 4 : 3), outputPort ? 4 : 3);
+            if (!scheduledExport) name.erase(directionEnd - (outputPort ? 4 : 3), outputPort ? 4 : 3);
             if (inputPort) {
                 auto bits = graph.wire(width(item.type), name, "input");
                 originals[item.key] = bits; cells.set(item.key, bits);
                 graph.ports.push_back({name, bits, true});
             } else outputs.emplace_back(name, item);
-        }
+          }
+        };
+        collectPorts(object, record, "", false);
         structural = true;
         if (auto assign = method(rootObject.type, "_assign")) invoke(assign, rootObject, {});
         structural = false;
         for (auto& [name, item] : outputs) graph.ports.push_back({name, read(item), false});
-        auto reset = graph.wire(1, "work_reset", "input");
-        graph.ports.push_back({"work_reset", reset, true});
+        auto reset = graph.wire(1, scheduledExport ? "reset" : "work_reset", "input");
+        graph.ports.push_back({scheduledExport ? "reset" : "work_reset", reset, true});
+        if (!graph.clocks.empty()) {
+            for (const auto* name : {"_work", "_strobe"}) if (auto legacy = method(rootObject.type, name)) {
+                instantiate(legacy);
+                auto body = dyn_cast<CompoundStmt>(legacy->getBody());
+                if (!body || !body->body_empty()) fail("named clocks cannot ignore root " + std::string(name));
+            }
+            runClocks(rootObject, reset);
+            graph.writeCpp(output);
+            return;
+        }
         working = true;
         if (auto work = method(rootObject.type, "_work")) invoke(work, rootObject, {value(reset, context.BoolTy)});
         working = false;
@@ -1484,6 +2035,9 @@ public:
             graph.states.push_back({bits, cells.count(key) ? cells.at(key) : bits, {1}});
         for (const auto& write : graph.memoryWrites)
             if (!appliedMemories.count(write.memory)) fail("C++ memory writes without strobe apply: " + graph.memories[write.memory].name);
+        graph.clockContract = ClockContract::RisingEdgeStep;
+        for (const auto& [instance, pins] : scheduledPorts)
+            if (!scheduledWork.count(instance) || !scheduledStrobe.count(instance)) fail("missing scheduled Clocked work/strobe: " + instance);
         graph.writeCpp(output);
     }
 };
@@ -1492,9 +2046,10 @@ class Consumer : public ASTConsumer {
     CompilerInstance& compiler;
     std::string root, output;
     bool& success;
+    std::vector<Clock> clocks;
 public:
-    Consumer(CompilerInstance& compiler, std::string root, std::string output, bool& success)
-        : compiler(compiler), root(std::move(root)), output(std::move(output)), success(success) {}
+    Consumer(CompilerInstance& compiler, std::string root, std::string output, bool& success, std::vector<Clock> clocks)
+        : compiler(compiler), root(std::move(root)), output(std::move(output)), success(success), clocks(std::move(clocks)) {}
     void HandleTranslationUnit(ASTContext& context) override {
         if (compiler.getDiagnostics().hasErrorOccurred()) return;
         // Parsing has popped the TU scope. Late template instantiation can
@@ -1507,8 +2062,12 @@ public:
             const VarDecl* found = nullptr;
             for (auto declaration : context.getTranslationUnitDecl()->decls())
                 if (auto variable = dyn_cast<VarDecl>(declaration); variable && variable->getNameAsString() == root) found = variable;
+            if (!found && (scheduledExport || synthesisExport)) for (auto declaration : context.getTranslationUnitDecl()->decls())
+                if (auto record = dyn_cast<CXXRecordDecl>(declaration); record && record->getNameAsString() == root && record->isCompleteDefinition())
+                    found = VarDecl::Create(context, context.getTranslationUnitDecl(), record->getLocation(), record->getLocation(),
+                        &context.Idents.get("cpphdl_synth_top"), context.getRecordType(record), nullptr, SC_Extern);
             if (!found) throw std::runtime_error("C++ root variable not found: " + root);
-            Lowering lowering(context, compiler.getSema());
+            Lowering lowering(context, compiler.getSema(), clocks);
             try { lowering.run(found, output); }
             catch (...) { lowering.statistics(); throw; }
             lowering.statistics();
@@ -1519,37 +2078,60 @@ public:
 class Action : public ASTFrontendAction {
     std::string root, output;
     bool& success;
+    std::vector<Clock> clocks;
 public:
-    Action(std::string root, std::string output, bool& success) : root(std::move(root)), output(std::move(output)), success(success) {}
+    Action(std::string root, std::string output, bool& success, std::vector<Clock> clocks)
+        : root(std::move(root)), output(std::move(output)), success(success), clocks(std::move(clocks)) {}
     bool BeginSourceFileAction(CompilerInstance& compiler) override {
         compiler.getDiagnostics().setSeverity(diag::err_cannot_open_file, diag::Severity::Ignored, SourceLocation());
         return true;
     }
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance& compiler, llvm::StringRef) override {
-        return std::make_unique<Consumer>(compiler, root, output, success);
+        return std::make_unique<Consumer>(compiler, root, output, success, clocks);
     }
 };
 class Factory : public tooling::FrontendActionFactory {
     std::string root, output;
     bool& success;
+    std::vector<Clock> clocks;
 public:
-    Factory(std::string root, std::string output, bool& success) : root(std::move(root)), output(std::move(output)), success(success) {}
-    std::unique_ptr<FrontendAction> create() override { return std::make_unique<Action>(root, output, success); }
+    Factory(std::string root, std::string output, bool& success, std::vector<Clock> clocks)
+        : root(std::move(root)), output(std::move(output)), success(success), clocks(std::move(clocks)) {}
+    std::unique_ptr<FrontendAction> create() override { return std::make_unique<Action>(root, output, success, clocks); }
 };
 inline int run(int argc, const char** argv, std::vector<std::string> includes) {
-    if (argc < 6 || std::string_view(argv[5]) != "--") {
-        llvm::errs() << "usage: cpphdl --lower-cpp-graph source.cc graph.cc root_variable -- compiler flags\n";
+    scheduledExport = argc > 1 && std::string_view(argv[1]) == "--lower-scheduled-graph";
+    synthesisExport = argc > 1 && std::string_view(argv[1]) == "--lower-synthesis-graph";
+    if (argc < 6) {
+        llvm::errs() << "usage: cpphdl --lower-cpp-graph source.cc graph.cc root_variable [--clock NAME HZ ...] -- compiler flags\n";
         return 2;
     }
     if (!std::filesystem::is_regular_file(argv[2]) || std::filesystem::exists(argv[3])) {
         llvm::errs() << "C++ graph requires an existing source and a new output file\n";
         return 2;
     }
-    for (int index = 6; index < argc; ++index) includes.emplace_back(argv[index]);
+    int index = 5;
+    std::vector<Clock> clocks;
+    try {
+        while (index < argc && std::string_view(argv[index]) != "--") {
+            if (std::string_view(argv[index]) != "--clock" || index + 2 >= argc)
+                throw std::runtime_error("expected --clock NAME HZ or --");
+            std::string frequency = argv[index + 2];
+            if (frequency.empty() || frequency.find_first_not_of("0123456789") != std::string::npos)
+                throw std::runtime_error("clock frequency must be a positive integer");
+            clocks.push_back({argv[index + 1], std::stoull(frequency)});
+            index += 3;
+        }
+        if (index == argc) throw std::runtime_error("missing -- before compiler flags");
+        if (!clocks.empty()) {
+            Graph check; check.clockContract = ClockContract::NamedEdges; check.clocks = clocks; check.validateClocks();
+        }
+    } catch (const std::exception& error) { llvm::errs() << error.what() << '\n'; return 2; }
+    for (++index; index < argc; ++index) includes.emplace_back(argv[index]);
     tooling::FixedCompilationDatabase database(".", includes);
     tooling::ClangTool tool(database, {argv[2]});
     bool success = false;
-    Factory factory(argv[4], argv[3], success);
+    Factory factory(argv[4], argv[3], success, clocks);
     int status = tool.run(&factory);
     if (!success || status) { std::filesystem::remove(argv[3]); return 1; }
     return 0;

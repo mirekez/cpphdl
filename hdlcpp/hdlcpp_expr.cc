@@ -127,6 +127,69 @@
         return "logic<1>((((uint64_t)(static_cast<logic<" + width + ">>(" + value + "))) >> (unsigned)(" + index + ")) & 1ull)";
     }
 
+    std::string integralStringLiteral(const ExpressionSyntax& expr)
+    {
+        if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+            return integralStringLiteral(*expr.as<ParenthesizedExpressionSyntax>().expression);
+        }
+        if (expr.kind != SyntaxKind::StringLiteralExpression) {
+            return {};
+        }
+        auto bytes = expr.as<LiteralExpressionSyntax>().literal.valueText();
+        if (bytes.size() <= 8) {
+            uint64_t value = 0;
+            for (unsigned char byte : bytes) {
+                value = (value << 8) | byte;
+            }
+            return std::to_string(value) + "ull";
+        }
+        std::string parts;
+        for (unsigned char byte : bytes) {
+            if (!parts.empty()) {
+                parts += ", ";
+            }
+            parts += "logic<8>(" + std::to_string(byte) + ")";
+        }
+        return "logic<" + std::to_string(bytes.size() * 8) + ">(cat{" + parts + "})";
+    }
+
+    std::string emitTypedExpr(const ExpressionSyntax& expr, const std::string& type)
+    {
+        if (!resolvedTypeWidth(unwrapRegType(type)).empty()) {
+            if (auto literal = integralStringLiteral(expr); !literal.empty()) {
+                return literal;
+            }
+        }
+        return emitExpr(expr);
+    }
+
+    std::string scopedSelectionType(const ScopedNameSyntax& scoped, bool* bitSelect = nullptr)
+    {
+        if (tok(scoped.separator) != "." || scoped.right->kind != SyntaxKind::IdentifierSelectName) {
+            return "";
+        }
+        auto& name = scoped.right->as<IdentifierSelectNameSyntax>();
+        auto type = fieldTypeFor(exprType(scoped.left->as<ExpressionSyntax>()), tok(name.identifier));
+        for (auto select : name.selectors) {
+            type = unwrapRegType(resolveAliasValueType(type));
+            if (type.empty() || !select || !select->selector) return "";
+            auto args = templateArgsFor(type, "array");
+            if (args.empty()) args = templateArgsFor(type, "std::array");
+            if (args.size() >= 2) {
+                type = args[0];
+                if (RangeSelectSyntax::isKind(select->selector->kind)) {
+                    type = "array<" + type + "," + selectTemplateWidth(*select) + ",true>";
+                }
+                if (bitSelect) *bitSelect = false;
+            } else {
+                const bool isBit = select->selector->kind == SyntaxKind::BitSelect;
+                type = "logic<" + (isBit ? std::string("1") : selectTemplateWidth(*select)) + ">";
+                if (bitSelect) *bitSelect = isBit;
+            }
+        }
+        return type;
+    }
+
     std::string exprType(const ExpressionSyntax& expr)
     {
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
@@ -167,6 +230,9 @@
             return "";
         }
         if (expr.kind == SyntaxKind::ScopedName) {
+            if (auto type = scopedSelectionType(expr.as<ScopedNameSyntax>()); !type.empty()) {
+                return type;
+            }
             return pathType(expr.toString());
         }
         if (expr.kind == SyntaxKind::InvocationExpression && mod) {
@@ -245,6 +311,10 @@
                 }
                 if (args.size() >= 2) {
                     type = args[0];
+                } else if (mod && mod->typeParamNames.count(type)) {
+                    // The selected element, not its opaque container, determines
+                    // the value width after the C++ type parameter is instantiated.
+                    return "cpphdl::value_type_for_ref_t<decltype(" + emitExpr(expr) + ")>";
                 }
             }
             return type;
@@ -486,6 +556,9 @@
 
     std::string logicValueExpr(const ExpressionSyntax& expr, const std::string& width, const std::string& emitted = "")
     {
+        if (auto literal = integralStringLiteral(expr); !literal.empty()) {
+            return "logic<" + width + ">(" + literal + ")";
+        }
         if (auto packed = packedValueExpr(expr, emitted); !packed.empty()) {
             return packed;
         }
@@ -928,6 +1001,10 @@
 
     std::string exprWidth(const ExpressionSyntax& expr)
     {
+        if (expr.kind == SyntaxKind::StringLiteralExpression) {
+            auto bytes = expr.as<LiteralExpressionSyntax>().literal.valueText();
+            return std::to_string(std::max<size_t>(1, bytes.size()) * 8);
+        }
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             return exprWidth(*expr.as<ParenthesizedExpressionSyntax>().expression);
         }
@@ -1048,6 +1125,9 @@
         }
         if (expr.kind == SyntaxKind::ScopedName) {
             auto& scoped = expr.as<ScopedNameSyntax>();
+            if (auto type = scopedSelectionType(scoped); !type.empty()) {
+                return foldWidth(resolvedTypeWidth(type));
+            }
             auto selectorWidth = [&]() -> std::string {
                 if (scoped.right->kind == SyntaxKind::IdentifierSelectName) {
                     auto& n = scoped.right->as<IdentifierSelectNameSyntax>();
@@ -1165,7 +1245,7 @@
                                  mod->typeParamNames.count(selectedType)) {
                             auto emitted = emitExpr(expr);
                             if (!emitted.empty()) {
-                                return "cpphdl::type_width<std::remove_cvref_t<decltype(" + emitted + ")>>()";
+                                return "cpphdl::type_width<cpphdl::value_type_for_ref_t<decltype(" + emitted + ")>>()";
                             }
                         }
                         else {
@@ -1735,6 +1815,14 @@
         }
         if (e->kind == SyntaxKind::ElementSelectExpression) {
             auto& sel = e->as<ElementSelectExpressionSyntax>();
+            auto baseType = unwrapRegType(resolveAliasValueType(exprType(*sel.left)));
+            if (templateArgsFor(baseType, "array").size() >= 2 ||
+                templateArgsFor(baseType, "std::array").size() >= 2 ||
+                memoryArgs(baseType).size() == 3) {
+                // An array element select is not a one-bit vector select.
+                // In particular packed struct fields may contain multi-bit lanes.
+                return false;
+            }
             return sel.select && sel.select->selector &&
                    sel.select->selector->kind == SyntaxKind::BitSelect;
         }
@@ -1761,6 +1849,11 @@
                     selectedType = unwrapRegType(resolveAliasValueType(arrayArgs[0]));
                     continue;
                 }
+                if (mod && mod->typeParamNames.count(selectedType)) {
+                    // This can be a multi-bit array element. Its instantiated
+                    // C++ value type resolves the width; do not force one bit.
+                    return false;
+                }
                 return index + 1 == n.selectors.size() && selector && selector->selector &&
                        selector->selector->kind == SyntaxKind::BitSelect;
             }
@@ -1773,6 +1866,8 @@
         }
         if (e->kind == SyntaxKind::ScopedName) {
             auto& scoped = e->as<ScopedNameSyntax>();
+            bool bitSelect = false;
+            if (!scopedSelectionType(scoped, &bitSelect).empty()) return bitSelect;
             if (scoped.right && scoped.right->kind == SyntaxKind::IdentifierSelectName) {
                 return isBitSelectOperand(*scoped.right);
             }
@@ -1874,11 +1969,14 @@
         bool numeric = true;
         bool runtimeWidth = false;
         auto isRuntimeWidth = [&](const std::string& width) {
-            if (textMentionsRuntimeIndex(width)) {
+            // Names inside decltype determine an instantiated type, not a
+            // runtime width. Keep fixed-size array element concatenations fast.
+            const auto valueWidth = stripDecltypeExpressions(width);
+            if (textMentionsRuntimeIndex(valueWidth)) {
                 return true;
             }
             return std::any_of(loopVars.begin(), loopVars.end(), [&](const std::string& name) {
-                return isIdentifierUsed(width, name);
+                return isIdentifierUsed(valueWidth, name);
             });
         };
         for (auto e : c.expressions) {
@@ -2640,7 +2738,7 @@
             if (d->initializer) {
                 auto& init = *d->initializer;
                 if (init.expr) {
-                    auto rhs = emitExpr(*init.expr);
+                    auto rhs = emitTypedExpr(*init.expr, type);
                     auto ctype = constexprType(type);
                     if (type == "bool") {
                         rhs = "static_cast<bool>(" + rhs + ")";
@@ -3365,6 +3463,110 @@
             target.first + ")) + __cpphdl_slice_i] = __cpphdl_slice_rhs[__cpphdl_slice_i]; } }())";
     }
 
+    void collectLValueIndices(const ExpressionSyntax& expression,
+                              std::vector<const ExpressionSyntax*>& indices)
+    {
+        auto append = [&](const ElementSelectSyntax* select) {
+            if (select && select->selector && select->selector->kind == SyntaxKind::BitSelect) {
+                indices.push_back(select->selector->as<BitSelectSyntax>().expr);
+            }
+        };
+        if (expression.kind == SyntaxKind::IdentifierSelectName) {
+            for (auto select : expression.as<IdentifierSelectNameSyntax>().selectors) append(select);
+        }
+        else if (expression.kind == SyntaxKind::ElementSelectExpression) {
+            auto& selected = expression.as<ElementSelectExpressionSyntax>();
+            collectLValueIndices(*selected.left, indices);
+            append(selected.select);
+        }
+        else if (expression.kind == SyntaxKind::MemberAccessExpression) {
+            collectLValueIndices(*expression.as<MemberAccessExpressionSyntax>().left, indices);
+        }
+        else if (expression.kind == SyntaxKind::ScopedName) {
+            auto& scoped = expression.as<ScopedNameSyntax>();
+            if (tok(scoped.separator) == ".") {
+                collectLValueIndices(scoped.left->as<ExpressionSyntax>(), indices);
+                collectLValueIndices(scoped.right->as<ExpressionSyntax>(), indices);
+            }
+        }
+        else if (expression.kind == SyntaxKind::ParenthesizedExpression) {
+            collectLValueIndices(*expression.as<ParenthesizedExpressionSyntax>().expression, indices);
+        }
+    }
+
+    std::string emitCheckedArrayAssignment(const std::string& lhs, const std::string& rhs,
+                                           const ExpressionSyntax& source)
+    {
+        // SV ignores an out-of-range array write; a C++ reference cannot represent it.
+        // Evaluate the RHS and each normalized index once, before forming the lvalue.
+        if (lhs.find('[') == std::string::npos) return lhs + " = " + rhs;
+        std::vector<const ExpressionSyntax*> indices;
+        collectLValueIndices(source, indices);
+        std::string target;
+        std::string typeTarget;
+        std::string declarations;
+        std::string condition;
+        size_t copied = 0;
+        size_t typeCopied = 0;
+        size_t ordinal = 0;
+        size_t coordinate = 0;
+        for (size_t open = lhs.find('['); open != std::string::npos;) {
+            size_t close = open + 1;
+            unsigned depth = 1;
+            for (; close < lhs.size() && depth; ++close) {
+                if (lhs[close] == '[') ++depth;
+                else if (lhs[close] == ']') --depth;
+            }
+            if (depth) break;
+            --close;
+            auto container = lhs.substr(0, open);
+            if (auto next = container.find("._next"); next != std::string::npos) {
+                container.erase(next, 6);
+            }
+            auto type = mod ? expressionStorageType(*mod, container) : std::string();
+            if (type.empty()) type = lookupLocalType(container);
+            type = unwrapRegType(resolveAliasValueType(type));
+            auto args = templateArgsFor(type, "array");
+            if (args.empty()) args = templateArgsFor(type, "std::array");
+            if (!typeTarget.empty()) {
+                typeTarget += lhs.substr(typeCopied, open + 1 - typeCopied) + "0]";
+                typeCopied = close + 1;
+            }
+            if (args.size() >= 2) {
+                if (typeTarget.empty()) {
+                    typeTarget = "std::declval<" + type + ">()[0]";
+                    typeCopied = close + 1;
+                }
+                auto index = "__cpphdl_write_index_" + std::to_string(ordinal++);
+                auto expression = lhs.substr(open + 1, close - open - 1);
+                auto width = coordinate < indices.size() ? foldWidth(exprWidth(*indices[coordinate])) : std::string();
+                // Narrow SV arithmetic must still wrap before the bounds check.
+                if (isNumber(width) && std::stoull(width) > 32 &&
+                    expression.rfind("(unsigned)(", 0) == 0 && expression.back() == ')') {
+                    expression = expression.substr(10);
+                }
+                declarations += "    const uint64_t " + index + " = " +
+                    expression + ";\n";
+                if (!condition.empty()) condition += " && ";
+                condition += index + " < (uint64_t)(" + args[1] + ")";
+                target += lhs.substr(copied, open + 1 - copied) + index + "]";
+                copied = close + 1;
+            }
+            ++coordinate;
+            open = lhs.find('[', close + 1);
+        }
+        if (condition.empty()) return lhs + " = " + rhs;
+        target += lhs.substr(copied);
+        typeTarget += lhs.substr(typeCopied);
+        // Packed records can assign from logic without an implicit converting constructor.
+        auto valueType = "cpphdl::value_type_for_ref_t<decltype(" + typeTarget + ")>";
+        auto value = trim(rhs).starts_with("{") ? valueType + rhs :
+            "cpphdl::sv_cast<" + valueType + ">(" + rhs + ")";
+        return "{\n    auto __cpphdl_write_value = " + value + ";\n" + declarations +
+            "    if (" + condition + ") {\n        " + target +
+            " = __cpphdl_write_value;\n    }\n}";
+    }
+
     std::string emitStatementExpr(const ExpressionSyntax& expr, bool comb)
     {
         if (isCompoundAssignmentKind(expr.kind)) {
@@ -3603,6 +3805,9 @@
             auto unbasedTargetType = !lvalueStorageType.empty() ? lvalueStorageType : targetStorageType;
             if (packedArrayWrite) {
                 unbasedTargetType = packedArrayWrite->leafType;
+            }
+            if (!integralStringLiteral(*b.right).empty()) {
+                rhs = emitTypedExpr(*b.right, unbasedTargetType);
             }
             if (!packedArrayWrite && lvalueStorageType.empty() && (lhs.find('.') != std::string::npos || lhs.find('[') != std::string::npos) &&
                 lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {
@@ -3946,7 +4151,7 @@
                     lhs += "._next";
                 }
             }
-            return lhs + " = " + rhs;
+            return emitCheckedArrayAssignment(lhs, rhs, *b.left);
         }
         return emitExpr(expr);
     }
@@ -4229,10 +4434,15 @@
                 if (!member.empty()) {
                     auto& left = scoped.left->as<ExpressionSyntax>();
                     auto parentType = exprType(left);
-                    auto value = emitLValue(left) + "." + member;
+                    auto parent = emitLValue(left);
+                    auto value = parent + "." + member;
                     auto lowerBounds = fieldLowerBoundsFor(parentType, member);
-                    if (selectors.empty() || lowerBounds.empty()) {
-                        return replaceKeywordMemberAccess(replaceRawRangeSelects(exprText(expr.toString())));
+                    if (selectors.empty()) {
+                        return value;
+                    }
+                    if (lowerBounds.empty()) {
+                        return replaceKeywordMemberAccess(parent + "." +
+                            replaceRawRangeSelects(exprText(scoped.right->toString())));
                     }
                     return emitTypedSelectChain(value, member,
                                                 fieldTypeFor(parentType, member), selectors, true,
@@ -4368,6 +4578,9 @@
 
     std::string emitUntypedNumericExpr(const ExpressionSyntax& expr)
     {
+        if (auto literal = integralStringLiteral(expr); !literal.empty()) {
+            return literal;
+        }
         if (auto value = unsignedConstantOperand(expr); !value.empty()) {
             return value;
         }
@@ -4821,7 +5034,7 @@
         }
         auto numericTarget = isNumericValueType(targetType);
         auto branchValue = [&](const ExpressionSyntax& branch) {
-            auto value = trim(emitExpr(branch));
+            auto value = trim(emitTypedExpr(branch, targetType));
             while (value.rfind("logic<1>(", 0) == 0) {
                 auto open = value.find('(');
                 auto close = matchingParenClose(value, open);
@@ -5119,6 +5332,9 @@
 
     std::string emitNumericExpr(const ExpressionSyntax& expr, const std::string& emitted = "")
     {
+        if (auto literal = integralStringLiteral(expr); !literal.empty()) {
+            return literal;
+        }
         if (emitted.empty() && expr.kind == SyntaxKind::ScopedName) {
             auto& scoped = expr.as<ScopedNameSyntax>();
             if (tok(scoped.separator) == ".") {

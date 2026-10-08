@@ -532,8 +532,11 @@
     std::string emitExpr(const ExpressionSyntax& expr)
     {
         auto isStringLiteral = [](const ExpressionSyntax& e) {
-            auto text = trim(exprText(e.toString()));
-            return !text.empty() && text.front() == '"';
+            auto expression = &e;
+            while (expression->kind == SyntaxKind::ParenthesizedExpression) {
+                expression = expression->as<ParenthesizedExpressionSyntax>().expression;
+            }
+            return expression->kind == SyntaxKind::StringLiteralExpression;
         };
         if (isStringLiteral(expr)) {
             return trim(exprText(expr.toString()));
@@ -978,6 +981,24 @@
             }
             auto rhs = emitExpr(*b.right);
             if ((op == "==" || op == "!=") && (isStringLiteral(*b.left) || isStringLiteral(*b.right))) {
+                auto integralOperand = [&](const ExpressionSyntax& operand) {
+                    auto value = &operand;
+                    while (value->kind == SyntaxKind::ParenthesizedExpression) {
+                        value = value->as<ParenthesizedExpressionSyntax>().expression;
+                    }
+                    if (mod && value->kind == SyntaxKind::IdentifierName) {
+                        auto name = tok(value->as<IdentifierNameSyntax>().identifier);
+                        for (const auto& param : mod->params) {
+                            if (templateParamName(param) == name) {
+                                return !resolvedTypeWidth(templateParamValueType(normalizeTemplateParamDecl(param))).empty();
+                            }
+                        }
+                    }
+                    return !isStringLiteral(operand) && !resolvedTypeWidth(exprType(operand)).empty();
+                };
+                if (integralOperand(*b.left) || integralOperand(*b.right)) {
+                    return "(" + emitNumericExpr(*b.left) + " " + op + " " + emitNumericExpr(*b.right) + ")";
+                }
                 return "(" + emitExpr(*b.left) + " " + op + " " + rhs + ")";
             }
             if (op == "&=" || op == "|=" || op == "^=" || op == "+=" || op == "-=" || op == "<<=" || op == ">>=") {
@@ -1336,7 +1357,7 @@
                     width = foldWidth(typeWidth(target));
                 }
                 if (!width.empty()) {
-                    return target + "(cpphdl::pack_value<" + width + ">(" + emitExpr(*operand) + "))";
+                    return target + "(cpphdl::pack_value<" + width + ">(" + emitTypedExpr(*operand, resolvedTarget) + "))";
                 }
                 return target + "(" + emitNumericExpr(*operand) + ")";
             }
@@ -1344,7 +1365,7 @@
                 target == "uint64_t" || target == "uint32_t" || target == "uint16_t" || target == "uint8_t") {
                 auto width = foldWidth(logicWidth(target));
                 if (!width.empty()) {
-                    return target + "(cpphdl::pack_value<" + width + ">(" + emitExpr(*operand) + "))";
+                    return target + "(cpphdl::pack_value<" + width + ">(" + emitTypedExpr(*operand, target) + "))";
                 }
                 return target + "(" + emitNumericExpr(*operand) + ")";
             }
@@ -2639,6 +2660,12 @@
         std::ofstream h("generated/" + stem + ".h");
 
         h << "#pragma once\n\n#include \"cpphdl.h\"\n#include <array>\n#include <tuple>\n#include <print>\n#include <type_traits>\n#include <utility>\n\n"
+             "#ifndef HDLCPP_RANGE_WIDTH_DEFINED\n"
+             "#define HDLCPP_RANGE_WIDTH_DEFINED\n"
+             "consteval uint64_t __hdlcpp_range_width(int32_t first, int32_t last) {\n"
+             "    return first >= last ? uint64_t(int64_t(first) - last) + 1 : uint64_t(int64_t(last) - first) + 1;\n"
+             "}\n"
+             "#endif\n\n"
              "#ifndef HDLCPP_FIXED_STRING_DEFINED\n"
              "#define HDLCPP_FIXED_STRING_DEFINED\n"
              "template <size_t N>\n"
@@ -4414,6 +4441,35 @@
 	                                    replaceIdentifierAll(line, source->returnBase, sourceStorageName);
 	                                }
 	                            }
+	                            sourceBody = hdlcpp::exposeCheckedWriteValues(std::move(sourceBody), sourceStorageName);
+	                            // Named packed-element update helpers replaced inline RMW lambdas.
+	                            // Recover their field assignment only in this analysis copy; the
+	                            // actual producer keeps the helper and its evaluation ordering.
+	                            for (auto& line : sourceBody) {
+	                                auto eq = hdlcpp::topLevelAssignPos(line);
+	                                if (eq == std::string::npos) continue;
+	                                auto lhs = trim(line.substr(0, eq));
+	                                if (lhs.rfind(sourceStorageName + "[", 0) != 0) continue;
+	                                auto rhs = trim(line.substr(eq + 1));
+	                                if (!rhs.empty() && rhs.back() == ';') rhs.pop_back();
+	                                auto open = rhs.find('(');
+	                                if (open == std::string::npos || matchingParenClose(rhs, open) != rhs.size() - 1)
+	                                    continue;
+	                                auto helper = m.helperDefinitions.find(rhs.substr(0, open));
+	                                if (helper == m.helperDefinitions.end() ||
+	                                    !helper->first.starts_with("__hdlcpp_update_")) continue;
+	                                auto memberStart = helper->second.find("element.");
+	                                auto memberEnd = helper->second.find(" = value;", memberStart);
+	                                if (memberStart == std::string::npos || memberEnd == std::string::npos) continue;
+	                                auto member = helper->second.substr(memberStart + 8, memberEnd - memberStart - 8);
+	                                auto args = splitTopLevelArgs(rhs.substr(open + 1, rhs.size() - open - 2));
+	                                auto elementType = sourceTypeAfterIndices(sourceAggregateType, lhs, sourceStorageName);
+	                                auto seed = "cpphdl::unpack_value<" + elementType +
+	                                    ">(cpphdl::pack_value<cpphdl::type_width<" + elementType + ">()>(" + lhs + "))";
+	                                auto materializedSeed = "cpphdl::convert_packed<" + elementType + ">(" + lhs + ")";
+	                                if (args.size() == 2 && (trim(args[0]) == seed || trim(args[0]) == materializedSeed))
+	                                    line = lhs + "." + member + " = " + trim(args[1]) + ";";
+	                            }
 	                            projectedArrayBody = hdlcpp::extractProjectedArrayFieldCombLines(
 	                                sourceBody, sourceStorageName, field, storageName);
 	                            for (auto& line : projectedArrayBody) {
@@ -4546,6 +4602,66 @@
 	                                        auto close = matchingParenClose(rhs, 0);
 			                                        if (close == rhs.size() - field.size() - 2) {
 	                                            auto aggregate = trim(rhs.substr(1, close - 1));
+	                                            // A checked array write snapshots its RHS through a
+	                                            // destination-typed cast. Project through it only when
+	                                            // the source has the same resolved element type.
+	                                            const std::string prefix = "cpphdl::sv_cast<";
+	                                            if (aggregate.starts_with(prefix)) {
+	                                                auto angle = matchingTemplateClose(aggregate, prefix.size() - 1);
+	                                                auto castOpen = angle == std::string::npos ? angle : angle + 1;
+	                                                if (castOpen != std::string::npos && castOpen < aggregate.size() &&
+	                                                    aggregate[castOpen] == '(' &&
+	                                                    matchingParenClose(aggregate, castOpen) == aggregate.size() - 1) {
+	                                                    auto inner = aggregate.substr(castOpen + 1, aggregate.size() - castOpen - 2);
+	                                                    auto expected = sourceTypeAfterIndices(sourceAggregateType, lhs, storageName);
+	                                                    auto actual = expressionStorageType(m, inner);
+	                                                    for (const auto& item : m.inputFieldProjections) {
+	                                                        const auto& projection = item.second;
+	                                                        auto getter = projection.projectedCppPort + "()";
+	                                                        if (auto indices = projectedInputIndices(inner, getter)) {
+	                                                            actual = sourceTypeAfterIndices(projection.projectedType,
+	                                                                getter + *indices, getter);
+	                                                            break;
+	                                                        }
+	                                                    }
+	                                                    for (const auto& item : m.combReturnTypes) {
+	                                                        auto getter = item.first + "_func()";
+	                                                        if (auto indices = projectedInputIndices(inner, getter)) {
+	                                                            actual = sourceTypeAfterIndices(item.second, getter + *indices, getter);
+	                                                            break;
+	                                                        }
+	                                                    }
+	                                                    // Projection metadata uses decltype for native
+	                                                    // fields. Resolve that member against its original
+	                                                    // declared port type before comparing layouts.
+	                                                    const std::string nativeField = "std::remove_cvref_t<decltype(std::declval<";
+	                                                    if (actual.starts_with(nativeField) && actual.ends_with(")>")) {
+	                                                        auto member = actual.find(">().", nativeField.size());
+	                                                        if (member != std::string::npos) {
+	                                                            auto record = actual.substr(nativeField.size(), member - nativeField.size());
+	                                                            auto path = actual.substr(member + 4, actual.size() - member - 6);
+	                                                            auto resolved = fieldTypeFor(record, path);
+	                                                            if (!resolved.empty()) actual = std::move(resolved);
+	                                                        }
+	                                                    }
+	                                                    auto target = aggregate.substr(prefix.size(), angle - prefix.size());
+	                                                    auto generatedTarget = "cpphdl::value_type_for_ref_t<decltype(std::declval<" +
+	                                                        emitCurrentCpphdlArrayOrder(sourceAggregateType) + ">()";
+	                                                    auto suffix = lhs.substr(storageName.size());
+	                                                    for (size_t pos = 0; pos < suffix.size() && suffix[pos] == '[';) {
+	                                                        generatedTarget += "[0]";
+	                                                        unsigned depth = 1;
+	                                                        while (++pos < suffix.size() && depth) {
+	                                                            if (suffix[pos] == '[') ++depth;
+	                                                            else if (suffix[pos] == ']') --depth;
+	                                                        }
+	                                                    }
+	                                                    generatedTarget += ")>";
+	                                                    if ((emitCurrentCpphdlArrayOrder(target) == generatedTarget || resolveLocalAliasType(target) == resolveLocalAliasType(expected)) &&
+	                                                        !actual.empty() && resolveLocalAliasType(actual) == resolveLocalAliasType(expected))
+	                                                        aggregate = std::move(inner);
+	                                                }
+	                                            }
 	                                            if (auto inputProjection = projectedInputFieldCall(
 	                                                    aggregate, field, type, false);
 	                                                !inputProjection.empty()) {
@@ -10617,6 +10733,10 @@
         }
         auto lhs = selfStrippedLine.substr(0, eq);
         auto rhs = selfStrippedLine.substr(eq + 1);
+        if (comb && !method.returnName.empty() && !method.returnBase.empty() &&
+            !method.localNames.count(method.returnBase)) {
+            replaceIdentifierAll(rhs, method.returnBase, method.returnName);
+        }
         auto declaredLocal = hdlcpp::declarationName(selfStrippedLine);
         if (!declaredLocal.empty()) {
             auto boundRhs = bindWithLocals(rhs, "");
@@ -10643,10 +10763,6 @@
             if (baseEnd != std::string::npos) {
                 lhs.replace(baseEnd, lhsBase.size(), combStorageName(mod, lhsBase));
             }
-        }
-        if (comb && !method.returnName.empty() && !method.returnBase.empty() &&
-            !method.localNames.count(method.returnBase)) {
-            replaceIdentifierAll(rhs, method.returnBase, method.returnName);
         }
         auto boundLhs = bindWithLocals(lhs, lhsBase, true);
         if (!lhsBase.empty()) {
@@ -13415,6 +13531,9 @@
                         (hasSemicolon ? ";" : "");
                 };
                 auto rewriteAggregateSvCastAssignmentFallback = [&]() {
+                    if (!hdlcpp::declarationName(emittedLine).empty()) {
+                        return;
+                    }
                     auto eq = hdlcpp::topLevelAssignPos(emittedLine);
                     if (eq == std::string::npos) {
                         return;
@@ -15099,12 +15218,12 @@ int main(int argc, char** argv)
                 }
             }
             for (const auto& type : module.packedUnionTypes) {
-                if (type.find("::") == std::string::npos) {
+                if (type.find("::") == std::string::npos || module.types.count(type)) {
                     moduleTraits << module.name << "\ttype_union." << type << "=1\n";
                 }
             }
             for (const auto& [type, order] : module.typeFieldOrder) {
-                if (type.find("::") != std::string::npos) {
+                if (type.find("::") != std::string::npos && !module.types.count(type)) {
                     continue;
                 }
                 auto fields = module.typeFields.find(type);

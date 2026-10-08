@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="cpphdl.example.market" id="42" version="0"
+                   semanticVersion="1.0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <type name="uint32" primitiveType="uint32"/>
+  </types>
+  <sbe:message name="Quote" id="1" blockLength="24">
+    <field name="sequence" id="1" type="uint32"/>
+    <field name="instrument" id="2" type="uint32"/>
+    <field name="bid" id="3" type="uint32"/>
+    <field name="ask" id="4" type="uint32"/>
+    <field name="bidQuantity" id="5" type="uint32"/>
+    <field name="askQuantity" id="6" type="uint32"/>
+  </sbe:message>
+</sbe:messageSchema>
