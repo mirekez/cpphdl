@@ -75,6 +75,15 @@ for mode in ('baseline', 'retimed'):
     if args.hft:
         regions = report['timing']['streaming_regions']
         assert len(regions) == 3 and all(p['initiation_interval'] == 1 for p in regions)
+        if mode == 'retimed':
+            tx = next(p for p in regions if p['scope'].endswith('.transmitter'))
+            cells = json.loads((out / 'gates.json').read_text())['modules'][top]['cells'].values()
+            registers = sum(c['type'].startswith('$_DFF_') for c in cells)
+            logic = len(cells) - registers
+            # Current HFT: 86,157 generic combinational cells, 24,811 FF bits,
+            # TX latency 13. Catch reintroduced serial formatter/checksum chains.
+            assert logic <= 100000 and registers <= 30000 and tx['latency'] <= 16, \
+                f'HFT TX resource regression: {logic} cells, {registers} FF bits, TX {tx["latency"]} clocks'
         drain = ' -DHFT_TEST_DRAIN_CYCLES=' + str(sum(p['latency'] for p in regions) + 7 + 64)
     run([args.verilator, '--cc', '--exe', '--build', '-j', '2', '-Wno-fatal',
          '-MAKEFLAGS', f'CXX={args.cxx} LINK={args.cxx} AR=ar LDFLAGS=-L{lib}',

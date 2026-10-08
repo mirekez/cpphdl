@@ -526,6 +526,36 @@ inline void hftHistoryTest(hft_test::Simulation& sim) {
     std::puts("PASS: per-security two-price history, rollover, no-trade updates, invalid IDs, duplicates and reset");
 }
 
+inline void hftTransmitTest(hft_test::Simulation& sim) {
+    using namespace hft_test;
+    std::mt19937 random{0x54584353};
+    // Every hexadecimal digit in every token position, both sides, all stocks,
+    // and full-width sell prices. Reset permits nonmonotonic token sequences.
+    for (unsigned position = 0; position < 8; ++position) {
+        for (unsigned digit = 0; digit < 16; ++digit) {
+            sim.reset();
+            Reference oracle;
+            uint32_t sequence = (0x12345678u & ~(15u << (position * 4))) | (digit << (position * 4));
+            uint32_t bid = digit & 1 ? 0x80000000u | (random() & 0x7ffffffeu) : 99000u;
+            Quote q{sequence, 1 + (position + digit) % 4, bid, bid + 1, 100, 100};
+            Bytes expected = oracle.expected(q);
+            require(expected.size() == 110, "TX token scenario must produce an order");
+            sim.frame(market(q, true), expected);
+        }
+    }
+    // Do not reset between these orders: TCP sequence crosses a 16-bit carry,
+    // exercising both checksum halves and repeated use of the committed order.
+    sim.reset();
+    Reference oracle;
+    for (unsigned i = 1; i <= 1260; ++i) {
+        Quote q{i, 1 + i % 4, 0xfffffffeu, 0xffffffffu, 100, 100};
+        Bytes expected = oracle.expected(q);
+        require(expected.size() == 110, "TX checksum scenario must produce an order");
+        sim.frame(market(q, true), expected);
+    }
+    std::puts("PASS: TX hexadecimal digits at all token positions, both sides, four stocks, full-width prices and TCP checksum carry");
+}
+
 inline int hftTest() {
     using namespace hft_test;
     try {
@@ -618,6 +648,7 @@ inline int hftTest() {
         }
         hftStreamingTest(sim);
         hftHistoryTest(sim);
+        hftTransmitTest(sim);
         sim.concurrent();
         sim.lineRate();
         sim.resetStages();
