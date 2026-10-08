@@ -24,9 +24,9 @@ default, overridable with `CPPHDL_TOOL`; rebuild that tool after source changes:
 ./.build_rocket64_cpphdl.sh
 ./.run_rocket64_cpphdl.sh plain
 ./.build_rocket64_cpphdl-optimize-combs.sh
-./.run_rocket64_cpphdl.sh optimize-combs
+./.run_rocket64_cpphdl-optimize-combs.sh
 ./.build_rocket64_cpphdl-native-graph.sh
-./.run_rocket64_cpphdl.sh native-graph
+./.run_rocket64_cpphdl-native-graph.sh
 ```
 
 All modes use the same FIRRTL and matrix ELF. `CPPHDL_OPT_LEVEL` overrides the
