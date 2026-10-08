@@ -1,6 +1,8 @@
-Refreshed after constant ROM preservation, 2026-10-08.
-Native graph uses the new uninstrumented 84.190-second run and successful 786.16-second build.
-Other backends retain the previous uninstrumented runs and build measurements. No new builds or runs were performed for this table refresh.
-Native graph build includes module extraction with two workers (the separately verified TLROM was cached), linking and runner compilation with one worker. The FIRRTL-exported model was reused. The older 371.10-second graph build excluded initial extraction.
-Measurements are single runs on a shared host and were not all collected in one session. Instrumented profiling runs are excluded.
-Original measurement directories and the paired old/new graph comparison are unchanged.
+Refreshed after whole-value helper lowering and chunk-local temporaries, 2026-10-08.
+Native graph runtime is the median of three uninstrumented candidate runs (27.939 seconds).
+Its 92.94-second build covers native code emission and runner compilation from an existing graph; it excludes frontend extraction and is not directly comparable with the complete builds in other rows.
+The preceding whole-value helper build took 532.49 seconds for module extraction, graph linking and runner compilation, reusing the FIRRTL-exported model. That build predates the local-temporary codegen change.
+Other backends retain previous runs and build measurements; they were not rebuilt or rerun in this optimization task.
+Optimization acceptance used three alternating baseline/candidate pairs per trial, requiring greater than 10% reduction in both median wall time and process CPU time. Both guarded-evaluation variants failed that threshold and were removed from the implementation.
+The shared host ran unrelated jobs; absolute times vary between trials. See 20261008-optimization-trials/report.txt and per-trial results.json for incremental comparisons, hashes and correctness checks.
+Instrumented profiling runs are excluded. Original measurement directories remain unchanged.
