@@ -171,8 +171,15 @@ Rows wider than 64 bits use multiple reads of the same row. The frontend retains
 the helper's zero result for out-of-range reads and wrapping uint64_t index
 multiplication for power-of-two row widths. For other widths it uses the ROM
 path only when index multiplication and per-bit offsets cannot overflow;
-otherwise the original helper is lowered. Nonconstant packed arrays also keep
-their existing lowering. `cpp_graph_constant_memory` compares original C++ and
+otherwise the original helper is lowered. Nonconstant packed arrays use a
+whole-value logical shift under the same arithmetic safety checks, avoiding
+one independently lowered variable bit read per output bit. Recognized
+`firtool_cpphdl::ashr` bodies similarly use whole-value arithmetic shifts when
+the helper's unsigned `bit + shift` cannot wrap; possible wrapping and edited
+helper bodies retain their C++ lowering. `cpp_graph_word_helpers` compares both
+emission modes with executed C++ for wide shifts, dynamic arrays, out-of-range
+indices, wrapping arithmetic, and modified helper implementations.
+`cpp_graph_constant_memory` compares original C++ and
 both monolithic and chunked graph models for narrow, 64-bit, 65-bit and 129-bit
 rows, large indices, duplicate tables, serialization and changed helper bodies.
 The partition regression combines independent writable RAMs and ROM lookups.

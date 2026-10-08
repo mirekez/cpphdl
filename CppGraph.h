@@ -1394,6 +1394,16 @@ class Lowering {
         std::vector<Item> arguments;
         for (unsigned index = start; index < call->getNumArgs(); ++index) arguments.push_back(expr(call->getArg(index)));
         auto qualified = function->getQualifiedNameAsString();
+        if (qualified == "firtool_cpphdl::ashr" && arguments.size() == 2 &&
+            firtoolHelper(function, "WS", "{ cpphdl :: logic < W > result = 0 ; size_t shift = static_cast < uint64_t > ( A ) ; bool sign = V . get ( W - 1 ) ; "
+                "for ( size_t bit = 0 ; bit < W ; ++ bit ) result . set ( bit , bit + shift < W ? V . get ( bit + shift ) : sign ) ; return result ; } ")) {
+            auto data = graph.resolved(read(arguments[0]));
+            auto shift = graph.resolved(read(cast(arguments[1], context.UnsignedLongLongTy)));
+            // The source helper adds each bit index using unsigned size_t.
+            // Keep its C++ implementation when that addition could wrap.
+            if (!data.empty() && maximumUnsigned(shift) <= ~uint64_t(0) - (data.size() - 1))
+                return value(graph.binary("sar", data, shift, data.size()), call->getType());
+        }
         if (qualified == "firtool_cpphdl::array_get" && arguments.size() == 2 && firtoolArrayLookup(function)) {
             auto params = function->getTemplateSpecializationArgs();
             if (params && params->size() == 3 &&
@@ -1403,8 +1413,7 @@ class Lowering {
                 auto depth = (*params)[1].getAsIntegral().getLimitedValue();
                 auto data = graph.resolved(read(arguments[0]));
                 if (rowWidth && rowWidth <= 1048576 && depth && depth <= 1048576 / rowWidth &&
-                    data.size() == rowWidth * depth && width(call->getType()) == rowWidth &&
-                    std::all_of(data.begin(), data.end(), [](Bit bit) { return bit < 2; })) {
+                    data.size() == rowWidth * depth && width(call->getType()) == rowWidth) {
                     auto address = graph.resolved(read(cast(arguments[1], context.UnsignedLongLongTy)));
                     // array_get multiplies its uint64_t index by rowWidth.
                     // Preserve wrapping multiplication for power-of-two rows.
@@ -1416,12 +1425,14 @@ class Lowering {
                         for (auto w = rowWidth; w > 1; w >>= 1) ++shift;
                         address = resize(slice(address, 0, 64 - shift), 64);
                     } else {
-                        uint64_t maximum = 0;
-                        for (unsigned bit = 0; bit < 64; ++bit)
-                            if (address[bit]) maximum |= uint64_t(1) << bit;
-                        safe = maximum <= (~uint64_t(0) - (rowWidth - 1)) / rowWidth;
+                        safe = maximumUnsigned(address) <= (~uint64_t(0) - (rowWidth - 1)) / rowWidth;
                     }
-                    if (safe) return value(graph.constantArray(std::move(data), std::move(address), rowWidth), call->getType());
+                    if (safe) {
+                        if (std::all_of(data.begin(), data.end(), [](Bit bit) { return bit < 2; }))
+                            return value(graph.constantArray(std::move(data), std::move(address), rowWidth), call->getType());
+                        auto offset = graph.binary("mul", address, constant(rowWidth, 64), 64);
+                        return value(graph.binary("shr", data, offset, rowWidth), call->getType());
+                    }
                 }
             }
         }
@@ -1746,14 +1757,20 @@ class Lowering {
         if (qualified == "std::move" || qualified == "std::forward") return arguments.at(0);
         return invoke(function, receiver, arguments);
     }
-    bool firtoolArrayLookup(const FunctionDecl* function) {
+    static uint64_t maximumUnsigned(const Value& value) {
+        uint64_t maximum = 0;
+        for (unsigned bit = 0; bit < std::min<size_t>(64, value.size()); ++bit)
+            if (value[bit]) maximum |= uint64_t(1) << bit;
+        return maximum;
+    }
+    bool firtoolHelper(const FunctionDecl* function, std::string_view parameters, std::string_view expected) {
         // Recognize the shipped helper's complete body, not just its name.
         // An edited helper must continue through ordinary C++ lowering.
         auto primary = function->getPrimaryTemplate();
-        if (!primary || primary->getTemplateParameters()->size() != 3 || function->getNumParams() != 2 || !function->hasBody()) return false;
+        if (!primary || primary->getTemplateParameters()->size() != parameters.size() || function->getNumParams() != 2 || !function->hasBody()) return false;
         std::map<std::string, std::string> names;
-        for (unsigned i = 0; i < 3; ++i)
-            names[primary->getTemplateParameters()->getParam(i)->getNameAsString()] = std::string(1, "WNI"[i]);
+        for (unsigned i = 0; i < parameters.size(); ++i)
+            names[primary->getTemplateParameters()->getParam(i)->getNameAsString()] = std::string(1, parameters[i]);
         names[function->getParamDecl(0)->getNameAsString()] = "V";
         names[function->getParamDecl(1)->getNameAsString()] = "A";
         auto location = function->getBody()->getBeginLoc();
@@ -1773,9 +1790,12 @@ class Lowering {
             auto word = buffer.substr(offset, token.getLength());
             normalized += (names.count(word) ? names.at(word) : word) + " ";
         }
-        return normalized == "{ cpphdl :: logic < W > result = 0 ; size_t first = static_cast < uint64_t > ( A ) * W ; "
+        return normalized == expected;
+    }
+    bool firtoolArrayLookup(const FunctionDecl* function) {
+        return firtoolHelper(function, "WNI", "{ cpphdl :: logic < W > result = 0 ; size_t first = static_cast < uint64_t > ( A ) * W ; "
             "for ( size_t bit = 0 ; bit < W ; ++ bit ) if ( first + bit < W * N ) "
-            "result . set ( bit , V . get ( first + bit ) ) ; return result ; } ";
+            "result . set ( bit , V . get ( first + bit ) ) ; return result ; } ");
     }
     Value hostEffect(const std::string& operation, unsigned count, Value inputs = {}) {
         auto enabled = executionGuard();
