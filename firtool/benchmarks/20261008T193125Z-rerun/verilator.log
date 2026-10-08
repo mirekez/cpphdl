@@ -1,0 +1,23 @@
+
+==> Reusing Chipyard: /home/me/chipyard/chipyard
+
+==> Run native SystemVerilog/Verilator Rocket RV64 matrix test
+Wall timeout: 1200s; simulation cycle limit: 100000000
+running simulator through conda loader: /home/me/chipyard/chipyard/.conda-env/x86_64-conda-linux-gnu/sysroot/lib64/ld-linux-x86-64.so.2
+RV64 matrix workload: 16x16, 8 rounds
+RV64 matrix progress: 2/8 rounds
+RV64 matrix progress: 4/8 rounds
+RV64 matrix progress: 6/8 rounds
+RV64 matrix progress: 8/8 rounds
+ROCKET RV64 MMUL TEST PASSED: signature=0xe49d58d75696cd28
+[UART] UART0 is here (stdin/stdout).
+- /home/me/chipyard/chipyard/sims/verilator/generated-src/chipyard.harness.TestHarness.RocketConfig/gen-collateral/TestDriver.v:158: Verilog $finish
+
+==> Native SystemVerilog/Verilator Rocket test PASS
+RV64 matrix workload: 16x16, 8 rounds
+RV64 matrix progress: 2/8 rounds
+RV64 matrix progress: 4/8 rounds
+RV64 matrix progress: 6/8 rounds
+RV64 matrix progress: 8/8 rounds
+ROCKET RV64 MMUL TEST PASSED: signature=0xe49d58d75696cd28
+Log: /home/me/cpphdl/firtool/chipyard/sims/verilator/output/chipyard.harness.TestHarness.RocketConfig/rocket64-mmul.log

@@ -1,0 +1,9 @@
+START plain 2026-10-08T19:32:27.215901+00:00
+DONE plain 380.870s wall 380.170s CPU PASS
+START optimize-combs 2026-10-08T19:38:48.184964+00:00
+DONE optimize-combs 209.922s wall 209.620s CPU PASS
+START native-graph 2026-10-08T19:42:18.158030+00:00
+DONE native-graph 31.922s wall 31.880s CPU PASS
+START verilator 2026-10-08T19:42:50.780002+00:00
+DONE verilator 291.043s wall 290.550s CPU PASS
+All four run scripts passed.

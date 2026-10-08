@@ -1,0 +1,13 @@
+RV64 matrix workload: 16x16, 8 rounds
+[CPPHDL graph] cycle 100000
+RV64 matrix progress: 2/8 rounds
+[CPPHDL graph] cycle 200000
+[CPPHDL graph] cycle 300000
+RV64 matrix progress: 4/8 rounds
+[CPPHDL graph] cycle 400000
+[CPPHDL graph] cycle 500000
+RV64 matrix progress: 6/8 rounds
+[CPPHDL graph] cycle 600000
+RV64 matrix progress: 8/8 rounds
+ROCKET RV64 MMUL TEST PASSED: signature=0xe49d58d75696cd28
+Native graph simulation finished after 695870 cycles (code 0)
