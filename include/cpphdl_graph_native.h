@@ -84,9 +84,40 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
             names[index] = "state" + std::to_string(index);
             output << "uint64_t " << names[index] << " = " << number(nodes[index].left).value_or(0) << "ull;\n";
         }
-        if (chunkSize) output << "std::array<uint64_t," << nodes.size() << "> __cpphdl_values{};\n";
+        // Only values that escape their defining chunk need model storage.
+        // Keeping the rest as scalars lets the host compiler eliminate their
+        // stores and allocate registers without exposing them to other calls.
+        std::map<size_t, size_t> sharedSlots;
+        if (chunkSize) {
+            std::vector<int64_t> chunkOf(nodes.size(), -1);
+            size_t position = 0;
+            for (auto index : order)
+                if (nodes[index].op != "state" && nodes[index].op != "input")
+                    chunkOf[index] = position++ / chunkSize;
+            auto retain = [&](const Value& bits, int64_t consumer = -1) {
+                for (auto bit : resolved(bits)) if (bit > 1) {
+                    auto index = owner(bit);
+                    if (chunkOf[index] >= 0 && chunkOf[index] != consumer)
+                        sharedSlots.emplace(index, sharedSlots.size());
+                }
+            };
+            for (auto index : order) if (chunkOf[index] >= 0)
+                for (const auto* bits : {&nodes[index].left, &nodes[index].right, &nodes[index].select})
+                    retain(*bits, chunkOf[index]);
+            for (const auto& port : ports) if (!port.input) retain(port.bits);
+            for (const auto& state : states)
+                for (const auto* bits : {&state.next, &state.trigger, &state.reset, &state.resetValue}) retain(*bits);
+            for (const auto& access : memoryAccesses) { retain(access.address); retain(access.enabled); }
+            for (const auto& write : memoryWrites)
+                for (const auto* bits : {&write.address, &write.data, &write.enabled}) retain(*bits);
+            output << "std::array<uint64_t," << sharedSlots.size() << "> __cpphdl_values{};\n";
+        }
         auto valueName = [&](size_t index) {
-            return chunkSize ? "__cpphdl_values[" + std::to_string(index) + "]" : "value" + std::to_string(index);
+            auto slot = sharedSlots.find(index);
+            return slot != sharedSlots.end() ? "__cpphdl_values[" + std::to_string(slot->second) + "]" : "value" + std::to_string(index);
+        };
+        auto declaration = [&](size_t index) {
+            return sharedSlots.count(index) ? "" : "const uint64_t ";
         };
         auto assembly = [&](Value value) {
             value = resolved(value);
@@ -127,7 +158,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
                     node.left.empty() || node.left.size() > 64 || node.width != std::min<uint64_t>(64, memories[*memory].width - *word * 64))
                     throw std::runtime_error("invalid graph memory read");
                 auto address = assembly(node.left);
-                output << (chunkSize ? "" : "const uint64_t ") << valueName(index) << " = " << address << " < " << memories[*memory].depth
+                output << declaration(index) << valueName(index) << " = " << address << " < " << memories[*memory].depth
                        << "ull ? memory" << *memory << '[' << address << "][" << *word << "] : 0ull;\n";
                 continue;
             }
@@ -214,7 +245,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
                 expr = left + " " + operators.at(op) + " " + right;
                 if (op == "div" || op == "mod") expr = right + " ? (" + expr + ") : 0ull";
             }
-            output << (chunkSize ? "" : "const uint64_t ") << valueName(index) << " = (" << expr << ") & " << mask(node.width) << "ull;\n";
+            output << declaration(index) << valueName(index) << " = (" << expr << ") & " << mask(node.width) << "ull;\n";
         }
         if (chunkSize) {
             if (chunks) output << "}\n";

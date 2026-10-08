@@ -131,7 +131,9 @@ External modules become explicit host input/output boundaries.
 The `.graph` extraction output is a compact serialized graph with resolved
 aliases and dead nodes removed. It avoids retaining a whole-hierarchy Clang AST.
 Native emission optionally splits operations into bounded, non-inlined C++
-functions sharing intermediate storage; register and memory updates still use
+functions sharing intermediate storage. Values consumed only within their own
+chunk use local scalar temporaries; only values read across chunks or by the
+final state/output phase occupy shared slots. Register and memory updates use
 one simultaneous transaction commit. Chunked emission rejects implicit host
 effects: the Rocket runner explicitly snapshots graph/host ports and invokes
 the existing TSI, DRAM and UART models. Hardware modules execute in the graph.
@@ -142,6 +144,10 @@ independent memories, and host callbacks. It forces tiny two-node chunks to
 exercise dependencies across functions. Firtool bit tests also cover masked
 168-bit concatenation slices; comparison tests cover 129-bit equality and
 unsigned ordering, including bits above 63 and 127.
+
+`cpp_graph_native_scheduling` compares chunk sizes 3 and 19 against monolithic
+execution across 24,576 evaluation phases, including derived controls, shared
+intermediates, asynchronous reset, rising/falling edges, and ordered RAM writes.
 
 The Chipyard native-graph build helper generates and compiles its runner at
 `-O2`. Each failed stage retains diagnostics and returns failure. Successful
