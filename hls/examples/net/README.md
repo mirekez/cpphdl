@@ -114,17 +114,45 @@ For the default four-stage HLS configuration, retiming produces:
 | --- | ---: | ---: |
 | RX header checks | 10 | 1 |
 | Trading decision | 13 | 1 |
-| TX word formatting | 29 | 1 |
+| TX order preparation / word formatting | 13 | 1 |
 
 The decision region itself has II=1, but its wrapper admits only one quote
 per completed decision (13 clocks in this retimed design) to preserve history.
 This is faster than the arrival rate of one valid 78-byte quote per 20 words.
 
-Retiming inserts 28,673 register bits. These are pipeline registers, not packet
+Retiming inserts 15,993 register bits. These are pipeline registers, not packet
 RAM. The seven manually added stages (ingress, five collector stages and TX
 command) are outside these region latencies. Packet latency also includes word
 arrival, queueing and the order-load handshake; it is not simply this table's
 sum. Neither this estimate nor Verilator establishes physical timing closure.
+
+### TX resource reduction
+
+TX computes the checksum from the fixed packet template and order fields; it
+does not build or scan a packet buffer. The checksum uses independent partial
+sums and a combined constant term. The formatter decodes disjoint word offsets
+in parallel, masks the selected words and combines them with bitwise OR.
+Hexadecimal token digits use a byte-sized arithmetic expression instead of
+sixteen repeated conditional helper calls across checksum and word generation.
+This avoids unnecessary serial control dependencies in the current HLS lowering.
+
+Measured with the same converter, generic mapper and 315 MHz retiming target:
+
+| Metric | Before TX changes | Current |
+| --- | ---: | ---: |
+| TX combinational cells | 79,309 | 43,847 |
+| TX register bits | 25,384 | 12,927 |
+| TX region latency, clocks | 29 | 13 |
+| Whole-design combinational cells | 121,619 | 86,157 |
+| Whole-design register bits | 37,268 | 24,811 |
+| Estimated worst path, ns | 3.12 | 3.12 |
+
+Cells here are generic one-bit AND/OR/XOR/mux cells, **not FPGA LUTs**. Register
+counts include the elastic pipeline and order state. These changes do not alter
+packet bytes, the valid/ready contract or II=1. The order-load/drain gap between
+frames still exists; this is not a claim of minimum-gap Ethernet transmission.
+The synthesis regression also limits whole-design cell/register counts and TX
+latency to catch a return of the oversized formatter.
 
 ```sh
 build/cpphdl --synth --top Hft --module Hft \
@@ -213,6 +241,9 @@ reuse of the same sequence number. Directed history tests cover all four rows,
 both history entries, rollover, no-trade updates, invalid IDs and reset.
 The independent oracle uses variable-length per-security histories and checks
 the stock identifier and checksums in every emitted order.
+TX-specific cases exercise all hexadecimal digits in every token position,
+both sides, all four stock identifiers, full-width prices, and 1,260 consecutive
+orders without reset to cross a TCP sequence carry between checksum halves.
 CRC expectations use a separate bit-serial reference and
 the standard 123456789 check vector. A further 1,000-frame run verifies
 20,000 uninterrupted RX words and TX intra-frame throughput.

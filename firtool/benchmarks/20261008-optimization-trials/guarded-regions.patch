@@ -1,0 +1,240 @@
+diff --git a/include/cpphdl_graph_native.h b/include/cpphdl_graph_native.h
+index 46c12c2..cfbdd8f 100644
+--- a/include/cpphdl_graph_native.h
++++ b/include/cpphdl_graph_native.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "cpphdl_graph.h"
++#include "cpphdl_graph_native_guards.h"
+ 
+ namespace cpphdl::graph {
+ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
+@@ -37,6 +38,11 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
+             if (nodes[owner(state.bits[0])].name == "event history")
+                 for (auto bit : state.next) checkEvent(bit);
+         auto order = dependencyOrder();
++        std::optional<NativeDemandPlan> demandPlan;
++        if (chunkSize) {
++            demandPlan.emplace(*this, order);
++            demandPlan->group(*this, order, chunkSize);
++        }
+         std::ofstream output(path);
+         if (!output) throw std::runtime_error("cannot write native model");
+         output << "#pragma once\n";
+@@ -89,11 +95,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
+         // stores and allocate registers without exposing them to other calls.
+         std::map<size_t, size_t> sharedSlots;
+         if (chunkSize) {
+-            std::vector<int64_t> chunkOf(nodes.size(), -1);
+-            size_t position = 0;
+-            for (auto index : order)
+-                if (nodes[index].op != "state" && nodes[index].op != "input")
+-                    chunkOf[index] = position++ / chunkSize;
++            const auto& chunkOf = demandPlan->chunkOf;
+             auto retain = [&](const Value& bits, int64_t consumer = -1) {
+                 for (auto bit : resolved(bits)) if (bit > 1) {
+                     auto index = owner(bit);
+@@ -104,6 +106,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
+             for (auto index : order) if (chunkOf[index] >= 0)
+                 for (const auto* bits : {&nodes[index].left, &nodes[index].right, &nodes[index].select})
+                     retain(*bits, chunkOf[index]);
++            for (const auto& guard : demandPlan->chunkGuards) retain({guard.bit});
+             for (const auto& port : ports) if (!port.input) retain(port.bits);
+             for (const auto& state : states)
+                 for (const auto* bits : {&state.next, &state.trigger, &state.reset, &state.resetValue}) retain(*bits);
+@@ -142,24 +145,24 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
+         // Output settling does not need next-state logic. Make the two phases
+         // compile-time distinct so the host compiler can remove that work,
+         // rather than testing a runtime flag after computing both schedules.
+-        unsigned chunks = 0, chunkNodes = 0;
++        unsigned chunks = 0;
+         if (!chunkSize) output << "template<bool Commit> void evaluate() {\n";
+         for (auto index : order) {
+             const auto& node = nodes[index];
+             if (node.op == "state" || node.op == "input") continue;
+-            if (chunkSize && chunkNodes % chunkSize == 0) {
++            if (chunkSize && (!chunks || demandPlan->chunkOf[index] != chunks - 1)) {
+                 if (chunks) output << "}\n";
+                 output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks++ << "() {\n";
+             }
+-            ++chunkNodes;
+             if (node.op == "memory_read") {
+                 auto memory = number(node.right), word = number(node.select);
+                 if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||
+                     node.left.empty() || node.left.size() > 64 || node.width != std::min<uint64_t>(64, memories[*memory].width - *word * 64))
+                     throw std::runtime_error("invalid graph memory read");
+                 auto address = assembly(node.left);
+-                output << declaration(index) << valueName(index) << " = " << address << " < " << memories[*memory].depth
+-                       << "ull ? memory" << *memory << '[' << address << "][" << *word << "] : 0ull;\n";
++                auto expression = address + " < " + std::to_string(memories[*memory].depth)
++                    + "ull ? memory" + std::to_string(*memory) + '[' + address + "][" + std::to_string(*word) + "] : 0ull";
++                output << declaration(index) << valueName(index) << " = " << expression << ";\n";
+                 continue;
+             }
+             if (node.op == "host_debug_tick") {
+@@ -250,8 +253,13 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
+         if (chunkSize) {
+             if (chunks) output << "}\n";
+             output << "template<bool Commit> [[gnu::noinline]] void evaluate() {\n";
+-            for (unsigned index = 0; index < chunks; ++index)
++            for (unsigned index = 0; index < chunks; ++index) {
++                auto guard = demandPlan->chunkGuards[index];
++                if (!guard.bit) continue;
++                if (guard.bit > 1)
++                    output << "if(" << (guard.positive ? "" : "!") << assembly({guard.bit}) << ") ";
+                 output << "__cpphdl_chunk_" << index << "();\n";
++            }
+         }
+         auto clockEdge = [&](int clock, bool falling) {
+             if (clock < 0) return std::string("true");
+diff --git a/include/cpphdl_graph_native_guards.h b/include/cpphdl_graph_native_guards.h
+new file mode 100644
+index 0000000..fae565b
+--- /dev/null
++++ b/include/cpphdl_graph_native_guards.h
+@@ -0,0 +1,144 @@
++#pragma once
++#include <cpphdl_graph.h>
++
++namespace cpphdl::graph {
++// Experimental conservative demand guards. Distinct demands merge to eager
++// evaluation instead of constructing an exponentially growing predicate DAG.
++struct NativeDemandPlan {
++    struct Predicate {
++        Bit bit = 0;
++        bool positive = true;
++        bool operator==(const Predicate&) const = default;
++    };
++    std::vector<Predicate> demand;
++    std::vector<bool> control;
++    std::vector<int64_t> chunkOf;
++    std::vector<Predicate> chunkGuards;
++    static Predicate canonical(Predicate p) {
++        if (p.bit < 2) return {Bit(bool(p.bit) == p.positive), true};
++        return p;
++    }
++    NativeDemandPlan(Graph& graph, std::vector<size_t>& order)
++        : demand(graph.nodes.size()), control(graph.nodes.size()) {
++        const Predicate always{1, true};
++        auto predicate = [&](const Value& value, bool positive = true) {
++            auto bits = graph.resolved(value);
++            // Multi-bit enables are conservatively evaluated eagerly.
++            return bits.size() == 1 ? canonical({bits.front(), positive}) : always;
++        };
++        auto require = [&](const Value& value, Predicate needed) {
++            needed = canonical(needed);
++            if (!needed.bit) return;
++            for (auto bit : graph.resolved(value)) if (bit > 1) {
++                auto& current = demand[Graph::owner(bit)];
++                if (!current.bit) current = needed;
++                else if (current != needed) current = always;
++            }
++        };
++        for (const auto& port : graph.ports) if (!port.input) require(port.bits, always);
++        for (const auto& state : graph.states) {
++            require(state.trigger, always); require(state.reset, always);
++            require(state.next, predicate(state.trigger));
++            require(state.resetValue, always);
++        }
++        for (const auto& access : graph.memoryAccesses) {
++            require(access.enabled, always);
++            require(access.address, predicate(access.enabled));
++        }
++        for (const auto& write : graph.memoryWrites) {
++            require(write.enabled, always);
++            require(write.address, predicate(write.enabled));
++            require(write.data, predicate(write.enabled));
++        }
++        auto propagate = [&] {
++            for (auto it = order.rbegin(); it != order.rend(); ++it) {
++                auto needed = demand[*it];
++                if (!needed.bit) continue;
++                const auto& node = graph.nodes[*it];
++                if (node.op == "state" || node.op == "input") continue;
++                require(node.select, needed);
++                if (node.op == "mux" && needed == always) {
++                    require(node.left, predicate(node.select));
++                    require(node.right, predicate(node.select, false));
++                } else {
++                    // Using the outer guard is a safe weakening of its
++                    // conjunction with an inner mux choice.
++                    require(node.left, needed); require(node.right, needed);
++                }
++            }
++        };
++        propagate();
++        // Compute every guard and its full dependency cone before guarded
++        // data. This prevents a stale guard or an artificial scheduling cycle.
++        std::vector<size_t> pending;
++        for (const auto& p : demand) if (p.bit > 1) pending.push_back(Graph::owner(p.bit));
++        while (!pending.empty()) {
++            auto index = pending.back(); pending.pop_back();
++            if (control[index]) continue;
++            control[index] = true; demand[index] = always;
++            const auto& node = graph.nodes[index];
++            if (node.op == "state" || node.op == "input") continue;
++            for (const auto* bits : {&node.left, &node.right, &node.select})
++                for (auto bit : graph.resolved(*bits)) if (bit > 1)
++                    pending.push_back(Graph::owner(bit));
++        }
++        propagate();
++        std::stable_partition(order.begin(), order.end(), [&](size_t index) { return control[index]; });
++    }
++    void group(Graph& graph, std::vector<size_t>& order, unsigned chunkSize) {
++        using Key = std::pair<Bit, bool>;
++        std::vector<bool> live(graph.nodes.size());
++        for (auto index : order)
++            live[index] = graph.nodes[index].op != "input" && graph.nodes[index].op != "state";
++        std::vector<std::vector<size_t>> consumers(graph.nodes.size());
++        std::vector<size_t> waiting(graph.nodes.size());
++        std::map<Key, std::set<size_t>> ready;
++        size_t remaining = 0;
++        for (auto index : order) if (live[index] && !control[index]) {
++            ++remaining;
++            std::set<size_t> dependencies;
++            const auto& node = graph.nodes[index];
++            for (const auto* bits : {&node.left, &node.right, &node.select})
++                for (auto bit : graph.resolved(*bits)) if (bit > 1) {
++                    auto source = Graph::owner(bit);
++                    if (live[source] && !control[source]) dependencies.insert(source);
++                }
++            waiting[index] = dependencies.size();
++            for (auto source : dependencies) consumers[source].push_back(index);
++            if (dependencies.empty()) ready[{demand[index].bit, demand[index].positive}].insert(index);
++        }
++        std::vector<size_t> scheduled;
++        chunkOf.assign(graph.nodes.size(), -1);
++        unsigned count = 0;
++        auto append = [&](size_t index) {
++            auto guard = demand[index];
++            if (chunkGuards.empty() || chunkGuards.back() != guard || count == chunkSize) {
++                chunkGuards.push_back(guard); count = 0;
++            }
++            ++count; chunkOf[index] = chunkGuards.size() - 1;
++            scheduled.push_back(index);
++        };
++        // Guard calculations and all their ancestors execute first.
++        for (auto index : order) {
++            if (!live[index]) scheduled.push_back(index);
++            else if (control[index]) append(index);
++        }
++        std::optional<Key> current;
++        while (remaining) {
++            if (!current || ready[*current].empty()) {
++                size_t largest = 0;
++                for (const auto& [key, values] : ready) if (values.size() > largest) {
++                    current = key; largest = values.size();
++                }
++                if (!largest) throw std::runtime_error("cycle in native guarded schedule");
++            }
++            auto& values = ready[*current];
++            auto index = *values.begin(); values.erase(values.begin());
++            append(index); --remaining;
++            for (auto consumer : consumers[index]) if (!--waiting[consumer])
++                ready[{demand[consumer].bit, demand[consumer].positive}].insert(consumer);
++        }
++        order = std::move(scheduled);
++    }
++};
++}

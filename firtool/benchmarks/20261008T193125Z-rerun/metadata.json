@@ -1,0 +1,13 @@
+{
+  "started": "2026-10-08T19:32:27.132910+00:00",
+  "host": "Linux-5.15.0-191-generic-x86_64-with-glibc2.35",
+  "cpu_count": 4,
+  "elf": "/home/me/chipyard/chipyard/tests/build/rocket64-mmul.riscv",
+  "elf_sha256": "bb801b7a30cff0fcfebdc44f749fa9e7c72c6c3e77d6d39ee9ff313cc41668fd",
+  "workload": "16x16 matrix, 8 rounds",
+  "sequential": true,
+  "repetitions": 1,
+  "notes": "Fresh uninstrumented run scripts; previous build timings retained with their original scopes.",
+  "completed": "2026-10-08T19:48:25.652202+00:00",
+  "observed_host_load": "Unrelated compiler processes ran on the shared four-CPU host during the measurements; they were left running."
+}

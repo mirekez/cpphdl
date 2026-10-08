@@ -118,8 +118,16 @@ public:
             if (memory.depth > 1048576 || memory.width * memory.depth > 16777216)
                 throw std::runtime_error("generic gate memory exceeds 16M bits; use an explicit technology memory box");
             memories.emplace_back();
-            for (uint64_t i = 0; i < memory.depth; ++i)
-                memories.back().push_back(out.wire(memory.width, memory.name + ".word" + std::to_string(i), "state"));
+            for (uint64_t i = 0; i < memory.depth; ++i) {
+                if (memory.contents.empty())
+                    memories.back().push_back(out.wire(memory.width, memory.name + ".word" + std::to_string(i), "state"));
+                else {
+                    Value row(memory.width);
+                    for (unsigned bit = 0; bit < memory.width; ++bit)
+                        row[bit] = (memory.contents[i * ((memory.width + 63) / 64) + bit / 64] >> (bit % 64)) & 1;
+                    memories.back().push_back(std::move(row));
+                }
+            }
         }
         for (size_t n : order) {
             const auto node = source.nodes[n];
@@ -180,6 +188,7 @@ public:
                 out.memoryAccesses.push_back({access.memory, value(access.address), value(access.enabled), access.transaction, access.clock, access.falling});
         }
         for (size_t m = 0; m < memories.size(); ++m) for (size_t row = 0; row < memories[m].size(); ++row) {
+            if (!source.memories[m].contents.empty()) continue;
             auto next = memories[m][row]; int clock = -1; bool falling = false;
             for (const auto& write : source.memoryWrites) if (write.memory == m) {
                 clock = write.clock; falling = write.falling;

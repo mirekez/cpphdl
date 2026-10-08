@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 chipyard_root=${1:-"$script_dir/chipyard"}
-chipyard_root=$(cd "$chipyard_root" && pwd)
+chipyard_root=$(cd "$chipyard_root" && pwd -P)
 chipyard_patch="$script_dir/chipyard_cpphdl.patch"
 firrtl_patch="$script_dir/firrtl_cpphdl.patch"
 circt_commit=${CIRCT_CPPHDL_COMMIT:-481cb60add7358934414a3c6b396f5d29ad934fe}
@@ -25,6 +25,12 @@ apply_once() {
   elif git -C "$repo" apply --reverse --check "$patch" 2>/dev/null; then
     echo "$label patch is already applied"
   elif [[ "$label" == Chipyard ]] &&
+       git -C "$repo" apply --check "$script_dir/chipyard_cpphdl_backends.patch" 2>/dev/null; then
+    git -C "$repo" apply "$script_dir/chipyard_cpphdl_backends.patch"
+    echo "upgraded Chipyard C++HDL backend build scripts"
+  elif [[ "$label" == Chipyard ]] &&
+       [[ -x "$repo/scripts/build-cpphdl-rocket64-graph.sh" ]] &&
+       grep -qF 'CPPHDL_BACKEND' "$repo/scripts/build-cpphdl-rocket64.sh" &&
        [[ -x "$repo/scripts/build-cpphdl-rocket64.sh" ]] &&
        [[ -f "$repo/tools/firtool-cpphdl/runtime/CMakeLists.txt" ]] &&
        grep -qF 'CPPHDL_USE_OPTIMIZED_PCH' \
@@ -42,10 +48,21 @@ apply_once() {
   fi
 }
 
+# Keep downloaded tools and generated models out of the shared checkout's
+# untracked-file list without changing its tracked ignore rules.
+exclude=$(git -C "$chipyard_root" rev-parse --path-format=absolute --git-path info/exclude)
+mkdir -p "$(dirname -- "$exclude")"
+touch "$exclude"
+for pattern in /cpphdl-build/ /tools/circt-cpphdl/ /tools/circt-cpphdl-sdk/ /tools/firtool-cpphdl/build/; do
+  if ! grep -qxF "$pattern" "$exclude"; then
+    printf '\n%s\n' "$pattern" >> "$exclude"
+  fi
+done
+
 step "Apply Chipyard C++HDL integration"
 apply_once "$chipyard_root" "$chipyard_patch" Chipyard
 
-step "Clone pinned CIRCT/firtool sources"
+step "Reuse or fetch pinned CIRCT/firtool sources"
 if [[ ! -d "$circt_dir/.git" ]]; then
   [[ ! -e "$circt_dir" ]] || die "$circt_dir exists but is not a Git checkout"
   mkdir -p "$(dirname "$circt_dir")"
@@ -73,6 +90,10 @@ fi
 step "Apply direct firtool-to-C++HDL exporter"
 apply_once "$circt_dir" "$firrtl_patch" firtool
 
+step "Prepare matching prebuilt CIRCT SDK"
+export CPPHDL_CIRCT_PREFIX=${CPPHDL_CIRCT_PREFIX:-"$chipyard_root/tools/circt-cpphdl-sdk"}
+"$script_dir/.bootstrap_circt_sdk.sh" "$CPPHDL_CIRCT_PREFIX"
+
 step "Build patched firtool"
 export PATH="$chipyard_root/.conda-env/bin:$PATH"
 export RISCV=${RISCV:-"$chipyard_root/.conda-env/riscv-tools"}
@@ -89,4 +110,4 @@ step "Installation complete"
 echo "Patched firtool: ${CPPHDL_FIRTOOL_BUILD_DIR:-$chipyard_root/tools/firtool-cpphdl/build}/firtool-cpphdl"
 echo "C++HDL build: $script_dir/.build_rocket64_cpphdl.sh"
 echo "C++HDL run: $script_dir/.run_rocket64_cpphdl.sh"
-echo "Build-and-run validation: $script_dir/chipyard_cpphdl_test.sh"
+echo "Build-and-run validation: $script_dir/.build_chipyard.sh"

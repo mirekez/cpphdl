@@ -87,6 +87,18 @@ int main() {
             if(ram.output("short_read")!=93) throw std::runtime_error("narrow memory read selected an unreachable row");
         }
         Graph bad;bad.clockContract=ClockContract::RisingEdgeStep;
+        Graph rom; rom.clockContract=ClockContract::RisingEdgeStep;
+        auto romAddress=rom.wire(4,"address","input");
+        rom.ports={{"address",romAddress,true},
+            {"data",rom.constantArray(constant(0x12345abc,36),romAddress,9),false}};
+        auto mappedRom=cpphdl::synth::mapGates(rom);
+        if(!mappedRom.states.empty()) throw std::runtime_error("ROM mapped to mutable registers");
+        Evaluate romSim(mappedRom);
+        for(unsigned row=0;row<16;++row) {
+            romSim.input("address",row);romSim.eval();
+            if(romSim.output("data")!=(row<4?((uint64_t(0x12345abc)>>(row*9))&511):0))
+                throw std::runtime_error("ROM contents lost in gate mapping");
+        }
         bad.ports.push_back({"result",bad.add("unknown",1,{0}),false});
         bool rejected=false;try{cpphdl::synth::mapGates(bad);}catch(const std::runtime_error&){rejected=true;}
         if(!rejected) throw std::runtime_error("unmapped operation accepted");

@@ -33,7 +33,12 @@ struct Node {
 struct Port { std::string name; Value bits; bool input; };
 struct State { Value bits, next, trigger; int clock = -1; bool falling = false; Value reset, resetValue; };
 struct Clock { std::string name; uint64_t frequency; };
-struct Memory { std::string name; unsigned width; uint64_t depth; };
+struct Memory {
+    std::string name; unsigned width; uint64_t depth;
+    // Nonempty contents describe an immutable ROM, row-major with each row
+    // rounded up to 64-bit words. Mutable RAM retains its existing semantics.
+    std::vector<uint64_t> contents;
+};
 struct MemoryAccess { size_t memory; Value address, enabled; bool transaction; int clock = -1; bool falling = false; };
 struct MemoryWrite { size_t memory; Value address, data, enabled; int clock = -1; bool falling = false; };
 struct ScopeAttribute { std::string scope, name, value; };
@@ -112,9 +117,18 @@ public:
             if (clockContract == ClockContract::NamedEdges ? (clock < 0 || size_t(clock) >= clocks.size()) : (clock != -1 || falling))
                 throw std::runtime_error("invalid memory clock domain");
         };
-        for (const auto& memory : memories)
+        for (const auto& memory : memories) {
             if (!memory.width || memory.width > 1048576 || !memory.depth)
                 throw std::runtime_error("invalid graph memory dimensions");
+            if (!memory.contents.empty()) {
+                const auto words = (memory.width + 63) / 64;
+                if (memory.contents.size() % words || memory.contents.size() / words != memory.depth)
+                    throw std::runtime_error("invalid graph ROM contents");
+                for (size_t i = words - 1; i < memory.contents.size(); i += words)
+                    if (memory.contents[i] & ~mask((memory.width - 1) % 64 + 1))
+                        throw std::runtime_error("nonzero graph ROM padding");
+            }
+        }
         for (const auto& access : memoryAccesses) {
             if (access.memory >= memories.size() || access.address.empty() || access.address.size() > 64 || access.enabled.size() != 1)
                 throw std::runtime_error("invalid graph memory access");
@@ -125,6 +139,7 @@ public:
             if (write.memory >= memories.size() || write.data.size() != memories[write.memory].width ||
                 write.address.empty() || write.address.size() > 64 || write.enabled.size() != 1)
                 throw std::runtime_error("invalid graph memory write");
+            if (!memories[write.memory].contents.empty()) throw std::runtime_error("write to graph ROM");
             checkMemoryClock(write.clock, write.falling);
             auto domain = std::make_pair(write.clock, write.falling);
             auto [entry, fresh] = writers.emplace(write.memory, domain);
@@ -229,6 +244,33 @@ public:
         }
         return result;
     }
+    Value constantArray(Value data, Value address, unsigned rowWidth) {
+        data = resolved(std::move(data));
+        if (!rowWidth || data.empty() || data.size() % rowWidth || address.empty() || address.size() > 64 ||
+            std::any_of(data.begin(), data.end(), [](Bit bit) { return bit > 1; }))
+            throw std::runtime_error("invalid constant array lookup");
+        const auto depth = data.size() / rowWidth;
+        if (auto known = number(resolved(address)))
+            return *known < depth ? slice(data, *known * rowWidth, rowWidth) : Value(rowWidth, 0);
+        const auto words = (rowWidth + 63) / 64;
+        std::vector<uint64_t> contents(depth * words, 0);
+        for (size_t row = 0; row < depth; ++row)
+            for (unsigned bit = 0; bit < rowWidth; ++bit)
+                contents[row * words + bit / 64] |= data[row * rowWidth + bit] << (bit % 64);
+        size_t identity = 0;
+        for (; identity < memories.size(); ++identity)
+            if (memories[identity].width == rowWidth && memories[identity].depth == depth &&
+                memories[identity].contents == contents) break;
+        if (identity == memories.size())
+            memories.push_back({currentScope + "/rom" + std::to_string(identity), rowWidth, depth, std::move(contents)});
+        Value result;
+        for (unsigned offset = 0; offset < rowWidth; offset += 64) {
+            auto part = add("memory_read", std::min(64u, rowWidth - offset), address,
+                            constant(identity, 64), constant(offset / 64, 64));
+            result.insert(result.end(), part.begin(), part.end());
+        }
+        return result;
+    }
     Value binary(std::string op, Value left, Value right, unsigned width) {
         if (op == "mul") {
             // Constant power-of-two multiplication is wiring, not an adder
@@ -265,7 +307,45 @@ public:
             return result;
         }
         if (left.size() > 64 || right.size() > 64 || width > 64) {
-            if (op == "shl" || op == "shr" || op == "sar") {
+            if (op == "eq") {
+                auto count = std::max(left.size(), right.size());
+                auto different = binary("xor", resize(left, count), resize(right, count), count);
+                return resize(unary("not", unary("any", different)), width);
+            }
+            if (op == "lt") {
+                auto count = std::max(left.size(), right.size());
+                left = resize(left, count); right = resize(right, count);
+                Value less{0};
+                for (size_t offset = 0; offset < count; offset += 64) {
+                    auto length = std::min<size_t>(64, count - offset);
+                    auto a = slice(left, offset, length), b = slice(right, offset, length);
+                    less = mux(binary("eq", a, b, 1), less, binary("lt", a, b, 1));
+                }
+                return resize(less, width);
+            }
+            if (op == "shr" || op == "sar") {
+                const Bit fill = op == "sar" && !left.empty() ? left.back() : 0;
+                left.resize(std::max<size_t>(left.size(), width), fill);
+                unsigned stages = 0;
+                while ((uint64_t(1) << stages) < left.size()) ++stages;
+                // Visit large shifts first and discard bits that no remaining
+                // smaller shift can move into the result. A ROM bit lookup
+                // must not construct a full-width shifter at every stage.
+                for (unsigned stage = stages; stage-- > 0;) {
+                    const size_t amount = uint64_t(1) << stage;
+                    const size_t needed = std::min(left.size(), size_t(width) + amount - 1);
+                    Value moved(needed, fill);
+                    for (size_t i = 0; i < needed; ++i)
+                        if (amount < left.size() - i) moved[i] = left[i + amount];
+                    left.resize(needed, fill);
+                    if (stage < right.size()) left = mux({right[stage]}, moved, left);
+                }
+                left.resize(width, fill);
+                if (right.size() > stages)
+                    left = mux(unary("any", slice(right, stages, right.size() - stages)), Value(width, fill), left);
+                return left;
+            }
+            if (op == "shl") {
                 const Bit fill = op == "sar" && !left.empty() ? left.back() : 0;
                 // Keep the source width until after a right shift: narrowing
                 // the result must not discard source bits that shift into it.
@@ -467,7 +547,55 @@ public:
         }
     }
 
-    void writeCpp(const std::string& path) const {
+    // Partition files retain only live, resolved values. In particular, dead
+    // locals and memoization aliases must not accumulate across instances.
+    void compact() {
+        if (!pipelines.empty()) throw std::runtime_error("cannot compact scheduled streaming regions");
+        auto order = dependencyOrder();
+        std::set<size_t> keep(order.begin(), order.end());
+        for (const auto& port : ports) if (port.input)
+            for (auto bit : resolved(port.bits)) if (bit > 1) keep.insert(owner(bit));
+        for (const auto& state : states)
+            for (auto bit : state.bits) if (bit > 1) keep.insert(owner(bit));
+        std::map<size_t, size_t> indices;
+        for (auto index : keep) indices.emplace(index, indices.size());
+        auto remap = [&](Value value) {
+            value = resolved(std::move(value));
+            for (auto& bit : value) if (bit > 1)
+                bit = (indices.at(owner(bit)) + 1) * 64 + 2 + lane(bit);
+            return value;
+        };
+        std::deque<Node> live;
+        for (auto index : keep) {
+            auto node = nodes[index];
+            node.left = remap(std::move(node.left)); node.right = remap(std::move(node.right));
+            node.select = remap(std::move(node.select));
+            live.push_back(std::move(node));
+        }
+        for (auto& port : ports) port.bits = remap(std::move(port.bits));
+        for (auto& state : states) {
+            state.bits = remap(std::move(state.bits)); state.next = remap(std::move(state.next));
+            state.trigger = remap(std::move(state.trigger)); state.reset = remap(std::move(state.reset));
+            state.resetValue = remap(std::move(state.resetValue));
+        }
+        for (auto& access : memoryAccesses) {
+            access.address = remap(std::move(access.address)); access.enabled = remap(std::move(access.enabled));
+        }
+        for (auto& write : memoryWrites) {
+            write.address = remap(std::move(write.address)); write.data = remap(std::move(write.data));
+            write.enabled = remap(std::move(write.enabled));
+        }
+        nodes = std::move(live); aliases.clear();
+    }
+
+    void writeCpp(const std::string& path) {
+        if (path.size() >= 6 && path.compare(path.size() - 6, 6, ".graph") == 0) {
+            optimize(); compact();
+            std::ofstream output(path);
+            if (!output) throw std::runtime_error("cannot write graph partition");
+            save(output);
+            return;
+        }
         std::string delimiter = "cpphdl_graph";
         unsigned suffix = 0;
         for (;;) {
@@ -548,6 +676,13 @@ public:
             for (const auto& [name, bits] : p.pins) output << std::quoted(name) << ' ' << valueText(bits) << '\n';
             output << p.registers.size() << '\n';
             for (const auto& bits : p.registers) output << valueText(bits) << '\n';
+        }
+        output << "roms_v1 " << std::count_if(memories.begin(), memories.end(),
+            [](const Memory& m) { return !m.contents.empty(); }) << '\n';
+        for (size_t i = 0; i < memories.size(); ++i) if (!memories[i].contents.empty()) {
+            output << i << ' ' << memories[i].contents.size();
+            for (auto word : memories[i].contents) output << ' ' << word;
+            output << '\n';
         }
     }
 
@@ -654,6 +789,19 @@ public:
                 pipelines.push_back(std::move(p));
             }
         }
+        if (!input.eof()) input >> std::ws;
+        if (!input.eof()) {
+            std::string tag; input >> tag >> count;
+            if (tag != "roms_v1" || count > memories.size()) throw std::runtime_error("invalid graph ROM metadata");
+            for (size_t i = 0; i < count; ++i) {
+                size_t identity, words; input >> identity >> words;
+                if (identity >= memories.size() || !words || words > 16777216 || !memories[identity].contents.empty())
+                    throw std::runtime_error("invalid graph ROM contents");
+                auto& contents = memories[identity].contents;
+                contents.resize(words);
+                for (auto& word : contents) input >> word;
+            }
+        }
         validateClocks();
     }
 
@@ -730,7 +878,7 @@ public:
     }
 
     // Compatibility entry point; implementation lives in the native backend.
-    void emit(const std::string& path);
+    void emit(const std::string& path, unsigned chunkSize = 0);
 
 };
 }

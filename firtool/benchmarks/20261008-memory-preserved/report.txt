@@ -1,0 +1,74 @@
+Preserved ROM lowering — 2026-10-08
+
+Implemented in /home/me/cpphdl.
+
+The graph frontend preserves supported constant firtool_cpphdl::array_get
+lookups as read-only memory. Native code uses static constant arrays with
+indexed loads rather than per-bit mux networks. Existing explicit writable
+RAM retains its transaction semantics. Nonconstant packed arrays keep their
+existing lowering.
+
+The complete helper body is checked as tokens before selecting the fast path.
+Edited helpers retain ordinary C++ lowering. Index conversion, bounds and
+wrapping uint64_t arithmetic are preserved; unsafe non-power-of-two index
+ranges fall back to the original helper. Wide rows use multiple words.
+
+ROM contents survive graph save/load and hierarchy linking. Legacy graph
+records remain readable. Verilog output includes memory initialization;
+explicit gate mapping preserves the constant values. ROM writes are rejected.
+
+Full Rocket matrix test: 16x16, 8 rounds; same ELF, Clang 21.1.3, -O2.
+                              Before           After
+Wall time                     275.384 s        84.190 s
+User CPU time                 274.69 s         83.70 s
+Simulation cycles             695870           695870
+Result                        PASS             PASS
+Boot-ROM partition nodes      32273            18
+Linked graph nodes            139337           106103
+State groups                  5397             5397
+GNU size text bytes           10656205         4888925
+
+Measured speedup: 3.27x; elapsed time reduced by 69.4%.
+Both signatures: 0xe49d58d75696cd28.
+Both simulator and ELF hashes remained unchanged during measurement.
+One run of each existing binary, sequentially (after, then before), without
+profiling instrumentation. This is a paired measurement on a shared VM, not
+a multi-run statistical estimate. CPU utilization was approximately 99–100%.
+The earlier profiling and four-backend timing tables are retained separately.
+
+Successful public build: .build_rocket64_cpphdl-native-graph.sh,
+CPPHDL_REGENERATE=0, extraction jobs=2, compile jobs=1,
+CPPHDL_GRAPH_MAX_VMEM_KB=4194304. All 389 module types were processed using
+the final compiler (the separately verified TLROM partition was reused).
+Elapsed 786.16 s; peak child RSS 1339284 KiB. This includes extraction,
+linking and runner compilation; it excludes building the cpphdl tool itself
+and re-exporting the unchanged FIRRTL model. The first interrupted extraction
+attempt is retained as build-before-guard.log and excluded from this timing.
+
+Published runner:
+/home/me/chipyard/chipyard/cpphdl-build/RocketConfig/native-graph/runtime/attempt.I0fQbc/cmake/cpphdl-rocket64-graph-sim
+The standard .run_rocket64_cpphdl.sh native-graph entry point selects it.
+The old runner remains available at:
+/home/me/chipyard/chipyard/cpphdl-build/RocketConfig/native-graph/runtime/attempt.eBUDKY/cmake/cpphdl-rocket64-graph-sim
+
+Validation:
+- cpp_graph_constant_memory: 4096 differential samples for each of monolithic
+  and chunked emission, wide/narrow rows, OOB reads, wrapping indices, duplicate
+  tables, save/load, immutable writes and nonconstant fallback. A modified
+  helper is also compared against its actual C++ implementation. Extra cases
+  check non-power-of-two multiplication wrapping to unaligned offsets.
+- cpp_graph_firtool_partitions: independent ROM and writable RAM instances,
+  child enables/reset, and host boundaries against ordinary C++.
+- cpp_graph_owned_hierarchy, cpp_graph_wide_shift, cpp_graph_memory_scaling.
+- synth_graph_checks and synth_mapping_checks: ROM initialization and values
+  survive hardware emission and explicit gate mapping.
+- Full Rocket simulation before and after: PASS.
+
+Files changed for the implementation:
+CppGraph.h; include/cpphdl_graph.h; include/cpphdl_graph_native.h;
+synth/Verilog.cpp; synth/Mapping.cpp; corresponding regressions and docs.
+No changes to simulator compiler optimization flags or the matrix workload.
+
+Artifacts: results.json includes exact timings and hashes; graph-stats.json
+has model counts; *.time and *-simulator.log retain raw measurements;
+checks-*.log retain validation. compare.py reproduces the paired benchmark.

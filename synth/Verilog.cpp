@@ -68,9 +68,22 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
     for (size_t i = 0; i < graph.nodes.size(); ++i)
         out << (graph.nodes[i].op == "state" ? "reg" : "wire") << " [" << graph.nodes[i].width-1
             << ":0] " << nodeName(i) << ";\n";
-    for (size_t i = 0; i < graph.memories.size(); ++i)
+    for (size_t i = 0; i < graph.memories.size(); ++i) {
         out << "reg [" << graph.memories[i].width - 1 << ":0] __cpphdl_memory_" << i
             << " [0:" << graph.memories[i].depth - 1 << "];\n";
+        const auto& memory = graph.memories[i];
+        if (!memory.contents.empty()) {
+            out << "initial begin\n";
+            const auto words = (memory.width + 63) / 64;
+            for (size_t row = 0; row < memory.depth; ++row) {
+                out << "  __cpphdl_memory_" << i << '[' << row << "] = " << memory.width << "'b";
+                for (unsigned bit = memory.width; bit-- > 0;)
+                    out << ((memory.contents[row * words + bit / 64] >> (bit % 64)) & 1);
+                out << ";\n";
+            }
+            out << "end\n";
+        }
+    }
     for (const auto& port : graph.ports) {
         if (port.input) out << "assign " << bits(port.bits) << " = " << identifier(port.name) << ";\n";
         else out << "assign " << identifier(port.name) << " = " << bits(port.bits) << ";\n";

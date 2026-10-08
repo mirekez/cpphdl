@@ -92,7 +92,8 @@ class HftTxMethods {
     }
     static uint32_t hex(uint32_t nibble) {
         nibble &= 15;
-        return nibble < 10 ? '0' + nibble : 'A' + nibble - 10;
+        // ASCII digits and letters differ by seven; no control-flow branch.
+        return uint8_t('0' + nibble + 7u * uint32_t(nibble >= 10));
     }
     static uint32_t tokenPair(uint32_t value) {
         return (hex(value >> 4) << 8) | hex(value);
@@ -102,77 +103,78 @@ class HftTxMethods {
         order.stock_suffix = uint8_t(security == 1 ? 'T' : '0' + security);
     }
     void tcpEthernet() {
-        uint32_t sum;
+        uint32_t token_high, token_low, token_sum, tcp_sum, price_sum, flags_sum, sum;
+        constexpr uint32_t fixed_sum =
+            0x0a00 + 1 + 0x0a00 + 2 + 6 + 72 +
+            40000 + 9001 + 1 + 0x5018 + 4096 +
+            50 + ('U' * 256 + 'O') + ('S' * 256 + 'I') + ('M' * 256 + '0') + ('0' * 256 + '0') +
+            (100 * 256 + 'T') + ('E' * 256 + 'S') + ' ' + (' ' * 256 + ' ') +
+            (' ' * 256) + ' ' + (' ' * 256 + ' ') + (' ' * 256 + 'Y') + ('P' * 256 + 'N') + ('N' * 256 + 'N');
         // Checksum fields precede the payload. Sum the fixed template and
         // variable application fields directly, without building/scanning a frame.
         order.tcp_sequence = tcp_sequence;
-        sum = 0x0a00 + 1 + 0x0a00 + 2 + 6 + 72; // IPv4 pseudo-header
-        sum += 40000 + 9001 + (tcp_sequence >> 16) + (tcp_sequence & 65535) + 1 + 0x5018 + 4096;
-        sum += 50 + ('U' * 256 + 'O') + ('S' * 256 + 'I') + ('M' * 256 + '0') + ('0' * 256 + '0');
-        sum += tokenPair(order.sequence >> 24) + tokenPair(order.sequence >> 16) +
-            tokenPair(order.sequence >> 8) + tokenPair(order.sequence);
-        sum += (order.buy ? 'B' : 'S') * 256;
-        sum += (100 * 256 + 'T') + ('E' * 256 + 'S') + (order.stock_suffix * 256 + ' ') + (' ' * 256 + ' ');
+        token_high = tokenPair(order.sequence >> 24) + tokenPair(order.sequence >> 16);
+        token_low = tokenPair(order.sequence >> 8) + tokenPair(order.sequence);
+        token_sum = token_high + token_low;
+        tcp_sum = (tcp_sequence >> 16) + (tcp_sequence & 65535);
         // Price starts on an odd byte, between the stock and time-in-force.
-        sum += (' ' * 256) + (order.price >> 24) + ((order.price >> 8) & 65535) + ((order.price & 255) << 8);
-        sum += ' ' + (' ' * 256 + ' ') + (' ' * 256 + 'Y') + ('P' * 256 + 'N') + ('N' * 256 + 'N');
+        price_sum = ((order.price >> 24) | ((order.price & 255) << 8)) + ((order.price >> 8) & 65535);
+        flags_sum = ((order.buy ? 'B' : 'S') + uint32_t(order.stock_suffix)) << 8;
+        // Independent partial sums form a tree, not a serial accumulator chain.
+        sum = (token_sum + tcp_sum) + (price_sum + flags_sum + fixed_sum);
         order.checksum = uint16_t(~fold(sum));
         tcp_sequence += 52;
     }
+    static uint32_t at(uint32_t offset, uint32_t position, uint32_t word) {
+        // Unsigned subtraction broadcasts the decode bit to a full-word mask.
+        return word & (0u - uint32_t(offset == position));
+    }
     uint32_t ethernetWord(uint32_t offset) const {
         // First wire byte is in bits 7:0. Fixed MACs, EtherType, IPv4 version.
-        if (offset == 0) return 0x00000002;
-        if (offset == 4) return 0x00020200;
-        if (offset == 8) return 0x01000000;
-        if (offset == 12) return 0x00450008;
-        return 0;
+        return at(offset, 0, 0x00000002) | at(offset, 4, 0x00020200) |
+            at(offset, 8, 0x01000000) | at(offset, 12, 0x00450008);
     }
     uint32_t ipv4Word(uint32_t offset) const {
         // All IPv4 fields are fixed in this mock session.
         uint32_t checksum = (~fold(0x4500 + 92 + 0x4000 + 0x4006 + 0x0a00 + 1 + 0x0a00 + 2)) & 65535;
-        if (offset == 16) return 0x00005c00; // length 92, identification 0
-        if (offset == 20) return 0x06400040; // DF, TTL 64, TCP
-        if (offset == 24) return 0x000a0000 | (checksum >> 8) | ((checksum & 255) << 8);
-        if (offset == 28) return 0x000a0100; // source/destination IPv4 addresses
-        return 0;
+        return at(offset, 16, 0x00005c00) | // length 92, identification 0
+            at(offset, 20, 0x06400040) | // DF, TTL 64, TCP
+            at(offset, 24, 0x000a0000 | (checksum >> 8) | ((checksum & 255) << 8)) |
+            at(offset, 28, 0x000a0100); // source/destination IPv4 addresses
     }
     uint32_t tcpWord(uint32_t offset) const {
-        if (offset == 32) return 0x409c0200; // IPv4 address tail, source port 40000
-        if (offset == 36) return 0x2923 | ((order.tcp_sequence >> 24) << 16) |
-            (((order.tcp_sequence >> 16) & 255) << 24); // port 9001, sequence high
-        if (offset == 40) return ((order.tcp_sequence >> 8) & 255) | ((order.tcp_sequence & 255) << 8);
-        if (offset == 44) return 0x18500100; // acknowledgment 1, PSH/ACK
-        if (offset == 48) return 0x10 | (uint32_t(order.checksum >> 8) << 16) |
-            ((uint32_t(order.checksum) & 255) << 24); // window 4096, checksum
-        if (offset == 52) return 0x32000000; // urgent pointer, Soup length 50
-        return 0;
+        return at(offset, 32, 0x409c0200) | // IPv4 address tail, source port 40000
+            at(offset, 36, 0x2923 | ((order.tcp_sequence >> 24) << 16) |
+                (((order.tcp_sequence >> 16) & 255) << 24)) | // port 9001, sequence high
+            at(offset, 40, ((order.tcp_sequence >> 8) & 255) | ((order.tcp_sequence & 255) << 8)) |
+            at(offset, 44, 0x18500100) | // acknowledgment 1, PSH/ACK
+            at(offset, 48, 0x10 | (uint32_t(order.checksum >> 8) << 16) |
+                ((uint32_t(order.checksum) & 255) << 24)) | // window 4096, checksum
+            at(offset, 52, 0x32000000); // urgent pointer, Soup length 50
     }
     uint32_t ouchWord(uint32_t offset) const {
-        if (offset == 56) return 'U' | ('O' << 8) | ('S' << 16) | ('I' << 24);
-        if (offset == 60) return 'M' | ('0' << 8) | ('0' << 16) | ('0' << 24);
-        if (offset == 64) return hex(order.sequence >> 28) | (hex(order.sequence >> 24) << 8) |
-            (hex(order.sequence >> 20) << 16) | (hex(order.sequence >> 16) << 24);
-        if (offset == 68) return hex(order.sequence >> 12) | (hex(order.sequence >> 8) << 8) |
-            (hex(order.sequence >> 4) << 16) | (hex(order.sequence) << 24);
-        if (offset == 72) return order.buy ? 'B' : 'S';
-        if (offset == 76) return 100 | ('T' << 8) | ('E' << 16) | ('S' << 24);
-        if (offset == 80) return order.stock_suffix | (' ' << 8) | (' ' << 16) | (' ' << 24);
-        if (offset == 84) return ' ' | ((order.price >> 24) << 8) |
-            (((order.price >> 16) & 255) << 16) | (((order.price >> 8) & 255) << 24);
-        if (offset == 88) return order.price & 255;
-        if (offset == 92) return (' ' << 8) | (' ' << 16) | (' ' << 24);
-        if (offset == 96) return ' ' | ('Y' << 8) | ('P' << 16) | ('N' << 24);
-        if (offset == 104) return 'N' | ('N' << 8);
-        return 0;
+        return at(offset, 56, 'U' | ('O' << 8) | ('S' << 16) | ('I' << 24)) |
+            at(offset, 60, 'M' | ('0' << 8) | ('0' << 16) | ('0' << 24)) |
+            at(offset, 64, hex(order.sequence >> 28) | (hex(order.sequence >> 24) << 8) |
+                (hex(order.sequence >> 20) << 16) | (hex(order.sequence >> 16) << 24)) |
+            at(offset, 68, hex(order.sequence >> 12) | (hex(order.sequence >> 8) << 8) |
+                (hex(order.sequence >> 4) << 16) | (hex(order.sequence) << 24)) |
+            at(offset, 72, order.buy ? 'B' : 'S') |
+            at(offset, 76, 100 | ('T' << 8) | ('E' << 16) | ('S' << 24)) |
+            at(offset, 80, order.stock_suffix | (' ' << 8) | (' ' << 16) | (' ' << 24)) |
+            at(offset, 84, ' ' | ((order.price >> 24) << 8) |
+                (((order.price >> 16) & 255) << 16) | (((order.price >> 8) & 255) << 24)) |
+            at(offset, 88, order.price & 255) |
+            at(offset, 92, (' ' << 8) | (' ' << 16) | (' ' << 24)) |
+            at(offset, 96, ' ' | ('Y' << 8) | ('P' << 16) | ('N' << 24)) |
+            at(offset, 104, 'N' | ('N' << 8));
     }
     uint64_t transmit(uint32_t offset) const {
         uint32_t word = 0;
         uint32_t data_count = offset < 104 ? 4u : (offset == 104 ? 2u : 0u);
         uint32_t count = offset < 108 ? 4u : 2u;
-        if (offset < 16) word = ethernetWord(offset);
-        else if (offset < 32) word = ipv4Word(offset);
-        else if (offset < 56) word = tcpWord(offset);
-        else word = ouchWord(offset);
+        // Each helper owns disjoint offsets: no priority between protocol layers.
+        word = ethernetWord(offset) | ipv4Word(offset) | tcpWord(offset) | ouchWord(offset);
         return word | (uint64_t(offset == 0) << 32) | (uint64_t(offset == 108) << 33) |
             (uint64_t(count) << 34) | (uint64_t(data_count) << 37);
     }
