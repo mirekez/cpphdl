@@ -1,6 +1,7 @@
 // Connect independently lowered C++HDL hierarchy partitions into one graph.
 #include <cpphdl_graph_native.h>
 #include <iostream>
+#include <cstdlib>
 
 using namespace cpphdl::graph;
 struct Instance {
@@ -9,8 +10,18 @@ struct Instance {
 };
 
 int main(int argc, char** argv) {
-    if (argc != 3 && argc != 4) return 2;
+    if (argc < 3 || argc > 5) return 2;
     try {
+        // The existing Chipyard build scripts propagate this optimizer setting
+        // to the linker. A positional override also supports standalone tools.
+        const char* threadArgument = argc == 5 ? argv[4] : std::getenv("CPPHDL_OPTIMIZE_THREADS");
+        unsigned threads = 1;
+        if (threadArgument) {
+            std::string text = threadArgument;
+            if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos ||
+                text.size() > 3 || (threads = std::stoul(text)) < 1 || threads > 256)
+                throw std::runtime_error("native graph threads must be between 1 and 256");
+        }
         std::ifstream plan(argv[1]);
         if (!plan) throw std::runtime_error("cannot read graph link plan");
         Graph graph;
@@ -120,9 +131,11 @@ int main(int argc, char** argv) {
             if (!portNames.insert(port.name).second) throw std::runtime_error("duplicate linked port: " + port.name);
         graph.optimize(); graph.compact();
         std::ofstream serialized(std::string(argv[2]) + ".graph"); graph.save(serialized);
-        unsigned chunkSize = argc == 4 ? std::stoul(argv[3]) : 512;
+        unsigned chunkSize = argc >= 4 ? std::stoul(argv[3]) : 512;
         if (!chunkSize) throw std::runtime_error("chunk size must be positive");
-        graph.emit(argv[2], chunkSize);
+        // Reserve a caller lane for host work only when at least two lanes
+        // remain for register cones. Keep the existing one/two-thread schedules.
+        graph.emit(argv[2], chunkSize, threads, hosts != 0 && threads >= 3);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "graph link: " << error.what() << '\n'; return 1;

@@ -70,6 +70,121 @@ as well as fresh checkouts, and stops on conflicting local script edits.
 DRAM instances retain their existing independent backing; these options do not
 implicitly connect separate memory ports to one shared memory image.
 
+After linking and validation, native emission removes registers that cannot
+affect an output, memory operation, or host effect, including through future
+register updates. Clock triggers, resets, memory bounds checks and host call
+ordering remain observable. Partition files retain all state for later linking;
+internal register fields in the emitted model are not a stable debug interface.
+
+`CPPHDL_OPTIMIZE_THREADS` now also selects native graph evaluation threads,
+including the calling thread (default 1, supported range 1–256):
+
+```sh
+CPPHDL_OPTIMIZE_THREADS=3 ./.build_rocket64_cpphdl-native-graph.sh
+./.run_rocket64_cpphdl-native-graph.sh
+```
+
+The count is selected at build time. `CPPHDL_GRAPH_JOBS` still controls graph
+extraction jobs, and `CPPHDL_BUILD_JOBS` controls host compilation jobs.
+Standalone native compilation accepts `cpphdl --native-graph --optimize-threads=3`
+with its usual source, output and runner arguments. Graph-link also accepts an
+optional thread count after its chunk-size argument; that overrides the environment.
+
+Parallel native evaluation uses persistent workers with complete combinational
+cones feeding outputs, register updates, and memory operations. The partitioner
+groups overlapping cones and balances estimated work. Shared pure operations
+can be duplicated into separate lane storage, keeping producer and consumer
+logic together without exchanging intermediate values between workers. Only
+the dispatch and final join synchronize lanes. Each lane assembles its assigned sinks locally, including register updates,
+instead of returning intermediate values to the caller for assembly. Register banks are laid out by owner, with separate
+cache lines at lane boundaries. Workers read the current bank and write the
+inactive bank. Registers use the smallest unsigned byte/word type that holds
+their width, grouped by storage size within each lane; reads explicitly widen
+to 64 bits before graph arithmetic. The serial backend uses the same compact
+register storage. RAM remains read-only during evaluation.
+
+For linked host models with three or more requested threads, the caller owns
+host-visible outputs, all memory validation, and staged RAM writes. Other lanes
+prepare next-state registers. After completing its lane, the caller validates
+and publishes outputs, then runs external host models while the register lanes
+are still working. RAM writes and register-bank publication wait until every
+lane finishes. This overlaps host work that previously ran after the join.
+One- and two-thread linked models retain their existing synchronous schedules.
+
+The `evaluate_with_host(callback)` continuation may read published output ports
+and update independent external models. It must not change graph inputs,
+clocks, RAM or state, or reenter an executor shared by a model copy. The generated
+runner honors this boundary. Failed graph validation skips the callback and
+publishes neither outputs nor state. If a host callback throws, workers drain
+and the graph transaction commits before the exception propagates, matching
+synchronous graph-then-host execution. Ordered updates to the same register
+stay on one lane. Host transfers use byte/word packing in all thread modes.
+
+The latest 2026-10-09 comparison restricted every process to CPUs **0,1,2**;
+CPU 3 was excluded. Four complete runs per configuration, in alternating order,
+measured these medians on the same RV64 matrix workload at `-O2`:
+
+| Threads | Before this change | Host overlap + compact registers | New wall-time range |
+| --- | ---: | ---: | ---: |
+| 1 | 16.28 s | 16.19 s | 15.86–16.60 s |
+| 3 | 12.81 s | 10.81 s | 9.77–11.21 s |
+
+Three-thread wall time fell **15.6%**; scaling against the current single-thread
+runner is **1.50x** (previously 1.27x in this same comparison). Median total CPU
+time fell from 37.29 to 30.86 seconds for three threads, versus 16.17 seconds for
+one. This improves throughput but still falls well short of linear scaling.
+The original three-thread range was 11.39–14.02 seconds; VM timing variation
+remains substantial. All 16 runs passed with signature `0xe49d58d75696cd28`
+and exactly 695870 cycles. No compilation ran during these measurements.
+
+The register-bank payload shrank from 31896 to 6856 bytes (before lane alignment).
+Separate two-round comparisons measured compact storage at 8.39 versus 9.87
+seconds with host overlap held constant, and host overlap at 10.33 versus 11.59
+seconds with compact storage held constant. Those pilots occurred at different
+times; the four-round table above is the final comparison. Compiling host wrappers
+together, preparing next-cycle inputs during the callback, separating input/output
+cache lines, and assigning additional register cones to the caller were tested
+and dropped because they did not produce a repeatable gain above 10%.
+
+Results, hashes, process snapshots, profile samples and experiment scripts are
+in `benchmarks/20261009-host-overlap/`; `summary.json` contains the table data.
+The validated three-thread executable is selected by the normal
+`.run_rocket64_cpphdl-native-graph.sh` runner. It was rebuilt from the unchanged
+saved linked graph and existing external-model objects, avoiding a full frontend
+re-extraction. Its runtime attempt contains `provenance.json`, including the
+previous executable for rollback. To reproduce the CPU restriction, run:
+
+```sh
+taskset -c 0,1,2 ./.run_rocket64_cpphdl-native-graph.sh
+```
+
+Mixed-width registers (including high bits and overflow), explicit/named clock
+edges, resets, ordered RAM writes, validation rollback, callback exceptions and
+model copies pass the UBSan host-overlap regression. The original C++ hierarchy
+comparison and 24576 phase evaluations also pass. Remaining costs include serial
+host-input preparation, per-cycle synchronization, and duplicated combinational
+cones; the final three-thread model schedules 45323 nodes versus 33867 serially.
+
+The 2026-10-09 state-ownership comparison on a four-vCPU VM measured the following
+median wall times (`-O2`, two complete quiet rounds per configuration):
+
+| Threads | Previous cone scheduler | Worker-owned state + packed host transfers |
+| --- | ---: | ---: |
+| 1 | 18.25 s | 16.51 s |
+| 2 | 17.02 s | 13.40 s |
+| 3 | 17.74 s | 12.55 s |
+| 4 | 20.37 s | 14.50 s |
+
+In that earlier measurement, three threads reduced wall time by 29% versus the previous three-thread runner,
+and 31% versus the previous one-thread baseline. Relative to the improved
+one-thread runner, three threads provide 1.32x throughput, using more total CPU
+time. Four threads still trail three; threading remains opt-in with default 1.
+All runs produced the same signature and 695870 cycles. Competing workloads
+interrupted other rounds; those timings are retained separately and excluded
+from this table. Raw comparisons, ranges, build artifacts and checks are in
+`benchmarks/20261009-state-ownership/`. The earlier cone-scheduling comparison
+is retained in `benchmarks/20261009-thread-diagnosis/`.
+
 Graph attempts preserve linked models, generated runners and stage logs in
 `native-graph/runtime/attempt.*/`; source wrappers, extraction logs and cached
 module graphs and link plans live in `runtime/partitions/`. A failed graph build returns failure

@@ -1,9 +1,175 @@
 #pragma once
 
 #include "cpphdl_graph.h"
+#include <numeric>
 
 namespace cpphdl::graph {
-inline void Graph::emit(const std::string& path, unsigned chunkSize) {
+// Native tasks own complete combinational cones. Pure shared logic can be
+// duplicated to avoid cross-lane intermediate traffic. Each lane also owns
+// its sinks and prepares register updates in an inactive state bank.
+struct NativeParallelPlan {
+    unsigned lanes = 1, stages = 1;
+    uint64_t cost = 0;
+    std::vector<std::vector<size_t>> tasks;
+    std::vector<std::vector<size_t>> waits;
+    std::vector<unsigned> ports, states, accesses, writes;
+};
+
+inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<size_t>& order, unsigned lanes,
+                                             bool hostOverlap = false) {
+    const size_t count = graph.nodes.size();
+    std::vector<size_t> values;
+    std::vector<std::vector<size_t>> dependencies(count);
+    std::vector<uint64_t> weight(count);
+    uint64_t total = 0;
+    for (auto index : order) {
+        const auto& node = graph.nodes[index];
+        if (node.op == "input" || node.op == "state") continue;
+        values.push_back(index); weight[index] = 1;
+        std::set<size_t> deps;
+        for (const auto* bits : {&node.left, &node.right, &node.select}) {
+            Bit previous = 0;
+            for (auto raw : *bits) {
+                auto bit = graph.resolve(raw);
+                if (bit < 2) { previous = 0; continue; }
+                if (bit != previous + 1) ++weight[index];
+                previous = bit;
+                auto producer = Graph::owner(bit);
+                if (graph.nodes[producer].op != "input" && graph.nodes[producer].op != "state") deps.insert(producer);
+            }
+        }
+        dependencies[index].assign(deps.begin(), deps.end()); total += weight[index];
+    }
+    if (values.empty()) return {};
+    // Each sink owns its entire pure combinational fan-in, ending at current
+    // state, input ports and memory contents. Duplicated operations have private
+    // node IDs/storage, so lanes never communicate intermediate values.
+    struct Root { std::vector<Value*> fields; std::vector<size_t> cone; uint64_t cost = 0; unsigned lane = 0; uint64_t sinkCost = 0; };
+    std::vector<Root> roots;
+    std::vector<size_t> portRoots, stateRoots, accessRoots, writeRoots;
+    for (auto& port : graph.ports) {
+        portRoots.push_back(port.input ? size_t(-1) : roots.size());
+        if (!port.input) roots.push_back({{&port.bits}});
+    }
+    // Explicit-event graphs can have ordered updates to the same state word.
+    // Keep all such sinks on one lane so their original priority is preserved.
+    std::vector<size_t> group(graph.states.size()); std::iota(group.begin(), group.end(), 0);
+    auto leader = [&](size_t i) { while (group[i] != i) { group[i] = group[group[i]]; i = group[i]; } return i; };
+    std::map<size_t, size_t> writers;
+    for (size_t i = 0; i < graph.states.size(); ++i) for (auto bit : graph.states[i].bits) {
+        auto [it, fresh] = writers.emplace(Graph::owner(bit), i);
+        if (!fresh) group[leader(i)] = leader(it->second);
+    }
+    std::map<size_t, size_t> groupRoot;
+    for (size_t i = 0; i < graph.states.size(); ++i) {
+        auto [it, fresh] = groupRoot.emplace(leader(i), roots.size());
+        if (fresh) roots.push_back({});
+        stateRoots.push_back(it->second);
+        auto& state = graph.states[i]; auto& fields = roots[it->second].fields;
+        fields.insert(fields.end(), {&state.next, &state.trigger, &state.reset, &state.resetValue});
+    }
+    for (auto& access : graph.memoryAccesses) {
+        accessRoots.push_back(roots.size()); roots.push_back({{&access.address, &access.enabled}});
+    }
+    for (auto& write : graph.memoryWrites) {
+        writeRoots.push_back(roots.size()); roots.push_back({{&write.address, &write.data, &write.enabled}});
+    }
+    std::vector<size_t> seen(count, size_t(-1));
+    size_t active = 0;
+    for (size_t r = 0; r < roots.size(); ++r) {
+        auto& root = roots[r]; std::vector<size_t> pending;
+        // Account for assembling the sink as well as its combinational cone.
+        // Constant/direct-state sinks still do work and must not all land on 0.
+        root.sinkCost = 1;
+        for (auto* field : root.fields) for (auto raw : *field) {
+            auto bit = graph.resolve(raw);
+            if (bit > 1 && weight[Graph::owner(bit)]) pending.push_back(Graph::owner(bit));
+        }
+        for (auto* field : root.fields) root.sinkCost += (field->size() + 63) / 64;
+        root.cost = root.sinkCost;
+        while (!pending.empty()) {
+            auto node = pending.back(); pending.pop_back();
+            if (seen[node] == r) continue;
+            seen[node] = r; root.cone.push_back(node); root.cost += weight[node];
+            pending.insert(pending.end(), dependencies[node].begin(), dependencies[node].end());
+        }
+        active += !root.cone.empty();
+    }
+    lanes = std::min<size_t>(lanes, active);
+    if (lanes < 2) { NativeParallelPlan p; p.tasks = {values}; p.waits.resize(1); return p; }
+    std::vector<size_t> sorted(roots.size()); std::iota(sorted.begin(), sorted.end(), 0);
+    std::stable_sort(sorted.begin(), sorted.end(), [&](size_t a, size_t b) { return roots[a].cost > roots[b].cost; });
+    std::vector<std::vector<bool>> owned(lanes, std::vector<bool>(count));
+    std::vector<uint64_t> load(lanes);
+    std::set<size_t> callerRoots;
+    if (hostOverlap) {
+        for (auto root : portRoots) if (root != size_t(-1)) callerRoots.insert(root);
+        callerRoots.insert(accessRoots.begin(), accessRoots.end());
+        callerRoots.insert(writeRoots.begin(), writeRoots.end());
+        // The caller owns every observable output and every validation that
+        // can fail. Its host continuation is safe before the workers finish:
+        // they only prepare inactive register storage, never observable state.
+        for (auto r : callerRoots) {
+            load[0] += roots[r].sinkCost;
+            for (auto node : roots[r].cone) if (!owned[0][node]) {
+                owned[0][node] = true; load[0] += weight[node];
+            }
+        }
+    }
+    // Group large overlapping cones first. Balance the accumulated lane cost
+    // and penalize extra work, rather than balancing unrelated depth slices.
+    for (auto r : sorted) {
+        if (callerRoots.count(r)) continue;
+        auto& root = roots[r]; uint64_t bestScore = UINT64_MAX, bestAdded = 0;
+        const auto peak = *std::max_element(load.begin(), load.end());
+        for (unsigned lane = hostOverlap ? 1 : 0; lane < lanes; ++lane) {
+            uint64_t added = root.sinkCost; for (auto node : root.cone) if (!owned[lane][node]) added += weight[node];
+            const auto score = std::max(peak, load[lane] + added) * lanes * 4 + added;
+            if (score < bestScore) { bestScore = score; bestAdded = added; root.lane = lane; }
+        }
+        load[root.lane] += bestAdded;
+        for (auto node : root.cone) owned[root.lane][node] = true;
+    }
+    NativeParallelPlan plan; plan.lanes = lanes; plan.stages = 1; plan.tasks.resize(lanes); plan.waits.resize(lanes);
+    for (auto root : portRoots) plan.ports.push_back(root == size_t(-1) ? 0 : roots[root].lane);
+    for (auto root : stateRoots) plan.states.push_back(roots[root].lane);
+    for (auto root : accessRoots) plan.accesses.push_back(roots[root].lane);
+    for (auto root : writeRoots) plan.writes.push_back(roots[root].lane);
+    // Preserve templates while each original operation is reused by its first
+    // owner. Only operations needed by additional lanes are duplicated.
+    const auto originals = graph.nodes;
+    std::vector<bool> reused(count);
+    for (unsigned lane = 0; lane < lanes; ++lane) {
+        std::vector<size_t> copy(count, size_t(-1));
+        auto remap = [&](Value& bits) {
+            for (auto& bit : bits) {
+                bit = graph.resolve(bit);
+                if (bit < 2 || !weight[Graph::owner(bit)]) continue;
+                auto index = copy[Graph::owner(bit)];
+                if (index == size_t(-1)) throw std::runtime_error("missing native cone producer");
+                bit = (index + 1) * 64 + 2 + Graph::lane(bit);
+            }
+        };
+        for (auto node : values) if (owned[lane][node]) {
+            auto cloned = originals[node]; remap(cloned.left); remap(cloned.right); remap(cloned.select);
+            if (!reused[node]) {
+                reused[node] = true; copy[node] = node; graph.nodes[node] = std::move(cloned);
+            } else {
+                copy[node] = graph.nodes.size(); graph.nodes.push_back(std::move(cloned));
+            }
+            plan.tasks[lane].push_back(copy[node]);
+        }
+        for (auto& root : roots) if (root.lane == lane) for (auto* field : root.fields) remap(*field);
+    }
+    plan.cost = *std::max_element(load.begin(), load.end());
+    fprintf(stderr, "native graph cones: base weight %llu; lane weights", (unsigned long long)total);
+    for(auto x:load) fprintf(stderr," %llu",(unsigned long long)x); fprintf(stderr,"\n");
+    return plan;
+}
+
+inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned threads, bool hostOverlap) {
+        if (!threads || threads > 256) throw std::runtime_error("native graph threads must be between 1 and 256");
+        if (threads > 1 && !chunkSize) chunkSize = 512;
         validateClocks();
         if (chunkSize)
             for (const auto& node : nodes) if (node.hostEffect())
@@ -37,9 +203,50 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
             if (nodes[owner(state.bits[0])].name == "event history")
                 for (auto bit : state.next) checkEvent(bit);
         auto order = dependencyOrder();
+        // Validate clocks, effects and combinational cycles before pruning so
+        // unused state cannot hide an invalid model. Partition files retain
+        // their original state; only the final executable loses dead registers.
+        if (pruneUnusedState()) {
+            compact();
+            order = dependencyOrder();
+        }
+        auto scheduledNodes = order.size();
+        NativeParallelPlan parallel;
+        std::vector<std::vector<size_t>> taskNodes(1);
+        if (threads > 1) {
+            parallel = nativeParallelPlan(*this, order, threads, hostOverlap);
+            threads = parallel.lanes;
+            if (threads > 1) {
+                taskNodes = parallel.tasks;
+                scheduledNodes = std::count_if(order.begin(), order.end(), [&](size_t i) {
+                    return nodes[i].op == "input" || nodes[i].op == "state";
+                });
+                for (const auto& task : taskNodes) scheduledNodes += task.size();
+            }
+        }
+        if (threads == 1) for (auto index : order)
+            if (nodes[index].op != "state" && nodes[index].op != "input") taskNodes[0].push_back(index);
+        std::vector<int64_t> chunkOf(nodes.size(), -1);
+        std::vector<std::vector<size_t>> taskChunks(taskNodes.size());
+        if (chunkSize) {
+            size_t chunk = 0;
+            for (size_t task = 0; task < taskNodes.size(); ++task) {
+                for (size_t i = 0; i < taskNodes[task].size(); ++i) {
+                    if (i % chunkSize == 0) taskChunks[task].push_back(chunk++);
+                    chunkOf[taskNodes[task][i]] = chunk - 1;
+                }
+            }
+        }
+        if (threads > 1) {
+            order.clear();
+            for (const auto& task : taskNodes) order.insert(order.end(), task.begin(), task.end());
+            fprintf(stderr, "native graph parallel: %u lanes, %u stages, %zu tasks\n",
+                    threads, parallel.stages, parallel.tasks.size());
+        }
         std::ofstream output(path);
         if (!output) throw std::runtime_error("cannot write native model");
         output << "#pragma once\n";
+        if (threads > 1) output << "#include <cpphdl_graph_threads.h>\n";
         if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_random"; }))
             output << "#include <cstdlib>\n";
         if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_jtag_tick"; }))
@@ -80,20 +287,47 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
                 names[owner(port.bits[offset])] = "(" + expr + ")";
             }
         }
-        for (size_t index = 0; index < nodes.size(); ++index) if (nodes[index].op == "state") {
-            names[index] = "state" + std::to_string(index);
-            output << "uint64_t " << names[index] << " = " << number(nodes[index].left).value_or(0) << "ull;\n";
-        }
+        auto stateStorageWidth = [](unsigned width) {
+            return width <= 8 ? 8u : width <= 16 ? 16u : width <= 32 ? 32u : 64u;
+        };
+        if (threads > 1) {
+            // A state word has one writer. Lay out the two banks by owner and
+            // keep lane boundaries on distinct cache lines. All lanes read the
+            // current bank while writing the inactive bank; publication is one
+            // index change after validation, with no per-register gather/copy.
+            std::vector<unsigned> stateOwner(nodes.size());
+            for (size_t i = 0; i < states.size(); ++i)
+                for (auto bit : states[i].bits) stateOwner[owner(bit)] = parallel.states[i];
+            output << "struct alignas(64) __cpphdl_StateBank {\n";
+            for (unsigned lane = 0; lane < threads; ++lane) {
+                bool first = true;
+                // Store each register in its smallest native unsigned type.
+                // Group by size to avoid padding between narrow registers.
+                for (unsigned storageWidth : {64u, 32u, 16u, 8u})
+                    for (size_t index = 0; index < nodes.size(); ++index)
+                        if (nodes[index].op == "state" && stateOwner[index] == lane) {
+                            if (stateStorageWidth(nodes[index].width) != storageWidth) continue;
+                            auto field = "state" + std::to_string(index);
+                            names[index] = "uint64_t(__cpphdl_state[__cpphdl_current]." + field + ")";
+                            output << (first ? "alignas(64) " : "") << "uint" << storageWidth << "_t " << field << " = "
+                                   << number(nodes[index].left).value_or(0) << "ull;\n";
+                            first = false;
+                        }
+            }
+            output << "};\n__cpphdl_StateBank __cpphdl_state[2]{};\nbool __cpphdl_current = false;\n";
+        } else for (unsigned storageWidth : {64u, 32u, 16u, 8u})
+            for (size_t index = 0; index < nodes.size(); ++index)
+                if (nodes[index].op == "state" && stateStorageWidth(nodes[index].width) == storageWidth) {
+                    auto field = "state" + std::to_string(index);
+                    names[index] = "uint64_t(" + field + ")";
+                    output << "uint" << storageWidth << "_t " << field << " = "
+                           << number(nodes[index].left).value_or(0) << "ull;\n";
+                }
         // Only values that escape their defining chunk need model storage.
         // Keeping the rest as scalars lets the host compiler eliminate their
         // stores and allocate registers without exposing them to other calls.
         std::map<size_t, size_t> sharedSlots;
         if (chunkSize) {
-            std::vector<int64_t> chunkOf(nodes.size(), -1);
-            size_t position = 0;
-            for (auto index : order)
-                if (nodes[index].op != "state" && nodes[index].op != "input")
-                    chunkOf[index] = position++ / chunkSize;
             auto retain = [&](const Value& bits, int64_t consumer = -1) {
                 for (auto bit : resolved(bits)) if (bit > 1) {
                     auto index = owner(bit);
@@ -110,8 +344,24 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
             for (const auto& access : memoryAccesses) { retain(access.address); retain(access.enabled); }
             for (const auto& write : memoryWrites)
                 for (const auto* bits : {&write.address, &write.data, &write.enabled}) retain(*bits);
-            output << "std::array<uint64_t," << sharedSlots.size() << "> __cpphdl_values{};\n";
+            size_t storage = sharedSlots.size();
+            if (threads > 1) {
+                // Different tasks never write the same cache line of shared
+                // intermediates, even if they execute on different lanes.
+                storage = 0;
+                for (const auto& task : taskNodes) {
+                    storage = (storage + 7) / 8 * 8;
+                    for (auto node : task) if (sharedSlots.count(node)) sharedSlots[node] = storage++;
+                }
+            }
+            output << (threads > 1 ? "alignas(64) " : "")
+                   << "std::array<uint64_t," << storage << "> __cpphdl_values{};\n";
         }
+        if (threads > 1)
+            output << "static constexpr unsigned __cpphdl_thread_count = " << threads << ";\n"
+                   << "std::shared_ptr<cpphdl::graph_runtime::Threads> __cpphdl_threads = "
+                      "std::make_shared<cpphdl::graph_runtime::Threads>("
+                   << threads << ',' << taskNodes.size() << ");\n";
         auto valueName = [&](size_t index) {
             auto slot = sharedSlots.find(index);
             return slot != sharedSlots.end() ? "__cpphdl_values[" + std::to_string(slot->second) + "]" : "value" + std::to_string(index);
@@ -139,19 +389,26 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
             if (constants || result.empty()) { if (!result.empty()) result += " | "; result += std::to_string(constants) + "ull"; }
             return "(" + result + ")";
         };
+        auto clockEdge = [&](int clock, bool falling) {
+            if (clock < 0) return std::string("true");
+            auto previous = "__cpphdl_previous_clock_" + std::to_string(clock);
+            auto current = clocks.at(clock).name;
+            return "(" + (falling ? "!" + current + " && " + previous : current + " && !" + previous) + ")";
+        };
         // Output settling does not need next-state logic. Make the two phases
         // compile-time distinct so the host compiler can remove that work,
         // rather than testing a runtime flag after computing both schedules.
-        unsigned chunks = 0, chunkNodes = 0;
+        unsigned chunks = 0;
+        int64_t previousChunk = -1;
         if (!chunkSize) output << "template<bool Commit> void evaluate() {\n";
         for (auto index : order) {
             const auto& node = nodes[index];
             if (node.op == "state" || node.op == "input") continue;
-            if (chunkSize && chunkNodes % chunkSize == 0) {
+            if (chunkSize && chunkOf[index] != previousChunk) {
                 if (chunks) output << "}\n";
                 output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks++ << "() {\n";
+                previousChunk = chunkOf[index];
             }
-            ++chunkNodes;
             if (node.op == "memory_read") {
                 auto memory = number(node.right), word = number(node.select);
                 if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||
@@ -249,16 +506,117 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
         }
         if (chunkSize) {
             if (chunks) output << "}\n";
+            if (threads > 1) {
+                // Endpoints are assembled on the same lane as their logic.
+                // Only compact host outputs, validation flags and RAM write
+                // transactions cross back to the caller. Scratch and inactive
+                // registers may be discarded if validation fails.
+                auto pending = [](unsigned lane) { return "__cpphdl_pending_" + std::to_string(lane); };
+                for (unsigned lane = 0; lane < threads; ++lane) {
+                    output << "struct alignas(64) __cpphdl_Transaction_" << lane << " {\nunsigned errors = 0;\n";
+                    for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input && parallel.ports[i] == lane)
+                        output << "std::array<uint32_t," << (ports[i].bits.size()+31)/32 << "> port" << i << "{};\n";
+                    for (size_t i = 0; i < memoryWrites.size(); ++i) if (parallel.writes[i] == lane)
+                        output << "bool enable" << i << " = false;\nuint64_t address" << i << " = 0;\n"
+                               << "std::array<uint64_t," << (memoryWrites[i].data.size()+63)/64 << "> data" << i << "{};\n";
+                    output << "} " << pending(lane) << ";\n";
+                    output << "template<bool Commit> [[gnu::noinline]] void __cpphdl_sinks_" << lane << "() noexcept {\n"
+                           << "auto& tx = " << pending(lane) << ";\ntx.errors = 0;\n";
+                    for (size_t i = 0; i < memoryAccesses.size(); ++i) if (parallel.accesses[i] == lane) {
+                        const auto& access = memoryAccesses[i];
+                        output << "if(" << (access.transaction ? "Commit && " + clockEdge(access.clock, access.falling) + " && " : "")
+                               << assembly(access.enabled) << " && " << assembly(access.address) << " >= "
+                               << memories[access.memory].depth << "ull) tx.errors |= 1;\n";
+                    }
+                    for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input && parallel.ports[i] == lane)
+                        for (unsigned offset = 0; offset < ports[i].bits.size(); offset += 32)
+                            output << "tx.port" << i << '[' << offset/32 << "] = uint32_t("
+                                   << assembly(slice(ports[i].bits, offset, std::min<size_t>(32,ports[i].bits.size()-offset))) << ");\n";
+                    output << "if constexpr(Commit) {\n";
+                    for (size_t i = 0; i < memoryWrites.size(); ++i) if (parallel.writes[i] == lane) {
+                        const auto& write = memoryWrites[i];
+                        output << "tx.enable" << i << " = " << clockEdge(write.clock, write.falling) << " && " << assembly(write.enabled) << ";\n"
+                               << "if(tx.enable" << i << ") {\ntx.address" << i << " = " << assembly(write.address) << ";\n"
+                               << "if(tx.address" << i << " >= " << memories[write.memory].depth << "ull) tx.errors |= 2;\n";
+                        for (unsigned offset = 0; offset < write.data.size(); offset += 64)
+                            output << "tx.data" << i << '[' << offset/64 << "] = "
+                                   << assembly(slice(write.data, offset, std::min<size_t>(64,write.data.size()-offset))) << ";\n";
+                        output << "}\n";
+                    }
+                    std::set<size_t> initialized;
+                    for (size_t i = 0; i < states.size(); ++i) if (parallel.states[i] == lane)
+                        for (auto bit : states[i].bits) if (initialized.insert(owner(bit)).second)
+                            output << "__cpphdl_state[!__cpphdl_current].state" << owner(bit) << " = " << names.at(owner(bit)) << ";\n";
+                    for (size_t i = 0; i < states.size(); ++i) if (parallel.states[i] == lane) {
+                        const auto& state = states[i];
+                        output << "const bool trigger" << i << " = (" << assembly(state.trigger) << " && " << clockEdge(state.clock, state.falling) << ")";
+                        if (!state.reset.empty()) output << " || " << assembly(state.reset);
+                        output << ";\nif(trigger" << i << ") {\n";
+                        for (unsigned offset = 0; offset < state.bits.size(); offset += 64) {
+                            auto index = owner(state.bits[offset]);
+                            auto width = std::min<size_t>(64,state.next.size()-offset);
+                            auto next = assembly(slice(state.next,offset,width));
+                            if (!state.reset.empty()) next = assembly(state.reset) + " ? " + assembly(slice(state.resetValue,offset,width)) + " : " + next;
+                            output << "__cpphdl_state[!__cpphdl_current].state" << index << " = " << next << ";\n";
+                        }
+                        output << "}\n";
+                    }
+                    output << "}\n}\n";
+                }
+                output << "template<bool Commit> static void __cpphdl_lane(void* target, cpphdl::graph_runtime::Threads&, "
+                          "unsigned lane, uint32_t) noexcept {\n"
+                          "auto& model = *static_cast<Model*>(target);\nswitch(lane) {\n";
+                for (unsigned lane = 0; lane < threads; ++lane) {
+                    output << "case " << lane << ":\n";
+                    for (auto chunk : taskChunks[lane]) output << "model.__cpphdl_chunk_" << chunk << "();\n";
+                    output << "model.__cpphdl_sinks_" << lane << "<Commit>();\nbreak;\n";
+                }
+                output << "}\n}\nvoid __cpphdl_publish() {\nunsigned errors = 0;\n";
+                for (unsigned lane = 0; lane < (hostOverlap ? 1u : threads); ++lane)
+                    output << "errors |= " << pending(lane) << ".errors;\n";
+                output << "if(errors & 1) throw std::out_of_range(\"native graph memory address\");\n"
+                          "if(errors & 2) throw std::out_of_range(\"native graph memory write address\");\n";
+                for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input)
+                    output << ports[i].name << " = " << pending(parallel.ports[i]) << ".port" << i << ";\n";
+                output << "}\nvoid __cpphdl_commit() noexcept {\n";
+                // Preserve global write order; workers only read RAM.
+                for (size_t i = 0; i < memoryWrites.size(); ++i) {
+                    const auto& write = memoryWrites[i]; const auto tx = pending(parallel.writes[i]);
+                    output << "if(" << tx << ".enable" << i << ") {\n";
+                    for (unsigned offset = 0; offset < write.data.size(); offset += 64)
+                        output << "memory" << write.memory << '[' << tx << ".address" << i << "][" << offset/64
+                               << "] = " << tx << ".data" << i << '[' << offset/64 << "];\n";
+                    output << "}\n";
+                }
+                output << "__cpphdl_current = !__cpphdl_current;\n";
+                for (size_t i = 0; i < clocks.size(); ++i)
+                    output << "__cpphdl_previous_clock_" << i << " = " << clocks[i].name << ";\n";
+                output << "}\ntemplate<bool Commit> [[gnu::noinline]] void evaluate() {\n"
+                          "__cpphdl_threads->run(this, &Model::__cpphdl_lane<Commit>);\n"
+                          "__cpphdl_publish();\nif constexpr(Commit) __cpphdl_commit();\n}\n";
+                if (hostOverlap) {
+                    // Host continuation may only consume the published ports
+                    // and update external host models. Inputs, graph storage
+                    // and this shared executor must not be mutated/reentered.
+                    // A host exception still commits the graph transaction,
+                    // matching the synchronous evaluate-then-host contract.
+                    output << "static constexpr bool __cpphdl_host_overlap = true;\n"
+                              "template<class Host> void evaluate_with_host(Host&& host) {\n"
+                              "bool published = false;\ntry {\n"
+                              "__cpphdl_threads->run(this, &Model::__cpphdl_lane<true>, [&] {\n"
+                              "__cpphdl_publish();\npublished = true;\nhost();\n});\n"
+                              "} catch(...) { if(published) __cpphdl_commit(); throw; }\n"
+                              "__cpphdl_commit();\n}\n";
+                } else output << "template<class Host> void evaluate_with_host(Host&& host) { evaluate<true>(); host(); }\n";
+                output << "void eval(bool commit = false) { if(commit) evaluate<true>(); else evaluate<false>(); }\n"
+                          "void step() { evaluate<true>(); evaluate<false>(); }\n};\n}\n";
+                fprintf(stderr, "native graph: %zu source nodes, %zu scheduled nodes, %zu state groups\n", nodes.size(), scheduledNodes, states.size());
+                return;
+            }
             output << "template<bool Commit> [[gnu::noinline]] void evaluate() {\n";
             for (unsigned index = 0; index < chunks; ++index)
                 output << "__cpphdl_chunk_" << index << "();\n";
         }
-        auto clockEdge = [&](int clock, bool falling) {
-            if (clock < 0) return std::string("true");
-            auto previous = "__cpphdl_previous_clock_" + std::to_string(clock);
-            auto current = clocks.at(clock).name;
-            return "(" + (falling ? "!" + current + " && " + previous : current + " && !" + previous) + ")";
-        };
         for (const auto& access : memoryAccesses)
             output << "if(" << (access.transaction ? "Commit && " + clockEdge(access.clock, access.falling) + " && " : "") << assembly(access.enabled)
                    << " && " << assembly(access.address) << " >= " << memories[access.memory].depth
@@ -301,13 +659,14 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize) {
             auto& state = states[index];
             output << "if(trigger" << index << ") {\n";
             for (unsigned offset = 0; offset < state.bits.size(); offset += 64)
-                output << names.at(owner(state.bits[offset])) << " = next" << index << '_' << offset << ";\n";
+                output << "state" << owner(state.bits[offset]) << " = next" << index << '_' << offset << ";\n";
             output << "}\n";
         }
         for (size_t i = 0; i < clocks.size(); ++i)
             output << "__cpphdl_previous_clock_" << i << " = " << clocks[i].name << ";\n";
         output << "}\n}\nvoid eval(bool commit = false) { if(commit) evaluate<true>(); else evaluate<false>(); }\n"
+                  "template<class Host> void evaluate_with_host(Host&& host) { evaluate<true>(); host(); }\n"
                   "void step() { evaluate<true>(); evaluate<false>(); }\n};\n}\n";
-        fprintf(stderr, "native graph: %zu source nodes, %zu scheduled nodes, %zu state groups\n", nodes.size(), order.size(), states.size());
+        fprintf(stderr, "native graph: %zu source nodes, %zu scheduled nodes, %zu state groups\n", nodes.size(), scheduledNodes, states.size());
     }
 }

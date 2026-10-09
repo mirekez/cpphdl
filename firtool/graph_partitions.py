@@ -107,11 +107,10 @@ def runner(hosts, output, combinational_hosts=()):
     lines += [f'#include "{name}.h"' for name in types]
     if combinational_hosts:
         lines += ['#include "cpphdl_external_models.h"', '#include <limits>', '#include <stdexcept>']
-    lines += ['long _system_clock = 0;',
-        'template<size_t W, size_t N> void pack(std::array<uint32_t,N>& a, const cpphdl::logic<W>& v) {',
-        'a.fill(0); for(size_t b=0;b<W;++b) if(v.get(b)) a[b/32] |= uint32_t(1) << (b%32); }',
-        'template<size_t W, size_t N> void unpack(cpphdl::logic<W>& v, const std::array<uint32_t,N>& a) {',
-        'v=0; for(size_t b=0;b<W;++b) v.set(b, (a[b/32] >> (b%32)) & 1); }',
+    lines += ['#include <cpphdl_graph_ports.h>',
+        'using cpphdl::graph_runtime::pack;',
+        'using cpphdl::graph_runtime::unpack;',
+        'long _system_clock = 0;',
         'int main(int argc, char** argv) {',
         'if(argc<2) { std::fprintf(stderr,"usage: %s program.riscv [FESVR options]\\n",argv[0]); return 2; }',
         'std::vector<std::string> storage(argv,argv+argc); storage.emplace_back(std::string("+loadmem=")+argv[1]);',
@@ -172,7 +171,10 @@ def runner(hosts, output, combinational_hosts=()):
         for p in h['ports']:
             if p['direction'] == 'output':
                 lines.append(f'pack(graph.{ident}_{p["name"]}, {ident}.{p["name"]}());')
-    lines.append('graph.evaluate<true>();')
+    # This continuation only reads published graph outputs and advances host
+    # models. Register workers can run concurrently; graph inputs are packed
+    # again only after evaluate_with_host has joined them and committed state.
+    lines.append('graph.evaluate_with_host([&] {')
     # All host inputs belong to the same pre-commit transaction snapshot.
     for h in hosts:
         ident = f'h{h["index"]}'
@@ -183,6 +185,7 @@ def runner(hosts, output, combinational_hosts=()):
         ident = f'h{h["index"]}'
         lines.append(f'if(graph.host_control_{h["index"]}_enable[0]) {ident}._work(graph.host_control_{h["index"]}_work_reset[0]);')
         lines.append(f'{ident}._strobe();')
+    lines.append('});')
     lines += ['if(progress && (cycle+1)%progress==0) std::fprintf(stderr,"[CPPHDL graph] cycle %llu\\n",(unsigned long long)(cycle+1));',
         'if(uint32_t exit=firtool_cpphdl_runtime::exitCode()) {',
         'std::fprintf(stderr,"Native graph simulation finished after %llu cycles (code %u)\\n",(unsigned long long)(cycle+1),exit>>1);',

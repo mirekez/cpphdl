@@ -9,6 +9,7 @@ import tempfile
 parser = argparse.ArgumentParser()
 parser.add_argument('--cpphdl', required=True)
 parser.add_argument('--cxx', required=True)
+parser.add_argument('--threads', type=int, default=1)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 work = Path(tempfile.mkdtemp(prefix='cpphdl-partitions-'))
@@ -16,8 +17,11 @@ source = work / 'source'
 source.mkdir()
 env = dict(os.environ)
 env['LD_LIBRARY_PATH'] = str(Path(args.cxx).resolve().parent.parent / 'lib') + ':' + env.get('LD_LIBRARY_PATH', '')
+env['CPPHDL_OPTIMIZE_THREADS'] = str(args.threads)
 
 def run(command):
+    if command[0] == args.cxx and args.threads > 1:
+        command = [command[0], '-pthread', *command[1:]]
     result = subprocess.run(list(map(str, command)), env=env, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=240)
     if result.returncode: raise RuntimeError(result.stdout)
@@ -97,6 +101,8 @@ linker = work / 'link'
 print(run([args.cxx, '-std=c++23', '-O1', '-I' + str(root.parent / 'include'),
            root.parent / 'tools/cpphdl-graph-link.cpp', '-o', linker]))
 print(run([linker, partitions / 'link.plan', work / 'model.h', '2']))
+if args.threads > 1:
+    assert '__cpphdl_thread_count = ' + str(args.threads) in (work/'model.h').read_text()
 (work / 'check.cpp').write_text('''#include "Parent.cpp"
 #include "Leaf.cpp"
 #include "model.h"
@@ -181,12 +187,14 @@ int main() {
   ++_system_clock;
   graph.r_data[0]=uint64_t(data); graph.r_enable[0]=uint64_t(enable); graph.r_reset[0]=uint64_t(reset);
   graph.h0_result[0]=uint64_t(host.result());
-  graph.evaluate<true>();
+  graph.evaluate_with_host([&] {
   if(graph.r_result[0]!=uint64_t(reference.result()) || graph.host_control_0_enable[0]!=uint64_t(enable) ||
-     graph.h0_enable[0]!=uint64_t(enable)) return 1;
+     graph.h0_enable[0]!=uint64_t(enable)) throw std::runtime_error("host snapshot mismatch");
   hostData=graph.h0_data[0];
   if(graph.host_control_0_enable[0]) host._work(graph.host_control_0_work_reset[0]);
-  host._strobe(); reference._work(false); reference._strobe();
+  host._strobe();
+  });
+  reference._work(false); reference._strobe();
  }
  std::puts("partitioned graph: host snapshots and conditional callbacks PASS (2048 cycles)");
 }
