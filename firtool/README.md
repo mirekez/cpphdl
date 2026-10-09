@@ -70,10 +70,6 @@ as well as fresh checkouts, and stops on conflicting local script edits.
 DRAM instances retain their existing independent backing; these options do not
 implicitly connect separate memory ports to one shared memory image.
 
-[`dram_runtime.cpp`](../dram_runtime.cpp) is a manual reproducer for shared DRAM
-backing, byte masks and independent response lifetimes. It currently exits with
-code 1 on the first cross-instance read; it is not a passing CTest regression.
-
 Graph attempts preserve linked models, generated runners and stage logs in
 `native-graph/runtime/attempt.*/`; source wrappers, extraction logs and cached
 module graphs and link plans live in `runtime/partitions/`. A failed graph build returns failure
