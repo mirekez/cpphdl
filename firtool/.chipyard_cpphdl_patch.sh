@@ -19,14 +19,21 @@ die() { echo "error: $*" >&2; exit 1; }
 
 apply_once() {
   local repo=$1 patch=$2 label=$3
-  if git -C "$repo" apply --check "$patch" 2>/dev/null; then
-    git -C "$repo" apply "$patch"
+  local top prefix
+  top=$(git -C "$repo" rev-parse --show-toplevel) || die "$repo is not in a Git checkout"
+  prefix=$(git -C "$repo" rev-parse --show-prefix)
+  # Apply from the owning root: git apply from an embedded tree can skip every
+  # path and report success. Prefix paths without weakening git's atomic checks.
+  local -a apply=(git -C "$top" apply)
+  if [[ -n "$prefix" ]]; then apply+=(--directory="${prefix%/}"); fi
+  if "${apply[@]}" --check "$patch" 2>/dev/null; then
+    "${apply[@]}" "$patch"
     echo "applied $label patch"
-  elif git -C "$repo" apply --reverse --check "$patch" 2>/dev/null; then
+  elif "${apply[@]}" --reverse --check "$patch" 2>/dev/null; then
     echo "$label patch is already applied"
   elif [[ "$label" == Chipyard ]] &&
-       git -C "$repo" apply --check "$script_dir/chipyard_cpphdl_backends.patch" 2>/dev/null; then
-    git -C "$repo" apply "$script_dir/chipyard_cpphdl_backends.patch"
+       "${apply[@]}" --check "$script_dir/chipyard_cpphdl_backends.patch" 2>/dev/null; then
+    "${apply[@]}" "$script_dir/chipyard_cpphdl_backends.patch"
     echo "upgraded Chipyard C++HDL backend build scripts"
   elif [[ "$label" == Chipyard ]] &&
        [[ -x "$repo/scripts/build-cpphdl-rocket64-graph.sh" ]] &&
@@ -51,9 +58,11 @@ apply_once() {
 # Keep downloaded tools and generated models out of the shared checkout's
 # untracked-file list without changing its tracked ignore rules.
 exclude=$(git -C "$chipyard_root" rev-parse --path-format=absolute --git-path info/exclude)
+exclude_prefix=$(git -C "$chipyard_root" rev-parse --show-prefix)
 mkdir -p "$(dirname -- "$exclude")"
 touch "$exclude"
 for pattern in /cpphdl-build/ /tools/circt-cpphdl/ /tools/circt-cpphdl-sdk/ /tools/firtool-cpphdl/build/; do
+  pattern="/${exclude_prefix}${pattern#/}"
   if ! grep -qxF "$pattern" "$exclude"; then
     printf '\n%s\n' "$pattern" >> "$exclude"
   fi
@@ -61,6 +70,7 @@ done
 
 step "Apply Chipyard C++HDL integration"
 apply_once "$chipyard_root" "$chipyard_patch" Chipyard
+apply_once "$chipyard_root" "$script_dir/chipyard_cpphdl_options.patch" "Chipyard runtime options"
 
 step "Reuse or fetch pinned CIRCT/firtool sources"
 if [[ ! -d "$circt_dir/.git" ]]; then

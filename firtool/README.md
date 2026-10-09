@@ -49,6 +49,31 @@ the existing UART, DRAM and TSI host models; ordinary hardware executes as a
 graph. Native evaluation is split into smaller functions to limit compiler
 memory use while retaining `-O2`.
 
+`CPPHDL_CONFIG` selects the Chipyard configuration (default `RocketConfig`) for
+both build and run scripts. The native-graph build also accepts these optional
+extensions, without changing TestChipIP or other external projects:
+
+- `CPPHDL_COMBINATIONAL_HOST="TypeA TypeB"`: settle the named external types
+  before sampling each clock edge. Supply a `firtool_cpphdl_external::eval(Type&)`
+  overload in `cpphdl_external_models.h` for each type. It may update combinational
+  outputs, but must not advance state, consume transactions, or perform I/O.
+  The runner rejects boundaries that do not settle within 16 passes. Work and
+  strobe still run once per simulation cycle under the existing host enables.
+  Leave this unset for ordinary clocked UART, TSI and DRAM models.
+- `CPPHDL_EXTRA_SOURCES` and `CPPHDL_EXTRA_INCLUDES`: colon-separated paths for
+  custom host implementations and headers. Use absolute paths; spaces are allowed.
+- `CPPHDL_EXTRA_DEFINITIONS`: shell-quoted compile definitions, without `-D`.
+
+The partition tool exposes the same opt-in as repeatable `--combinational-host`.
+The installer applies the runtime-options upgrade to older backend installations
+as well as fresh checkouts, and stops on conflicting local script edits.
+DRAM instances retain their existing independent backing; these options do not
+implicitly connect separate memory ports to one shared memory image.
+
+[`dram_runtime.cpp`](../dram_runtime.cpp) is a manual reproducer for shared DRAM
+backing, byte masks and independent response lifetimes. It currently exits with
+code 1 on the first cross-instance read; it is not a passing CTest regression.
+
 Graph attempts preserve linked models, generated runners and stage logs in
 `native-graph/runtime/attempt.*/`; source wrappers, extraction logs and cached
 module graphs and link plans live in `runtime/partitions/`. A failed graph build returns failure

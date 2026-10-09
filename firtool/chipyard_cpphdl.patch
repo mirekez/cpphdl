@@ -11,7 +11,7 @@ index 0000000000000000000000000000000000000000..6600d112d7a2851985e2f81cd3f76915
 +export RISCV=${RISCV:-"$root/.conda-env/riscv-tools"}
 +export PATH="$RISCV/bin:$root/.conda-env/bin:$PATH"
 +
-+config=RocketConfig
++config=${CPPHDL_CONFIG:-RocketConfig}
 +long_name="chipyard.harness.TestHarness.${config}"
 +generated_root="$root/sims/verilator/generated-src/$long_name"
 +fir_file="$generated_root/$long_name.fir"
@@ -993,7 +993,7 @@ new file mode 100755
 index 0000000000000000000000000000000000000000..c469c7bda8b23cd10b605d75b65f665e10095700
 --- /dev/null
 +++ b/scripts/build-cpphdl-rocket64-graph.sh
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,82 @@
 +#!/usr/bin/env bash
 +# Lower C++ modules separately, link their graphs, then build the host runner.
 +set -euo pipefail
@@ -1021,9 +1021,14 @@ index 0000000000000000000000000000000000000000..c469c7bda8b23cd10b605d75b65f665e
 +trap 'status=$?; if (( status )); then echo "error: graph build failed; diagnostics: $attempt" >&2; fi' EXIT
 +partitions="$build_dir/partitions"
 +echo "Native graph partitions and host runner; diagnostics: $attempt"
++partition_args=()
++read -r -a combinational_hosts <<< "${CPPHDL_COMBINATIONAL_HOST:-}"
++for host in "${combinational_hosts[@]}"; do
++  partition_args+=(--combinational-host "$host")
++done
 +python3 "$partition_tool" --source "$output_dir" --output "$partitions" \
 +  --cpphdl "$cpphdl_tool" --include "$cpphdl_include" \
-+  --jobs "${CPPHDL_GRAPH_JOBS:-1}" 2>&1 | tee "$attempt/extract.log"
++  --jobs "${CPPHDL_GRAPH_JOBS:-1}" "${partition_args[@]}" 2>&1 | tee "$attempt/extract.log"
 +linker="$build_dir/graph-link"
 +if [[ ! -x "$linker" || "$link_source" -nt "$linker" || \
 +      "$cpphdl_include/cpphdl_graph.h" -nt "$linker" || \
@@ -1035,6 +1040,8 @@ index 0000000000000000000000000000000000000000..c469c7bda8b23cd10b605d75b65f665e
 +cp "$partitions/runner.cpp" "$partitions/hosts.json" "$attempt/"
 +python3 - "$attempt" "$root" "$output_dir" "$cpphdl_include" <<'PY'
 +import json
++import os
++import shlex
 +from pathlib import Path
 +import sys
 +attempt, root, generated, include = map(Path, sys.argv[1:])
@@ -1046,14 +1053,17 @@ index 0000000000000000000000000000000000000000..c469c7bda8b23cd10b605d75b65f665e
 +           runtime / 'cpphdl_external_models.cpp', collateral / 'mm.cc',
 +           collateral / 'testchip_tsi.cc', collateral / 'testchip_htif.cc']
 +sources += [generated / (name + '.cpp') for name in sorted({h['type'] for h in hosts})]
++sources += [Path(s) for s in os.environ.get('CPPHDL_EXTRA_SOURCES', '').split(os.pathsep) if s]
++extra_include = [Path(s) for s in os.environ.get('CPPHDL_EXTRA_INCLUDES', '').split(os.pathsep) if s]
 +quote = lambda paths: '\n'.join(json.dumps(str(p)) for p in paths)
 +(attempt / 'CMakeLists.txt').write_text(
 +    'cmake_minimum_required(VERSION 3.16)\nproject(RocketNativeGraph LANGUAGES CXX)\n'
 +    'set(CMAKE_CXX_STANDARD 23)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n'
 +    'add_executable(cpphdl-rocket64-graph-sim\n' + quote(sources) + ')\n'
-+    'target_compile_options(cpphdl-rocket64-graph-sim PRIVATE -O2)\n'
++    'target_compile_options(cpphdl-rocket64-graph-sim PRIVATE -O2 -fno-strict-aliasing)\n'
 +    'target_include_directories(cpphdl-rocket64-graph-sim PRIVATE\n' +
-+    quote([attempt, runtime, generated, include, collateral, riscv / 'include']) + ')\n'
++    quote([attempt, *extra_include, runtime, generated, include, collateral, riscv / 'include']) + ')\n'
++    'target_compile_definitions(cpphdl-rocket64-graph-sim PRIVATE\n' + quote(shlex.split(os.environ.get('CPPHDL_EXTRA_DEFINITIONS', ''))) + ')\n'
 +    'target_link_directories(cpphdl-rocket64-graph-sim PRIVATE ' + json.dumps(str(riscv / 'lib')) + ')\n'
 +    'target_link_libraries(cpphdl-rocket64-graph-sim PRIVATE fesvr riscv dl pthread)\n'
 +    'target_link_options(cpphdl-rocket64-graph-sim PRIVATE ' + json.dumps('-Wl,-rpath,' + str(riscv / 'lib')) + ')\n')

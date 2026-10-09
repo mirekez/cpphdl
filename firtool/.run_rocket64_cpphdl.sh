@@ -4,17 +4,18 @@ set -euo pipefail
 product_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 chipyard_root="$product_root/chipyard"
 backend=${1:-plain}
+config=${CPPHDL_CONFIG:-RocketConfig}
 case "$backend" in
   plain)
-    mode_root="$chipyard_root/cpphdl-build/RocketConfig/plain"
+    mode_root="$chipyard_root/cpphdl-build/$config/plain"
     target=cpphdl-rocket64-sim
     build_script=.build_rocket64_cpphdl.sh ;;
   optimize-combs)
-    mode_root="$chipyard_root/cpphdl-build/RocketConfig"
+    mode_root="$chipyard_root/cpphdl-build/$config"
     target=cpphdl-rocket64-optimized-sim
     build_script=.build_rocket64_cpphdl-optimize-combs.sh ;;
   native-graph)
-    mode_root="$chipyard_root/cpphdl-build/RocketConfig/native-graph"
+    mode_root="$chipyard_root/cpphdl-build/$config/native-graph"
     target=cpphdl-rocket64-graph-sim
     build_script=.build_rocket64_cpphdl-native-graph.sh ;;
   *) echo "error: run backend must be plain, optimize-combs or native-graph" >&2; exit 2 ;;

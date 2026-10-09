@@ -194,3 +194,92 @@ int main() {
 print(run([args.cxx, '-std=c++23', '-O2', '-I' + str(root.parent / 'include'), '-I' + str(source),
            '-I' + str(work), work / 'host-check.cpp', '-o', work / 'host-check']))
 print(run([work / 'host-check']))
+
+# A combinational external result must be available to the graph on the same
+# edge. A counter fed through the host detects an accidental extra cycle.
+(source / 'CombHost.h').write_text('''#pragma once
+#include "cpphdl_support.h"
+#include <stdexcept>
+inline unsigned host_ticks=0, host_strobes=0;
+class CombHost : public cpphdl::Module { public:
+ _PORT(cpphdl::logic<8>) data; // input
+ _PORT(cpphdl::logic<8>) result; // output
+ void* cpphdlExternalState;
+ unsigned expected=0, unstable=0;
+ void _assign() { result=_ASSIGN(cpphdl::logic<8>((uint64_t(data())+1)^unstable)); }
+ void _work(bool reset) {
+  if(!reset && uint64_t(data())!=expected)
+   throw std::runtime_error("combinational host introduced a clock of latency");
+  expected=reset ? 0 : (expected+1)&255; ++host_ticks;
+ }
+ void _strobe() { ++host_strobes; }
+};
+''')
+(source / 'TestHarness.h').write_text('''#pragma once
+#include "cpphdl_support.h"
+class CombHost;
+class TestHarness : public cpphdl::Module { public:
+ _PORT(cpphdl::logic<1>) clock; // input
+ _PORT(cpphdl::logic<1>) reset; // input
+ CombHost* inst_host;
+ cpphdl::reg<cpphdl::logic<8>> saved{};
+ TestHarness(); ~TestHarness();
+ void _assign(); void _work(bool); void _strobe();
+};
+''')
+(source / 'TestHarness.cpp').write_text('''#include "TestHarness.h"
+#include "CombHost.h"
+TestHarness::TestHarness() { inst_host=new CombHost(); }
+TestHarness::~TestHarness() { delete inst_host; }
+void TestHarness::_assign() { inst_host->data=_ASSIGN(saved); inst_host->_assign(); }
+void TestHarness::_work(bool) {
+ saved._next=reset() ? cpphdl::logic<8>(0) : inst_host->result();
+ inst_host->_work(bool(reset()));
+}
+void TestHarness::_strobe() { saved.strobe(); inst_host->_strobe(); }
+''')
+(source / 'cpphdl_external_models.h').write_text('''#pragma once
+#include "CombHost.h"
+#include <cstdlib>
+namespace firtool_cpphdl_external {
+inline void eval(CombHost& host) {
+ if(std::getenv("TEST_UNSTABLE_HOST")) host.unstable^=1;
+}
+}
+''')
+(source / 'cpphdl_runtime.h').write_text('''#pragma once
+#include "CombHost.h"
+namespace firtool_cpphdl_runtime {
+inline void configure(int,char**) {}
+inline uint32_t exitCode() {
+ if(host_ticks!=host_strobes) throw std::runtime_error("work/strobe count mismatch");
+ if(host_ticks!=unsigned(_system_clock)) throw std::runtime_error("extra work during settling");
+ return host_ticks==64 ? 1 : 0;
+}
+}
+''')
+print(run(['python3', root / 'graph_partitions.py', '--source', source, '--output', partitions,
+           '--top', 'TestHarness', '--combinational-host', 'CombHost',
+           '--cpphdl', args.cpphdl, '--include', root.parent / 'include']))
+print(run([linker, partitions / 'link.plan', work / 'model.h', '2']))
+print(run([args.cxx, '-std=c++23', '-O2', '-I' + str(root.parent / 'include'),
+           '-I' + str(source), '-I' + str(work), partitions / 'runner.cpp',
+           '-o', work / 'comb-check']))
+print(run([work / 'comb-check', 'unused.riscv']))
+print('partitioned graph: same-edge combinational host settling PASS (64 cycles)')
+
+result = subprocess.run([str(work / 'comb-check'), 'unused.riscv'],
+                        env={**env, 'TEST_UNSTABLE_HOST': '1'}, text=True,
+                        capture_output=True, timeout=30)
+if result.returncode != 2 or 'combinational host boundary did not settle' not in result.stderr:
+    raise RuntimeError('unstable host was not rejected: ' + result.stdout + result.stderr)
+print('partitioned graph: non-converging combinational host rejection PASS')
+
+result = subprocess.run(['python3', str(root / 'graph_partitions.py'),
+                         '--source', str(source), '--output', str(partitions),
+                         '--combinational-host', 'MissingHost', '--cpphdl', args.cpphdl,
+                         '--include', str(root.parent / 'include')],
+                        env=env, text=True, capture_output=True, timeout=240)
+if result.returncode == 0 or 'unknown combinational host type(s): MissingHost' not in result.stderr:
+    raise RuntimeError('unknown host was not rejected: ' + result.stdout + result.stderr)
+print('partitioned graph: unknown combinational host rejection PASS')
