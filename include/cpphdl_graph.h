@@ -15,6 +15,10 @@
 #include <string>
 #include <vector>
 
+#ifndef CPPHDL_NATIVE_THREADS
+#define CPPHDL_NATIVE_THREADS 1
+#endif
+
 namespace cpphdl::graph {
 
 using Bit = uint64_t;
@@ -547,6 +551,65 @@ public:
         }
     }
 
+    // Final native emission can discard state outside the observable sequential
+    // cone. Do not run this during partition extraction or streaming scheduling:
+    // those graphs can still acquire consumers/bindings at a later stage.
+    size_t pruneUnusedState() {
+        if (states.empty() || !pipelines.empty()) return 0;
+        std::vector<std::vector<size_t>> owners(nodes.size());
+        for (size_t index = 0; index < states.size(); ++index) {
+            std::set<size_t> words;
+            for (auto bit : states[index].bits) if (bit > 1) words.insert(owner(bit));
+            for (auto word : words) owners[word].push_back(index);
+        }
+        std::vector<bool> live(nodes.size()), stateLive(states.size());
+        std::vector<size_t> pending;
+        auto requireNode = [&](size_t index) {
+            if (!live[index]) { live[index] = true; pending.push_back(index); }
+        };
+        auto require = [&](const Value& value) {
+            for (auto raw : value) {
+                auto bit = resolve(raw);
+                if (bit > 1) requireNode(owner(bit));
+            }
+        };
+        for (const auto& port : ports) if (!port.input) require(port.bits);
+        // Even an unread memory can have writes or observable bounds errors.
+        for (const auto& access : memoryAccesses) {
+            require(access.address); require(access.enabled);
+        }
+        for (const auto& write : memoryWrites) {
+            require(write.address); require(write.data); require(write.enabled);
+        }
+        for (size_t index = 0; index < nodes.size(); ++index)
+            if (nodes[index].hostEffect()) requireNode(index);
+        while (!pending.empty()) {
+            auto index = pending.back(); pending.pop_back();
+            const auto& node = nodes[index];
+            if (node.op == "state") {
+                // Retain the whole update group when any word is observable.
+                // Following next-state dependencies also preserves values that
+                // become observable only on a later cycle.
+                for (auto stateIndex : owners[index]) if (!stateLive[stateIndex]) {
+                    stateLive[stateIndex] = true;
+                    const auto& state = states[stateIndex];
+                    require(state.next); require(state.trigger);
+                    require(state.reset); require(state.resetValue);
+                }
+            } else if (node.op != "input") {
+                require(node.left); require(node.right); require(node.select);
+            }
+        }
+        size_t retained = 0;
+        for (size_t index = 0; index < states.size(); ++index) if (stateLive[index]) {
+            if (retained != index) states[retained] = std::move(states[index]);
+            ++retained;
+        }
+        auto removed = states.size() - retained;
+        states.resize(retained);
+        return removed;
+    }
+
     // Partition files retain only live, resolved values. In particular, dead
     // locals and memoization aliases must not accumulate across instances.
     void compact() {
@@ -878,7 +941,10 @@ public:
     }
 
     // Compatibility entry point; implementation lives in the native backend.
-    void emit(const std::string& path, unsigned chunkSize = 0);
+    // hostOverlap keeps observable sinks on the caller so an external host
+    // continuation can run while workers prepare inactive register state.
+    void emit(const std::string& path, unsigned chunkSize = 0, unsigned threads = CPPHDL_NATIVE_THREADS,
+              bool hostOverlap = false);
 
 };
 }

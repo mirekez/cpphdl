@@ -24,18 +24,23 @@ def main(arguments=None):
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--cxx', default=os.environ.get('CXX', 'clang++'))
     parser.add_argument('--runner', type=Path)
+    parser.add_argument('--optimize-threads', type=int, default=1,
+                        help='native evaluation lanes, including the caller (1..256; default: 1)')
     parser.add_argument('--top', help='root variable in ordinary CppHDL C++ (no hdlcpp graph mode)')
     parser.add_argument('--frontend-flag', action='append', default=[], help='C++ parsing flag; use --frontend-flag=-I/path')
     parser.add_argument('source', type=Path)
     add_clock_arguments(parser)
     args = parser.parse_args(arguments)
+    if not 1 <= args.optimize_threads <= 256:
+        parser.error('--optimize-threads must be between 1 and 256')
     clocks = clock_arguments(parser, args)
     if clocks and not args.top:
         parser.error('clock declarations require --top for ordinary CppHDL lowering')
     output = args.output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         parser.error('output must be a new or empty directory')
-    manifest = {'backend': 'cpphdl-native-graph', 'status': 'building', 'commands': []}
+    manifest = {'backend': 'cpphdl-native-graph', 'status': 'building', 'commands': [],
+                'optimize_threads': args.optimize_threads}
     try:
         source = args.source.resolve(strict=True)
         if source.suffix not in ('.cc', '.cpp', '.cxx'):
@@ -45,7 +50,8 @@ def main(arguments=None):
             raise ValueError('C++ compiler not found')
         runner = args.runner.resolve(strict=True) if args.runner else None
         include = Path(__file__).resolve().parent.parent / 'include'
-        inputs = [source, include / 'cpphdl_graph.h', include / 'cpphdl_graph_native.h'] + ([runner] if runner else [])
+        inputs = [source, include / 'cpphdl_graph.h', include / 'cpphdl_graph_native.h',
+                  include / 'cpphdl_graph_threads.h'] + ([runner] if runner else [])
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         manifest['inputs'] = {str(path): digest(path) for path in inputs}
         output.mkdir(parents=True, exist_ok=True)
@@ -77,11 +83,13 @@ def main(arguments=None):
             run([str(Path(args.cpphdl).resolve()), '--lower-cpp-graph', str(source),
                  str(graph_source), args.top, *clocks, '--', '-std=c++23', '-I' + str(include),
                  *args.frontend_flag], 'cpp-to-graph')
-        run([compiler, '-std=c++23', '-O1', '-I' + str(include), str(graph_source),
+        run([compiler, '-std=c++23', '-O1', '-I' + str(include),
+             '-DCPPHDL_NATIVE_THREADS=' + str(args.optimize_threads), str(graph_source),
              '-o', str(output / 'lower')], 'build-graph-compiler')
         run([str(output / 'lower'), str(output / 'model.h')], 'lower')
         if runner:
-            run([compiler, '-std=c++23', '-O2', '-I' + str(output),
+            run([compiler, '-std=c++23', '-O2', '-I' + str(output), '-I' + str(include),
+                 *(['-pthread'] if args.optimize_threads > 1 else []),
                  '-include', str(output / 'model.h'), *flags, str(runner),
                  '-o', str(output / 'run')], 'build-runner')
         if manifest['inputs'] != {str(path): digest(path) for path in inputs}:

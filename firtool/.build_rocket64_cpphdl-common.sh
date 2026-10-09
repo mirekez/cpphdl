@@ -22,6 +22,14 @@ case "$backend" in
     } ;;
   *) echo "error: unknown backend: $backend" >&2; exit 1 ;;
 esac
+if [[ "$backend" == native-graph ]]; then
+  native_threads=${CPPHDL_OPTIMIZE_THREADS:-1}
+  if [[ ! "$native_threads" =~ ^[1-9][0-9]{0,2}$ ]] || (( native_threads > 256 )); then
+    echo 'error: native-graph CPPHDL_OPTIMIZE_THREADS must be between 1 and 256' >&2
+    exit 1
+  fi
+  export CPPHDL_OPTIMIZE_THREADS="$native_threads"
+fi
 CPPHDL_FIRTOOL_JOBS="${CPPHDL_FIRTOOL_JOBS:-1}" \
   "$product_root/.chipyard_cpphdl_patch.sh"
 CPPHDL_BACKEND="$backend" \

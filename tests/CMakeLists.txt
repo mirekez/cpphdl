@@ -138,6 +138,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_graph_partitions.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_firtool_partitions PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_firtool_partition_threads COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_graph_partitions.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}" --threads 3)
+    set_tests_properties(cpp_graph_firtool_partition_threads PROPERTIES TIMEOUT 240)
     add_test(NAME firtool_chipyard_patch COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_chipyard_patch.py")
     set_tests_properties(firtool_chipyard_patch PROPERTIES TIMEOUT 30)
@@ -157,6 +161,26 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSchedulingChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_scheduling PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_native_threads COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSchedulingChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --threaded)
+    set_tests_properties(cpp_graph_native_threads PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_thread_driver COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeThreadsDriverChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_thread_driver PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_ports COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativePortsChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_ports PROPERTIES TIMEOUT 120)
+    add_test(NAME cpp_graph_native_host_overlap COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeHostOverlapChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_host_overlap PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_dead_state COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/DeadStateChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_dead_state PROPERTIES TIMEOUT 240)
     add_test(NAME cpp_graph_constant_memory COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/ConstantMemoryChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
