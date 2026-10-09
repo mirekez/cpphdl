@@ -10,6 +10,32 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 class Backends(unittest.TestCase):
+    def test_run_config_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            shutil.copy2(ROOT / '.run_rocket64_cpphdl.sh', base / 'run.sh')
+            elf = base / 'matrix.elf'
+            elf.write_text('fixture')
+            for backend, subdir, target in [
+                ('plain', 'plain', 'cpphdl-rocket64-sim'),
+                ('optimize-combs', '', 'cpphdl-rocket64-optimized-sim'),
+                ('native-graph', 'native-graph', 'cpphdl-rocket64-graph-sim')]:
+                with self.subTest(backend=backend):
+                    mode = base / 'chipyard/cpphdl-build/OtherConfig' / subdir
+                    (mode / 'runtime').mkdir(parents=True)
+                    sim = mode / 'runtime' / target
+                    sim.write_text('#!/bin/sh\necho "ROCKET RV64 MMUL TEST PASSED: fixture"\n')
+                    sim.chmod(0o755)
+                    if backend == 'optimize-combs':
+                        (mode / 'generated').mkdir()
+                        (mode / 'generated/TestHarness_optimized_combs.cpp').write_text('// fixture\n')
+                    env = {k: v for k, v in os.environ.items() if not k.startswith('CPPHDL_')}
+                    env['CPPHDL_CONFIG'] = 'OtherConfig'
+                    result = subprocess.run(['bash', str(base / 'run.sh'), backend, str(elf)],
+                                            env=env, text=True, capture_output=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertTrue((mode / 'rocket64-mmul.log').is_file())
+
     def test_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

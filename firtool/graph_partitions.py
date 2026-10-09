@@ -96,12 +96,17 @@ def link_plan(catalog, output, top):
     return hosts
 
 
-def runner(hosts, output):
+def runner(hosts, output, combinational_hosts=()):
     types = sorted({h['type'] for h in hosts})
+    unknown = set(combinational_hosts) - set(types)
+    if unknown:
+        raise ValueError('unknown combinational host type(s): ' + ', '.join(sorted(unknown)))
     lines = ['#include "model.h"', '#include "cpphdl_runtime.h"', '#include "cpphdl_support.h"',
              '#include <cstdio>', '#include <cstdlib>', '#include <memory>', '#include <string>',
              '#include <vector>']
     lines += [f'#include "{name}.h"' for name in types]
+    if combinational_hosts:
+        lines += ['#include "cpphdl_external_models.h"', '#include <limits>', '#include <stdexcept>']
     lines += ['long _system_clock = 0;',
         'template<size_t W, size_t N> void pack(std::array<uint32_t,N>& a, const cpphdl::logic<W>& v) {',
         'a.fill(0); for(size_t b=0;b<W;++b) if(v.get(b)) a[b/32] |= uint32_t(1) << (b%32); }',
@@ -127,6 +132,41 @@ def runner(hosts, output):
         'if(auto* s=std::getenv("CPPHDL_PROGRESS_CYCLES")) progress=std::strtoull(s,nullptr,0);',
         'try { for(uint64_t cycle=0;cycle<limit;++cycle) {',
         '++_system_clock; graph.r_clock[0]=1; graph.r_reset[0]=cycle<10;']
+    if combinational_hosts:
+        # Reevaluate only combinational callbacks; never clock host state while
+        # finding a fixed point. Cache epochs must differ on every settle pass.
+        lines += ['const long clock_epoch=_system_clock;',
+                  'static long settle_epoch=-2;',
+                  'if(settle_epoch < std::numeric_limits<long>::min()+32)',
+                  'throw std::runtime_error("combinational host cache epochs exhausted");',
+                  'bool settled=false; for(unsigned pass=0;pass<16;++pass) {',
+                  '_system_clock=--settle_epoch;']
+        for h in hosts:
+            ident = f'h{h["index"]}'
+            for p in h['ports']:
+                if p['direction'] == 'output':
+                    lines.append(f'pack(graph.{ident}_{p["name"]}, {ident}.{p["name"]}());')
+        lines.append('graph.evaluate<false>();')
+        for h in hosts:
+            if h['type'] not in combinational_hosts:
+                continue
+            ident = f'h{h["index"]}'
+            for p in h['ports']:
+                if p['direction'] == 'input':
+                    lines.append(f'unpack({ident}_{p["name"]}, graph.{ident}_{p["name"]});')
+        lines.append('_system_clock=--settle_epoch; bool changed=false;')
+        for h in hosts:
+            if h['type'] not in combinational_hosts:
+                continue
+            ident = f'h{h["index"]}'
+            lines.append(f'firtool_cpphdl_external::eval({ident});')
+            for p in h['ports']:
+                if p['direction'] == 'output':
+                    field = f'graph.{ident}_{p["name"]}'
+                    lines.append(f'{{ auto old={field}; pack({field}, {ident}.{p["name"]}()); changed |= old != {field}; }}')
+        lines += ['if(!changed) { settled=true; break; }', '}',
+                  '_system_clock=clock_epoch;',
+                  'if(!settled) throw std::runtime_error("combinational host boundary did not settle");']
     for h in hosts:
         ident = f'h{h["index"]}'
         for p in h['ports']:
@@ -161,6 +201,8 @@ def main():
     parser.add_argument('--include', required=True, type=Path)
     parser.add_argument('--module', action='append')
     parser.add_argument('--top', default='TestHarness')
+    parser.add_argument('--combinational-host', action='append', default=[],
+                        help='external type with a side-effect-free firtool_cpphdl_external::eval callback')
     parser.add_argument('--jobs', type=int, default=1)
     args = parser.parse_args()
     if args.jobs < 1:
@@ -215,7 +257,7 @@ def main():
             raise
     if not args.module:
         hosts = link_plan(catalog, output, args.top)
-        if args.top == 'TestHarness': runner(hosts, output)
+        if args.top == 'TestHarness': runner(hosts, output, args.combinational_host)
 
 
 if __name__ == '__main__':

@@ -138,6 +138,12 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_graph_partitions.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_firtool_partitions PROPERTIES TIMEOUT 240)
+    add_test(NAME firtool_chipyard_patch COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_chipyard_patch.py")
+    set_tests_properties(firtool_chipyard_patch PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_rocket_backends COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_rocket_backends.py")
+    set_tests_properties(firtool_rocket_backends PROPERTIES TIMEOUT 30)
     add_test(NAME cpp_graph_wide_shift COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideShiftChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
