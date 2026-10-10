@@ -59,6 +59,10 @@ int main(int argc, char** argv) {
                     node.name = path + "/" + node.name; node.scope = path + "/" + node.scope;
                     graph.nodes.push_back(std::move(node));
                 }
+                for (size_t i = 0; i < part.nodes.size(); ++i) {
+                    auto& node = graph.nodes[nodeBase + i];
+                    if (node.validation()) node.left = graph.binary("and", instance.enable, node.left, 1);
+                }
                 for (auto memory : part.memories) {
                     memory.name = path + "/" + memory.name; graph.memories.push_back(std::move(memory));
                 }

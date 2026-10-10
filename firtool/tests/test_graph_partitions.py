@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import os
 import subprocess
+import sys
 import tempfile
 
 parser = argparse.ArgumentParser()
@@ -18,11 +19,14 @@ source.mkdir()
 env = dict(os.environ)
 env['LD_LIBRARY_PATH'] = str(Path(args.cxx).resolve().parent.parent / 'lib') + ':' + env.get('LD_LIBRARY_PATH', '')
 env['CPPHDL_OPTIMIZE_THREADS'] = str(args.threads)
+sys.path.insert(0, str(root.parent / 'tests'))
+from TestToolchain import TestToolchain
+toolchain = TestToolchain(args.cxx, None, work)
 
 def run(command):
     if command[0] == args.cxx and args.threads > 1:
         command = [command[0], '-pthread', *command[1:]]
-    result = subprocess.run(list(map(str, command)), env=env, text=True, stdout=subprocess.PIPE,
+    result = subprocess.run(toolchain.command(command), env=env, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=240)
     if result.returncode: raise RuntimeError(result.stdout)
     return result.stdout
@@ -291,3 +295,63 @@ result = subprocess.run(['python3', str(root / 'graph_partitions.py'),
 if result.returncode == 0 or 'unknown combinational host type(s): MissingHost' not in result.stderr:
     raise RuntimeError('unknown host was not rejected: ' + result.stdout + result.stderr)
 print('partitioned graph: unknown combinational host rejection PASS')
+
+# A child assertion must respect its parent's enable and fail before committing.
+# Instrument the linker as well as checking the generated executor's behavior.
+(work / 'assertions-emit.cpp').write_text(r'''#include <cpphdl_graph_native.h>
+using namespace cpphdl::graph;
+int main(int argc, char** argv) {
+ Graph parent; parent.clockContract=ClockContract::RisingEdgeStep;
+ auto enable=parent.wire(1,"enable","input");
+ auto data=parent.wire(1,"data","input");
+ auto result=parent.wire(8,"result","input");
+ auto capturedEnable=parent.wire(1,"root.sink.__graph_enable","state");
+ auto capturedReset=parent.wire(1,"root.sink.__graph_reset","state");
+ parent.states.push_back({capturedEnable,enable,{1}});
+ parent.states.push_back({capturedReset,{0},{1}});
+ parent.ports={{"r_enable",enable,true},{"r_data",data,true},{"r_result",result,false},
+               {"c_sink_data",data,false},{"c_sink_result",result,true}};
+ std::ofstream parentFile(std::string(argv[1])+"/assert-parent.graph"); parent.save(parentFile);
+ Graph child; child.clockContract=ClockContract::RisingEdgeStep;
+ auto childData=child.wire(1,"data","input");
+ auto saved=child.wire(8,"saved","state");
+ child.add("assert_failure",1,childData,{}, {},"linked assertion");
+ child.states.push_back({saved,constant(42,8),{1}});
+ child.ports={{"r_data",childData,true},{"r_result",saved,false}};
+ std::ofstream childFile(std::string(argv[1])+"/assert-child.graph"); child.save(childFile);
+}
+''')
+print(run([args.cxx, '-std=c++23', '-O1', '-I' + str(root.parent / 'include'),
+           work / 'assertions-emit.cpp', '-o', work / 'assertions-emit']))
+print(run([work / 'assertions-emit', work]))
+(work / 'assertions.plan').write_text(
+    f'part "root" "{work / "assert-parent.graph"}" "" ""\n'
+    f'part "root.sink" "{work / "assert-child.graph"}" "root" "sink"\n')
+print(run([args.cxx, '-std=c++23', '-O1', '-g', '-fsanitize=address,undefined',
+           '-fno-sanitize-recover=all', '-I' + str(root.parent / 'include'),
+           root.parent / 'tools/cpphdl-graph-link.cpp', '-o', work / 'checked-link']))
+print(run([work / 'checked-link', work / 'assertions.plan', work / 'assert-model.h', '2']))
+(work / 'assertions-check.cpp').write_text(r'''#include "assert-model.h"
+#include <cassert>
+#include <string>
+int main() {
+ cpphdl_native::Model model;
+ model.r_data[0]=1; model.r_enable[0]=0;
+ model.step(); assert(model.r_result[0]==0);
+ model.r_enable[0]=1;
+ model.eval(false);
+ bool rejected=false;
+ try { model.step(); }
+ catch(const std::runtime_error& error) {
+  rejected=std::string(error.what()).find("linked assertion")!=std::string::npos;
+ }
+ assert(rejected);
+ model.r_enable[0]=0; model.eval(false); assert(model.r_result[0]==0);
+ model.r_enable[0]=1; model.r_data[0]=0;
+ model.step(); model.eval(false); assert(model.r_result[0]==42);
+}
+''')
+print(run([args.cxx, '-std=c++23', '-O2', '-I' + str(root.parent / 'include'),
+           work / 'assertions-check.cpp', '-o', work / 'assertions-check']))
+print(run([work / 'assertions-check']))
+print('partitioned graph: disabled assertions, rollback and recovery PASS')
