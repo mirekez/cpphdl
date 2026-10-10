@@ -456,6 +456,7 @@ endforeach()
 # Parse that testbench too, so conversion sees the same implicit instances.
 set(template_hierarchy_tests
     code/TypeTemplateModule.cpp
+    structs/UnionParamAccess.cpp
     templates/TemplateArrayDimension.cpp
     templates/TemplateBaseAliasPackage.cpp
     templates/TemplateTypeWidth.cpp
@@ -552,6 +553,8 @@ foreach(src ${TEST_SOURCES})
         set(template_top ${name})
         if(rel_path STREQUAL "code/TypeTemplateModule.cpp")
             set(template_top TypeTemplateModuleParent)
+        elseif(rel_path STREQUAL "structs/UnionParamAccess.cpp")
+            set(template_top UnionParamAccessUnionParamBF16E8)
         endif()
         add_test(NAME ${target_name}
             COMMAND ${CMAKE_COMMAND}
