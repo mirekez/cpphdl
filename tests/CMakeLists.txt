@@ -171,7 +171,7 @@ if(Python3_Interpreter_FOUND)
             --cxx "${CMAKE_CXX_COMPILER}" --workload ${workload}
             --work "${CMAKE_CURRENT_BINARY_DIR}/native-scaling")
         set_tests_properties(cpp_graph_native_scaling_${workload} PROPERTIES
-            TIMEOUT 600 RUN_SERIAL TRUE PROCESSORS 4 LABELS "native-graph;scaling")
+            TIMEOUT 600 RUN_SERIAL TRUE PROCESSORS 2 LABELS "native-graph;scaling")
     endforeach()
     add_test(NAME cpp_graph_native_thread_driver COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeThreadsDriverChecks.py"

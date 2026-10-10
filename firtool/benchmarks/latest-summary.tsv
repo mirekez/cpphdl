@@ -1,5 +1,0 @@
-backend	previous_build_seconds	build_scope	new_run_seconds	cycles	signature	result
-plain	947.931	previous successful build attempt	380.870	695720	0xe49d58d75696cd28	PASS
-optimize-combs	1782.762	previous successful build attempt	209.922	695870	0xe49d58d75696cd28	PASS
-native-graph	92.940	native code emission and runner compilation (1 worker) from the saved graph; frontend extraction excluded	31.922	695870	0xe49d58d75696cd28	PASS
-verilator	361.027	previous successful build attempt	291.043		0xe49d58d75696cd28	PASS

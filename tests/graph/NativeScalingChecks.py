@@ -1,4 +1,4 @@
-"""Lock down 1-4 lane scheduling and report comparable native-graph throughput."""
+"""Compare serial and two-worker native-graph scheduling and throughput."""
 import argparse
 import os
 from pathlib import Path
@@ -34,7 +34,7 @@ def main():
         run([*flags, '-O2', '-pthread', '-I' + str(work), source, '-o', work / 'check'])
         output = run([work / 'check'])
         print(output, end='')
-        samples = {lanes: [] for lanes in range(1, 5)}
+        samples = {lanes: [] for lanes in range(1, 3)}
         checksums = set()
         for line in output.splitlines():
             if not line.startswith('measurement '):

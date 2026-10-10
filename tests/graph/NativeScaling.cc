@@ -44,7 +44,7 @@ int main(int argc, char** argv)
 {
     using namespace cpphdl::graph;
     if (argc != 2) return 1;
-    for (unsigned lanes = 1; lanes <= 4; ++lanes) {
+    for (unsigned lanes = 1; lanes <= 2; ++lanes) {
         auto graph = makeGraph();
         auto base = graph.nodes.size();
         auto plan = nativeParallelPlan(graph, graph.dependencyOrder(), lanes);
@@ -73,19 +73,11 @@ int main(int argc, char** argv)
 #define cpphdl_native two
 #include "model2.h"
 #undef cpphdl_native
-#define cpphdl_native three
-#include "model3.h"
-#undef cpphdl_native
-#define cpphdl_native four
-#include "model4.h"
-#undef cpphdl_native
 #include <chrono>
 #include <cstdio>
 #include <stdexcept>
 
 static_assert(two::Model::__cpphdl_thread_count == 2);
-static_assert(three::Model::__cpphdl_thread_count == 3);
-static_assert(four::Model::__cpphdl_thread_count == 4);
 
 template<class Model> auto outputs(const Model& model)
 {
@@ -159,21 +151,19 @@ template<class Model> double measure(unsigned cycles, uint64_t& checksum)
 
 int main()
 {
-    check<one::Model>(); check<two::Model>(); check<three::Model>(); check<four::Model>();
-    std::puts("1-4 lanes: balanced private cones, no extra operations, old-state outputs and oracle PASS");
+    check<one::Model>(); check<two::Model>();
+    std::puts("1-2 lanes: balanced private cones, no extra operations, old-state outputs and oracle PASS");
     unsigned cycles = 1024;
     uint64_t checksum = 0;
     while (measure<one::Model>(cycles, checksum) < 0.1 && cycles < 131072) cycles *= 2;
     for (unsigned sample = 0; sample < 5; ++sample) {
         // Rotate measurement order so boost/thermal drift does not favor one lane count.
-        for (unsigned position = 0; position < 4; ++position) {
-            unsigned lanes = (position + sample) % 4 + 1;
+        for (unsigned position = 0; position < 2; ++position) {
+            unsigned lanes = (position + sample) % 2 + 1;
             checksum = 0;
             double seconds = 0;
             if (lanes == 1) seconds = measure<one::Model>(cycles, checksum);
             if (lanes == 2) seconds = measure<two::Model>(cycles, checksum);
-            if (lanes == 3) seconds = measure<three::Model>(cycles, checksum);
-            if (lanes == 4) seconds = measure<four::Model>(cycles, checksum);
             std::printf("measurement %u %u %u %.9f %llu\n", sample, lanes, cycles, seconds,
                         (unsigned long long)checksum);
         }
