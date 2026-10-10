@@ -61,6 +61,25 @@ int main(int argc,char**argv) {
   auto before=shared.nodes.size();
   auto plan=nativeParallelPlan(shared,shared.dependencyOrder(),std::stoul(argv[3]));
   assert(shared.nodes.size()>before);independent(shared,plan);
+  // A dominant cone makes the greedy scheduler reuse a small shared cone.
+  // The requested maximum must not become hundreds of empty worker lanes.
+  for(bool overlap:{false,true}) {
+   Graph sparse;auto input=sparse.wire(64,"input","input");auto heavy=input;
+   for(unsigned i=0;i<4096;++i)heavy=sparse.binary("add",heavy,constant(i+1,64),64);
+   sparse.ports.push_back({"heavy",heavy,false});
+   auto common=sparse.binary("xor",input,constant(19,64),64);
+   for(unsigned i=0;i<300;++i) {
+    auto state=sparse.wire(64,"state"+std::to_string(i),"state");
+    sparse.states.push_back({state,common,{1}});
+   }
+   auto compact=nativeParallelPlan(sparse,sparse.dependencyOrder(),256,overlap);
+   assert(compact.lanes==2);assert(compact.ports[0]==0);
+   independent(sparse,compact);
+   std::vector<bool> sinks(compact.lanes);
+   for(auto lane:compact.ports)sinks[lane]=true;
+   for(auto lane:compact.states)sinks[lane]=true;
+   for(bool used:sinks)assert(used);
+  }
  }
  Graph g;g.clockContract=ClockContract::NamedEdges;g.clocks.push_back({"clock",100});
  auto input=[&](const char*n,unsigned w){auto v=g.wire(w,n,"input");g.ports.push_back({n,v,true});return v;};
@@ -100,8 +119,12 @@ print(run([args.cxx,'-std=c++23','-O1','-I'+str(root/'include'),work/'emit.cpp',
 for chunk in (0, 3, 19):
     print(run([work/'emit',work/f'model{chunk}.h',str(chunk)]))
 if args.threaded:
-    for threads in (2, 3, 4):
-        print(run([work/'emit', work/f'threads{threads}.h', '19', str(threads)]))
+    for threads in (2, 3, 4, 256):
+        header = work/f'threads{threads}.h'
+        print(run([work/'emit', header, '19', str(threads)]))
+        # Compaction can produce identical headers for different requested
+        # maxima. Each is included once under its own namespace below.
+        header.write_text(header.read_text().replace('#pragma once', f'// Requested lanes: {threads}', 1))
 (work/'check.cpp').write_text(r'''
 #define cpphdl_native reference
 #include "model0.h"
@@ -120,6 +143,9 @@ if args.threaded:
 #define cpphdl_native parallel4
 #include "threads4.h"
 #undef cpphdl_native
+#define cpphdl_native parallel256
+#include "threads256.h"
+#undef cpphdl_native
 #include <thread>
 #include <cassert>
 #endif
@@ -134,25 +160,26 @@ template<class M> bool same(const reference::Model&r,const M&m) {
 int main() {
  reference::Model r;small::Model a;cpphdl_native::Model b;uint64_t random=42;
 #ifdef CHECK_THREADS
- parallel2::Model p2;parallel3::Model p3;parallel4::Model p4;
+ parallel2::Model p2;parallel3::Model p3;parallel4::Model p4;parallel256::Model p256;
  auto copied=p2;
  static_assert(parallel2::Model::__cpphdl_thread_count==2);
- static_assert(parallel3::Model::__cpphdl_thread_count==3);
- static_assert(parallel4::Model::__cpphdl_thread_count==4);
+ static_assert(parallel3::Model::__cpphdl_thread_count>=2 && parallel3::Model::__cpphdl_thread_count<=3);
+ static_assert(parallel4::Model::__cpphdl_thread_count>=2 && parallel4::Model::__cpphdl_thread_count<=4);
+ static_assert(parallel256::Model::__cpphdl_thread_count==2);
 #endif
  for(unsigned i=0;i<8192;++i) {
   // Repeated inputs, changed inputs, commit and noncommit evaluations.
   if(i%7==0){random^=random<<13;random^=random>>7;random^=random<<17;}
   inputs(r,random,i);inputs(a,random,i);inputs(b,random,i);
 #ifdef CHECK_THREADS
-  inputs(p2,random,i);inputs(p3,random,i);inputs(p4,random,i);inputs(copied,random,i);
+  inputs(p2,random,i);inputs(p3,random,i);inputs(p4,random,i);inputs(p256,random,i);inputs(copied,random,i);
 #endif
   for(bool commit:{false,true,false}) {
    r.eval(commit);a.eval(commit);b.eval(commit);
    if(!same(r,a)||!same(r,b)){std::printf("mismatch at %u commit=%d\n",i,commit);return 1;}
 #ifdef CHECK_THREADS
-   p2.eval(commit);p3.eval(commit);p4.eval(commit);copied.eval(commit);
-   assert(same(r,p2)&&same(r,p3)&&same(r,p4)&&same(r,copied));
+   p2.eval(commit);p3.eval(commit);p4.eval(commit);p256.eval(commit);copied.eval(commit);
+   assert(same(r,p2)&&same(r,p3)&&same(r,p4)&&same(r,p256)&&same(r,copied));
 #endif
   }
  }
@@ -168,7 +195,7 @@ int main() {
  };
  std::thread first([&]{check(ref1,one,13);}),second([&]{check(ref2,two,91);});
  first.join();second.join();
- std::puts("native threads: 2/3/4 lanes, shared-executor copies and concurrent callers PASS");
+ std::puts("native threads: requested 2/3/4/256 lanes, compact workers, shared-executor copies and concurrent callers PASS");
 #endif
  std::puts("native scheduling: 24576 phase evaluations, RAM ordering and reset PASS");
 }

@@ -88,8 +88,11 @@ public:
     void _assign() {
         unsigned i;
         source.seed_in = _ASSIGN(source_unsigned_in());
-        for (i = 0; i < 2; ++i)
+        for (i = 0; i < 2; ++i) {
             assignIf(source, sink, source.links_out[i], sink.links_in[i]);
+            // Parent interface wiring may enter a child's _assign repeatedly.
+            assignIf(source, sink, source.links_out[i], sink.links_in[i]);
+        }
         interface_sum_out = _ASSIGN(source.sum_out());
         // Top-level output evaluation uses read(port), not operator().
         direct_narrow_out = _ASSIGN(uint64_t(data_in()));

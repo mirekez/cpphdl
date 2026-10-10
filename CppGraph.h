@@ -18,6 +18,8 @@
 #include "llvm/Support/SaveAndRestore.h"
 #include <memory>
 #include <exception>
+#include <chrono>
+#include <cstdlib>
 
 namespace cpphdl::cpp_graph {
 using namespace clang;
@@ -61,6 +63,7 @@ class Lowering {
     Environment cells;
     std::map<std::string, Value> originals, results;
     std::map<std::string, std::shared_ptr<Closure>> bindings;
+    std::set<std::string> structuralConstants;
     std::map<std::string, Item> interfaceBindings;
     std::set<std::string> activeInterfaceReads;
     std::map<std::string, Value> registers;
@@ -79,12 +82,33 @@ class Lowering {
     std::vector<std::string> activeGetters;
     std::map<QualType, unsigned> widths;
     std::vector<std::string> stack;
+    bool reportProgress = std::getenv("CPPHDL_GRAPH_PROGRESS") != nullptr;
+    unsigned progressCalls = 0;
+    std::chrono::steady_clock::time_point lastProgress = std::chrono::steady_clock::now();
+    void progress() {
+        if (!reportProgress || (++progressCalls & 4095)) return;
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastProgress < std::chrono::seconds(60)) return;
+        lastProgress = now;
+        llvm::errs() << "C++ graph progress: nodes=" << graph.nodes.size()
+                     << " cells=" << cells.size() << " locals=" << localNames.size()
+                     << " method=" << (stack.empty() ? "root" : stack.back()) << '\n';
+    }
     unsigned serial = 0;
+    unsigned functionSerialBegin = 0;
     unsigned oneClockSerial = 0, oneClockDepth = 0;
     unsigned oneClockSerialBegin = 0;
     std::vector<std::string> localNames;
+    std::map<std::string, std::string> localDescriptions;
+    void describeLocal(const std::string& key, const ValueDecl* declaration) {
+        auto location = context.getSourceManager().getPresumedLoc(declaration->getLocation());
+        if (location.isValid())
+            localDescriptions[key] = declaration->getNameAsString() + " at " + location.getFilename() +
+                ":" + std::to_string(location.getLine()) + " in " + (stack.empty() ? "root" : stack.back());
+    }
     size_t peakLocals = 0;
     void trackLocal(const std::string& key) {
+        if (std::find(localNames.begin(), localNames.end(), key) != localNames.end()) return;
         localNames.push_back(key);
         peakLocals = std::max(peakLocals, localNames.size());
     }
@@ -197,6 +221,7 @@ class Lowering {
     }
     bool containsHierarchy(QualType type) {
         if (type.isNull()) return false;
+        if (port(type)) return true;
         type = payload(type);
         if (module(type) || interface(type)) return true;
         auto name = templateName(type);
@@ -318,7 +343,7 @@ class Lowering {
         }
     }
     bool nativeRecordLayout(const CXXRecordDecl* record) {
-        if (!record || !record->isStandardLayout() || record->isUnion() || record->getNumBases()) return false;
+        if (!record || !record->isStandardLayout() || record->getNumBases()) return false;
         for (auto method : record->methods())
             if (method->getNameAsString() == "_size_bits") return false;
         return true;
@@ -328,12 +353,15 @@ class Lowering {
         if (auto found = widths.find(type); found != widths.end()) return found->second;
         if (type->isBooleanType()) return 1;
         if (type->isIntegerType() || type->isEnumeralType()) return context.getTypeSize(type);
+        if (!synthesisExport && type->isRealFloatingType() &&
+            (context.getTypeSize(type) == 32 || context.getTypeSize(type) == 64)) return context.getTypeSize(type);
+        if (auto array = context.getAsConstantArrayType(type); array && array->getSize() == 0) return 0;
         if (type->isPointerType()) return width(type->getPointeeType());
         if (auto count = integerWrapperWidth(type)) return *count;
         auto name = templateName(type);
         auto spec = specialization(type);
         unsigned result = 0;
-        if (name == "cpphdl::logic") result = spec->getTemplateArgs()[0].getAsIntegral().getLimitedValue();
+        if (name == "cpphdl::logic" || name == "cpphdl::logic_bits") result = spec->getTemplateArgs()[0].getAsIntegral().getLimitedValue();
         else if (name == "cpphdl::cat") {
             for (const auto& argument : spec->getTemplateArgs()[0].pack_elements()) result += argument.getAsIntegral().getLimitedValue();
         }
@@ -354,8 +382,10 @@ class Lowering {
             }
             if (!result && nativeRecordLayout(record)) {
                 for (auto field : record->fields()) {
-                    if (field->isBitField() || field->getType()->isPointerType() || field->getType()->isReferenceType())
+                    if (field->getType()->isPointerType() || field->getType()->isReferenceType())
                         fail("unsupported native graph record field: " + field->getNameAsString());
+                    if (auto array = context.getAsConstantArrayType(field->getType()); array && array->getSize() == 0)
+                        continue;
                     width(field->getType());
                 }
                 result = context.getTypeSize(type);
@@ -414,7 +444,15 @@ class Lowering {
             auto [entry, fresh] = pendingReaders.emplace(identity, activeProcess);
             if (!fresh && entry->second != activeProcess) fail("cross-clock pending memory read");
         }
-        for (const auto& getter : activeGetters) memoryGetters.insert(getter);
+        // Committed RAM is immutable during one work transaction. A bounded
+        // read can reuse its getter cone; only unchecked bounds guards and
+        // pending-row forwarding depend on this invocation's path/history.
+        uint64_t maximumAddress = 0;
+        auto resolvedAddress = graph.resolved(address);
+        for (unsigned bit = 0; bit < resolvedAddress.size(); ++bit)
+            if (resolvedAddress[bit] != 0) maximumAddress |= uint64_t(1) << bit;
+        if (pending || maximumAddress >= graph.memories[identity].depth)
+            for (const auto& getter : activeGetters) memoryGetters.insert(getter);
         Value bits;
         for (unsigned offset = 0; offset < count; offset += 64) {
             auto part = graph.add("memory_read", std::min(64u, count - offset), address,
@@ -447,6 +485,7 @@ class Lowering {
     }
     uint64_t packedOffset(QualType type, const FieldDecl* field) {
         auto record = clean(type)->getAsCXXRecordDecl();
+        if ((templateName(type) == "cpphdl::u" || integerWrapperWidth(type)) && field->getNameAsString() == "value") return 0;
         // Handwritten RTL structs have C++ field layout; hdlcpp records carry
         // explicit logical offsets, which must retain their stricter checks.
         if (nativeRecordLayout(record))
@@ -458,7 +497,16 @@ class Lowering {
             }
         fail("missing packed field metadata: " + field->getNameAsString() + " in " + type.getAsString());
     }
+    unsigned fieldWidth(const FieldDecl* field) {
+        return field->isBitField() ? field->getBitWidthValue() : width(field->getType());
+    }
     Item constantObject(const APValue& constantValue, QualType type) {
+        if (constantValue.isFloat()) {
+            auto integer = constantValue.getFloat().bitcastToAPInt();
+            Value bits(width(type), 0);
+            for (unsigned bit = 0; bit < bits.size(); ++bit) bits[bit] = integer[bit];
+            return value(bits, type);
+        }
         if (constantValue.isInt()) {
             const auto& integer = constantValue.getInt();
             Value bits(width(type), 0);
@@ -479,10 +527,22 @@ class Lowering {
             if (bits.size() != width(type)) fail("constant array size mismatch");
             return value(bits, type);
         }
+        if (constantValue.isUnion()) {
+            Value result(width(type), 0);
+            if (auto member = constantValue.getUnionField()) {
+                auto part = resize(constantObject(constantValue.getUnionValue(), member->getType()).bits,
+                                   fieldWidth(member));
+                auto offset = packedOffset(type, member);
+                if (offset > result.size() || part.size() > result.size() - offset)
+                    fail("constant union field out of bounds: " + member->getNameAsString());
+                std::copy(part.begin(), part.end(), result.begin() + offset);
+            }
+            return value(result, type);
+        }
         if (constantValue.isStruct()) {
             auto record = clean(type)->getAsCXXRecordDecl();
             auto name = templateName(type);
-            bool storageWrapper = name == "cpphdl::logic" || name == "cpphdl::array" ||
+            bool storageWrapper = name == "cpphdl::logic" || name == "cpphdl::u" || name == "cpphdl::array" ||
                 name == "std::array" || integerWrapperWidth(type).has_value();
             Value result(width(type), 0);
             std::vector<bool> covered(result.size(), false);
@@ -494,6 +554,7 @@ class Lowering {
                         fail("unsupported C++ constant storage: " + type.getAsString());
                     return value(resize(part, result.size()), type);
                 }
+                part = resize(part, fieldWidth(member));
                 auto offset = packedOffset(type, member);
                 if (offset > result.size() || part.size() > result.size() - offset)
                     fail("constant packed field out of bounds: " + member->getNameAsString());
@@ -517,7 +578,13 @@ class Lowering {
             }
             auto count = item.extent ? item.extent : width(item.type);
             bool state = templateName(item.type) == "cpphdl::reg" && !item.key.starts_with("$");
-            originals[item.key] = graph.wire(count, item.key, state ? "state" : "wire");
+            if (const char* trace = std::getenv("CPPHDL_GRAPH_TRACE_LOCAL"); trace && item.key == trace) {
+                llvm::errs() << "C++ graph local: " << item.key << " type=" << item.type.getAsString() << '\n';
+                for (const auto& frame : stack) llvm::errs() << "  in " << frame << '\n';
+            }
+            auto name = item.key;
+            if (localDescriptions.count(item.key)) name += " (" + localDescriptions.at(item.key) + ")";
+            originals[item.key] = graph.wire(count, name, state ? "state" : "wire");
             if (item.key.starts_with("$")) trackLocal(item.key);
             if (state) registers[item.key] = originals[item.key];
         }
@@ -548,7 +615,8 @@ class Lowering {
             if (bindings.count(item.key)) return read(boundPort(item));
         }
         auto source = cells.count(item.key) ? cells.at(item.key) : initial(item);
-        if (moduleFields.count(item.key) && !activeGetters.empty()) {
+        bool nextState = item.key.ends_with("._next") && registers.count(item.key.substr(0, item.key.size() - 6));
+        if ((moduleFields.count(item.key) || nextState) && !activeGetters.empty()) {
             auto current = cells.find(item.key);
             if (current == cells.end() && !originalReadVersions.count(item.key)) originalReadVersions.set(item.key, source);
             auto version = current != cells.end() ? current->second : originalReadVersions.find(item.key)->second;
@@ -578,7 +646,21 @@ class Lowering {
     }
     Item cast(Item item, QualType type) {
         auto bits = read(item);
-        if (clean(type)->isBooleanType()) bits = graph.unary("any", bits);
+        bool fromFloat = !item.type.isNull() && clean(item.type)->isRealFloatingType();
+        bool toFloat = clean(type)->isRealFloatingType();
+        if (fromFloat || toFloat) {
+            if (synthesisExport) fail("floating-point primitives are native-graph only");
+            if (clean(type)->isBooleanType()) bits = graph.unary("any", slice(bits, 0, bits.size()-1));
+            else if (fromFloat && toFloat) {
+                if (bits.size() != width(type)) bits = graph.add("fp_cast", width(type), bits);
+            }
+            else if (fromFloat && clean(type)->isIntegralOrEnumerationType())
+                bits = graph.add(clean(type)->isSignedIntegerOrEnumerationType() ? "fp_to_signed" : "fp_to_unsigned", width(type), bits);
+            else if (toFloat && clean(item.type)->isIntegralOrEnumerationType())
+                bits = graph.add(clean(item.type)->isSignedIntegerOrEnumerationType() ? "fp_from_signed" : "fp_from_unsigned", width(type), bits);
+            else fail("unsupported floating-point C++ cast");
+        }
+        else if (clean(type)->isBooleanType()) bits = graph.unary("any", bits);
         else bits = resize(bits, valueWidth(type), !item.type.isNull() && clean(item.type)->isSignedIntegerOrEnumerationType());
         auto result = value(bits, type);
         // A reg copy owns both its current payload and its pending payload.
@@ -598,7 +680,8 @@ class Lowering {
         // before selecting primitives (e.g. logic::bits), not just on write.
         // Pointer-backed bindings already return their pointee Item; retain
         // its reference/storage metadata when it has the declared value type.
-        if (context.hasSameType(clean(result.type), clean(type))) return result;
+        if (context.hasSameType(clean(result.type), clean(type)) &&
+            read(result).size() == width(type)) return result;
         return cast(result, type);
     }
     Value wideShiftRight(Value bits, const Value& amount) {
@@ -639,6 +722,20 @@ class Lowering {
         if (source.closure) {
             if (!structural || target.key.empty() || !port(target.type)) fail("closure assignment outside structural port binding");
             bindings[target.key] = source.closure;
+            interfaceBindings.erase(target.key);
+            return;
+        }
+        if (structural && port(target.type) && port(source.type) && !source.key.empty()) {
+            // function_ref copies the current callable, not its evaluated value.
+            if (bindings.count(source.key)) {
+                bindings[target.key] = bindings.at(source.key);
+                interfaceBindings.erase(target.key);
+            }
+            else {
+                auto copied = interfaceBindings.count(source.key) ? interfaceBindings.at(source.key) : source;
+                bindings.erase(target.key);
+                interfaceBindings[target.key] = copied;
+            }
             return;
         }
         if (target.key.empty()) fail("assignment to non-addressable C++ value");
@@ -667,6 +764,16 @@ class Lowering {
         if (templateName(target.type) == "cpphdl::reg" && templateName(source.type) == "cpphdl::reg")
             write(nextRegister(target), value(read(nextRegister(source)), payload(target.type)));
         if (moduleFields.count(target.key)) {
+            if (structural) {
+                auto incoming = read(cast(source, target.type));
+                if (std::any_of(incoming.begin(), incoming.end(), [](Bit bit) { return bit > 1; }))
+                    fail("nonconstant structural C++ configuration: " + target.key);
+                structuralConstants.insert(target.key);
+                cells.set(target.key, std::move(incoming));
+                return;
+            }
+            if (structuralConstants.count(target.key))
+                fail("write to structural C++ configuration outside _assign: " + target.key);
             if (working && producerStorage.empty()) {
                 if (!graph.clocks.empty()) fail("multiclock persistent state must use cpphdl::reg: " + target.key);
                 if (combinationalWrites.count(target.key)) fail("mixed work/combinational C++ writes: " + target.key);
@@ -747,7 +854,7 @@ class Lowering {
                 if (!construction || construction->getNumArgs()) fail("initialized C++ register unsupported");
             }
             if (templateName(result.type) == "cpphdl::memory" && member->hasInClassInitializer()) fail("initialized C++ memory unsupported");
-            if (port(result.type) && !bindings.count(result.key) && member->hasInClassInitializer()) {
+            if (port(result.type) && !bindings.count(result.key) && !interfaceBindings.count(result.key) && member->hasInClassInitializer()) {
                 if (!member->getInClassInitializer() &&
                     sema.BuildCXXDefaultInitExpr(member->getLocation(), const_cast<FieldDecl*>(member)).isInvalid())
                     fail("cannot instantiate C++ port initializer");
@@ -755,7 +862,12 @@ class Lowering {
                 auto initializer = expr(member->getInClassInitializer());
                 object = saved;
                 if (initializer.closure) bindings[result.key] = initializer.closure;
-                else fail("non-closure port initializer");
+                else if (port(initializer.type) && !initializer.key.empty()) {
+                    if (bindings.count(initializer.key)) bindings[result.key] = bindings.at(initializer.key);
+                    else interfaceBindings[result.key] = interfaceBindings.count(initializer.key)
+                        ? interfaceBindings.at(initializer.key) : initializer;
+                }
+                else fail("non-closure port initializer: " + result.key);
             }
             return result;
         }
@@ -766,10 +878,11 @@ class Lowering {
         if (templateName(base.type) == "cpphdl::reg" && !base.key.empty()) initial(base);
         if (!record) fail("field of non-record");
         auto offset = packedOffset(payload(base.type), member);
-        if (base.key.empty()) return value(slice(read(base), offset, width(member->getType())), member->getType());
+        if (base.key.empty()) return value(slice(read(base), offset, fieldWidth(member)), member->getType());
         if (!base.extent) base.extent = width(base.type);
         base.offset = graph.binary("add", base.offset, constant(offset, 64), 64);
         base.type = member->getType();
+        base.selectedWidth = member->isBitField() ? fieldWidth(member) : 0;
         return base;
     }
     Item index(Item base, Item indexValue, QualType resultType) {
@@ -820,6 +933,14 @@ class Lowering {
     Item binary(std::string op, Item left, Item right, QualType type) {
         auto lhs = read(left), rhs = read(right);
         unsigned count = width(type);
+        if (!left.type.isNull() && clean(left.type)->isRealFloatingType()) {
+            if (synthesisExport || right.type.isNull() || !clean(right.type)->isRealFloatingType() || lhs.size() != rhs.size())
+                fail("unsupported floating-point C++ operands");
+            static const std::map<std::string, std::string> names{{"+","fp_add"},{"-","fp_sub"},{"*","fp_mul"},{"/","fp_div"},
+                {"==","fp_eq"},{"!=","fp_ne"},{"<","fp_lt"},{"<=","fp_le"},{">","fp_gt"},{">=","fp_ge"}};
+            if (!names.count(op)) fail("unsupported floating-point operator " + op);
+            return value(graph.add(names.at(op), count, lhs, rhs), type);
+        }
         if (op == "&&" || op == "||") return value(graph.binary(op == "&&" ? "and" : "or", graph.unary("any", lhs), graph.unary("any", rhs), 1), type);
         bool invert = op == "!=" || op == ">=" || op == "<=";
         if (op == ">" || op == "<=") { std::swap(lhs, rhs); op = "<"; }
@@ -845,6 +966,7 @@ class Lowering {
             if (type->isReferenceType() || type->isPointerType() || arguments[index].closure) locals[parameter] = arguments[index];
             else {
                 Item local; local.key = "$local" + std::to_string(++serial); local.type = type;
+                describeLocal(local.key, parameter);
                 write(local, arguments[index]);
                 local.memory = arguments[index].memory; local.memoryAddress = arguments[index].memoryAddress;
                 locals[parameter] = local;
@@ -859,6 +981,7 @@ class Lowering {
         if (stack.size() > 256) fail("C++ call nesting limit");
         auto savedObject = object; auto savedLocals = locals;
         auto localBegin = localNames.size();
+        llvm::SaveAndRestore functionLocals(functionSerialBegin, serial);
         object = closure->object; locals = closure->locals;
         bindArguments(function, arguments);
         stack.push_back("lambda");
@@ -927,14 +1050,14 @@ class Lowering {
         return valid ? result : nullptr;
     }
     bool staleGetter(const std::shared_ptr<const GetterReads>& reads) {
-        if (blockingStates.empty()) return false;
         std::vector<const GetterReads*> pending{reads.get()};
         std::set<const GetterReads*> visited;
         while (!pending.empty()) {
             auto currentReads = pending.back(); pending.pop_back();
             if (!visited.insert(currentReads).second) continue;
             for (const auto& [field, version] : currentReads->fields) {
-                if (!blockingStates.count(field)) continue;
+                bool nextState = field.ends_with("._next") && registers.count(field.substr(0, field.size() - 6));
+                if (!blockingStates.count(field) && !nextState) continue;
                 const auto& current = cells.count(field) ? cells.at(field) : originals.at(field);
                 if (graph.resolved(*version) != graph.resolved(current)) return true;
             }
@@ -952,6 +1075,14 @@ class Lowering {
         getterReads.at(activeGetters.back())->producers.insert(std::move(reads));
     }
     Item invoke(const FunctionDecl* function, Item receiver, std::vector<Item> arguments) {
+        if (auto member = dyn_cast<CXXMethodDecl>(function); member && !member->isStatic() && receiver.key.empty()) {
+            // Methods may mutate a temporary record (e.g. FloatWord{}.pack).
+            // Give that object scoped storage without changing its bit layout.
+            auto source = receiver;
+            receiver.key = "$receiver" + std::to_string(++serial);
+            write(receiver, source);
+            trackLocal(receiver.key);
+        }
         std::vector<std::string> annotations;
         for (auto* attr : function->specific_attrs<AnnotateAttr>()) annotations.push_back(attr->getAnnotation().str());
         if (auto box = synth::blackBoxSpec(annotations); box && synthesisExport) {
@@ -1042,6 +1173,9 @@ class Lowering {
         }
         if (module(receiver.type)) validateModule(receiver.type);
         instantiate(function);
+        // An out-of-line body refers to its definition's parameter declarations,
+        // not those of the earlier declaration used by the call expression.
+        function = function->getDefinition();
         auto name = function->getNameAsString();
         if (activeProcess >= 0)
             for (size_t process = 0; process < graph.clocks.size() * 2; ++process)
@@ -1071,6 +1205,7 @@ class Lowering {
         if (stack.size() > 256) fail("C++ call nesting limit");
         auto savedObject = object; auto savedLocals = locals;
         auto localBegin = localNames.size();
+        llvm::SaveAndRestore functionLocals(functionSerialBegin, serial);
         object = receiver; locals.clear();
         bindArguments(function, arguments);
         Value output;
@@ -1133,6 +1268,7 @@ class Lowering {
         return result.value_or(Item{});
     }
     Item expr(const Expr* expression) {
+        progress();
         if (!expression) return {};
         if (!clang::isStackNearlyExhausted()) return exprImpl(expression);
         // Generated casts and producer calls can exhaust the host stack before
@@ -1173,6 +1309,10 @@ class Lowering {
                 !object.type.isNull() && module(object.type) ? object.key : graph.currentScope}); return result;
         }
         if (isa<CXXThisExpr>(expression)) return object;
+        if (auto literal = dyn_cast<FloatingLiteral>(expression)) {
+            APValue constant(literal->getValue());
+            return constantObject(constant, expression->getType());
+        }
         if (expression->getType()->isIntegralOrEnumerationType())
             if (auto known = evaluated(expression)) return value(constant(*known, width(expression->getType())), expression->getType());
         if (auto substitution = dyn_cast<SubstNonTypeTemplateParmExpr>(expression)) return expr(substitution->getReplacement());
@@ -1193,8 +1333,10 @@ class Lowering {
         if (auto castExpr = dyn_cast<CastExpr>(expression)) {
             auto result = expr(castExpr->getSubExpr());
             if (castExpr->getCastKind() == CK_ToVoid) return {};
-            // Module arrays are hierarchy paths, not packed values or host pointers.
-            if (castExpr->getCastKind() == CK_ArrayToPointerDecay && containsHierarchy(result.type)) return result;
+            // Decay preserves the backing array and its bounds. It is not a
+            // value conversion to one pointee (including register arrays).
+            if (castExpr->getCastKind() == CK_ArrayToPointerDecay) return result;
+            if (castExpr->getCastKind() == CK_BitCast && castExpr->getType()->isPointerType()) return result;
             if (result.closure || castExpr->getCastKind() == CK_NoOp || castExpr->getCastKind() == CK_LValueToRValue || castExpr->getCastKind() == CK_DerivedToBase || castExpr->getCastKind() == CK_UncheckedDerivedToBase) return result;
             return cast(result, castExpr->getType());
         }
@@ -1223,6 +1365,7 @@ class Lowering {
             }
             auto result = expr(construct->getArg(0));
             if (result.closure) return result;
+            if (port(construct->getType()) && port(result.type)) return result;
             return cast(result, construct->getType());
         }
         if (auto known = evaluated(expression)) return value(constant(*known, width(expression->getType())), expression->getType());
@@ -1243,6 +1386,8 @@ class Lowering {
                     trackLocal(temporary.key);
                     unsigned index = 0;
                     for (auto member : record->fields()) {
+                        if (member->isUnnamedBitField()) continue;
+                        if (record->isUnion() && member != init->getInitializedFieldInUnion()) continue;
                         if (index >= init->getNumInits()) break;
                         write(field(temporary, member), expr(init->getInit(index++)));
                     }
@@ -1264,7 +1409,15 @@ class Lowering {
             }
             if (op == UO_LNot) return value(graph.unary("not", graph.unary("any", read(operand))), expression->getType());
             if (op == UO_Not) return value(graph.unary("not", read(operand)), expression->getType());
-            if (op == UO_Minus) return binary("-", value(Value(width(expression->getType()), 0), expression->getType()), operand, expression->getType());
+            if (op == UO_Minus) {
+                if (clean(expression->getType())->isRealFloatingType()) {
+                    auto bits = read(operand);
+                    auto sign = graph.unary("not", {bits.back()});
+                    bits.back() = sign.front();
+                    return value(bits, expression->getType());
+                }
+                return binary("-", value(Value(width(expression->getType()), 0), expression->getType()), operand, expression->getType());
+            }
             fail("unsupported unary C++ operation", expression);
         }
         if (auto operation = dyn_cast<BinaryOperator>(expression)) {
@@ -1356,8 +1509,22 @@ class Lowering {
                 if (bindings.count(receiver.key)) return boundPort(receiver);
                 return value(read(receiver), payload(receiver.type));
             }
-            if (op == OO_Subscript) return index(receiver, expr(call->getArg(start)), call->getType());
-            if (op == OO_Equal) {
+            auto primitive = [&](QualType type) {
+                if (type.isNull()) return false;
+                auto name = templateName(type);
+                return name == "cpphdl::logic" || name == "cpphdl::logic_bits" ||
+                    name == "cpphdl::cat" || name == "cpphdl::u" || name == "cpphdl::reg" ||
+                    name == "cpphdl::array" || name == "std::array" ||
+                    name == "cpphdl::memory" || name == "cpphdl::memory_row" || port(type) || integerWrapperWidth(type).has_value();
+            };
+            // User-defined value operators carry their own semantics (notably
+            // floating-point records). Only framework operators are bit math.
+            bool primitiveOperation = primitive(receiver.type);
+            if (auto member = dyn_cast<CXXMethodDecl>(function))
+                primitiveOperation |= primitive(context.getRecordType(member->getParent()));
+            if (!start && call->getNumArgs()) primitiveOperation = primitive(call->getArg(0)->getType());
+            if (op == OO_Subscript && primitiveOperation) return index(receiver, expr(call->getArg(start)), call->getType());
+            if (op == OO_Equal && (primitiveOperation || function->isDefaulted())) {
                 auto source = expr(call->getArg(start));
                 if (templateName(receiver.type) == "cpphdl::reg" &&
                     templateName(function->getParamDecl(0)->getType()) != "cpphdl::reg")
@@ -1374,7 +1541,7 @@ class Lowering {
             // (and &/*). Count AST arguments including the member receiver
             // before accessing a second operand. Free unary operators have
             // no receiver, so take their operand from argument zero instead.
-            if (call->getNumArgs() == 1 &&
+            if (primitiveOperation && call->getNumArgs() == 1 &&
                 (op == OO_Plus || op == OO_Minus || op == OO_Exclaim || op == OO_Tilde)) {
                 auto operand = start ? receiver : expr(call->getArg(0));
                 if (op == OO_Exclaim)
@@ -1385,7 +1552,7 @@ class Lowering {
                 if (op == OO_Tilde) return value(graph.unary("not", read(operand)), call->getType());
                 return binary("-", value(Value(width(call->getType()), 0), call->getType()), operand, call->getType());
             }
-            if (call->getNumArgs() == 2 && (op == OO_Amp || op == OO_Pipe || op == OO_Caret || op == OO_Plus || op == OO_Minus || op == OO_Star || op == OO_Slash || op == OO_Percent || op == OO_LessLess || op == OO_GreaterGreater || op == OO_EqualEqual || op == OO_ExclaimEqual || op == OO_Less || op == OO_Greater || op == OO_LessEqual || op == OO_GreaterEqual)) {
+            if (primitiveOperation && call->getNumArgs() == 2 && (op == OO_Amp || op == OO_Pipe || op == OO_Caret || op == OO_Plus || op == OO_Minus || op == OO_Star || op == OO_Slash || op == OO_Percent || op == OO_LessLess || op == OO_GreaterGreater || op == OO_EqualEqual || op == OO_ExclaimEqual || op == OO_Less || op == OO_Greater || op == OO_LessEqual || op == OO_GreaterEqual)) {
                 auto left = start ? receiver : expr(call->getArg(0));
                 return binary(getOperatorSpelling(op), left, expr(call->getArg(1)), call->getType());
             }
@@ -1394,6 +1561,24 @@ class Lowering {
         std::vector<Item> arguments;
         for (unsigned index = start; index < call->getNumArgs(); ++index) arguments.push_back(expr(call->getArg(index)));
         auto qualified = function->getQualifiedNameAsString();
+        if (!synthesisExport && function->isExternC() && name == "memcpy" && arguments.size() == 3) {
+            auto bytes = integer(arguments[2]);
+            if (arguments[0].key.empty() || !bytes || bytes > width(arguments[0].type)/8 || bytes > width(arguments[1].type)/8)
+                fail("native memcpy requires bounded addressable objects", call);
+            auto destination = arguments[0];
+            destination.selectedWidth = bytes*8;
+            write(destination, value(slice(read(arguments[1]), 0, bytes*8)));
+            return arguments[0];
+        }
+        if (!synthesisExport && (function->isExternC() || function->getBuiltinID()) && arguments.size() == 1 &&
+            clean(arguments[0].type)->isRealFloatingType() && clean(call->getType())->isRealFloatingType()) {
+            static const std::set<std::string> operations{"sqrt", "exp", "tanh", "log", "fabs"};
+            std::string operation = name;
+            if (operation.starts_with("__builtin_")) operation.erase(0, 10);
+            if (operation.ends_with("f")) operation.pop_back();
+            if (operations.count(operation))
+                return value(graph.add("fp_" + operation, width(call->getType()), read(arguments[0])), call->getType());
+        }
         if (qualified == "firtool_cpphdl::ashr" && arguments.size() == 2 &&
             firtoolHelper(function, "WS", "{ cpphdl :: logic < W > result = 0 ; size_t shift = static_cast < uint64_t > ( A ) ; bool sign = V . get ( W - 1 ) ; "
                 "for ( size_t bit = 0 ; bit < W ; ++ bit ) result . set ( bit , bit + shift < W ? V . get ( bit + shift ) : sign ) ; return result ; } ")) {
@@ -1733,8 +1918,12 @@ class Lowering {
                 bool drivesA = a.second != parent0, drivesB = b.second != parent1;
                 if (drivesA == drivesB) fail("assignIf direction mismatch", call);
                 const auto& target = drivesA ? b.first : a.first;
-                if (interfaceBindings.count(target.key)) fail("interface port connected more than once: " + target.key, call);
-                interfaceBindings[target.key] = drivesA ? a.first : b.first;
+                const auto& source = drivesA ? a.first : b.first;
+                if (auto previous = interfaceBindings.find(target.key); previous != interfaceBindings.end()) {
+                    if (previous->second.key != source.key)
+                        fail("interface port connected more than once: " + target.key, call);
+                }
+                interfaceBindings[target.key] = source;
             }
             for (unsigned side = 0; side < 2; ++side) if (arguments[side].key != receiver.key)
                 if (auto assign = method(arguments[side].type, "_assign")) invoke(assign, arguments[side], {});
@@ -1743,7 +1932,10 @@ class Lowering {
         if (qualified == "cpphdl::sv_assign_field") { write(arguments.at(0), arguments.at(1)); return {}; }
         if (qualified == "cpphdl::sv_assign_bit") { write(index(arguments.at(0), arguments.at(1), context.BoolTy), arguments.at(2)); return {}; }
         if (qualified == "cpphdl::pack_value" || qualified == "cpphdl::unpack_value" || qualified == "cpphdl::convert_packed" || qualified == "cpphdl::sv_cast" || qualified == "cpphdl::sv_unsigned" || name == "__hdlcpp_array_cast") return cast(arguments.at(0), call->getType());
-        if (name == "pack" && !receiver.type.isNull()) return cast(receiver, call->getType());
+        if (name == "pack" && !receiver.type.isNull() &&
+            (templateName(payload(receiver.type)) == "cpphdl::logic" ||
+             templateName(payload(receiver.type)) == "cpphdl::array" || integerWrapperWidth(payload(receiver.type))))
+            return cast(receiver, call->getType());
         if (name == "to_ullong" && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::memory_row")
             return cast(receiver, call->getType());
         if (name == "slice" && !receiver.type.isNull()) {
@@ -1841,7 +2033,7 @@ class Lowering {
     }
     // Gate both SSA writes and transactional effects, never just the return
     // value. This also prevents dead suffixes from invoking unsupported calls.
-    Flow guardedStatement(const Stmt* body, const Value& enabled) {
+    Flow guardedStatement(const Stmt* body, const Value& enabled, bool continuationLocals = false) {
         if (dead(enabled)) return {};
         if (number(graph.resolved(enabled)) == std::optional<uint64_t>{1}) return statement(body);
         if (structural || committing) fail("dynamic structural/commit C++ condition", body);
@@ -1852,14 +2044,65 @@ class Lowering {
         auto after = cells;
         cells = before;
         merge(enabled, before, after, before);
+        if (continuationLocals) {
+            // A function's own locals are unobservable on paths that already
+            // returned. Keeping their old value invents an uninitialized SSA
+            // dependency. Caller references, state and loop exits stay gated.
+            for (const auto& [key, bits] : after)
+                if (key.starts_with("$local") && std::stoul(key.substr(6)) > functionSerialBegin)
+                    cells[key] = bits;
+        }
         return flow;
     }
     void appendStatement(Flow& flow, const Stmt* body) {
         auto enabled = flow.normal;
         if (dead(enabled)) return;
-        auto next = guardedStatement(body, enabled);
+        auto next = guardedStatement(body, enabled,
+            !dead(flow.returns) && dead(flow.breaks) && dead(flow.continues));
         collectExits(flow, next, enabled);
         flow.normal = both(enabled, next.normal);
+    }
+    bool instanceLabelField(const Expr* expression) {
+        auto member = dyn_cast<MemberExpr>(expression->IgnoreParenImpCasts());
+        return member && member->getMemberDecl()->getQualifiedNameAsString() == "cpphdl::Module::__inst_name"
+            && !member->getBase()->HasSideEffects(context);
+    }
+    bool instanceLabelValue(const Expr* expression) {
+        expression = expression->IgnoreImplicit();
+        if (isa<StringLiteral>(expression) || instanceLabelField(expression)) return true;
+        if (auto construct = dyn_cast<CXXConstructExpr>(expression))
+            return construct->getNumArgs() == 1 && instanceLabelValue(construct->getArg(0));
+        if (auto operation = dyn_cast<CXXOperatorCallExpr>(expression)) {
+            if (operation->getOperator() != OO_Plus || operation->getNumArgs() != 2) return false;
+            return instanceLabelValue(operation->getArg(0)) && instanceLabelValue(operation->getArg(1));
+        }
+        return false;
+    }
+    std::optional<std::string> terminatingDiagnostic(const CompoundStmt* body) {
+        if (body->size() != 2 || !working || structural || committing) return {};
+        auto first = body->body_begin();
+        auto expression = dyn_cast<Expr>(*first);
+        auto print = expression ? dyn_cast<CallExpr>(expression->IgnoreImplicit()) : nullptr;
+        expression = dyn_cast<Expr>(*(first + 1));
+        auto stop = expression ? dyn_cast<CallExpr>(expression->IgnoreImplicit()) : nullptr;
+        auto printer = print ? print->getDirectCallee() : nullptr;
+        auto stopper = stop ? stop->getDirectCallee() : nullptr;
+        if (!printer || !stopper || !printer->isExternC() || !stopper->isExternC() ||
+            printer->getNameAsString() != "printf" || stopper->getNameAsString() != "exit" ||
+            stop->getNumArgs() != 1 || evaluated(stop->getArg(0)) != std::optional<uint64_t>{1} ||
+            (print->getNumArgs() != 1 && print->getNumArgs() != 2)) return {};
+        auto format = dyn_cast<StringLiteral>(print->getArg(0)->IgnoreParenImpCasts());
+        if (!format) return {};
+        auto message = format->getString().str();
+        if (print->getNumArgs() == 2) {
+            auto label = dyn_cast<CXXMemberCallExpr>(print->getArg(1)->IgnoreParenImpCasts());
+            if (!label || label->getNumArgs() || label->getMethodDecl()->getNameAsString() != "c_str" ||
+                !instanceLabelField(label->getImplicitObjectArgument()) || !message.starts_with("%s") ||
+                message.find('%', 2) != std::string::npos) return {};
+            message.replace(0, 2, object.key);
+        }
+        else if (message.find('%') != std::string::npos) return {};
+        return message;
     }
     Flow statement(const Stmt* body) {
         if (!body || isa<NullStmt>(body)) return {};
@@ -1873,7 +2116,21 @@ class Lowering {
         // _LAZY_COMB's timestamp is a runtime cache, not retained hardware.
         // Only its exact clock-guard/update shape is removed here.
         if (memoStatement(body)) return {};
+        // Instance labels are framework diagnostics, never hardware storage.
+        // Reject arbitrary RHS calls rather than discard their side effects.
+        if (auto expression = dyn_cast<Expr>(body))
+            if (auto assignment = dyn_cast<CXXOperatorCallExpr>(expression->IgnoreImplicit());
+                assignment && assignment->getOperator() == OO_Equal && assignment->getNumArgs() == 2 &&
+                instanceLabelField(assignment->getArg(0)) && instanceLabelValue(assignment->getArg(1)))
+                return {};
         if (auto compound = dyn_cast<CompoundStmt>(body)) {
+            if (auto message = terminatingDiagnostic(compound)) {
+                graph.add("assert_failure", 1, executionGuard(), {}, {}, *message);
+                ++effectCount;
+                // exit(1) also makes later locals unobservable, just like a
+                // return. The validation still throws before state commit.
+                Flow flow; flow.normal = {0}; flow.returns = {1}; return flow;
+            }
             auto localBegin = localNames.size();
             llvm::SaveAndRestore localScope(locals);
             Flow flow;
@@ -1898,6 +2155,10 @@ class Lowering {
         if (auto declarations = dyn_cast<DeclStmt>(body)) {
             for (auto declaration : declarations->decls()) if (auto variable = dyn_cast<VarDecl>(declaration)) {
                 Item item; item.key = "$local" + std::to_string(++serial); item.type = variable->getType();
+                describeLocal(item.key, variable);
+                // Storage belongs to its declaration scope, not to the first
+                // nested branch that happens to read or assign it.
+                if (!variable->getType()->isReferenceType()) trackLocal(item.key);
                 if (variable->getType()->isReferenceType()) item = expr(variable->getInit());
                 else if (variable->hasInit()) {
                     auto initializer = expr(variable->getInit());
@@ -2224,8 +2485,10 @@ public:
         for (const auto& [key, bits] : registers) {
             if (!committed.count(key)) continue;
             auto next = cells.find(key + "._next");
-            if (next == cells.end()) fail("register has no C++ next-state assignment: " + key);
-            graph.states.push_back({bits, *next->second, {1}});
+            // Constant-disabled inputs can eliminate every write to a
+            // register. Its value-initialized next/current storage stays
+            // equal throughout the lifecycle, so committing it is a hold.
+            graph.states.push_back({bits, next == cells.end() ? bits : *next->second, {1}});
         }
         for (const auto& [key, bits] : blockingStates)
             graph.states.push_back({bits, cells.count(key) ? cells.at(key) : bits, {1}});

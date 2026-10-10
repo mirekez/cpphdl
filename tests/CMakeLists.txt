@@ -165,6 +165,14 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSchedulingChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}" --threaded)
     set_tests_properties(cpp_graph_native_threads PROPERTIES TIMEOUT 300)
+    foreach(workload arithmetic ram)
+        add_test(NAME cpp_graph_native_scaling_${workload} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeScalingChecks.py"
+            --cxx "${CMAKE_CXX_COMPILER}" --workload ${workload}
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-scaling")
+        set_tests_properties(cpp_graph_native_scaling_${workload} PROPERTIES
+            TIMEOUT 600 RUN_SERIAL TRUE PROCESSORS 2 LABELS "native-graph;scaling")
+    endforeach()
     add_test(NAME cpp_graph_native_thread_driver COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeThreadsDriverChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
@@ -456,6 +464,7 @@ endforeach()
 # Parse that testbench too, so conversion sees the same implicit instances.
 set(template_hierarchy_tests
     code/TypeTemplateModule.cpp
+    structs/UnionParamAccess.cpp
     templates/TemplateArrayDimension.cpp
     templates/TemplateBaseAliasPackage.cpp
     templates/TemplateTypeWidth.cpp
@@ -553,6 +562,8 @@ foreach(src ${TEST_SOURCES})
         set(template_top ${name})
         if(rel_path STREQUAL "code/TypeTemplateModule.cpp")
             set(template_top TypeTemplateModuleParent)
+        elseif(rel_path STREQUAL "structs/UnionParamAccess.cpp")
+            set(template_top UnionParamAccessUnionParamBF16E8)
         endif()
         add_test(NAME ${target_name}
             COMMAND ${CMAKE_COMMAND}
@@ -591,6 +602,12 @@ endforeach()
 
 # Exercise the byte-oriented fallback even on little-endian development hosts.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(datatypes_PointerPortsAlignment datatypes/PointerPorts.cpp)
+    set_target_properties(datatypes_PointerPortsAlignment PROPERTIES CXX_STANDARD 17)
+    target_include_directories(datatypes_PointerPortsAlignment PRIVATE "${CMAKE_SOURCE_DIR}/include")
+    target_compile_options(datatypes_PointerPortsAlignment PRIVATE -O1 -fsanitize=alignment -fno-sanitize-recover=alignment)
+    target_link_options(datatypes_PointerPortsAlignment PRIVATE -fsanitize=alignment)
+    add_test(NAME datatypes_PointerPortsAlignment COMMAND datatypes_PointerPortsAlignment)
     add_executable(datatypes_LogicLayoutAlignment datatypes/LogicLayout.cpp)
     set_target_properties(datatypes_LogicLayoutAlignment PROPERTIES CXX_STANDARD 17)
     target_include_directories(datatypes_LogicLayoutAlignment PRIVATE "${CMAKE_SOURCE_DIR}/include")

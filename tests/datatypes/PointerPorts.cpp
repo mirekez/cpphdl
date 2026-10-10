@@ -1,4 +1,5 @@
 #include <cpphdl.h>
+#include <cstddef>
 #include <cstdio>
 #include <memory>
 
@@ -45,6 +46,23 @@ bool check(Raw value)
     return true;
 }
 
+template<typename T, typename Raw>
+bool check_packed(Raw value)
+{
+    struct __attribute__((packed)) Packed { uint8_t pad; T source; };
+    static_assert(offsetof(Packed, source) == 1, "test requires unaligned scalar storage");
+    alignas(8) Packed packed{};
+    function_ref<T> constructed = _ASSIGN_REG(packed.source);
+    function_ref<T> assigned;
+    assigned = _ASSIGN_REG(packed.source);
+    for (Raw sample : {Raw(0), value, Raw(1)}) {
+        packed.source = T(sample);
+        if (Raw(constructed()) != sample || Raw(assigned()) != sample) return false;
+        ++_system_clock;
+    }
+    return true;
+}
+
 int main()
 {
     bool ok = true;
@@ -57,6 +75,10 @@ int main()
     ok &= check<i32, int32_t>(-123456789);
     ok &= check<i64, int64_t>(-123456789012345LL);
     ok &= check<u<8>, u<8>>(u<8>(0xe5));
+    ok &= check_packed<u16, uint16_t>(0x9876);
+    ok &= check_packed<u32, uint32_t>(0xfedcba98);
+    ok &= check_packed<u64, uint64_t>(0xfedcba9876543210ULL);
+    ok &= check_packed<i64, int64_t>(-123456789012345LL);
     return !ok;
 }
 #endif

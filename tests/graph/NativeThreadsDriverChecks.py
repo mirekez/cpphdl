@@ -77,7 +77,7 @@ int main() {
 }
 ''')
     outputs = []
-    for threads in (1, 4):
+    for threads in (1, 2, 3, 4):
         out = work/f'threads-{threads}'
         run([args.cpphdl, '--native-graph', '--optimize-threads='+str(threads),
              '--cxx', args.cxx, '--output', out, '--runner', runner, source, '--',
@@ -85,7 +85,7 @@ int main() {
         manifest = json.loads((out/'manifest.json').read_text())
         assert manifest['optimize_threads'] == threads and manifest['status'] == 'complete'
         outputs.append(run([out/'run']))
-    assert outputs[0] == outputs[1]
+    assert all(output == outputs[0] for output in outputs)
     for value in ('0', '-1', '257', '2junk'):
         out = work/('invalid'+value)
         run([args.cpphdl, '--native-graph', '--optimize-threads', value,

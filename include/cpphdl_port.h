@@ -1,6 +1,7 @@
 #pragma once
 
 #include <exception>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <stdio.h>
@@ -178,7 +179,20 @@ private:
         else {
             // u8/u16/etc. expose raw scalar pointers through operator&.
             // Convert the pointed-to value; never reinterpret it as an A object.
-            func2_ = [fn = std::forward<F>(f)]() mutable -> A { return *fn(); };
+            func2_ = [fn = std::forward<F>(f)]() mutable -> A {
+                using Pointee = std::remove_pointer_t<invoke_result_t<remove_cvref_t<F>>>;
+                using Value = std::remove_cv_t<Pointee>;
+                if constexpr (std::is_arithmetic<Value>::value && !std::is_volatile<Pointee>::value) {
+                    // Raw scalar pointers can refer to unaligned packed fields.
+                    Value value;
+                    const void* source = fn();
+                    std::memcpy(std::addressof(value), source, sizeof(value));
+                    return value;
+                }
+                else {
+                    return *fn();
+                }
+            };
             func1_ = nullptr;
         }
         assigned = true;

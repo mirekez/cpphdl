@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <set>
@@ -33,6 +35,7 @@ struct Node {
     std::string name;
     std::string scope;
     bool hostEffect() const { return op == "host_random" || op == "host_jtag_tick" || op == "host_debug_tick"; }
+    bool validation() const { return op == "assert_failure"; }
 };
 struct Port { std::string name; Value bits; bool input; };
 struct State { Value bits, next, trigger; int clock = -1; bool falling = false; Value reset, resetValue; };
@@ -464,7 +467,7 @@ public:
     template<class Redirect> void simplifyNode(Node& node, Redirect redirect) {
         node.left = resolved(std::move(node.left)); node.right = resolved(std::move(node.right));
         node.select = resolved(std::move(node.select));
-        if (node.hostEffect() || node.op == "memory_read" || node.op == "blackbox") return;
+        if (node.hostEffect() || node.validation() || node.op.compare(0, 3, "fp_") == 0 || node.op == "memory_read" || node.op == "blackbox") return;
         if (node.op == "mux" || node.op == "and" || node.op == "or" || node.op == "xor") {
             for (unsigned offset = 0; offset < node.width; ++offset) {
                 auto left = node.left[offset], right = node.right[offset];
@@ -535,7 +538,7 @@ public:
         std::map<std::string, size_t> shared;
         for (size_t index = 0; index < nodes.size(); ++index) {
             auto& node = nodes[index];
-            if (node.op == "wire" || node.op == "input" || node.op == "state" || node.hostEffect()) continue;
+            if (node.op == "wire" || node.op == "input" || node.op == "state" || node.hostEffect() || node.validation()) continue;
             node.left = resolved(node.left); node.right = resolved(node.right); node.select = resolved(node.select);
             std::ostringstream key;
             key << node.scope << ':' << node.op << ':' << node.width;
@@ -582,7 +585,7 @@ public:
             require(write.address); require(write.data); require(write.enabled);
         }
         for (size_t index = 0; index < nodes.size(); ++index)
-            if (nodes[index].hostEffect()) requireNode(index);
+            if (nodes[index].hostEffect() || nodes[index].validation()) requireNode(index);
         while (!pending.empty()) {
             auto index = pending.back(); pending.pop_back();
             const auto& node = nodes[index];
@@ -871,8 +874,9 @@ public:
     // Shared live dependency ordering, including bitwise-cycle refinement.
     std::vector<size_t> dependencyOrder() {
         std::vector<size_t> order;
-        // A word-level cycle can be artificial (independent fields in a bus).
-        // Split only cyclic bitwise producers; never iterate a real comb loop.
+        // Word-level dependencies can include discarded sibling bits of a
+        // partially written bus. Refine bitwise producers for those false
+        // undriven dependencies and artificial cycles, never a real comb loop.
         for (;;) {
             std::vector<unsigned> marks(nodes.size());
             std::vector<size_t> stack;
@@ -895,7 +899,34 @@ public:
                     return;
                 }
                 const auto& node = nodes[index];
-                if (node.op == "wire") throw std::runtime_error("undriven bit: " + node.name);
+                if (node.op == "wire") {
+                    for (auto position = stack.rbegin(); position != stack.rend(); ++position) {
+                        const auto& candidate = nodes[*position];
+                        if (candidate.width > 1 && (candidate.op == "mux" || candidate.op == "and" ||
+                            candidate.op == "or" || candidate.op == "xor")) {
+                            cycle = *position;
+                            return;
+                        }
+                    }
+                    if (std::getenv("CPPHDL_GRAPH_TRACE_UNDRIVEN")) {
+                        for (auto parent : stack) {
+                            const auto& producer = nodes[parent];
+                            std::cerr << "undriven dependency " << parent << ' ' << producer.op
+                                      << ' ' << producer.name << " scope=" << producer.scope;
+                            for (const auto* operand : {&producer.left, &producer.right, &producer.select}) {
+                                std::cerr << " [";
+                                if (!operand->empty()) {
+                                    auto first = resolve(operand->front());
+                                    std::cerr << first;
+                                    if (first > 1) std::cerr << ':' << nodes[owner(first)].op << ':' << nodes[owner(first)].name;
+                                }
+                                std::cerr << ']';
+                            }
+                            std::cerr << '\n';
+                        }
+                    }
+                    throw std::runtime_error("undriven bit: " + node.name);
+                }
                 if (outputCone && node.hostEffect())
                     throw std::runtime_error("transactional host effect reaches a combinational output");
                 marks[index] = 1;
@@ -925,7 +956,7 @@ public:
             // A discarded return value does not discard a host-side effect.
             // The left dependency orders calls; select is their execution guard.
             for (size_t index = 0; index < nodes.size(); ++index)
-                if (nodes[index].hostEffect()) visit((index + 1) * 64 + 2);
+                if (nodes[index].hostEffect() || nodes[index].validation()) visit((index + 1) * 64 + 2);
             if (!cycle) break;
             auto index = *cycle;
             const auto node = nodes[index];

@@ -3,22 +3,29 @@
 #ifndef GRAPH_MEMORY_WORDS
 #define GRAPH_MEMORY_WORDS 1
 #endif
+#ifndef GRAPH_MEMORY_DEPTH
+#define GRAPH_MEMORY_DEPTH 17
+#endif
 
 class GraphMemory : public cpphdl::Module {
 public:
-    static constexpr unsigned Words = GRAPH_MEMORY_WORDS, Bits = Words * 64, Depth = 17;
+    static constexpr unsigned Words = GRAPH_MEMORY_WORDS, Bits = Words * 64, Depth = GRAPH_MEMORY_DEPTH;
     using Row = cpphdl::logic<Bits>;
     _PORT(Row) data_in, other_in;
     _PORT(cpphdl::logic<5>) address_in, second_in;
     _PORT(cpphdl::logic<Bits / 8>) mask_in;
     _PORT(cpphdl::logic<1>) full_in, overwrite_in;
-    _PORT(Row) read_out = _ASSIGN(cpphdl::pack_value<Bits>(sram[uint64_t(address_in())]));
+    _PORT(Row) read_out = _ASSIGN_COMB(committed_func());
     _PORT(Row) auxiliary_out = _ASSIGN(cpphdl::pack_value<Bits>(other[uint64_t(address_in())]));
     _PORT(Row) old_out = _ASSIGN(old.pack());
     _PORT(Row) pending_out = _ASSIGN(forwarded.pack());
     cpphdl::memory<cpphdl::logic<64>, Words, Depth> sram, other;
     cpphdl::reg<Row> old, forwarded;
-    Row latest;
+    Row latest, committed;
+    Row& committed_func() {
+        committed = cpphdl::pack_value<Bits>(sram[uint64_t(address_in())]);
+        return committed;
+    }
     Row& pending_func() {
         latest = cpphdl::pack_value<Bits>(sram.pending(uint64_t(address_in())));
         return latest;
@@ -26,6 +33,7 @@ public:
     void _work(bool reset) {
         old._next = 0; forwarded._next = 0;
         if (!reset) {
+            old._next = committed_func();
             forwarded._next = pending_func();
             if (full_in()) {
                 auto snapshot = sram.pending(uint64_t(address_in()));
@@ -41,7 +49,7 @@ public:
                 }
             }
             if (overwrite_in()) sram[uint64_t(second_in())] = other_in();
-            old._next = cpphdl::pack_value<Bits>(sram[uint64_t(address_in())]);
+            old._next = committed_func();
             forwarded._next = pending_func();
         }
     }

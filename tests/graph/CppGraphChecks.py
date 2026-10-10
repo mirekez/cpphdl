@@ -150,12 +150,12 @@ def main():
             log = (work / name / 'cpp-to-graph.log').read_text()
             assert diagnostic in log, (name, log)
             assert not (work / name / 'model.h').exists()
-        for words in (1, 2):
-            destination = work / ('memory-' + str(words))
-            define = '-DGRAPH_MEMORY_WORDS=' + str(words)
+        for words, depth in ((1, 17), (2, 17), (2, 32)):
+            destination = work / ('memory-' + str(words) + '-' + str(depth))
+            defines = ['-DGRAPH_MEMORY_WORDS=' + str(words), '-DGRAPH_MEMORY_DEPTH=' + str(depth)]
             run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
-                 '--frontend-flag=' + define, '--runner', fixtures / 'CppGraphMemory.cc',
-                 '--output', destination, fixtures / 'CppGraphMemory.cc', '--', define,
+                 *['--frontend-flag=' + define for define in defines], '--runner', fixtures / 'CppGraphMemory.cc',
+                 '--output', destination, fixtures / 'CppGraphMemory.cc', '--', *defines,
                  '-DCPP_GRAPH_MEMORY_RUN', '-I' + str(fixtures.parents[1] / 'include'),
                  '-fsanitize=address,undefined'])
             print(run([destination / 'run']).stdout, end='')

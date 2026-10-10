@@ -4,6 +4,20 @@
 #include <numeric>
 
 namespace cpphdl::graph {
+inline std::string nativeStringLiteral(const std::string& value) {
+    std::string result = "\"";
+    for (unsigned char byte : value) {
+        if (byte == '"' || byte == '\\') { result += '\\'; result += byte; }
+        else if (byte >= 32 && byte < 127) result += byte;
+        else {
+            result += '\\';
+            result += char('0' + ((byte >> 6) & 7));
+            result += char('0' + ((byte >> 3) & 7));
+            result += char('0' + (byte & 7));
+        }
+    }
+    return result + '"';
+}
 // Native tasks own complete combinational cones. Pure shared logic can be
 // duplicated to avoid cross-lane intermediate traffic. Each lane also owns
 // its sinks and prepares register updates in an inactive state bank.
@@ -24,7 +38,7 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     uint64_t total = 0;
     for (auto index : order) {
         const auto& node = graph.nodes[index];
-        if (node.op == "input" || node.op == "state") continue;
+        if (node.op == "input" || node.op == "state" || node.validation()) continue;
         values.push_back(index); weight[index] = 1;
         std::set<size_t> deps;
         for (const auto* bits : {&node.left, &node.right, &node.select}) {
@@ -74,6 +88,10 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     for (auto& write : graph.memoryWrites) {
         writeRoots.push_back(roots.size()); roots.push_back({{&write.address, &write.data, &write.enabled}});
     }
+    std::vector<size_t> validationRoots;
+    for (auto& node : graph.nodes) if (node.validation()) {
+        validationRoots.push_back(roots.size()); roots.push_back({{&node.left}});
+    }
     std::vector<size_t> seen(count, size_t(-1));
     size_t active = 0;
     for (size_t r = 0; r < roots.size(); ++r) {
@@ -102,6 +120,7 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     std::vector<std::vector<bool>> owned(lanes, std::vector<bool>(count));
     std::vector<uint64_t> load(lanes);
     std::set<size_t> callerRoots;
+    callerRoots.insert(validationRoots.begin(), validationRoots.end());
     if (hostOverlap) {
         for (auto root : portRoots) if (root != size_t(-1)) callerRoots.insert(root);
         callerRoots.insert(accessRoots.begin(), accessRoots.end());
@@ -109,11 +128,11 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
         // The caller owns every observable output and every validation that
         // can fail. Its host continuation is safe before the workers finish:
         // they only prepare inactive register storage, never observable state.
-        for (auto r : callerRoots) {
-            load[0] += roots[r].sinkCost;
-            for (auto node : roots[r].cone) if (!owned[0][node]) {
-                owned[0][node] = true; load[0] += weight[node];
-            }
+    }
+    for (auto r : callerRoots) {
+        load[0] += roots[r].sinkCost;
+        for (auto node : roots[r].cone) if (!owned[0][node]) {
+            owned[0][node] = true; load[0] += weight[node];
         }
     }
     // Group large overlapping cones first. Balance the accumulated lane cost
@@ -130,6 +149,24 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
         load[root.lane] += bestAdded;
         for (auto node : root.cone) owned[root.lane][node] = true;
     }
+    // Overlapping cones can leave lanes unused. Keep the caller at lane zero,
+    // but do not create workers or barrier participants for empty lanes.
+    std::vector<unsigned> laneMap(lanes);
+    unsigned usedLanes = 0;
+    for (unsigned lane = 0; lane < lanes; ++lane) {
+        if (lane == 0 || load[lane] != 0) {
+            laneMap[lane] = usedLanes;
+            if (usedLanes != lane) {
+                owned[usedLanes] = std::move(owned[lane]);
+                load[usedLanes] = load[lane];
+            }
+            ++usedLanes;
+        }
+    }
+    for (auto& root : roots) root.lane = laneMap[root.lane];
+    lanes = usedLanes;
+    owned.resize(lanes);
+    load.resize(lanes);
     NativeParallelPlan plan; plan.lanes = lanes; plan.stages = 1; plan.tasks.resize(lanes); plan.waits.resize(lanes);
     for (auto root : portRoots) plan.ports.push_back(root == size_t(-1) ? 0 : roots[root].lane);
     for (auto root : stateRoots) plan.states.push_back(roots[root].lane);
@@ -253,7 +290,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             output << "extern \"C\" int jtag_tick(unsigned char*, unsigned char*, unsigned char*, unsigned char*, unsigned char);\n";
         if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_debug_tick"; }))
             output << "extern \"C\" int debug_tick(unsigned char*, unsigned char, int*, int*, int*, unsigned char, unsigned char*, int, int);\n";
-        output << "#include <array>\n#include <cstdint>\n#include <stdexcept>\n#include <vector>\n"
+        output << "#include <array>\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <stdexcept>\n#include <vector>\n"
                   "namespace cpphdl_native {\nstruct Model {\n";
         for (size_t i = 0; i < clocks.size(); ++i)
             output << "bool " << clocks[i].name << " = false;\nbool __cpphdl_previous_clock_" << i << " = false;\n";
@@ -339,6 +376,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 for (const auto* bits : {&nodes[index].left, &nodes[index].right, &nodes[index].select})
                     retain(*bits, chunkOf[index]);
             for (const auto& port : ports) if (!port.input) retain(port.bits);
+            for (const auto& node : nodes) if (node.validation()) retain(node.left);
             for (const auto& state : states)
                 for (const auto* bits : {&state.next, &state.trigger, &state.reset, &state.resetValue}) retain(*bits);
             for (const auto& access : memoryAccesses) { retain(access.address); retain(access.enabled); }
@@ -403,7 +441,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         if (!chunkSize) output << "template<bool Commit> void evaluate() {\n";
         for (auto index : order) {
             const auto& node = nodes[index];
-            if (node.op == "state" || node.op == "input") continue;
+            if (node.op == "state" || node.op == "input" || node.validation()) continue;
             if (chunkSize && chunkOf[index] != previousChunk) {
                 if (chunks) output << "}\n";
                 output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks++ << "() {\n";
@@ -478,7 +516,36 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             }
             std::string expr;
             auto op = node.op;
-            if (op == "host_random") expr = "Commit && " + assembly(node.select) + " ? uint64_t(::random()) : 0ull";
+            if (op.compare(0, 3, "fp_") == 0) {
+                auto floating = [](const std::string& bits, unsigned width) {
+                    if (width != 32 && width != 64) throw std::runtime_error("invalid native floating-point width");
+                    return std::string("std::bit_cast<") + (width == 32 ? "float>(uint32_t(" : "double>(uint64_t(") + bits + "))";
+                };
+                auto integer = [](const std::string& value, unsigned width) {
+                    return std::string("std::bit_cast<") + (width == 32 ? "uint32_t>(float(" : "uint64_t>(double(") + value + "))";
+                };
+                if (op == "fp_from_signed" || op == "fp_from_unsigned") {
+                    auto input = left;
+                    if (op == "fp_from_signed") input = "(int64_t(" + input + " << " + std::to_string(64-node.left.size()) + ") >> " + std::to_string(64-node.left.size()) + ")";
+                    expr = integer(input, node.width);
+                }
+                else {
+                    auto lhs = floating(left, node.left.size());
+                    if (op == "fp_to_signed" || op == "fp_to_unsigned")
+                        expr = std::string(op == "fp_to_signed" ? "int64_t(" : "uint64_t(") + lhs + ')';
+                    else if (op == "fp_cast") expr = integer(lhs, node.width);
+                    else if (op == "fp_sqrt" || op == "fp_exp" || op == "fp_tanh" || op == "fp_log" || op == "fp_fabs")
+                        expr = integer("std::" + op.substr(3) + '(' + lhs + ')', node.width);
+                    else {
+                        static const std::map<std::string, std::string> operations{{"fp_add","+"},{"fp_sub","-"},{"fp_mul","*"},{"fp_div","/"},
+                            {"fp_eq","=="},{"fp_ne","!="},{"fp_lt","<"},{"fp_le","<="},{"fp_gt",">"},{"fp_ge",">="}};
+                        if (!operations.count(op)) throw std::runtime_error("invalid native floating-point operation " + op);
+                        expr = lhs + ' ' + operations.at(op) + ' ' + floating(right, node.right.size());
+                        if (node.width != 1) expr = integer(expr, node.width);
+                    }
+                }
+            }
+            else if (op == "host_random") expr = "Commit && " + assembly(node.select) + " ? uint64_t(::random()) : 0ull";
             else if (op == "mux") expr = assembly(node.select) + " ? " + left + " : " + right;
             else if (op == "any") expr = left + " != 0";
             else if (op == "all") expr = left + " == " + std::to_string(mask(node.left.size())) + "ull";
@@ -571,9 +638,12 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     for (auto chunk : taskChunks[lane]) output << "model.__cpphdl_chunk_" << chunk << "();\n";
                     output << "model.__cpphdl_sinks_" << lane << "<Commit>();\nbreak;\n";
                 }
-                output << "}\n}\nvoid __cpphdl_publish() {\nunsigned errors = 0;\n";
+                output << "}\n}\nvoid __cpphdl_publish(bool commit = true) {\nunsigned errors = 0;\n";
                 for (unsigned lane = 0; lane < (hostOverlap ? 1u : threads); ++lane)
                     output << "errors |= " << pending(lane) << ".errors;\n";
+                for (const auto& node : nodes) if (node.validation())
+                    output << "if(commit && " << assembly(node.left) << ") throw std::runtime_error("
+                           << nativeStringLiteral(node.name) << ");\n";
                 output << "if(errors & 1) throw std::out_of_range(\"native graph memory address\");\n"
                           "if(errors & 2) throw std::out_of_range(\"native graph memory write address\");\n";
                 for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input)
@@ -593,7 +663,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     output << "__cpphdl_previous_clock_" << i << " = " << clocks[i].name << ";\n";
                 output << "}\ntemplate<bool Commit> [[gnu::noinline]] void evaluate() {\n"
                           "__cpphdl_threads->run(this, &Model::__cpphdl_lane<Commit>);\n"
-                          "__cpphdl_publish();\nif constexpr(Commit) __cpphdl_commit();\n}\n";
+                          "__cpphdl_publish(Commit);\nif constexpr(Commit) __cpphdl_commit();\n}\n";
                 if (hostOverlap) {
                     // Host continuation may only consume the published ports
                     // and update external host models. Inputs, graph storage
@@ -617,6 +687,9 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             for (unsigned index = 0; index < chunks; ++index)
                 output << "__cpphdl_chunk_" << index << "();\n";
         }
+        for (const auto& node : nodes) if (node.validation())
+            output << "if(Commit && " << assembly(node.left) << ") throw std::runtime_error("
+                   << nativeStringLiteral(node.name) << ");\n";
         for (const auto& access : memoryAccesses)
             output << "if(" << (access.transaction ? "Commit && " + clockEdge(access.clock, access.falling) + " && " : "") << assembly(access.enabled)
                    << " && " << assembly(access.address) << " >= " << memories[access.memory].depth

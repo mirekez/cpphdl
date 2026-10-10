@@ -24,6 +24,7 @@ int main(int argc,char**argv) {
  if(named){g.clockContract=ClockContract::NamedEdges;g.clocks.push_back({"clock",100});}
  auto input=[&](const char* name,unsigned width) {auto x=g.wire(width,name,"input");g.ports.push_back({name,x,true});return x;};
  auto data=input("data",64),address=input("address",8),enable=input("enable",1),reset=input("reset",1);
+ if(!named)g.add("assert_failure",1,g.binary("eq",data,constant(123456,64),1),{}, {},"invalid input");
  g.memories.push_back({"ram",64,8});
  auto read=g.add("memory_read",64,address,constant(0,64),constant(0,64));
  g.memoryAccesses.push_back({0,address,enable,false});
@@ -85,6 +86,8 @@ template<class R=serial::Model,class M> void check(M& m) {
  for(unsigned i=0;i<2048;++i) {
   inputs(m,i);inputs(ref,i);
   bool bad=i%19==0,hostThrows=i%17==0;
+  bool badAssertion=i%23==0 && !requires{m.clock;};
+  if(badAssertion)m.data=ref.data={123456,0};
   if(bad) {m.address[0]=ref.address[0]=255;m.enable[0]=ref.enable[0]=1;}
   unsigned refCalls=0,calls=0;uint64_t refHost=0,host=0;
   auto tick=[&](const auto& x,unsigned& count,uint64_t& result) {
@@ -100,8 +103,9 @@ template<class R=serial::Model,class M> void check(M& m) {
   catch(const std::runtime_error&) {error=2;}
   assert(error==refError && calls==refCalls && host==refHost);
   assert(outputs(m)==outputs(ref) && m.memory0==ref.memory0);
-  if(bad)assert(calls==0);
+  if(bad||badAssertion)assert(calls==0);
   // Settle reveals committed registers, including after a host exception.
+  if(badAssertion)m.data=ref.data={i*1237u,0x80000000u+i*971u};
   m.address[0]=ref.address[0]=i%8;m.eval(false);ref.eval(false);
   assert(outputs(m)==outputs(ref) && m.memory0==ref.memory0);
   if(i%31==0) {auto copy=m;auto rcopy=ref;copy.step();rcopy.step();assert(outputs(copy)==outputs(rcopy));}

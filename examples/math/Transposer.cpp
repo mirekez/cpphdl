@@ -118,8 +118,6 @@ private:
     reg<logic<RESET_DELAY>> reset1;
     array<SIZE, logic<WIDTH>> data_out_comb;
     array<SIZE, logic<WIDTH>> write_data_comb;
-    logic<2 * SIZE * WIDTH> write_bus_comb;
-    logic<2 * SIZE * WIDTH> read_bus_comb;
     array<SIZE, u<clog2(2 * SIZE)>> read_address_comb;
     u<clog2(2 * SIZE)> write_address_comb;
 
@@ -133,6 +131,7 @@ private:
     array<SIZE, logic<WIDTH>>& write_data_comb_func()
     {
         size_t i, column;
+        logic<2 * SIZE * WIDTH> write_bus_comb;
         column = write_column;
         // Pack explicitly: native array elements may have byte padding, but
         // the routing bus must contain exactly WIDTH bits per lane.
@@ -165,6 +164,7 @@ private:
     array<SIZE, logic<WIDTH>>& data_out_comb_func()
     {
         size_t i, row;
+        logic<2 * SIZE * WIDTH> read_bus_comb;
         row = read_row;
         read_bus_comb = 0;
         for (i = 0; i < SIZE; ++i) {

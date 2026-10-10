@@ -1,8 +1,0 @@
-Refreshed all four public run scripts sequentially on 2026-10-08.
-Fresh single uninstrumented runs: plain 380.870 s, optimize-combs 209.922 s, native graph 31.922 s, Verilator 291.043 s.
-All four passed the 16x16, eight-round matrix workload with signature 0xe49d58d75696cd28. Binary and workload hashes remained unchanged. C++HDL cycle counts are recorded; Verilator did not print a cycle count.
-Builds were not repeated. All build times and scopes are retained from previous measurements.
-Native graph contains preserved ROMs, whole-value shifts/array reads and chunk-local scalar temporaries. Neither rejected guarded-evaluation experiment is active.
-The native-graph 92.94-second build covers native code emission and runner compilation from an existing graph; it excludes frontend extraction and is not directly comparable with the complete builds in other rows. The preceding whole-value-helper build took 532.49 seconds including extraction, linking and runner compilation, before the local-temporary codegen change.
-Runtime entries now use these fresh single runs rather than the previous native-graph three-run median. The optimization trials and their acceptance measurements remain unchanged.
-The shared four-CPU host also ran unrelated compiler jobs. These are not isolated-machine measurements, and absolute timings vary with host conditions. Per-run wall time, CPU time, logs and hashes are in 20261008T193125Z-rerun/.
