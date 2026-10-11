@@ -235,7 +235,7 @@ class TestTribe : public Module
     uint32_t start_mem_addr = 0;
     uint32_t ram_size = DEFAULT_RAM_SIZE;
     // Testbench-driven UART RX is part of the simulated machine state.
-    // Keep it in CppHDL registers so checkpoints capture the pin level
+    // Keep it in C++HDL registers so checkpoints capture the pin level
     // instead of hiding it in ordinary C++ variables.
     reg<u1> uart_rx_valid_reg;
     reg<u8> uart_rx_data_reg;
@@ -958,7 +958,7 @@ public:
         AXI4_RESPONDER_FROM(iospace.masters_out[4], ethgig_dma.axi_in);
         AXI4_RESPONDER_FROM(iospace.masters_out[5], plic.axi_in);
         AXI4_RESPONDER_FROM(tribe.axi_out[3], iospace.slave_in);
-	#else  // connecting Verilator to CppHDL
+	#else  // connecting Verilator to C++HDL
         tribe.reset_pc_in = reset_pc;
         tribe.boot_hartid_in = boot_hartid;
         tribe.boot_dtb_addr_in = boot_dtb_addr;

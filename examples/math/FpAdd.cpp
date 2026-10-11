@@ -538,7 +538,7 @@ public:
 #ifdef VERILATOR
         std::printf("VERILATOR FpAdd<%zu,%zu>...", W, EW);
 #else
-        std::printf("CppHDL FpAdd<%zu,%zu>...", W, EW);
+        std::printf("C++HDL FpAdd<%zu,%zu>...", W, EW);
 #endif
         cycle(0, 0, true);
         cycle(0, 0, true);

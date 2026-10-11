@@ -709,7 +709,7 @@ public:
 #endif
 };
 
-// This header is the complete synthesizable design seen by CppHDL. The native
+// This header is the complete synthesizable design seen by C++HDL. The native
 // TestTribe harness is excluded by SYNTHESIS, so keep the required concrete
 // specializations explicit for HDL generation.
 template class TribeTest<1>;

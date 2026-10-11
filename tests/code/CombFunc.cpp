@@ -8,7 +8,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 class CombFunc : public Module
 {
@@ -78,7 +78,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -278,7 +278,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestCombFunc...");
 #else
-        std::print("CppHDL TestCombFunc...");
+        std::print("C++HDL TestCombFunc...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "comb_func_test";

@@ -253,7 +253,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestCastTypes...");
 #else
-        std::print("CppHDL TestCastTypes...");
+        std::print("C++HDL TestCastTypes...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "cast_types_test";

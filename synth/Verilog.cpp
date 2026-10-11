@@ -57,7 +57,7 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
         return bits(slice(address, 0, width));
     };
     std::ostringstream out;
-    out << "// CppHDL operation graph; explicit register clock/edge ownership.\n"
+    out << "// C++HDL operation graph; explicit register clock/edge ownership.\n"
         << "module " << identifier(module) << "(";
     for (size_t i = 0; i < clocks.size(); ++i)
         out << (i ? ",\n" : "") << "input wire " << identifier(clocks[i].name);

@@ -308,7 +308,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestPLIC...");
 #else
-        std::print("CppHDL TestPLIC...");
+        std::print("C++HDL TestPLIC...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "plic_test";

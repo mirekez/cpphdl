@@ -4,7 +4,7 @@
 
 ## About
 
-Tribe is a RV32 RISC-V CPU model written in the CppHDL C++ dialect. The model runs both as a native C++ simulation and as generated SystemVerilog through Verilator. One `Tribe` core contains a small in-order pipeline, private instruction and data L1 caches, CSR/trap support, interrupt routing, and optional Sv32 MMU/TLBs. `TribeTest<CPU_CORES>` composes one or more cores around a shared coherent L2 cache, clock-domain crossings, and AXI4-style memory ports; the simulation and SoC wrappers add memories and devices around that cluster.
+Tribe is a RV32 RISC-V CPU model written in the C++HDL C++ dialect. The model runs both as a native C++ simulation and as generated SystemVerilog through Verilator. One `Tribe` core contains a small in-order pipeline, private instruction and data L1 caches, CSR/trap support, interrupt routing, and optional Sv32 MMU/TLBs. `TribeTest<CPU_CORES>` composes one or more cores around a shared coherent L2 cache, clock-domain crossings, and AXI4-style memory ports; the simulation and SoC wrappers add memories and devices around that cluster.
 
 The base implementation targets RV32IMC integer software. `tribe_cpu/Config.h` enables atomics, interrupt routing, and Sv32 translation through `TRIBE_CFG_RV32IA`, `TRIBE_CFG_ISR`, and `TRIBE_CFG_MMU_TLB`; each defaults to `1` and is also a CMake setting. These select `ENABLE_RV32IA`, `ENABLE_ISR`, and `ENABLE_MMU_TLB` in the sources. Zicsr and traps are enabled unconditionally by the current configuration. The L2 memory data width is selected with `L2_AXI_WIDTH`; the build provides 64-, 128-, and 256-bit targets. The address map starts at `memory_base_in` and contains four contiguous memory/device regions; the last is uncached IO/MMIO.
 
@@ -108,7 +108,7 @@ The design has two synchronous, phase-aligned clock inputs with distinct ownersh
 
 `CPU_CLK_MULTIPLIER` is defined in `tribe_cpu/Config.h`, defaults to `2`, must be positive, and must divide 100 MHz exactly. With the default, `l2_clock` is 50 MHz and has a rising edge on every second primary-clock cycle. Native C++ and Verilator harnesses use the same unshifted edge relationship.
 
-CppHDL conversion receives the clocks explicitly:
+C++HDL conversion receives the clocks explicitly:
 
 ```text
 --primary_clock clk 100000000 \
@@ -211,9 +211,9 @@ Instruction semantics are supplied by `spec/Rv32i.h`, `Rv32ic.h`, `Rv32im.h`, `R
 | Module | Source | Purpose |
 | --- | --- | --- |
 | `SDCardVerif` | `verif/SDCardVerif.h` | Host-side SD image/card behavior and checkpoint state. |
-| `SDCardVerifFrontend` | `verif/SDCardVerif.h` | CppHDL module exposing the SD verification model as byte-stream ports. |
+| `SDCardVerifFrontend` | `verif/SDCardVerif.h` | C++HDL module exposing the SD verification model as byte-stream ports. |
 | `RGMIIVerif` | `verif/RGMIIVerif.h` | Host-side packet queues and RGMII frame behavior. |
-| `RGMIIVerifFrontend` | `verif/RGMIIVerif.h` | CppHDL module connecting packet verification to PHY nibble ports. |
+| `RGMIIVerifFrontend` | `verif/RGMIIVerif.h` | C++HDL module connecting packet verification to PHY nibble ports. |
 | `EthGigTapSocket` | `TribeDebug.h` | Native simulation Unix-socket endpoint for the host TAP bridge. |
 
 ## Main (Core)

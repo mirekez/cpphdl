@@ -1,6 +1,6 @@
 // Shared test harness helpers only, not L2 cache behaviour requirements:
 // 1. Section labels make per-requirement failures easy to locate.
-// 2. Integer-like CppHDL values are compared without relying on std::format.
+// 2. Integer-like C++HDL values are compared without relying on std::format.
 // 3. Tests return a conventional process status for CTest.
 #pragma once
 

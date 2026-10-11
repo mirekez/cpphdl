@@ -14,7 +14,7 @@ module RAM #(
     output wire[WIDTH-1:0]          q_out,
     input  wire signed[31:0]        id_in
 );
-    // CppHDL's byte-lane memory representation generates a wide bank of
+    // C++HDL's byte-lane memory representation generates a wide bank of
     // individual registers.  Keep wide L1 data arrays in BRAM, but map the
     // shallow, narrow tag arrays to distributed RAM.  Forcing a 16-entry tag
     // array into RAMB18 adds a BRAM clock-to-output delay to every hit and was

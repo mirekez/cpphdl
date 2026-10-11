@@ -8,7 +8,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 class CodeReturn : public Module
 {
@@ -96,7 +96,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -299,7 +299,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestCodeReturn...");
 #else
-        std::print("CppHDL TestCodeReturn...");
+        std::print("C++HDL TestCodeReturn...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "task_return_test";

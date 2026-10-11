@@ -1,5 +1,5 @@
 // HLS pipelined_logic: II=1, STAGES=3; stage boundaries balance operation depth, not technology delay.
-// CppHDL operation graph; explicit register clock/edge ownership.
+// C++HDL operation graph; explicit register clock/edge ownership.
 module \cpphdl_hls_ClockedPipelineDramCalculate_logic63_0_logic128m1_0_P3 (input wire \clk ,
 output wire [0:0] \command_ready_out ,
 input wire [0:0] \command_valid_in ,

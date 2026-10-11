@@ -4330,7 +4330,7 @@
                       << " width=" << width << "\n";
         }
         // A type-parameter element can have no foldable width in the generic module.
-        // CppHDL's type_width<T>() remains valid after specialization, so materialize
+        // C++HDL's type_width<T>() remains valid after specialization, so materialize
         // the packed proxy whenever its element type is known instead of emitting `.field`.
         if (elementType.empty()) {
             return {};

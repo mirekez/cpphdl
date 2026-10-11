@@ -1077,7 +1077,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
         if (OCE->getOperator() == OO_Tilde) {
             const auto resultType = castTypeName(OCE->getArg(0)->getType());
             if (resultType.rfind("cpphdl_logic", 0) == 0 || resultType.rfind("cpphdl_u", 0) == 0) {
-                // CppHDL complements only the bit-vector's declared bits.
+                // C++HDL complements only the bit-vector's declared bits.
                 // SV would propagate a wider assignment through ~ and invert
                 // the extension bits too. Derive the width from the SV operand
                 // so instantiated C++ default widths cannot replace parameters.
@@ -1698,7 +1698,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                     str.find("cpphdl::u<") != std::string::npos || str.find("cpphdl::i<") != std::string::npos ||
                     str.find("cpphdl::logic<") != std::string::npos || canonical_type.find("cpphdl::u<") != std::string::npos ||
                     canonical_type.find("cpphdl::i<") != std::string::npos || canonical_type.find("cpphdl::logic<") != std::string::npos) {
-                    // Scalar CppHDL value-initialization, for example logic<1>{},
+                    // Scalar C++HDL value-initialization, for example logic<1>{},
                     // is a real zero assignment in RTL, not an absent expression.
                     return cpphdl::Expr{"0", cpphdl::Expr::EXPR_NUM};
                 }

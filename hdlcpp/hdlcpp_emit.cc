@@ -4419,7 +4419,7 @@
 	                                const bool packedElementProxy =
 	                                    args.size() >= 3 && trim(args[2]) == "true";
 	                                if (packedElementProxy) {
-	                                    // Packed CppHDL arrays return an element proxy. Reconstruct
+	                                    // Packed C++HDL arrays return an element proxy. Reconstruct
 	                                    // the conceptual SV element before selecting its fields.
 	                                    const auto element = "__cpphdl_projected_element_" + suffix +
 	                                        "_" + std::to_string(depth);
@@ -5382,7 +5382,7 @@
 		                        if (expr.empty()) {
 		                            // A demanded leaf can be undriven directly when an ancestor is
 		                            // assigned as a whole, or when the SV field is intentionally left
-		                            // undriven. CppHDL values are value-initialized, so keep the projected
+		                            // undriven. C++HDL values are value-initialized, so keep the projected
 		                            // getter present and give that leaf the same default state.
 		                            expr = typeDefaultExpr();
 		                        }
@@ -5419,7 +5419,7 @@
 	            };
 	            // Output projections must become comb demands before synthesis; only then
 	            // can their public ports bind to the independently extracted methods.
-	            // This preserves lazy CppHDL evaluation without touching sibling fields.
+	            // This preserves lazy C++HDL evaluation without touching sibling fields.
 	            discoverOutputFieldProjections(m, false);
 	            synthesizeFieldCombMethods();
 	            discoverOutputFieldProjections(m, true);
@@ -11268,7 +11268,7 @@
             auto before = trim(decl.substr(0, instPos));
             if (!before.empty()) {
                 // Internal array types retain hdlcpp's element-first representation;
-                // emitted member declarations have already been reordered for CppHDL.
+                // emitted member declarations have already been reordered for C++HDL.
                 // Keep internal metadata for indexed instances so element lookup is valid.
                 if (!metadataType.empty() && arrayElementTypeText(metadataType) != metadataType) {
                     return metadataType;
@@ -11896,7 +11896,7 @@
                      inputType != "uint64_t" &&
                      inputType.rfind("logic<", 0) != 0 &&
                      inputType.rfind("u<", 0) != 0) {
-                // Packed structs and CppHDL arrays provide bitwise operator&.
+                // Packed structs and C++HDL arrays provide bitwise operator&.
                 // _ASSIGN_COMB uses unary &, so preserve the value-returning
                 // binding selected by structural type adaptation.
                 return line;
@@ -13376,7 +13376,7 @@
                     }
                     else {
                         // Write aggregate conversions into their final storage. The
-                        // CppHDL helper selects native assignment or the equivalent
+                        // C++HDL helper selects native assignment or the equivalent
                         // packed fallback without constructing a returned temporary.
                         const auto indent = emittedLine.substr(0, emittedLine.find_first_not_of(" \t"));
                         emittedLine = indent + "cpphdl::sv_assign_field(" + lhs + ", " + rhs + ")" +

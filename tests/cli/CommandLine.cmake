@@ -5,7 +5,7 @@ if(CASE STREQUAL "help")
         if(NOT status EQUAL 0 OR NOT error STREQUAL "")
             message(FATAL_ERROR "${flag} failed (${status}): ${error}")
         endif()
-        foreach(required "CppHDL - convert C++ RTL" "Before --:" "After  --:"
+        foreach(required "C++HDL - convert C++ RTL" "Before --:" "After  --:"
                 --generated-dir --json-output --no-synthesis-flag --debug
                 --primary_clock --secondary_clock --optimize-combs
                 --optimize-combs-l1 --optimize-math --optimize-threads
@@ -33,8 +33,8 @@ if(CASE STREQUAL "help")
     # An explicit separator makes --help a Clang argument, not a tool option.
     execute_process(COMMAND "${CPPHDL}" "${TEST_DIR}/CommandLineInput.h" -- --help
         OUTPUT_VARIABLE output ERROR_VARIABLE error)
-    if("${output}${error}" MATCHES "CppHDL - convert C[+][+] RTL")
-        message(FATAL_ERROR "CppHDL consumed compiler-side --help")
+    if("${output}${error}" MATCHES "C[+][+]HDL - convert C[+][+] RTL")
+        message(FATAL_ERROR "C++HDL consumed compiler-side --help")
     endif()
 elseif(CASE STREQUAL "forwarding")
     foreach(mode explicit legacy)

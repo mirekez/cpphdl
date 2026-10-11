@@ -671,7 +671,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR SystemTest...");
 #else
-        std::print("CppHDL SystemTest...");
+        std::print("C++HDL SystemTest...");
 #endif
         FILE* out = fopen("out.txt", "wb");
         if (out) {

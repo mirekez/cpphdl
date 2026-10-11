@@ -6,7 +6,7 @@ extern long _system_clock;
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t MEM_WIDTH, size_t MEM_DEPTH, bool PRIMARY_WRITE_FIRST = true>
 class File : public Module

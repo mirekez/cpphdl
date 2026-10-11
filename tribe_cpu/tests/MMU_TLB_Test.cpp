@@ -372,7 +372,7 @@ public:
 #ifdef VERILATOR
         std::print("Verilator TestMMUTLB direct...");
 #else
-        std::print("CppHDL TestMMUTLB direct...");
+        std::print("C++HDL TestMMUTLB direct...");
 #endif
         __inst_name = "mmu_tlb_direct";
         _assign();

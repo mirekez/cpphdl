@@ -1,11 +1,11 @@
 ---
 name: cpphdl-verilator-rtl
-description: Use when writing or debugging CppHDL tests that mix C++ testbench models with Verilated RTL, especially reset ordering, register inputs, AXI4 responder wiring, eval sequencing, _assign/_strobe discipline, and avoiding C++/SystemVerilog simulation mismatches.
+description: Use when writing or debugging C++HDL tests that mix C++ testbench models with Verilated RTL, especially reset ordering, register inputs, AXI4 responder wiring, eval sequencing, _assign/_strobe discipline, and avoiding C++/SystemVerilog simulation mismatches.
 ---
 
-# CppHDL and Verilator RTL Tests
+# C++HDL and Verilator RTL Tests
 
-Use this skill when editing CppHDL tests or harnesses that instantiate a Verilated module and connect it to C++ models such as `Axi4Ram`, `Axi4RegionMux`, UART, CLINT, or accelerator devices.
+Use this skill when editing C++HDL tests or harnesses that instantiate a Verilated module and connect it to C++ models such as `Axi4Ram`, `Axi4RegionMux`, UART, CLINT, or accelerator devices.
 
 ## MAIN RULES:
 
@@ -17,7 +17,7 @@ Use this skill when editing CppHDL tests or harnesses that instantiate a Verilat
 ## Hard Rules
 
 - Put `_ASSIGN(...)`, `_ASSIGN_REG(...)`, , `_ASSIGN_COMB(...)`, `_ASSIGN_I(...)`, `_ASSIGN_REG/COMB_I(...)`, `_ASSIGN_INDEXED(...)`, and `_ASSIGN_REG/COMB_INDEXED(...)` assignments only in `_assign()`.
-- Assign a CppHDL interface once with `assignIf(...)`; do not assign its individual ports separately. Make the connection in the immediate common parent's `_assign()`:
+- Assign a C++HDL interface once with `assignIf(...)`; do not assign its individual ports separately. Make the connection in the immediate common parent's `_assign()`:
 
 ```cpp
 void _assign()
@@ -27,11 +27,11 @@ void _assign()
 ```
 
   Do not replace this with one assignment per `valid`, `ready`, `data`, or other interface member. `assignIf` resolves both interface directions and expands the flattened SystemVerilog connections consistently.
-- CppHDL forbids assignments across hierarchy levels, matching synthesizable SystemVerilog module encapsulation. A module may connect its own ports and the exposed ports/interfaces of its immediate child modules, but it must not reach through a child into a grandchild or assign a child module's internal state. Expose an intermediate port or interface and connect the hierarchy one level at a time.
+- C++HDL forbids assignments across hierarchy levels, matching synthesizable SystemVerilog module encapsulation. A module may connect its own ports and the exposed ports/interfaces of its immediate child modules, but it must not reach through a child into a grandchild or assign a child module's internal state. Expose an intermediate port or interface and connect the hierarchy one level at a time.
 - Put `.strobe()` and `.apply()` calls only in the parent `_strobe()` method. Do not call them from `_work()`, helper methods, comb functions, or `_assign()`.
 - `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle. Never run any `_assign()` after `_work()` cycles begin
 - In Verilator mode, write all Verilated input ports before `eval()`.
-- For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ CppHDL update order accidentally matching Verilator.
+- For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ C++HDL update order accidentally matching Verilator.
 - In rare case if you use Verilator for 0-clock latency module testing, to see comb output from Verilator use eval() with clk = 0. This will update combs without updating regs
 - sys_clock is mandatory global variable to be incremented once per main loop cycle, it is used to cache combinational variables functions results
 - it's better to put `if (reset)` section in the end of `_work()` method to do not forget to call nested `_work()` methods in case of reset
@@ -110,11 +110,11 @@ dut.memory_base_in = memory_base;
 dut.mem_region_size_in[0] = region0_size;
 ```
 
-Do not assign these through `_ASSIGN()/_ASSIGN_REG()` in Verilator-only code. `_ASSIGN()` is for CppHDL structural assignment inside `_assign()`. Verilator requires strait data for ports, not functions
+Do not assign these through `_ASSIGN()/_ASSIGN_REG()` in Verilator-only code. `_ASSIGN()` is for C++HDL structural assignment inside `_assign()`. Verilator requires strait data for ports, not functions
 
 ## C++ Model Order
 
-For C++ CppHDL models connected around a Verilated DUT:
+For C++ C++HDL models connected around a Verilated DUT:
 
 - `_assign()` wires ports once.
 - `_work(reset)` computes next values for C++ models.
@@ -140,7 +140,7 @@ Common signatures:
 
 # Using Axi4Driver, Axi4Responder and Axi4If interface
 
-Use this skill when editing CppHDL models or tests or harnesses to verilator connected to/from Axi4
+Use this skill when editing C++HDL models or tests or harnesses to verilator connected to/from Axi4
 
 ## Hard Rules
 
@@ -153,14 +153,14 @@ Use this skill when editing CppHDL models or tests or harnesses to verilator con
 
 # Developing RTL modules, devices, examples
 
-Use this skill when developing and debugging new CppHDL module, device, example or functionality
+Use this skill when developing and debugging new C++HDL module, device, example or functionality
 
 ## Hard Rules
 
 - If you see bug in cpphdl functionality and fixing it - develop a new test in root tests/ folder or add section to correspondent old test
 - If you see bug in Tribe cpu code or modules or devices and fixing it - develop a new test in tribe_cpu/tests folder or add section to correspondent old test
 
-# CppHDL Template Specialization Conversion
+# C++HDL Template Specialization Conversion
 
 Use these rules when changing template handling in the cpphdl converter.
 
@@ -170,6 +170,6 @@ Use these rules when changing template handling in the cpphdl converter.
 - Template `Module` classes use type and textual/string-like template parameters as specialization identity. These parameters are added to the generated module name and select a separate SV module for each type/text combination.
 - When a fixed type specialization contributes static `constexpr` values used by a module, resolve those fixed type constexprs to concrete values. Numeric module parameters remain symbolic.
 
-# CppHDL conversion development rules
+# C++HDL conversion development rules
 
 - There shouldnt be code worsening in SV generation just because cpphdl is unsure in something. SV code shouldnt make cast where it didnt in C++ and it is not 100% necessary (due to differences between C++ and SystemVerilog casting/assignments)

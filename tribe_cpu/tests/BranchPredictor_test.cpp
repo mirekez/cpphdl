@@ -161,7 +161,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestBranchPredictor...");
 #else
-        std::print("CppHDL TestBranchPredictor...");
+        std::print("C++HDL TestBranchPredictor...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         _assign();

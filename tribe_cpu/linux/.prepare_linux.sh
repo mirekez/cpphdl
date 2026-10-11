@@ -141,7 +141,7 @@ cpu_clock = int(sys.argv[5], 0)
 path.write_text(f"""/dts-v1/;
 
 / {{
-\tmodel = "CppHDL Tribe";
+\tmodel = "C++HDL Tribe";
 \t#address-cells = <1>;
 \t#size-cells = <1>;
 \tcompatible = "cpphdl,tribe";
@@ -267,10 +267,10 @@ import sys
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
 block = """config BLK_DEV_TRIBE_SD
-\tbool "CppHDL Tribe SD block device"
+\tbool "C++HDL Tribe SD block device"
 \tdepends on OF
 \thelp
-\t  Built-in block driver for the custom CppHDL Tribe SD controller.
+\t  Built-in block driver for the custom C++HDL Tribe SD controller.
 
 """
 if "config BLK_DEV_TRIBE_SD" not in text:

@@ -17,7 +17,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 # -----------------------------------------------------------------------------
 # LLVM/Clang dependency policy
 #
-# Normal CppHDL builds should use a prebuilt LLVM and Clang Tooling installation.
+# Normal C++HDL builds should use a prebuilt LLVM and Clang Tooling installation.
 # The supported and recommended setup is the repository-local Conda environment
 # in .conda (created from requirements.yaml); CPPHDL_USE_LOCAL_CONDA selects it
 # automatically when it is present. A compatible system LLVM/Clang development
@@ -27,7 +27,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 # cannot use Conda and does not have compatible system LLVM/Clang development
 # packages. Enabling it downloads the large llvm-project source repository and
 # builds LLVM and Clang from source, substantially increasing configure time,
-# disk use, memory use, and build time. It is not required for ordinary CppHDL
+# disk use, memory use, and build time. It is not required for ordinary C++HDL
 # development, Tribe CPU tests, or building the RISC-V GNU toolchain. Keep this
 # option OFF unless that specific source-bootstrap fallback is intentional.
 # -----------------------------------------------------------------------------
@@ -74,9 +74,9 @@ project(cpphdl
 add_compile_definitions(CPPHDL_CMAKE_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
 add_compile_definitions(CPPHDL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-CppHDL converter" OFF)
-option(CPPHDL_BUILD_EXAMPLES "Build CppHDL examples" ON)
-option(CPPHDL_BUILD_TESTS "Build CppHDL standalone tests" ON)
+option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-C++HDL converter" OFF)
+option(CPPHDL_BUILD_EXAMPLES "Build C++HDL examples" ON)
+option(CPPHDL_BUILD_TESTS "Build C++HDL standalone tests" ON)
 option(CPPHDL_BUILD_HLS_TESTS "Build experimental HLS tests (requires Clang and libc++)" ON)
 option(CPPHDL_BUILD_SYNTH_TESTS "Build experimental shared-graph synthesis tests" ON)
 option(CPPHDL_BUILD_TRIBE "Build Tribe CPU models and tests" OFF)
@@ -148,10 +148,10 @@ if(NOT CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS AND CPPHDL_STDCXXEXP)
   set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES_SAVE}")
 endif()
 if(CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS OR CPPHDL_STACKTRACE_LINKS_WITH_STDCXXEXP)
-  message(STATUS "CppHDL stacktrace support enabled")
+  message(STATUS "C++HDL stacktrace support enabled")
   add_compile_definitions(CPPHDL_HAVE_STACKTRACE=1)
 else()
-  message(STATUS "CppHDL stacktrace support disabled: <stacktrace> did not link")
+  message(STATUS "C++HDL stacktrace support disabled: <stacktrace> did not link")
 endif()
 
 function(cpphdl_link_stdcxxexp_if_available target)

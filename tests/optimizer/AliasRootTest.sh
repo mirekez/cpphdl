@@ -89,7 +89,7 @@ fi
 
 # Ordinary comb methods remain repeatable and valid recursion is cut by a port
 # or _LAZY_COMB timestamp. Optimizer-owned transient guards add state and calls
-# that do not exist in CppHDL's execution model.
+# that do not exist in C++HDL's execution model.
 if search_q 'bool evaluating|s\.evaluating' \
     "$build_dir"/AliasRoot_optimized_combs*; then
     printf 'ordinary dynamic comb gained optimizer-owned recursion state\n' >&2

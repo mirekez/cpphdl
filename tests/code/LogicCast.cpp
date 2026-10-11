@@ -287,7 +287,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestLogicCast...");
 #else
-        std::print("CppHDL TestLogicCast...");
+        std::print("C++HDL TestLogicCast...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "logic_cast_test";

@@ -95,7 +95,7 @@ int main() {
         if (fall_fast || asserted) cpphdl_top._strobe_neg_fast_clk();
         if (rise_slow || asserted) cpphdl_top._strobe_slow_clk();
         // Outputs may have been sampled during work. Settle after the commit
-        // with a fresh CppHDL comb-cache generation, as the graph backend does.
+        // with a fresh C++HDL comb-cache generation, as the graph backend does.
         ++_system_clock;
         unclocked_assertions += asserted && nf == fast && ns == slow;
         held_edges += reset && previous_reset && (rise_fast || fall_fast || rise_slow);

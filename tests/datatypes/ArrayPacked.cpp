@@ -447,7 +447,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestArrayPacked...");
 #else
-        std::print("CppHDL TestArrayPacked...");
+        std::print("C++HDL TestArrayPacked...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "array_packed_test";

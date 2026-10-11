@@ -19,14 +19,15 @@ source.mkdir()
 env = dict(os.environ)
 env['LD_LIBRARY_PATH'] = str(Path(args.cxx).resolve().parent.parent / 'lib') + ':' + env.get('LD_LIBRARY_PATH', '')
 env['CPPHDL_OPTIMIZE_THREADS'] = str(args.threads)
+env.pop('CPPHDL_BALANCE_LANES', None)
 sys.path.insert(0, str(root.parent / 'tests'))
 from TestToolchain import TestToolchain
 toolchain = TestToolchain(args.cxx, None, work)
 
-def run(command):
+def run(command, extra_env=None):
     if command[0] == args.cxx and args.threads > 1:
         command = [command[0], '-pthread', *command[1:]]
-    result = subprocess.run(toolchain.command(command), env=env, text=True, stdout=subprocess.PIPE,
+    result = subprocess.run(toolchain.command(command), env={**env, **(extra_env or {})}, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=240)
     if result.returncode: raise RuntimeError(result.stdout)
     return result.stdout
@@ -104,6 +105,15 @@ print(run(['python3', root / 'graph_partitions.py', '--source', source, '--outpu
 linker = work / 'link'
 print(run([args.cxx, '-std=c++23', '-O1', '-I' + str(root.parent / 'include'),
            root.parent / 'tools/cpphdl-graph-link.cpp', '-o', linker]))
+for value in ('', '2', 'true', '-1'):
+    rejected_output = work / 'invalid-balance.h'
+    result = subprocess.run([str(linker), str(work / 'missing.plan'), str(rejected_output)],
+                            env={**env, 'CPPHDL_BALANCE_LANES': value}, text=True,
+                            capture_output=True, timeout=30)
+    assert result.returncode != 0
+    assert 'CPPHDL_BALANCE_LANES must be 0 or 1' in result.stderr
+    assert not rejected_output.exists()
+print('partitioned graph: invalid lane-balancing settings rejected PASS')
 print(run([linker, partitions / 'link.plan', work / 'model.h', '2']))
 if args.threads > 1:
     assert '__cpphdl_thread_count = ' + str(args.threads) in (work/'model.h').read_text()
@@ -169,7 +179,7 @@ void HostTop::_assign() {
  result=_ASSIGN(cpphdl::cat<8,8>(saved,inst_host->result()));
 }
 void HostTop::_work(bool) {
- saved._next=inst_host->result();
+ saved._next=inst_host->result() ^ data();
  if(enable()) inst_host->_work(bool(reset()));
 }
 void HostTop::_strobe() { saved.strobe(); inst_host->_strobe(); }
@@ -191,21 +201,45 @@ int main() {
   ++_system_clock;
   graph.r_data[0]=uint64_t(data); graph.r_enable[0]=uint64_t(enable); graph.r_reset[0]=uint64_t(reset);
   graph.h0_result[0]=uint64_t(host.result());
+  bool callbackFailed=false;
+  try {
   graph.evaluate_with_host([&] {
   if(graph.r_result[0]!=uint64_t(reference.result()) || graph.host_control_0_enable[0]!=uint64_t(enable) ||
      graph.h0_enable[0]!=uint64_t(enable)) throw std::runtime_error("host snapshot mismatch");
   hostData=graph.h0_data[0];
   if(graph.host_control_0_enable[0]) host._work(graph.host_control_0_work_reset[0]);
   host._strobe();
+  if(cycle%41==0) throw std::runtime_error("expected host failure");
   });
+  } catch(const std::runtime_error& error) {
+   if(std::string(error.what())!="expected host failure") throw;
+   callbackFailed=true;
+  }
+  if(callbackFailed!=(cycle%41==0)) throw std::runtime_error("host failure was not propagated");
   reference._work(false); reference._strobe();
  }
- std::puts("partitioned graph: host snapshots and conditional callbacks PASS (2048 cycles)");
+ std::puts("partitioned graph: host snapshots, conditional callbacks and exception recovery PASS (2048 cycles)");
 }
 ''')
 print(run([args.cxx, '-std=c++23', '-O2', '-I' + str(root.parent / 'include'), '-I' + str(source),
            '-I' + str(work), work / 'host-check.cpp', '-o', work / 'host-check']))
 print(run([work / 'host-check']))
+
+# Explicit zero must preserve the default generated schedule. Balanced linking
+# must publish the same host snapshot without reserving host-overlap lanes.
+print(run([linker, partitions / 'link.plan', work / 'host-model.h', '2', '3']))
+default_host_model = (work / 'host-model.h').read_text()
+assert '__cpphdl_host_overlap' in default_host_model
+print(run([linker, partitions / 'link.plan', work / 'host-model.h', '2', '3'],
+          {'CPPHDL_BALANCE_LANES': '0'}))
+assert (work / 'host-model.h').read_text() == default_host_model
+print(run([linker, partitions / 'link.plan', work / 'host-model.h', '2', '3'],
+          {'CPPHDL_BALANCE_LANES': '1'}))
+assert '__cpphdl_host_overlap' not in (work / 'host-model.h').read_text()
+print(run([args.cxx, '-pthread', '-std=c++23', '-O2', '-I' + str(root.parent / 'include'),
+           '-I' + str(source), '-I' + str(work), work / 'host-check.cpp', '-o', work / 'balanced-host-check']))
+print(run([work / 'balanced-host-check']))
+print('partitioned graph: explicit compact schedule and balanced host snapshots PASS')
 
 # A combinational external result must be available to the graph on the same
 # edge. A counter fed through the host detects an accidental extra cycle.
@@ -355,3 +389,9 @@ print(run([args.cxx, '-std=c++23', '-O2', '-I' + str(root.parent / 'include'),
            work / 'assertions-check.cpp', '-o', work / 'assertions-check']))
 print(run([work / 'assertions-check']))
 print('partitioned graph: disabled assertions, rollback and recovery PASS')
+print(run([work / 'checked-link', work / 'assertions.plan', work / 'assert-model.h', '2', '3'],
+          {'CPPHDL_BALANCE_LANES': '1'}))
+print(run([args.cxx, '-pthread', '-std=c++23', '-O2', '-I' + str(root.parent / 'include'),
+           work / 'assertions-check.cpp', '-o', work / 'balanced-assertions-check']))
+print(run([work / 'balanced-assertions-check']))
+print('partitioned graph: balanced assertions, rollback and recovery PASS')

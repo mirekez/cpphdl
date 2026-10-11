@@ -341,7 +341,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5cf080684ecce689e4fd3bb5cd7c735905621da2
 --- /dev/null
 +++ b/tools/firtool-cpphdl/CMakeLists.txt
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,55 @@
 +cmake_minimum_required(VERSION 3.20)
 +project(firtool_cpphdl LANGUAGES CXX)
 +
@@ -354,13 +354,16 @@ index 0000000000000000000000000000000000000000..5cf080684ecce689e4fd3bb5cd7c7359
 +find_package(MLIR REQUIRED CONFIG)
 +find_package(CIRCT REQUIRED CONFIG)
 +
++file(GLOB CPPHDL_EXPORT_SOURCE "${CIRCT_CPPHDL_SOURCE_DIR}/lib/Conversion/Export*/Export*.cpp")
++list(FILTER CPPHDL_EXPORT_SOURCE INCLUDE REGEX "/Export[Cc]pp[Hh][Dd][Ll][.]cpp$")
++
 +add_executable(firtool-cpphdl
 +  ${CIRCT_CPPHDL_SOURCE_DIR}/tools/firtool/firtool.cpp
-+  ${CIRCT_CPPHDL_SOURCE_DIR}/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp
++  ${CPPHDL_EXPORT_SOURCE}
 +)
 +
 +# Installed headers come first because they contain TableGen output. The
-+# modified CIRCT source tree then contributes the new ExportCppHDL interface.
++# modified CIRCT source tree then contributes the new Exportcpphdl interface.
 +target_include_directories(firtool-cpphdl PRIVATE
 +  ${CIRCT_INCLUDE_DIRS}
 +  ${MLIR_INCLUDE_DIRS}

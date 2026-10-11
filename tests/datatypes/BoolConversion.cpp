@@ -152,7 +152,7 @@ public:
 #ifdef VERILATOR
         std::printf("VERILATOR BoolConversion...");
 #else
-        std::printf("CppHDL BoolConversion...");
+        std::printf("C++HDL BoolConversion...");
 #endif
         for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
             bool reset = i == 0;

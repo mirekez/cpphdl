@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Simple block driver for the CppHDL Tribe SD controller.
+ * Simple block driver for the C++HDL Tribe SD controller.
  *
  * The hardware exposes one SD-card-like byte stream behind a small MMIO
  * command interface.  Block BIO fragments are submitted as a descriptor FIFO
@@ -318,5 +318,5 @@ static struct platform_driver tribe_sd_driver = {
 };
 module_platform_driver(tribe_sd_driver);
 
-MODULE_DESCRIPTION("CppHDL Tribe SD block driver");
+MODULE_DESCRIPTION("C++HDL Tribe SD block driver");
 MODULE_LICENSE("GPL");

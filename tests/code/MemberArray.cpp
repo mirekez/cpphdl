@@ -115,7 +115,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -245,7 +245,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestMemberArray...");
 #else
-        std::print("CppHDL TestMemberArray...");
+        std::print("C++HDL TestMemberArray...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "member_array_test";

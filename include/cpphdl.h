@@ -177,7 +177,7 @@ constexpr logic<WIDTH> sv_bits(const T& value, size_t last, size_t first)
     }
 }
 
-// Two-state CppHDL values cannot contain SystemVerilog X or Z states.
+// Two-state C++HDL values cannot contain SystemVerilog X or Z states.
 // Generated $isunknown expressions still require a callable runtime operation.
 // Report false explicitly to preserve that two-state model contract.
 template<typename T>

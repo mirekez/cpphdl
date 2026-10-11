@@ -61,7 +61,7 @@ for mode in ('baseline', 'retimed'):
          *retiming, source, '--', *flags], mode + '-synth')
     report = json.loads((out / 'manifest.json').read_text())
     assert report['status'] == 'complete'
-    assert report['graph_frontend'] == 'C++ RTL with automatic AST Clocked scheduling -> CppHDL graph'
+    assert report['graph_frontend'] == 'C++ RTL with automatic AST Clocked scheduling -> C++HDL graph'
     assert not (out / 'scheduled').exists(), 'graph export must not round-trip through SV'
     assert not any('yosys' in str(arg).lower() for cmd in report['commands'] for arg in cmd)
     if mode == 'retimed':

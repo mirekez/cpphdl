@@ -30,7 +30,7 @@ struct NativeParallelPlan {
 };
 
 inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<size_t>& order, unsigned lanes,
-                                             bool hostOverlap = false) {
+                                             bool hostOverlap = false, bool balanceLanes = false) {
     const size_t count = graph.nodes.size();
     std::vector<size_t> values;
     std::vector<std::vector<size_t>> dependencies(count);
@@ -143,7 +143,11 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
         const auto peak = *std::max_element(load.begin(), load.end());
         for (unsigned lane = hostOverlap ? 1 : 0; lane < lanes; ++lane) {
             uint64_t added = root.sinkCost; for (auto node : root.cone) if (!owned[lane][node]) added += weight[node];
-            const auto score = std::max(peak, load[lane] + added) * lanes * 4 + added;
+            // Compact scheduling avoids duplication once another cone fixes
+            // the critical path. Distributed scheduling balances each lane
+            // independently, allowing large hosts to use the requested CPUs.
+            const auto cost = balanceLanes ? load[lane] + added : std::max(peak, load[lane] + added);
+            const auto score = cost * lanes * 4 + added;
             if (score < bestScore) { bestScore = score; bestAdded = added; root.lane = lane; }
         }
         load[root.lane] += bestAdded;
@@ -204,7 +208,8 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     return plan;
 }
 
-inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned threads, bool hostOverlap) {
+inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned threads, bool hostOverlap,
+                        bool balanceLanes) {
         if (!threads || threads > 256) throw std::runtime_error("native graph threads must be between 1 and 256");
         if (threads > 1 && !chunkSize) chunkSize = 512;
         validateClocks();
@@ -252,7 +257,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         NativeParallelPlan parallel;
         std::vector<std::vector<size_t>> taskNodes(1);
         if (threads > 1) {
-            parallel = nativeParallelPlan(*this, order, threads, hostOverlap);
+            parallel = nativeParallelPlan(*this, order, threads, hostOverlap, balanceLanes);
             threads = parallel.lanes;
             if (threads > 1) {
                 taskNodes = parallel.tasks;

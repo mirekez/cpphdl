@@ -1,7 +1,7 @@
 /dts-v1/;
 
 / {
-	model = "CppHDL Tribe";
+	model = "C++HDL Tribe";
 	#address-cells = <1>;
 	#size-cells = <1>;
 	compatible = "cpphdl,tribe";

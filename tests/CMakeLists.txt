@@ -489,7 +489,7 @@ set(template_hierarchy_tests
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
-# directory. They contain generated .cpp files, not independent CppHDL tests.
+# directory. They contain generated .cpp files, not independent C++HDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
 # These fixtures are built by SwitchControlChecks.py with a separate runner
 # and flow-specific definitions, not as standalone inline-test executables.
@@ -965,7 +965,7 @@ add_test(
 )
 set_tests_properties(optimizer_module_array_call PROPERTIES TIMEOUT 120)
 
-# Very large concrete classes may remain ordinary CppHDL subtrees while the
+# Very large concrete classes may remain ordinary C++HDL subtrees while the
 # surrounding hierarchy is flattened. Preserve their lifecycle calls, and
 # never move structural _assign() setup into generated runtime functions.
 add_test(

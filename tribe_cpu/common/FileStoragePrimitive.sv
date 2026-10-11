@@ -1,6 +1,6 @@
 `default_nettype none
 
-// Physical storage leaf for the CppHDL File module.  The architectural
+// Physical storage leaf for the C++HDL File module.  The architectural
 // register-file behavior (including write-first bypasses) remains in File.h.
 // A validity bitmap avoids resetting the distributed RAM, which would force
 // Vivado to implement the 32x32 array as flip-flops.

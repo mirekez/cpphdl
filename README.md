@@ -1,6 +1,6 @@
-# cpphdl
+# C++HDL
 
-CppHDL Hardware Description Language
+C++HDL Hardware Description Language
 
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
@@ -65,7 +65,7 @@ This work is not subsidized or paid.
 Tribe CPU models and tests are disabled by default. Install a RISC-V GNU
 toolchain under `RISCV_HOME`, prepare the external Spike, Sail,
 `riscv-tests`, `riscv-arch-test`, and `riscv-dv` dependencies, and configure
-CppHDL with both Tribe and CTest enabled:
+C++HDL with both Tribe and CTest enabled:
 
 ```bash
 export RISCV_HOME="$HOME/riscv"

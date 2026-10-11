@@ -175,7 +175,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestImplicitWork...");
 #else
-        std::print("CppHDL TestImplicitWork...");
+        std::print("C++HDL TestImplicitWork...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "implicit_work_test";

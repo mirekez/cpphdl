@@ -419,7 +419,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestCLINT...");
 #else
-        std::print("CppHDL TestCLINT...");
+        std::print("C++HDL TestCLINT...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "clint_test";

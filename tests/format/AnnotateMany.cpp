@@ -234,7 +234,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestAnnotateMany...");
 #else
-        std::print("CppHDL TestAnnotateMany...");
+        std::print("C++HDL TestAnnotateMany...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         _assign();

@@ -14,9 +14,9 @@ create_clock -name l2_clk -period 6.410 -waveform {0.000 3.205} \
 set_clock_uncertainty 0.100 [get_clocks cpu_clk]
 set_clock_uncertainty 0.100 [get_clocks l2_clk]
 
-# The CppHDL CDCs are toggle mailboxes.  Only the D pin of synchronizer stage 1
+# The C++HDL CDCs are toggle mailboxes.  Only the D pin of synchronizer stage 1
 # is an asynchronous sampling point; stage 2 must remain timed in its receiving
-# domain.  ASYNC_REG is already emitted by CppHDL on both stages.
+# domain.  ASYNC_REG is already emitted by C++HDL on both stages.
 set cdc_stage1_cells [get_cells -hierarchical -quiet -filter \
     {ASYNC_REG == TRUE && NAME =~ *1_reg*}]
 set_false_path -to [get_pins -of_objects $cdc_stage1_cells -filter \

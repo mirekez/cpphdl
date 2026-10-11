@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile an authoritative CppHDL value graph; no HDL or external synthesis tool."""
+"""Compile an authoritative C++HDL value graph; no HDL or external synthesis tool."""
 
 import argparse
 import hashlib
@@ -28,7 +28,7 @@ def main(arguments=None):
                         help='bound native function size; ordinary C++ graphs serialize without a giant C++ literal')
     parser.add_argument('--optimize-threads', type=int, default=1,
                         help='native evaluation lanes, including the caller (1..256; default: 1)')
-    parser.add_argument('--top', help='root variable in ordinary CppHDL C++ (no hdlcpp graph mode)')
+    parser.add_argument('--top', help='root variable in ordinary C++HDL C++ (no hdlcpp graph mode)')
     parser.add_argument('--frontend-flag', action='append', default=[], help='C++ parsing flag; use --frontend-flag=-I/path')
     parser.add_argument('source', type=Path)
     add_clock_arguments(parser)
@@ -38,10 +38,10 @@ def main(arguments=None):
     if args.chunk_size < 0:
         parser.error('--chunk-size must not be negative')
     if args.chunk_size and not args.top:
-        parser.error('--chunk-size requires --top for ordinary CppHDL lowering')
+        parser.error('--chunk-size requires --top for ordinary C++HDL lowering')
     clocks = clock_arguments(parser, args)
     if clocks and not args.top:
-        parser.error('clock declarations require --top for ordinary CppHDL lowering')
+        parser.error('clock declarations require --top for ordinary C++HDL lowering')
     output = args.output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         parser.error('output must be a new or empty directory')

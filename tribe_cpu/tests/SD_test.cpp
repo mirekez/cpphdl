@@ -544,7 +544,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestSD...");
 #else
-        std::print("CppHDL TestSD...");
+        std::print("C++HDL TestSD...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "sd_test";

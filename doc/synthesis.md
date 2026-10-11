@@ -1,6 +1,6 @@
-# Synthesis with CppHDL
+# Synthesis with C++HDL
 
-CppHDL has an experimental synthesis backend that converts C++ RTL directly
+C++HDL has an experimental synthesis backend that converts C++ RTL directly
 to technology-independent gate-level Verilog. It uses the same operation graph
 as native graph simulation, with separate hardware mapping and retiming passes.
 It does not generate SystemVerilog and feed it into another synthesis tool:

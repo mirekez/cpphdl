@@ -186,7 +186,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestInheritedHelperNoPackage...");
 #else
-        std::print("CppHDL TestInheritedHelperNoPackage...");
+        std::print("C++HDL TestInheritedHelperNoPackage...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "inherited_helper_no_package_test";

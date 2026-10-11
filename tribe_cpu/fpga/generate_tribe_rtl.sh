@@ -85,7 +85,7 @@ if [[ -z "${converter}" ]]; then
 fi
 
 if [[ -z "${converter}" || ! -x "${converter}" ]]; then
-    echo "Missing CppHDL converter." >&2
+    echo "Missing C++HDL converter." >&2
     echo "Build the cpphdl target or set CPPHDL_CONVERTER to its executable." >&2
     exit 1
 fi

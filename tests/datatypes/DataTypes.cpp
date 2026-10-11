@@ -47,7 +47,7 @@ using namespace cpphdl;
     X(48) X(49) X(50) X(51) X(52) X(53) X(54) X(55) \
     X(56) X(57) X(58) X(59) X(60) X(61) X(62) X(63)
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 class Datatypes : public Module
 {
@@ -266,7 +266,7 @@ public:
 };
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -482,7 +482,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestDatatypes...");
 #else
-        std::print("CppHDL TestDatatypes...");
+        std::print("C++HDL TestDatatypes...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "datatypes_test";

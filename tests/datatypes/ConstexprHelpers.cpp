@@ -158,7 +158,7 @@ int main()
         "packed bit proxy must expose an ordinary logic value");
 
     ok &= expect(!sv_isunknown(packed_array),
-        "two-state CppHDL values must never report unknown bits");
+        "two-state C++HDL values must never report unknown bits");
 
     reg<u<8>> scalar_reg;
     scalar_reg.set(u<8>(0x12));

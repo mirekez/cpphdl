@@ -317,7 +317,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestIOUART direct...");
 #else
-        std::print("CppHDL TestIOUART direct...");
+        std::print("C++HDL TestIOUART direct...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "iouart_test";

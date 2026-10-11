@@ -8,7 +8,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 class LogicBitsWiden : public Module
 {
@@ -53,7 +53,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -192,7 +192,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestLogicBitsWiden...");
 #else
-        std::print("CppHDL TestLogicBitsWiden...");
+        std::print("C++HDL TestLogicBitsWiden...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "logic_bits_widen_test";

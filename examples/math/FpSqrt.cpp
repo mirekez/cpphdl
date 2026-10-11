@@ -228,7 +228,7 @@ public:
 #ifdef VERILATOR
         std::printf("VERILATOR FpSqrt<%zu,%zu>...", W, EW);
 #else
-        std::printf("CppHDL FpSqrt<%zu,%zu>...", W, EW);
+        std::printf("C++HDL FpSqrt<%zu,%zu>...", W, EW);
 #endif
         check(Format::zero(false));
         check(Format::zero(true));

@@ -2827,7 +2827,7 @@
         m.ret = kw == "task" ? "void" : typeText(*node.prototype->returnType);
         mod->functionReturnTypes[m.name] = m.ret;
         if (mod->isPackage) {
-            // CppHDL logic values are constexpr-capable, so a package function can retain
+            // C++HDL logic values are constexpr-capable, so a package function can retain
             // its exact SystemVerilog result width. Converting logic<N> to uint64_t loses
             // that width at cross-package call sites, especially inside concatenations.
             if (m.ret.rfind("logic<", 0) != 0 && m.ret.rfind("u<", 0) != 0) {

@@ -385,7 +385,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestNS16550A direct...");
 #else
-        std::print("CppHDL TestNS16550A direct...");
+        std::print("C++HDL TestNS16550A direct...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "ns16550a_test";

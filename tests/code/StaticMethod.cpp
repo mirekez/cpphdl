@@ -196,7 +196,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestStaticMethod...");
 #else
-        std::print("CppHDL TestStaticMethod...");
+        std::print("C++HDL TestStaticMethod...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "static_method_test";

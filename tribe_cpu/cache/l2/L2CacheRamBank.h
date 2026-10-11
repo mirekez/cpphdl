@@ -5,7 +5,7 @@
 using namespace cpphdl;
 
 // Synchronous one-port storage leaf used by the generated L2 controller.
-// Keeping only the physical RAM shape in a replacement prevents the CppHDL
+// Keeping only the physical RAM shape in a replacement prevents the C++HDL
 // packed bank arrays from being elaborated as hundreds of thousands of FFs.
 template<size_t WIDTH, size_t DEPTH>
 class [[clang::annotate("CPPHDL_REPLACEMENT_FILE=L2CacheRamBankPrimitive.sv;")]]
