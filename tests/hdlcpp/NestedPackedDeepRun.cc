@@ -39,13 +39,16 @@ int main() {
         else return bool((value[bit / 32] >> (bit % 32)) & 1);
     };
     uint32_t random = 0x56781234;
-    for (unsigned sample = 0; sample < 512; ++sample) {
+    for (unsigned sample = 0; sample < 1024; ++sample) {
         hi = sample & 15;
         raw = 0;
         for (unsigned bit = 0; bit < total; ++bit) {
             random ^= random << 13; random ^= random >> 17; random ^= random << 5;
             raw.set(bit, random & 1);
         }
+        // Cover every pair of four-bit lanes at both runtime positions,
+        // followed by randomized full-structure data and field updates.
+        if (sample < 512) raw.bits(15, 8) = sample >> 1;
         ++_system_clock;
 #ifdef NESTED_GRAPH
         setWords(model.raw_i, raw);
@@ -67,7 +70,8 @@ int main() {
         if (uint64_t(dut.lanes_o_out()) != swapped ||
             uint64_t(dut.selected_lane_o_out()) != selected ||
             uint64_t(dut.lane_bits_o_out()) != laneBits ||
-            uint64_t(dut.repeated_lane_o_out()) != selected * 17) {
+            uint64_t(dut.repeated_lane_o_out()) != selected * 17 ||
+            uint64_t(dut.selected_typed_lane_o_out()) != selected) {
             std::fprintf(stderr, "sample=%u lanes=%llu/%llu selected=%llu/%llu bits=%llu/%llu repeat=%llu/%llu\n",
                 sample, (unsigned long long)uint64_t(dut.lanes_o_out()), (unsigned long long)swapped,
                 (unsigned long long)uint64_t(dut.selected_lane_o_out()), (unsigned long long)selected,
@@ -77,11 +81,13 @@ int main() {
         }
 #ifdef NESTED_GRAPH
         if (model.lanes_o[0] != swapped || model.selected_lane_o[0] != selected ||
-            model.lane_bits_o[0] != laneBits || model.repeated_lane_o[0] != selected * 17) return 7;
+            model.lane_bits_o[0] != laneBits || model.repeated_lane_o[0] != selected * 17 ||
+            model.selected_typed_lane_o[0] != selected) return 7;
 #endif
 #ifdef NESTED_RTL
         if (rtl.lanes_o != swapped || rtl.selected_lane_o != selected ||
-            rtl.lane_bits_o != laneBits || rtl.repeated_lane_o != selected * 17) return 8;
+            rtl.lane_bits_o != laneBits || rtl.repeated_lane_o != selected * 17 ||
+            rtl.selected_typed_lane_o != selected) return 8;
 #endif
         for (unsigned bit = 0; bit < total; ++bit) {
             const bool expected = raw.get(bit) ^
@@ -98,5 +104,5 @@ int main() {
 #endif
         }
     }
-    std::printf("512 deep packed-array samples pass: WIDTH=%u\n", TEST_WIDTH);
+    std::printf("1024 deep packed-array samples pass: WIDTH=%u\n", TEST_WIDTH);
 }

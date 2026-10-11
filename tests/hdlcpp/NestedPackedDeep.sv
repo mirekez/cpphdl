@@ -11,7 +11,8 @@ module NestedPackedDeep #(
     output logic [7:0] lanes_o,
     output logic [3:0] selected_lane_o,
     output logic [1:0] lane_bits_o,
-    output logic [7:0] repeated_lane_o
+    output logic [7:0] repeated_lane_o,
+    output logic [3:0] selected_typed_lane_o
 );
     typedef struct packed {
         logic [2:0] head;
@@ -51,4 +52,7 @@ module NestedPackedDeep #(
     assign selected_lane_o = {bytes.lanes[hi_i[0]]};
     assign lane_bits_o = {bytes.lanes[0][1], bytes.lanes[1][2]};
     assign repeated_lane_o = {2{typed_lanes[hi_i[0]]}};
+    // An opaque type parameter can contain multi-bit elements too. Direct
+    // concatenation and replication must use the selected element's width.
+    assign selected_typed_lane_o = {typed_lanes[hi_i[0]]};
 endmodule

@@ -35,7 +35,9 @@ def main():
                 raise AssertionError((command, result.returncode, result.stdout, result.stderr))
             print(result.stdout, end='', flush=True)
 
-        flags = ['-std=c++23', '-O2', '-I' + str(include)]
+        # Graph emitters and synthesis runners also include this public header
+        # in C++17 mode; exercise that compatibility, not only C++23 consumers.
+        flags = ['-std=c++17', '-O2', '-I' + str(include)]
         run([args.cxx, *flags, fixtures / 'GraphConstruction.cc', '-o', work / 'construct'])
         run([work / 'construct', 'storage', 262145], limited=True)
         run([work / 'construct', 'folds', 65536], limited=True)

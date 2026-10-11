@@ -638,11 +638,14 @@
     std::string usableTemplateLogicWidth(std::string width)
     {
         width = foldWidth(std::move(width));
-        if (width.find(".bits(") != std::string::npos ||
-            width.find("'(") != std::string::npos ||
-            width.find('[') != std::string::npos ||
-            width.find(']') != std::string::npos ||
-            width.find(" | ") != std::string::npos) {
+        // Runtime selections inside decltype only identify an instantiated
+        // value type; they do not make type_width<T>() a runtime width.
+        const auto evaluatedWidth = stripDecltypeExpressions(width);
+        if (evaluatedWidth.find(".bits(") != std::string::npos ||
+            evaluatedWidth.find("'(") != std::string::npos ||
+            evaluatedWidth.find('[') != std::string::npos ||
+            evaluatedWidth.find(']') != std::string::npos ||
+            evaluatedWidth.find(" | ") != std::string::npos) {
             return "";
         }
         return width;
