@@ -25,6 +25,17 @@ procedural values and explicit register transactions into the same graph
 backend. The generated C++ and its included headers are authoritative. The
 second stage neither reads the original SV nor reconstructs SV from C++.
 
+For large ordinary C++ designs, `--chunk-size=512` writes a compact
+`model.graph` instead of compiling a giant serialized C++ string literal.
+`tools/cpphdl-graph-emit.cpp` emits bounded native functions and `memories.tsv`,
+which identifies unchanged graph RAMs for host-side ELF preloading.
+Single-lane chunks preserve ordered `random`, `jtag_tick`, and `debug_tick`
+transactions, including pointer outputs used by later chunks. Settling invokes
+none of those callbacks. Parallel implicit callbacks still require explicit
+host boundaries. Module-array port bindings remain hierarchy aliases rather
+than packed values; packed element proxies lower directly to their original
+storage slices, and `std::as_const` retains its argument's storage identity.
+
 Ordinary hdlcpp output includes `__cpphdl_net_STORAGE` metadata for methods
 consisting solely of concurrent continuous assignments. This leaves their
 existing C++ bodies and ABI unchanged. It distinguishes declarative net
@@ -134,7 +145,7 @@ Native emission optionally splits operations into bounded, non-inlined C++
 functions sharing intermediate storage. Values consumed only within their own
 chunk use local scalar temporaries; only values read across chunks or by the
 final state/output phase occupy shared slots. Register and memory updates use
-one simultaneous transaction commit. Chunked emission rejects implicit host
+one simultaneous transaction commit. Parallel emission rejects implicit host
 effects: the Rocket runner explicitly snapshots graph/host ports and invokes
 the existing TSI, DRAM and UART models. Hardware modules execute in the graph.
 

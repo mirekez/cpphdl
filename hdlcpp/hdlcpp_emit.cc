@@ -1005,6 +1005,11 @@
                 return emitCompoundAssignment(b, op);
             }
             if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") {
+                auto width = foldWidth(exprWidth(expr));
+                if (!width.empty() && (!isNumber(width) || std::stoul(width) > 64)) {
+                    return "(" + logicValueExpr(*b.left, width) + " " + op + " " +
+                        logicValueExpr(*b.right, width, rhs) + ")";
+                }
                 return emitNumericExpr(*b.left) + " " + op + " " + emitNumericExpr(*b.right, rhs);
             }
             if (op == "<" || op == "<=" || op == ">" || op == ">=" ||

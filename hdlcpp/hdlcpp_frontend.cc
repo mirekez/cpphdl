@@ -2304,7 +2304,7 @@
                 if (!base.empty() && mod->varNames.count(base) && !wholeNetAssign) {
                     mod->partialAssignDrivenVars.insert(base);
                 }
-                auto rhs = emitExpr(*b.right);
+                auto rhs = emitTypedExpr(*b.right, exprType(*b.left));
                 if (b.right->kind == SyntaxKind::ConditionalExpression && !base.empty() && mod->types.count(base)) {
                     auto targetType = unwrapRegType(mod->types[base]);
                     auto& c = b.right->as<ConditionalExpressionSyntax>();
@@ -4061,7 +4061,7 @@
                     for (const auto& replacement : replacements) {
                         loopVars.insert(replacement.first);
                     }
-                    auto rhs = emitExpr(*b.right);
+                    auto rhs = emitTypedExpr(*b.right, exprType(*b.left));
                     auto writeProof = continuousBitWriteProof(*b.left, *b.right, base);
                     if (b.right->kind == SyntaxKind::ConditionalExpression &&
                         lhs.find(".bits(") == std::string::npos && lhs.find(".get(") == std::string::npos) {

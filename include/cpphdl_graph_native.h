@@ -208,9 +208,10 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         if (!threads || threads > 256) throw std::runtime_error("native graph threads must be between 1 and 256");
         if (threads > 1 && !chunkSize) chunkSize = 512;
         validateClocks();
-        if (chunkSize)
+        const bool hostEffects = std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.hostEffect(); });
+        if (threads > 1)
             for (const auto& node : nodes) if (node.hostEffect())
-                throw std::runtime_error("chunked native evaluation requires explicit host boundaries");
+                throw std::runtime_error("parallel native evaluation requires explicit host boundaries");
         if (clockContract == ClockContract::NamedEdges) {
             for (const auto& node : nodes) if (node.hostEffect())
                 throw std::runtime_error("multiclock host effects are not implemented");
@@ -404,6 +405,13 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             auto slot = sharedSlots.find(index);
             return slot != sharedSlots.end() ? "__cpphdl_values[" + std::to_string(slot->second) + "]" : "value" + std::to_string(index);
         };
+        if (chunkSize && hostEffects) {
+            const unsigned sizes[] = {8, 8, 32, 32, 32, 8, 8, 32, 32};
+            for (auto index : order) if (nodes[index].op == "host_debug_tick")
+                for (unsigned argument = 0; argument < 9; ++argument)
+                    output << (sizes[argument] == 8 ? "unsigned char " : "int ")
+                           << "debug" << index << '_' << argument << " = 0;\n";
+        }
         auto declaration = [&](size_t index) {
             return sharedSlots.count(index) ? "" : "const uint64_t ";
         };
@@ -444,6 +452,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             if (node.op == "state" || node.op == "input" || node.validation()) continue;
             if (chunkSize && chunkOf[index] != previousChunk) {
                 if (chunks) output << "}\n";
+                if (hostEffects) output << "template<bool Commit> ";
                 output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks++ << "() {\n";
                 previousChunk = chunkOf[index];
             }
@@ -468,13 +477,14 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 // may intentionally leave outputs unchanged on a stalled tick.
                 for (unsigned argument = 0; argument < 9; ++argument) {
                     auto type = sizes[argument] == 8 ? "unsigned char" : "int";
-                    output << type << ' ' << prefix << '_' << argument << " = static_cast<"
+                    if (!chunkSize) output << type << ' ';
+                    output << prefix << '_' << argument << " = static_cast<"
                            << type << ">(" << assembly(slice(node.right, offset, sizes[argument])) << ");\n";
                     offset += sizes[argument];
                 }
-                output << "uint64_t value" << index << " = 0;\n"
+                output << (sharedSlots.count(index) ? "" : "uint64_t ") << valueName(index) << " = 0;\n"
                        << "if constexpr(Commit) { if(" << assembly(node.select) << ") {\n"
-                       << "value" << index << " = uint32_t(::debug_tick(";
+                       << valueName(index) << " = uint32_t(::debug_tick(";
                 for (unsigned argument = 0; argument < 9; ++argument) {
                     if (argument) output << ", ";
                     if (pointers[argument]) output << '&';
@@ -490,7 +500,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     nodes[owner(node.left.front())].op != "host_debug_tick" ||
                     node.width != (*argument == 0 || *argument == 6 ? 8u : 32u))
                     throw std::runtime_error("invalid debug_tick output projection");
-                output << "const uint64_t value" << index << " = uint32_t(debug"
+                output << declaration(index) << valueName(index) << " = uint32_t(debug"
                        << owner(node.left.front()) << '_' << *argument << ");\n";
                 continue;
             }
@@ -499,7 +509,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 if (node.width != 64 || node.right.size() != 40 || node.select.size() != 1)
                     throw std::runtime_error("invalid jtag_tick effect layout");
                 auto prefix = "jtag" + std::to_string(index);
-                output << "uint64_t value" << index << " = (" << right << " & 4294967295ull) << 32;\n"
+                output << (sharedSlots.count(index) ? "" : "uint64_t ") << valueName(index)
+                       << " = (" << right << " & 4294967295ull) << 32;\n"
                        << "if constexpr(Commit) { if(" << assembly(node.select) << ") {\n";
                 for (unsigned argument = 0; argument < 4; ++argument)
                     output << "unsigned char " << prefix << '_' << argument << " = static_cast<unsigned char>("
@@ -508,7 +519,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 for (unsigned argument = 0; argument < 4; ++argument)
                     output << '&' << prefix << '_' << argument << ", ";
                 output << "static_cast<unsigned char>(" << assembly(slice(node.right, 32, 8)) << "));\n"
-                       << "value" << index << " = uint64_t(uint32_t(" << prefix << "_result))";
+                       << valueName(index) << " = uint64_t(uint32_t(" << prefix << "_result))";
                 for (unsigned argument = 0; argument < 4; ++argument)
                     output << " | (uint64_t(" << prefix << '_' << argument << ") << " << 32 + 8 * argument << ')';
                 output << ";\n} }\n";
@@ -685,7 +696,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             }
             output << "template<bool Commit> [[gnu::noinline]] void evaluate() {\n";
             for (unsigned index = 0; index < chunks; ++index)
-                output << "__cpphdl_chunk_" << index << "();\n";
+                output << "__cpphdl_chunk_" << index << (hostEffects ? "<Commit>" : "") << "();\n";
         }
         for (const auto& node : nodes) if (node.validation())
             output << "if(Commit && " << assembly(node.left) << ") throw std::runtime_error("

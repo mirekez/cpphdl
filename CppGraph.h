@@ -1,6 +1,7 @@
 #pragma once
 
 #include "include/cpphdl_graph.h"
+#include "CppGraphEnvironment.h"
 #include "hls/AstClocked.h"
 #include "synth/BlackBox.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -49,12 +50,6 @@ class Lowering {
     };
     using Locals = std::map<const ValueDecl*, Item>;
     struct Closure { const LambdaExpr* expression; Item object; Locals locals; std::string scope; };
-    // Branch snapshots share immutable bit vectors. Copying every wide bus at
-    // each nested condition makes frontend memory grow with call depth.
-    struct Environment : std::map<std::string, std::shared_ptr<const Value>> {
-        const Value& at(const std::string& key) const { return *std::map<std::string, std::shared_ptr<const Value>>::at(key); }
-        void set(const std::string& key, Value bits) { (*this)[key] = std::make_shared<const Value>(std::move(bits)); }
-    };
     ASTContext& context;
     Sema& sema;
     Graph graph;
@@ -85,14 +80,16 @@ class Lowering {
     bool reportProgress = std::getenv("CPPHDL_GRAPH_PROGRESS") != nullptr;
     unsigned progressCalls = 0;
     std::chrono::steady_clock::time_point lastProgress = std::chrono::steady_clock::now();
-    void progress() {
-        if (!reportProgress || (++progressCalls & 4095)) return;
+    void progress(const char* phase = nullptr) {
+        if (!reportProgress || (!phase && (++progressCalls & 4095))) return;
         auto now = std::chrono::steady_clock::now();
-        if (now - lastProgress < std::chrono::seconds(60)) return;
+        if (!phase && now - lastProgress < std::chrono::seconds(60)) return;
         lastProgress = now;
         llvm::errs() << "C++ graph progress: nodes=" << graph.nodes.size()
                      << " cells=" << cells.size() << " locals=" << localNames.size()
-                     << " method=" << (stack.empty() ? "root" : stack.back()) << '\n';
+                     << " method=" << (stack.empty() ? "root" : stack.back());
+        if (phase) llvm::errs() << " phase=" << phase;
+        llvm::errs() << '\n';
     }
     unsigned serial = 0;
     unsigned functionSerialBegin = 0;
@@ -486,6 +483,7 @@ class Lowering {
     uint64_t packedOffset(QualType type, const FieldDecl* field) {
         auto record = clean(type)->getAsCXXRecordDecl();
         if ((templateName(type) == "cpphdl::u" || integerWrapperWidth(type)) && field->getNameAsString() == "value") return 0;
+        if (packedArray(type) && field->getNameAsString() == "data") return 0;
         // Handwritten RTL structs have C++ field layout; hdlcpp records carry
         // explicit logical offsets, which must retain their stricter checks.
         if (nativeRecordLayout(record))
@@ -617,10 +615,10 @@ class Lowering {
         auto source = cells.count(item.key) ? cells.at(item.key) : initial(item);
         bool nextState = item.key.ends_with("._next") && registers.count(item.key.substr(0, item.key.size() - 6));
         if ((moduleFields.count(item.key) || nextState) && !activeGetters.empty()) {
-            auto current = cells.find(item.key);
-            if (current == cells.end() && !originalReadVersions.count(item.key)) originalReadVersions.set(item.key, source);
-            auto version = current != cells.end() ? current->second : originalReadVersions.find(item.key)->second;
-            getterReads.at(activeGetters.back())->fields[item.key] = version;
+            auto current = cells.lookup(item.key);
+            if (!current && !originalReadVersions.count(item.key)) originalReadVersions.set(item.key, source);
+            auto version = current ? *current : *originalReadVersions.lookup(item.key);
+            getterReads.at(activeGetters.back())->fields.setShared(item.key, version);
         }
         unsigned count = item.selectedWidth ? item.selectedWidth : width(item.type);
         if (auto offset = number(graph.resolved(item.offset))) return slice(source, *offset, count);
@@ -676,6 +674,7 @@ class Lowering {
     Item boundPort(const Item& portItem) {
         auto result = invokeClosure(bindings.at(portItem.key));
         auto type = payload(portItem.type);
+        if (context.hasSameType(clean(result.type), clean(type)) && containsHierarchy(type)) return result;
         // function_ref<A> converts value-returning bindings to A. Do this
         // before selecting primitives (e.g. logic::bits), not just on write.
         // Pointer-backed bindings already return their pointee Item; retain
@@ -819,13 +818,15 @@ class Lowering {
     }
     void merge(const Value& condition, const Environment& before,
                const Environment& yes, const Environment& no) {
-        std::set<std::string> keys;
-        for (const auto& [key, bits] : yes) keys.insert(key);
-        for (const auto& [key, bits] : no) keys.insert(key);
+        auto keys = yes.changedKeys(before);
+        auto noKeys = no.changedKeys(before);
+        keys.insert(noKeys.begin(), noKeys.end());
+        cells = before;
         for (const auto& key : keys) {
-            auto yesValue = yes.find(key), noValue = no.find(key);
-            if (yesValue != yes.end() && noValue != no.end() && yesValue->second == noValue->second) {
-                cells[key] = yesValue->second;
+            auto yesValue = yes.lookup(key), noValue = no.lookup(key);
+            if (!yesValue && !noValue) { cells.erase(key); continue; }
+            if (yesValue && noValue && *yesValue == *noValue) {
+                cells.setShared(key, *yesValue);
                 continue;
             }
             const auto& fallback = before.count(key) ? before.at(key) : originals.at(key);
@@ -1514,7 +1515,7 @@ class Lowering {
                 auto name = templateName(type);
                 return name == "cpphdl::logic" || name == "cpphdl::logic_bits" ||
                     name == "cpphdl::cat" || name == "cpphdl::u" || name == "cpphdl::reg" ||
-                    name == "cpphdl::array" || name == "std::array" ||
+                    name == "cpphdl::array" || name == "cpphdl::detail::array_packed_ref" || name == "std::array" ||
                     name == "cpphdl::memory" || name == "cpphdl::memory_row" || port(type) || integerWrapperWidth(type).has_value();
             };
             // User-defined value operators carry their own semantics (notably
@@ -1946,7 +1947,7 @@ class Lowering {
         }
         if ((name == "r_or" || name == "r_and" || name == "r_xor") && !receiver.type.isNull())
             return value(graph.unary(name == "r_or" ? "any" : name == "r_and" ? "all" : "parity", read(receiver)), call->getType());
-        if (qualified == "std::move" || qualified == "std::forward") return arguments.at(0);
+        if (qualified == "std::move" || qualified == "std::forward" || qualified == "std::as_const") return arguments.at(0);
         return invoke(function, receiver, arguments);
     }
     static uint64_t maximumUnsigned(const Value& value) {
@@ -2048,9 +2049,9 @@ class Lowering {
             // A function's own locals are unobservable on paths that already
             // returned. Keeping their old value invents an uninitialized SSA
             // dependency. Caller references, state and loop exits stay gated.
-            for (const auto& [key, bits] : after)
+            for (const auto& key : after.changedKeys(before))
                 if (key.starts_with("$local") && std::stoul(key.substr(6)) > functionSerialBegin)
-                    cells[key] = bits;
+                    if (auto bits = after.lookup(key)) cells.setShared(key, *bits);
         }
         return flow;
     }
@@ -2457,9 +2458,11 @@ public:
           }
         };
         collectPorts(object, record, "", false);
+        progress("bind hierarchy");
         structural = true;
         if (auto assign = method(rootObject.type, "_assign")) invoke(assign, rootObject, {});
         structural = false;
+        progress("read outputs");
         for (auto& [name, item] : outputs) graph.ports.push_back({name, read(item), false});
         auto reset = graph.wire(1, scheduledExport ? "reset" : "work_reset", "input");
         graph.ports.push_back({scheduledExport ? "reset" : "work_reset", reset, true});
@@ -2473,6 +2476,7 @@ public:
             graph.writeCpp(output);
             return;
         }
+        progress("work");
         working = true;
         if (auto work = method(rootObject.type, "_work")) invoke(work, rootObject, {value(reset, context.BoolTy)});
         working = false;
@@ -2484,11 +2488,11 @@ public:
         // Do not invent SV clocks or asynchronous events removed by conversion.
         for (const auto& [key, bits] : registers) {
             if (!committed.count(key)) continue;
-            auto next = cells.find(key + "._next");
+            auto next = cells.lookup(key + "._next");
             // Constant-disabled inputs can eliminate every write to a
             // register. Its value-initialized next/current storage stays
             // equal throughout the lifecycle, so committing it is a hold.
-            graph.states.push_back({bits, next == cells.end() ? bits : *next->second, {1}});
+            graph.states.push_back({bits, next ? **next : bits, {1}});
         }
         for (const auto& [key, bits] : blockingStates)
             graph.states.push_back({bits, cells.count(key) ? cells.at(key) : bits, {1}});

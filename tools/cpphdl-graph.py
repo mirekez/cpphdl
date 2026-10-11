@@ -24,6 +24,8 @@ def main(arguments=None):
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--cxx', default=os.environ.get('CXX', 'clang++'))
     parser.add_argument('--runner', type=Path)
+    parser.add_argument('--chunk-size', type=int, default=0,
+                        help='bound native function size; ordinary C++ graphs serialize without a giant C++ literal')
     parser.add_argument('--optimize-threads', type=int, default=1,
                         help='native evaluation lanes, including the caller (1..256; default: 1)')
     parser.add_argument('--top', help='root variable in ordinary CppHDL C++ (no hdlcpp graph mode)')
@@ -33,6 +35,10 @@ def main(arguments=None):
     args = parser.parse_args(arguments)
     if not 1 <= args.optimize_threads <= 256:
         parser.error('--optimize-threads must be between 1 and 256')
+    if args.chunk_size < 0:
+        parser.error('--chunk-size must not be negative')
+    if args.chunk_size and not args.top:
+        parser.error('--chunk-size requires --top for ordinary CppHDL lowering')
     clocks = clock_arguments(parser, args)
     if clocks and not args.top:
         parser.error('clock declarations require --top for ordinary CppHDL lowering')
@@ -40,7 +46,7 @@ def main(arguments=None):
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         parser.error('output must be a new or empty directory')
     manifest = {'backend': 'cpphdl-native-graph', 'status': 'building', 'commands': [],
-                'optimize_threads': args.optimize_threads}
+                'optimize_threads': args.optimize_threads, 'chunk_size': args.chunk_size}
     try:
         source = args.source.resolve(strict=True)
         if source.suffix not in ('.cc', '.cpp', '.cxx'):
@@ -52,6 +58,9 @@ def main(arguments=None):
         include = Path(__file__).resolve().parent.parent / 'include'
         inputs = [source, include / 'cpphdl_graph.h', include / 'cpphdl_graph_native.h',
                   include / 'cpphdl_graph_threads.h'] + ([runner] if runner else [])
+        emitter = Path(__file__).with_name('cpphdl-graph-emit.cpp')
+        if args.chunk_size:
+            inputs.append(emitter)
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         manifest['inputs'] = {str(path): digest(path) for path in inputs}
         output.mkdir(parents=True, exist_ok=True)
@@ -71,7 +80,7 @@ def main(arguments=None):
         if args.top:
             if not args.cpphdl:
                 raise ValueError('--top requires the cpphdl executable')
-            graph_source = output / 'graph.cc'
+            graph_source = output / ('model.graph' if args.chunk_size else 'graph.cc')
             dependencies = output / 'dependencies.d'
             run([compiler, '-std=c++23', '-I' + str(include), *args.frontend_flag,
                  '-MM', '-MT', 'cppgraph', '-MF', str(dependencies), str(source)], 'dependencies')
@@ -85,8 +94,12 @@ def main(arguments=None):
                  *args.frontend_flag], 'cpp-to-graph')
         run([compiler, '-std=c++23', '-O1', '-I' + str(include),
              '-DCPPHDL_NATIVE_THREADS=' + str(args.optimize_threads), str(graph_source),
+             '-o', str(output / 'lower')] if not args.chunk_size else
+            [compiler, '-std=c++23', '-O1', '-I' + str(include), str(emitter),
              '-o', str(output / 'lower')], 'build-graph-compiler')
-        run([str(output / 'lower'), str(output / 'model.h')], 'lower')
+        run([str(output / 'lower'), str(output / 'model.h')] if not args.chunk_size else
+            [str(output / 'lower'), str(graph_source), str(output / 'model.h'),
+             str(args.chunk_size), str(args.optimize_threads), str(output / 'memories.tsv')], 'lower')
         if runner:
             run([compiler, '-std=c++23', '-O2', '-I' + str(output), '-I' + str(include),
                  *(['-pthread'] if args.optimize_threads > 1 else []),

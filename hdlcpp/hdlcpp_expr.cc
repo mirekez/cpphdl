@@ -124,7 +124,7 @@
         if (width.empty()) {
             return "";
         }
-        return "logic<1>((((uint64_t)(static_cast<logic<" + width + ">>(" + value + "))) >> (unsigned)(" + index + ")) & 1ull)";
+        return "logic<1>((static_cast<logic<" + width + ">>(" + value + ")) >> (unsigned)(" + index + "))";
     }
 
     std::string integralStringLiteral(const ExpressionSyntax& expr)
@@ -155,9 +155,24 @@
 
     std::string emitTypedExpr(const ExpressionSyntax& expr, const std::string& type)
     {
-        if (!resolvedTypeWidth(unwrapRegType(type)).empty()) {
+        auto width = foldWidth(resolvedTypeWidth(unwrapRegType(type)));
+        if (!width.empty()) {
             if (auto literal = integralStringLiteral(expr); !literal.empty()) {
                 return literal;
+            }
+            if (!isNumber(width) || std::stoul(width) > 64) {
+                if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+                    return "(" + emitTypedExpr(*expr.as<ParenthesizedExpressionSyntax>().expression, type) + ")";
+                }
+                if (BinaryExpressionSyntax::isKind(expr.kind)) {
+                    auto& binary = expr.as<BinaryExpressionSyntax>();
+                    const auto op = tok(binary.operatorToken);
+                    if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
+                        op == "&" || op == "|" || op == "^") {
+                        return "(logic<" + width + ">(" + emitTypedExpr(*binary.left, type) + ") " +
+                            op + " logic<" + width + ">(" + emitTypedExpr(*binary.right, type) + "))";
+                    }
+                }
             }
         }
         return emitExpr(expr);
@@ -3589,7 +3604,7 @@
                     base = textBase;
                 }
             }
-            auto rhs = emitExpr(*b.right);
+            auto rhs = emitTypedExpr(*b.right, exprType(*b.left));
             auto designatedAggregateRhs = [](const std::string& text) {
                 auto s = trim(text);
                 return s.rfind("{.", 0) == 0 || s.rfind("{ .", 0) == 0;
