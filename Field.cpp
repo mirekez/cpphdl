@@ -1,6 +1,7 @@
 #include "Field.h"
 #include "Debug.h"
 #include "Project.h"
+#include "Module.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -188,7 +189,7 @@ bool printStructFieldArray(std::ofstream& out, Field& field, const std::string& 
     std::string packedDims;
     appendPackedDims(packedDims, shape.unpackedDims);
     appendPackedDims(packedDims, shape.cpphdlDims);
-    out << shape.base.str("", packedDims) << " " << field.name << nameSuffix << ";\n";
+    out << shape.base.str("", packedDims) << " " << escapeIdentifier(field.name) << nameSuffix << ";\n";
 
     field.expr.declSize = shape.base.declSize;
     for (const auto& dim : shape.cpphdlDims) {
@@ -231,7 +232,7 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
         expr.type = Expr::EXPR_TYPE;
         expr.value = "cpphdl_logic";
         bitwidth.flags = Expr::FLAG_SPECVAL;
-        out << expr.str("", std::string("[") + bitwidth.str() + "-1:0]") << " " << name << ";\n";
+        out << expr.str("", std::string("[") + bitwidth.str() + "-1:0]") << " " << escapeIdentifier(name) << ";\n";
     } else
     if (initializer.type != Expr::EXPR_NONE) {
         auto tmp = Expr{name, Expr::EXPR_DECL, {std::move(expr), initializer}};
@@ -244,7 +245,7 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
         out << expr.str() + ";\n";
     } else
     if (expr.type == Expr::EXPR_PARAM) {
-        out << name << nameSuffix << " = " << expr.str() + ";\n";
+        out << escapeIdentifier(name) << nameSuffix << " = " << expr.str() + ";\n";
 //        out << tmp.debug() + "\n";
     } else
     if (array.size()) {
@@ -256,7 +257,7 @@ bool Field::print(std::ofstream& out, std::string nameSuffix, bool inStruct)
             size_t unpackCount = array.size() > packCount ? array.size() - packCount : 0;
             auto packed = sliceDims(array, unpackCount, packCount);
             auto unpacked = sliceDims(array, 0, unpackCount);
-            out << tmp.sub[0].str("", packedDims(packed)) << " " << name << nameSuffix << unpackedDims(unpacked) << ";\n";
+            out << tmp.sub[0].str("", packedDims(packed)) << " " << escapeIdentifier(name) << nameSuffix << unpackedDims(unpacked) << ";\n";
         }
         else if (isCpphdlMemory(tmp.sub[0])) {
             // A C++ array of memories is indexed outer-array first and memory
@@ -307,13 +308,13 @@ bool Field::printPort(std::ofstream& out)
             size_t unpackCount = array.size() > packCount ? array.size() - packCount : 0;
             auto packed = sliceDims(array, unpackCount, packCount);
             auto unpacked = sliceDims(array, 0, unpackCount);
-            out << expr.str(!str_ending(name, "_out") ? "input " : "output ", packedDims(packed)) << " " << name << unpackedDims(unpacked) << "\n";
+            out << expr.str(!str_ending(name, "_out") ? "input " : "output ", packedDims(packed)) << " " << escapeIdentifier(name) << unpackedDims(unpacked) << "\n";
         }
         else {
-            out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << unpackedDims(array) << "\n";
+            out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << escapeIdentifier(name) << unpackedDims(array) << "\n";
         }
         return true;
     }
-    out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << name << "\n";
+    out << expr.str(!str_ending(name, "_out") ? "input " : "output ") << " " << escapeIdentifier(name) << "\n";
     return true;
 }

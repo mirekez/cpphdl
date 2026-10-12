@@ -14,6 +14,9 @@ Verilog with Verilator. No OpenMP runtime is embedded in the hardware.
 | `Private.cpp` | Private scratch and firstprivate input; caller values remain unchanged |
 | `Boundaries.cpp` | Empty and singleton loops, constexpr bound, broadcast array read, nonzero initial reduction value |
 | `Tree.cpp` | Parametric XOR/sum lanes; scaling regression checks logarithmic reduction depth |
+| `Float.cpp` | FP32 +/* reductions, private/firstprivate float, pure templated helpers, fixed loops and guarded neighbor snapshots |
+| `Wide.cpp` | 224-bit typed records, math namespace templates, SV keywords, array aliases, loop declarations and two concurrent workers |
+| `Grid.cpp` | 64x64 (4,096) lanes with a balanced reduction; native/RTL structural scaling |
 | `StateLanes.cpp` | Eight disjoint persistent history registers and read-after-write within each lane |
 
 ## Build and Test
@@ -56,7 +59,7 @@ estimates are not FPGA timing closure.
 - Supported directives: `parallel for`, `parallel for simd`, and `simd`.
 - Bounds and stride are compile-time integers. Induction variables have at most
   32 bits. Ascending/descending loops, `<`, `<=`, `>`, `>=`, `++`, `--`, `+=`,
-  and `-=` are supported. The combined iteration count is at most 256 lanes.
+  and `-=` are supported. The combined iteration count is at most 4,096 lanes.
 - `collapse(1..3)` requires perfectly nested rectangular loops.
 - Private/firstprivate and reduction clauses name automatic locals or function
   arguments, not globals. Each iteration has separate locals and scratch. Firstprivate
@@ -67,19 +70,19 @@ estimates are not FPGA timing closure.
 - Unsigned integer reductions, up to 64 bits, use balanced trees. The initial
   enclosing value is combined exactly once, including when it is nonzero.
   Empty loops leave it unchanged. Unsigned arithmetic retains its C++ wrapping
-  behavior; signed/floating/custom reductions are not supported.
-- Shared writes require a fixed array with direct induction-variable indices
-  that prove lane separation. Array reads/writes are checked for bounds and
+  behavior; FP32 +/* reductions use a registered floating policy; signed/f64/custom reductions remain unsupported.
+- Shared writes require a fixed array with bounded affine indices
+  and constant guards that prove lane separation. Array reads/writes are checked for bounds and
   cross-lane dependencies. These small arrays become direct wires/values, not
   automatically multiported RAM. Larger lane counts cost more arithmetic area.
 - `schedule(static[, constant_chunk])`, `shared`, `default(shared)`, and
   `default(none)` are supported. Host scheduling does not change lane allocation.
 - Runtime bounds, dynamic scheduling, tasks, atomics, critical sections,
-  lastprivate, pointer accesses, function calls in lane bodies, and nested
-  control loops outside `collapse` are rejected. This is a hardware subset of
+  lastprivate, pointer accesses and impure calls are rejected. Pure arithmetic
+  value helpers and canonical fixed control loops are accepted after validation. This is a hardware subset of
   OpenMP, not a general host-thread emulator.
 
-Ordinary unannotated loops keep their existing HLS behavior. A parallel loop
+Fixed canonical loops in a pipeline are elaborated; delayed wrappers retain their sequential loop scheduling. A parallel loop
 does not introduce an FSM back-edge: independent lane calculations can overlap.
 Balanced reductions have logarithmic combine depth rather than a serial
 accumulator dependency. `ClockedPipeline` supplies the streaming handshake and
@@ -87,6 +90,14 @@ stage boundaries; `fit_pipeline_retiming` subdivides the arithmetic further
 using the selected clock-period estimate, while aligning result and tag paths.
 Use `ClockedMemory`/a memory controller separately for variable-latency DDR
 accesses; these pragmas do not invent additional external-memory ports.
+
+FP32 operators and reductions use explicit `HLS_OVERRIDE_BITS` policies.
+Pure helper calls are checked transitively before lane lowering. Constant `if`
+clauses affect host team creation but preserve the full hardware lane count.
+Reconvergent command control paths preserve the activation of their dominating
+fork, with the current fault guard retained. This prevents independent arithmetic
+lanes from acquiring false dependencies through inlined helper branch/return
+predicates. It does not remove real accumulator or memory dependencies.
 
 `StateLanes.cpp` also exercises the existing floating-feedback pipeline
 contract: each invocation calculates from the state available at its input

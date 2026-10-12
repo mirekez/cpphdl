@@ -1,10 +1,12 @@
 include("${TOOLCHAIN}")
-set(reasons "constant integers" "shared scalar write" "constant integers"
-    "schedule.static" "supported directives" "256 hardware lanes" "unsigned integers"
+set(reasons "constant integers" "shared scalar write" "cross-lane read/write dependence"
+    "schedule.static" "supported directives" "4096 hardware lanes" "unsigned integers"
     "unsupported clause" "before reading" "carries state" "before reading"
-    "outside the fixed array" "straight-line" "256 hardware lanes"
-    "supported defaults" "constant integers" "overflows" "fixed arrays" "straight-line"
-    "cross-lane read/write dependence" "bound automatic variable")
+    "outside the fixed array" "constant integers" "4096 hardware lanes"
+    "supported defaults" "constant integers" "overflows" "fixed arrays" "pure helper"
+    "cross-lane read/write dependence" "bound automatic variable"
+    "arithmetic value parameters" "FP32" "recursive pure helpers"
+    "outside the fixed array" "disjoint array writes" "before reading")
 list(GET reasons ${CASE} reason)
 file(REMOVE_RECURSE "${WORK}/generated")
 file(MAKE_DIRECTORY "${WORK}")

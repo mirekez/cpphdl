@@ -116,6 +116,14 @@ inline bool is_systemverilog_keyword(const std::string& token)
     return sv_keywords.find(token) != sv_keywords.end();
 }
 
+// Only these templates encode SV scalar/container syntax. Library records in
+// cpphdl::hls::math must use normal specialization names and packages.
+inline bool isBuiltinTemplate(const std::string& name)
+{
+    return name == "cpphdl_logic" || name == "cpphdl_u" || name == "cpphdl_i"
+        || name == "cpphdl_reg" || name == "cpphdl_array" || name == "cpphdl_memory";
+}
+
 inline std::string escapeIdentifier(const std::string& token)
 {
     if (is_systemverilog_keyword(token)) {

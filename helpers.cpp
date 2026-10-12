@@ -233,7 +233,8 @@ static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD)
     if (!RD || !RD->hasDefinition() || RD->isLambda()) {
         return false;
     }
-    if (RD->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+    if ((RD->getQualifiedNameAsString().find("cpphdl::") == 0
+            && RD->getQualifiedNameAsString().find("cpphdl::hls::math::") != 0) ||
         RD->getQualifiedNameAsString().find("std::") == 0) {
         return false;
     }
@@ -993,6 +994,25 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             }
         }
 
+        // HLS policy classes need not have an RTL struct package. Their
+        // concrete integral constants can be used by an enclosing RTL module
+        // without inventing a package that the policy scheduler never emits.
+        // Module constants remain parameters, preserving RTL specialization.
+        if (owner && Var && Var->isConstexpr() && Var->getType()->isIntegralOrEnumerationType()
+            && !DRE->isValueDependent()) {
+            auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
+            if (!ModuleClass || !owner->isDerivedFrom(ModuleClass)) {
+                clang::Expr::EvalResult evaluated;
+                if (DRE->EvaluateAsInt(evaluated,*ctx)) {
+                    llvm::SmallString<32> text;
+                    const auto& bits=evaluated.Val.getInt();
+                    bits.toString(text,16,false);
+                    cpphdl::Expr literal{"'h"+text.str().str(),cpphdl::Expr::EXPR_NUM};
+                    if (bits.getBitWidth()>32) literal.value=std::to_string(bits.getBitWidth())+literal.value;
+                    return cpphdl::Expr{castTypeName(Var->getType()),cpphdl::Expr::EXPR_CAST,{std::move(literal)}};
+                }
+            }
+        }
         std::string name = VD->getNameAsString();
         if (const auto *ECD = dyn_cast<EnumConstantDecl>(VD)) {  // make enum pkg
             if (const auto *ED = dyn_cast<EnumDecl>(ECD->getDeclContext())) {

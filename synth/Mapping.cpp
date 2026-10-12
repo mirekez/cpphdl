@@ -87,7 +87,10 @@ class Mapper {
         for (auto bit : source.resolved(input)) {
             if (bit < 2) result.push_back(bit);
             else {
-                if (!mapped.count(bit)) throw std::runtime_error("gate mapper encountered unordered input");
+                if (!mapped.count(bit)) {
+                    const auto& producer = source.nodes.at((bit-2)/64-1);
+                    throw std::runtime_error("gate mapper encountered unordered input: " + producer.op + " " + producer.name);
+                }
                 result.push_back(mapped.at(bit));
             }
         }

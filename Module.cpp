@@ -176,7 +176,7 @@ void collectPortTypeImports(Expr type, std::vector<Import>& imports)
     std::string name;
     if (type.type == Expr::EXPR_TYPE) {
         name = type.value;
-    } else if (type.type == Expr::EXPR_TEMPLATE && type.value.rfind("cpphdl_", 0) != 0) {
+    } else if (type.type == Expr::EXPR_TEMPLATE && !isBuiltinTemplate(type.value)) {
         type.traverseIf([](auto& expr) { expr.flags = 0; return false; });
         name = type.str();
     }
@@ -581,6 +581,31 @@ bool isRegisterField(const Field& field)
     });
 }
 
+bool hasClockedMemory(const Module& module)
+{
+    for (const auto& field : module.vars) {
+        Expr expr = field.expr;
+        if (expr.traverseIf([](const Expr& e) {
+                return e.type == Expr::EXPR_TEMPLATE && e.value == "cpphdl_memory";
+            })) return true;
+    }
+    return false;
+}
+
+void printClockMethod(std::ofstream& out, Module& module, const std::string& name, bool resetArgument)
+{
+    if (hasClockedMemory(module)) {
+        if (const auto* method = findMethod(module, name)) {
+            Method copy = *method;
+            auto* saved = currMethod;
+            copy.printInlineClocked(out);
+            currMethod = saved;
+            return;
+        }
+    }
+    out << "            " << escapeIdentifier(name) << (resetArgument ? "(reset);\n" : "();\n");
+}
+
 void printClockBlock(std::ofstream& out, Module& module, const std::string& edge,
     const std::string& clock, const std::string& work,
     const std::unordered_set<std::string>& registers, bool alwaysFf,
@@ -597,27 +622,27 @@ void printClockBlock(std::ofstream& out, Module& module, const std::string& edge
         if (registers.find(field.name) != registers.end()
             && module.onceAccessedRegs.find(field.name) == module.onceAccessedRegs.end()
             && isRegisterField(field)) {
-            out << "        " << field.name << "_tmp = " << field.name << ";\n";
+            out << "        " << (escapeIdentifier(field.name) + "_tmp") << " = " << escapeIdentifier(field.name) << ";\n";
         }
     }
     out << "\n";
     if (!asyncReset.empty()) {
         out << "        if (reset) begin\n";
-        out << "            " << asyncReset << "();\n";
+        printClockMethod(out, module, asyncReset, false);
         out << "        end\n";
         out << "        else begin\n";
-        out << "            " << work << "(reset);\n";
+        printClockMethod(out, module, work, true);
         out << "        end\n";
     }
     else {
-        out << "        " << work << "(reset);\n";
+        printClockMethod(out, module, work, true);
     }
     out << "\n";
     for (auto& field : module.vars) {
         if (registers.find(field.name) != registers.end()
             && module.onceAccessedRegs.find(field.name) == module.onceAccessedRegs.end()
             && isRegisterField(field)) {
-            out << "        " << field.name << " <= " << field.name << "_tmp;\n";
+            out << "        " << escapeIdentifier(field.name) << " <= " << (escapeIdentifier(field.name) + "_tmp") << ";\n";
         }
     }
     out << "    end\n";
@@ -752,7 +777,9 @@ bool Module::print(std::ofstream& out)
 
     for (auto& a : aliases) {
 //        out << a.expr.debug() << "\n";
-        out << "    typedef " << a.expr.str() << " " << a.name << ";\n";
+        out << "    typedef " << a.expr.str() << " " << escapeIdentifier(a.name);
+        for (auto& dimension : a.array) out << "[" << dimension.str() << "]";
+        out << ";\n";
     }
     out << "\n";
 
@@ -794,6 +821,15 @@ bool Module::print(std::ofstream& out)
 
     bool hasWorkNeg = false;
     for (auto& method : methods) {
+        if (hasClockedMemory(*this) &&
+            (method.name == "_work" || method.name == "_work_neg" ||
+             std::any_of(clockProcesses.begin(), clockProcesses.end(), [&](const auto& process) {
+                 return method.name == process.work || method.name == process.workNeg ||
+                     method.name == process.resetPos || method.name == process.resetNeg;
+             }))) {
+            if (method.name == "_work_neg") hasWorkNeg = true;
+            continue; // Inline clock block owns this name and all RAM accesses.
+        }
         if (multipleClocks && std::any_of(clockProcesses.begin(), clockProcesses.end(), [&](const auto& process) {
                 return method.name == process.strobe || method.name == process.strobeNeg;
             })) {
@@ -832,7 +868,7 @@ bool Module::print(std::ofstream& out)
         if (hasWorkNeg) {
             out << "\n";
             out << "    always @(negedge " << clockNames.front() << ") begin\n";
-            out << "        _work_neg(reset);\n";
+            printClockMethod(out, *this, "_work_neg", true);
             out << "    end\n";
         }
     }
