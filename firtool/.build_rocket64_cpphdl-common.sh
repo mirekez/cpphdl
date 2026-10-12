@@ -10,6 +10,7 @@ if [[ -z "${CPPHDL_GRAPH_CXX:-}" && -x "$product_root/../.conda/bin/clang++" ]];
 fi
 backend=${1:?backend required}
 shift
+python3 "$product_root/check_versions.py" "$chipyard_root" --quiet
 [[ -f "$cpphdl_include/cpphdl.h" ]] || {
   echo "error: cpphdl.h not found in $cpphdl_include" >&2; exit 1;
 }

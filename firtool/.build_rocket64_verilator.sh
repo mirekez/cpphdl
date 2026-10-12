@@ -15,7 +15,7 @@ if [ ! -f "$PRODUCT_ROOT/.build_chipyard.sh" ]; then
   echo "error: missing $PRODUCT_ROOT/.build_chipyard.sh" >&2
   exit 1
 fi
-if [ ! -d "$CHIPYARD_ROOT/.git" ]; then
+if [ ! -e "$CHIPYARD_ROOT/.git" ]; then
   echo "error: missing Chipyard checkout at $CHIPYARD_ROOT" >&2
   echo "run $PRODUCT_ROOT/.build_chipyard.sh first" >&2
   exit 1
@@ -39,10 +39,10 @@ step "Generate RocketConfig SystemVerilog"
 CHIPYARD_DISABLE_OPTIONAL_MODULES=1 make_with_sbt_retry \
   make -C sims/verilator CONFIG=RocketConfig verilog -j"$BUILD_JOBS"
 
-step "Build native SystemVerilog/Verilator RocketConfig simulator"
+step "Build SystemVerilog/Verilator RocketConfig simulator"
 build_simulator RocketConfig
 
-step "Build native RV64 matrix-multiply test"
+step "Build RV64 matrix-multiply test for Verilator"
 "$CMAKE_BIN" -S tests -B tests/build -D CMAKE_BUILD_TYPE=Release
 "$CMAKE_BIN" --build tests/build \
   --target rocket64-mmul rocket64-mmul-dump --parallel "$BUILD_JOBS"
@@ -68,7 +68,7 @@ for instruction in addiw divu mul sll sd ld; do
   fi
 done
 
-step "Native Rocket build ready"
+step "Verilator Rocket build ready"
 file "$sim"
 file "$elf"
 printf 'SystemVerilog collateral: %s\n' \

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Check integration patch paths and upgrades without fetching external tools."""
 from pathlib import Path
+import json
 import os
 import subprocess
 import tempfile
 import unittest
+from version_fixture import configure_product, commit
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,6 +43,7 @@ class ChipyardPatchTest(unittest.TestCase):
         for name in ('chipyard_cpphdl.patch', 'chipyard_cpphdl_options.patch',
                      'firrtl_cpphdl.patch'):
             (product / name).write_text(patch)
+        configure_product(product, checkout)
         return repo, checkout, product
 
     def install(self, checkout, product):
@@ -77,6 +80,51 @@ class ChipyardPatchTest(unittest.TestCase):
         self.assertIn('does not apply cleanly', result.stderr)
         self.assertEqual((checkout / 'build.sbt').read_text(), 'user edit\n')
         self.assertFalse((checkout / 'created').exists())
+
+    def test_wrong_revision_stops_before_patching(self):
+        repo, checkout, product = self.fixture()
+        (checkout / 'other-version').write_text('new version\n')
+        revision = commit(checkout)
+        result = self.install(checkout, product)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('required', result.stderr)
+        self.assertEqual((checkout / 'build.sbt').read_text(), 'original\n')
+        self.assertEqual(self.git(repo, 'rev-parse', 'HEAD').stdout.strip(), revision)
+        self.assertFalse((checkout / 'created').exists())
+
+    def test_circt_branch_override_stops_before_patching(self):
+        repo, checkout, product = self.fixture()
+        result = subprocess.run(['bash', str(product / 'install.sh'), str(checkout)],
+                                env={**os.environ, 'CIRCT_CPPHDL_COMMIT': 'master'},
+                                text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('locked revision', result.stderr)
+        self.assertEqual((checkout / 'build.sbt').read_text(), 'original\n')
+
+    def test_dirty_exporter_does_not_bypass_circt_revision(self):
+        repo, checkout, product = self.fixture()
+        circt = self.base / 'circt'
+        circt.mkdir()
+        self.git(circt, 'init', '-q')
+        for path in ('include/circt/Conversion/Exportcpphdl.h',
+                     'lib/Conversion/Exportcpphdl/Exportcpphdl.cpp', 'tools/firtool/firtool.cpp'):
+            target = circt / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('"split-cpphdl"\n')
+        pinned = commit(circt)
+        lock = json.loads((product / 'revisions.json').read_text())
+        lock['circt']['commit'] = pinned
+        (product / 'revisions.json').write_text(json.dumps(lock))
+        (circt / 'other-revision').write_text('new revision\n')
+        actual = commit(circt)
+        (circt / 'tools/firtool/firtool.cpp').write_text('"split-cpphdl" // local changes\n')
+        result = subprocess.run(['bash', str(product / 'install.sh'), str(checkout)],
+                                env={**os.environ, 'CIRCT_CPPHDL_SOURCE_DIR': str(circt)},
+                                text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(pinned, result.stderr)
+        self.assertEqual(self.git(circt, 'rev-parse', 'HEAD').stdout.strip(), actual)
+        self.assertEqual((checkout / 'build.sbt').read_text(), 'original\n')
 
     def test_exporter_lowercase_paths(self):
         repo = self.base / 'exporter'

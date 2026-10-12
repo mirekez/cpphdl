@@ -1,0 +1,34 @@
+{
+  "chipyard": {
+    "commit": "e602d917dcc495c58cabe906535e411707096c9c",
+    "required_submodules": [
+      "generators/rocket-chip",
+      "generators/diplomacy",
+      "generators/hardfloat",
+      "tools/cde",
+      "tools/firrtl2",
+      "tools/fixedpoint",
+      "tools/DRAMSim2",
+      "generators/testchipip",
+      "generators/rocket-chip-blocks",
+      "generators/rocket-chip-inclusive-cache",
+      "generators/boom",
+      "generators/bar-fetchers",
+      "generators/constellation",
+      "generators/icenet",
+      "generators/shuttle",
+      "generators/rerocc",
+      "toolchains/riscv-tools/riscv-isa-sim",
+      "toolchains/libgloss",
+      "tools/install-circt"
+    ],
+    "overrides": {
+      "generators/rocket-chip": "8f1e33b253e3bce741861c0a2e3ba8b7ff85b292",
+      "generators/rocket-chip/dependencies/diplomacy": "fe5e131d4fc8adec14a3ce4a4935bb5c0a269871"
+    }
+  },
+  "circt": {
+    "commit": "481cb60add7358934414a3c6b396f5d29ad934fe",
+    "sdk_version": "firtool-1.75.0"
+  }
+}

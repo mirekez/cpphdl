@@ -6,6 +6,7 @@ prefix=${1:?CIRCT SDK installation directory required}
 if [[ -f "$prefix/lib/cmake/circt/CIRCTConfig.cmake" &&
       -f "$prefix/lib/cmake/mlir/MLIRConfig.cmake" &&
       -f "$prefix/lib/cmake/llvm/LLVMConfig.cmake" ]]; then
+  python3 "$script_dir/check_versions.py" "$prefix" --component sdk --quiet
   echo "Reusing CIRCT SDK: $prefix"
   exit 0
 fi
@@ -17,7 +18,7 @@ fi
   echo "error: set CPPHDL_CIRCT_PREFIX to a compatible CIRCT 1.75.0 SDK" >&2
   exit 1
 }
-version=firtool-1.75.0
+version=$(python3 "$script_dir/check_versions.py" --print-version sdk)
 asset=circt-full-shared-linux-x64.tar.gz
 url="https://github.com/llvm/circt/releases/download/$version/$asset"
 cache="$script_dir/.cache"
@@ -36,6 +37,7 @@ tar -xzf "$archive" --strip-components=1 -C "$stage"
 for package in llvm mlir circt; do
   test -d "$stage/lib/cmake/$package"
 done
+python3 "$script_dir/check_versions.py" "$stage" --component sdk --quiet
 mv -- "$stage" "$prefix"
 # The installed SDK is sufficient; do not retain a second compressed copy.
 rm -- "$archive"

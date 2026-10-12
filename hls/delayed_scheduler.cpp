@@ -369,11 +369,16 @@ class DelayedScheduler {
                 }
                 if (item.write) {
                     storageWriteWidths.insert(bytes(item.type));
-                    auto savedAddress = "scratch.write_address_" + std::to_string(tempCount++);
+                    auto savedAddress = addressCast(address);
                     auto savedData = "scratch.write_value_" + std::to_string(tempCount++);
-                    blockSymbols[savedAddress] = {addressWidth, "write_address", true};
+                    // A known object offset cannot change while data is captured.
+                    // Keep it constant so synthesis can address only its bytes.
+                    if (!location) {
+                        savedAddress = "scratch.write_address_" + std::to_string(tempCount++);
+                        blockSymbols[savedAddress] = {addressWidth, "write_address", true};
+                        prefix.push_back(savedAddress + " = " + addressCast(address) + ";");
+                    }
                     blockSymbols[savedData] = {valueWidth, "write_value", true};
-                    prefix.push_back(savedAddress + " = " + addressCast(address) + ";");
                     prefix.push_back(savedData + " = " + std::to_string(valueWidth) + "'(" + castTo(item.type, data) + ");");
                     auto value = effects.expression(castTo(item.type, data), valueWidth);
                     effects.bind(savedData, value);

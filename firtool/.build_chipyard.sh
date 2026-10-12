@@ -26,11 +26,6 @@ printf '\n==> Reusing Chipyard: %s\n' "$root"
 PRODUCT_ROOT="$product_root"
 ROOT="$root"
 cd "$ROOT"
-TOP_COMMIT="0acc1e1de2d3284bcd4d876956932a013ffe1949"
-ROCKET_COMMIT="8f1e33b253e3bce741861c0a2e3ba8b7ff85b292"
-RISCV_ISA_SIM_COMMIT="9c190a07c6838f6392bafa4ad83acea462c7f759"
-LIBGLOSS_COMMIT="39234a16247ab1fa234821b251f1f1870c3de343"
-INSTALL_CIRCT_COMMIT="3f8dda6e1c1965537b5801a43c81c287bac4eae4"
 
 ROOT="$root"
 cd "$ROOT"
@@ -318,31 +313,7 @@ host_build_env() {
 }
 
 require_clean_enough_checkout() {
-  local current
-  current="$(git rev-parse HEAD)"
-  if [ "$current" = "$TOP_COMMIT" ]; then
-    return 0
-  fi
-
-  if [ "${ALLOW_UNPINNED_CHIPYARD:-0}" = "1" ]; then
-    printf 'warning: using unsupported Chipyard commit %s (expected %s)\n' \
-      "$current" "$TOP_COMMIT" >&2
-    return 0
-  fi
-
-  if git diff --quiet --ignore-submodules -- && \
-     git diff --cached --quiet --ignore-submodules --; then
-    printf 'checking out supported Chipyard commit %s (was %s)\n' \
-      "$TOP_COMMIT" "$current"
-    git checkout "$TOP_COMMIT"
-    return 0
-  fi
-
-  printf 'error: Chipyard checkout is %s, but this build requires %s\n' \
-    "$current" "$TOP_COMMIT" >&2
-  printf 'error: local tracked changes prevent an automatic checkout.\n' >&2
-  printf 'Use a clean checkout, or set ALLOW_UNPINNED_CHIPYARD=1 only when intentionally porting the patches.\n' >&2
-  exit 1
+  python3 "$PRODUCT_ROOT/check_versions.py" "$ROOT" --quiet
 }
 
 enough_checkout() {
@@ -489,56 +460,9 @@ apply_local_fixes() {
 }
 
 init_critical_submodules() {
-  step "Initialize Rocket/Chipyard base submodules"
-  for path in \
-    generators/rocket-chip \
-    generators/diplomacy \
-    generators/hardfloat \
-    tools/cde \
-    tools/firrtl2 \
-    tools/fixedpoint \
-    tools/DRAMSim2 \
-    generators/testchipip \
-    generators/rocket-chip-blocks \
-    generators/rocket-chip-inclusive-cache \
-    generators/boom \
-    generators/bar-fetchers \
-    generators/constellation \
-    generators/icenet \
-    generators/shuttle \
-    generators/rerocc \
-    toolchains/riscv-tools/riscv-isa-sim \
-    toolchains/libgloss \
-    tools/install-circt
-  do
-    prepare_submodule_path "$path"
-  done
-
-  git submodule update --init --recursive \
-    generators/rocket-chip \
-    generators/diplomacy \
-    generators/hardfloat \
-    tools/cde \
-    tools/firrtl2 \
-    tools/fixedpoint \
-    tools/DRAMSim2 \
-    generators/testchipip \
-    generators/rocket-chip-blocks \
-    generators/rocket-chip-inclusive-cache \
-    generators/boom \
-    generators/bar-fetchers \
-    generators/constellation \
-    generators/icenet \
-    generators/shuttle \
-    generators/rerocc \
-    toolchains/riscv-tools/riscv-isa-sim \
-    toolchains/libgloss \
-    tools/install-circt
-
-  git -C generators/rocket-chip checkout "$ROCKET_COMMIT"
-  git -C toolchains/riscv-tools/riscv-isa-sim checkout "$RISCV_ISA_SIM_COMMIT"
-  git -C toolchains/libgloss checkout "$LIBGLOSS_COMMIT"
-  git -C tools/install-circt checkout "$INSTALL_CIRCT_COMMIT"
+  # Prepared checkouts only: never reset a subrepo or replace its local edits.
+  step "Validate pinned Rocket/Chipyard submodules"
+  require_clean_enough_checkout
 
   if [ ! -f tools/cde/cde/src/chipsalliance/rocketchip/config.scala ]; then
     echo "warning: tools/cde source is missing; falling back to generators/rocket-chip/dependencies/cde" >&2
@@ -811,7 +735,7 @@ build_and_run_hello() {
 }
 
 build_and_run_rocket64_mmul() {
-  step "Build and run native RV64 matrix test on RocketConfig"
+  step "Build and run Verilator RV64 matrix test on RocketConfig"
   source_chipyard_env
 
   "$CMAKE_BIN" -S tests -B tests/build -D CMAKE_BUILD_TYPE=Release
@@ -833,16 +757,17 @@ build_and_run_rocket64_mmul() {
     </dev/null 2>&1 | tee "$log"
 
   if ! grep -q '^ROCKET RV64 MMUL TEST PASSED:' "$log"; then
-    echo "error: native RV64 Rocket test did not report PASS" >&2
+    echo "error: Verilator RV64 Rocket test did not report PASS" >&2
     tail -40 "$log" >&2
     exit 1
   fi
 
-  step "Native RV64 smoke-test log"
+  step "Verilator RV64 smoke-test log"
   tail -20 "$log"
 }
 
 main() {
+  require_clean_enough_checkout
   export RISCV="$root/.conda-env/riscv-tools"
   export PATH="$RISCV/bin:$root/.conda-env/bin:$PATH"
   export CHIPYARD_DISABLE_OPTIONAL_MODULES=1

@@ -153,6 +153,15 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME firtool_rocket_backends COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_rocket_backends.py")
     set_tests_properties(firtool_rocket_backends PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_versions COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_versions.py")
+    set_tests_properties(firtool_versions PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_reuse_chipyard COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_reuse_chipyard.py")
+    set_tests_properties(firtool_reuse_chipyard PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_build_all COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_build_all.py")
+    set_tests_properties(firtool_build_all PROPERTIES TIMEOUT 30)
     add_test(NAME firtool_emitter_support COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_emitter.py" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(firtool_emitter_support PROPERTIES TIMEOUT 180)

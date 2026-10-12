@@ -36,7 +36,7 @@ def support_checks(base, cxx):
     randomizer = random.Random(0x4d554c)
     checks = []
     total = 0
-    for width in (1, 8, 31, 32, 63, 64, 65, 96, 127, 128, 129, 256):
+    for width in (1, 8, 31, 32, 63, 64, 65, 96, 127, 128, 129, 256, 512):
         mask = (1 << width) - 1
         cases = [(0, mask), (1, mask), (mask, mask)]
         if width > 64:
@@ -77,6 +77,42 @@ def circt_checks(base, emitter, cxx):
     directory = base / 'split-mul'
     run([emitter, input_file, directory])
     assert 'firtool_cpphdl::multiply<128>' in (directory / 'Multiply.cpp').read_text()
+    # Execute the exported module in both file layouts, including a variadic
+    # comb.mul. This checks port bindings and expression emission, not just helpers.
+    for operands in (2, 3):
+        third_port = ', in %third : i128' if operands == 3 else ''
+        third_operand = ', %third' if operands == 3 else ''
+        input_file.write_text(f'''module {{
+  hw.module @Multiply(in %lhs : i128, in %rhs : i128{third_port}, out result : i128) {{
+    %r = comb.mul %lhs, %rhs{third_operand} : i128
+    hw.output %r : i128
+  }}
+}}
+''')
+        mono = run([emitter, input_file, '--single'])
+        (base / 'multiply-mono.h').write_text(mono)
+        run([emitter, input_file, directory])
+        cases = [(0, (1 << 128)-1, 3), ((1 << 64)-1, (1 << 64)-1, 5),
+                 ((1 << 127)+7, 17, 9)]
+        def literal(value):
+            return f'firtool_cpphdl::constant<128>({{{value & ((1<<64)-1)}ULL,{value >> 64}ULL}})'
+        checks = []
+        for a, b, c in cases:
+            expected = a * b * (c if operands == 3 else 1) & ((1 << 128)-1)
+            checks.append(f'lhs={literal(a)}; rhs={literal(b)}; third={literal(c)}; ++_system_clock; '
+                          f'if(dut.result()!={literal(expected)}) return 1;')
+        for split in (False, True):
+            header = 'Multiply.h' if split else 'multiply-mono.h'
+            third_binding = 'dut.third=[&]{return third;};' if operands == 3 else ''
+            source = base / 'multiply-check.cpp'
+            source.write_text(f'#include "{header}"\nlong _system_clock=0;\nint main(){{\n'
+                              'cpphdl::logic<128> lhs(0),rhs(0),third(0); Multiply dut;\n'
+                              'dut.lhs=[&]{return lhs;}; dut.rhs=[&]{return rhs;};\n' +
+                              third_binding + 'dut._assign();\n' + '\n'.join(checks) + '\n}\n')
+            extra = [directory / 'Multiply.cpp'] if split else []
+            run([cxx, '-std=c++17', '-fno-strict-aliasing', '-I' + str(ROOT / 'include'),
+                 '-I' + str(directory), source, *extra, '-o', base / 'multiply-check'])
+            run([base / 'multiply-check'])
     # Required parameters have no extern declaration defaults; instance bindings
     # must supply their concrete values, including values wider than 64 bits.
     def parameter_ir(second=123456789012345678901234567890):
@@ -110,7 +146,16 @@ def circt_checks(base, emitter, cxx):
     for output in ('--single', base / 'conflict'):
         result = subprocess.run([str(emitter), str(input_file), str(output)], text=True, capture_output=True)
         assert result.returncode != 0 and 'bindings differ' in result.stderr, result.stdout + result.stderr
-    print('PASS: CIRCT multiply lowering, split/monolithic extern metadata and conflicting bindings')
+    input_file.write_text('module { hw.module.extern @Unbound<DEPTH: i32>() }\n')
+    for output in ('--single', base / 'unbound'):
+        result = subprocess.run([str(emitter), str(input_file), str(output)], text=True, capture_output=True)
+        assert result.returncode != 0 and 'concrete integer or string value' in result.stderr, result.stdout + result.stderr
+    input_file.write_text('module { hw.module.extern @Defaults<COUNT: i17 = -2, LABEL: none = "default">() }\n')
+    mono = run([emitter, input_file, '--single'])
+    assert 'cpphdl_external_name = "Defaults"' in mono
+    assert 'constant<17>({131070ULL})' in mono
+    assert 'cpphdl_parameter_LABEL = "default"' in mono
+    print('PASS: executable CIRCT products, extern bindings/defaults and conflict/unbound rejection')
 
 
 def main():

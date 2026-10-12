@@ -6,7 +6,7 @@ chipyard_root=${1:-"$script_dir/chipyard"}
 chipyard_root=$(cd "$chipyard_root" && pwd -P)
 chipyard_patch="$script_dir/chipyard_cpphdl.patch"
 firrtl_patch="$script_dir/firrtl_cpphdl.patch"
-circt_commit=${CIRCT_CPPHDL_COMMIT:-481cb60add7358934414a3c6b396f5d29ad934fe}
+circt_commit=$(python3 "$script_dir/check_versions.py" --print-version circt)
 circt_repo=${CIRCT_CPPHDL_REPO_URL:-https://github.com/llvm/circt.git}
 circt_dir=${CIRCT_CPPHDL_SOURCE_DIR:-"$chipyard_root/tools/circt-cpphdl"}
 
@@ -25,6 +25,16 @@ has_cpphdl_exporter() {
 [[ -f "$chipyard_root/build.sbt" ]] || die "$chipyard_root is not a Chipyard checkout"
 [[ -f "$chipyard_patch" ]] || die "missing $chipyard_patch"
 [[ -f "$firrtl_patch" ]] || die "missing $firrtl_patch"
+[[ "${CIRCT_CPPHDL_COMMIT:-$circt_commit}" == "$circt_commit" ]] ||
+  die "CIRCT_CPPHDL_COMMIT must equal locked revision $circt_commit"
+python3 "$script_dir/check_versions.py" "$chipyard_root" --quiet
+if [[ -e "$circt_dir" || -L "$circt_dir" ]]; then
+  python3 "$script_dir/check_versions.py" "$circt_dir" --component circt --quiet
+fi
+sdk=${CPPHDL_CIRCT_PREFIX:-"$chipyard_root/tools/circt-cpphdl-sdk"}
+if [[ -e "$sdk" || -L "$sdk" ]]; then
+  python3 "$script_dir/check_versions.py" "$sdk" --component sdk --quiet
+fi
 
 apply_once() {
   local repo=$1 patch=$2 label=$3
@@ -79,7 +89,7 @@ apply_once "$chipyard_root" "$chipyard_patch" Chipyard
 apply_once "$chipyard_root" "$script_dir/chipyard_cpphdl_options.patch" "Chipyard runtime options"
 
 step "Reuse or fetch pinned CIRCT/firtool sources"
-if [[ ! -d "$circt_dir/.git" ]]; then
+if [[ ! -e "$circt_dir/.git" ]]; then
   [[ ! -e "$circt_dir" ]] || die "$circt_dir exists but is not a Git checkout"
   mkdir -p "$(dirname "$circt_dir")"
   git init "$circt_dir"
@@ -87,6 +97,7 @@ if [[ ! -d "$circt_dir/.git" ]]; then
   git -C "$circt_dir" fetch --depth=1 origin "$circt_commit"
   git -C "$circt_dir" checkout --detach FETCH_HEAD
 fi
+python3 "$script_dir/check_versions.py" "$circt_dir" --component circt --quiet
 if [[ -n "$(git -C "$circt_dir" status --porcelain)" ]]; then
   if ! git -C "$circt_dir" apply --reverse --check "$firrtl_patch" 2>/dev/null; then
     if ! has_cpphdl_exporter "$circt_dir"; then
@@ -94,11 +105,6 @@ if [[ -n "$(git -C "$circt_dir" status --porcelain)" ]]; then
     fi
     echo "using locally extended firtool C++HDL exporter"
   fi
-else
-  if ! git -C "$circt_dir" cat-file -e "$circt_commit^{commit}" 2>/dev/null; then
-    git -C "$circt_dir" fetch --depth=1 origin "$circt_commit"
-  fi
-  git -C "$circt_dir" checkout --detach "$circt_commit"
 fi
 
 step "Apply direct firtool-to-C++HDL exporter"

@@ -199,6 +199,14 @@ if(HLS_VERILATOR)
         "-DVERILATOR=${HLS_VERILATOR}" -DLOCAL_RAM=ON -DLOCAL_BLOCK=1 -DLOCAL_BYTES=2049
         -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
     set_tests_properties(hls_external_local_large_rtl PROPERTIES TIMEOUT 300)
+    foreach(bytes 255 256 257 264)
+        add_test(NAME hls_external_local_boundary_${bytes}_rtl COMMAND "${CMAKE_COMMAND}"
+            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-local-boundary-${bytes}"
+            "-DVERILATOR=${HLS_VERILATOR}" -DLOCAL_RAM=ON -DLOCAL_BLOCK=1 "-DLOCAL_BYTES=${bytes}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
+        set_tests_properties(hls_external_local_boundary_${bytes}_rtl PROPERTIES TIMEOUT 300)
+    endforeach()
     foreach(flow rtl gates)
         set(synth OFF)
         if(flow STREQUAL "gates")
