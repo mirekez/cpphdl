@@ -994,14 +994,14 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             }
         }
 
-        // HLS policy classes need not have an RTL struct package. Their
-        // concrete integral constants can be used by an enclosing RTL module
-        // without inventing a package that the policy scheduler never emits.
+        // Namespace constants and HLS policy classes need not have an RTL
+        // package. Their concrete integral constants can be used by an RTL
+        // module without inventing an unbound symbol or a missing package.
         // Module constants remain parameters, preserving RTL specialization.
-        if (owner && Var && Var->isConstexpr() && Var->getType()->isIntegralOrEnumerationType()
+        if (Var && Var->isConstexpr() && Var->getType()->isIntegralOrEnumerationType()
             && !DRE->isValueDependent()) {
             auto* ModuleClass = lookupQualifiedRecord("cpphdl::Module");
-            if (!ModuleClass || !owner->isDerivedFrom(ModuleClass)) {
+            if (!owner || !ModuleClass || !owner->isDerivedFrom(ModuleClass)) {
                 clang::Expr::EvalResult evaluated;
                 if (DRE->EvaluateAsInt(evaluated,*ctx)) {
                     llvm::SmallString<32> text;

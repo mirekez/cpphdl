@@ -27,6 +27,14 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    find_program(CONSTANTS_VERILATOR verilator)
+    if(CONSTANTS_VERILATOR)
+        add_test(NAME templates_namespace_constants COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/templates/NamespaceConstantsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}")
+        set_tests_properties(templates_namespace_constants PROPERTIES TIMEOUT 120 LABELS "rtl;templates")
+    endif()
     foreach(fixture WideSliceMatrix ZeroConcatCases)
         string(TOLOWER ${fixture} fixture_name)
         add_test(NAME cpp_graph_${fixture_name} COMMAND "${Python3_EXECUTABLE}"
