@@ -38,7 +38,8 @@ module Check;
   NamespaceConstants #(.OFFSET(9)) dut(.clk(1'b0),.reset(1'b0),.*);
   initial begin
     for (integer i=0;i<4096;i=i+1) begin
-      value_in=32'(i*7919)^32'hfffffe00;
+      value_in=32'(i*7919)^((i%2)?32'h80000000:32'h0);
+      if (i<4) value_in=32'hfffffff8+32'(i); // -8,-7,-6,-5.
       #1;
       if (word_out!==((value_in^32'h80000003)+32'd20)) $fatal(1,"namespace constant / overridable module parameter");
       if (wide_out!==(64'(value_in)+64'hff00000000000003)) $fatal(1,"64-bit namespace constant");
