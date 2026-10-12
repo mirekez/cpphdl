@@ -111,6 +111,22 @@ are still working. RAM writes and register-bank publication wait until every
 lane finishes. This overlaps host work that previously ran after the join.
 One- and two-thread linked models retain their existing synchronous schedules.
 
+Linked graphs can opt into a more aggressive lane-balancing policy at build time:
+
+```sh
+CPPHDL_BALANCE_LANES=1 CPPHDL_OPTIMIZE_THREADS=2 ./.build_rocket64_cpphdl-native-graph.sh
+```
+
+Unset or `0` preserves the default policy, which favors sharing overlapping
+cones when another cone already limits the critical path. `1` spreads sink work
+across lanes and disables host-callback overlap: all lanes join before host
+callbacks run. This can improve CPU utilization, but may duplicate more logic,
+increase generated code and compilation costs, or slow host-heavy designs.
+It is not a guaranteed speedup. Re-link and rebuild to change this setting.
+The environment variable is specific to `cpphdl-graph-link`; standalone
+`cpphdl --native-graph` does not read it. C++ graph emitters can select the same
+policy with `graph.emit(path, chunkSize, threads, hostOverlap, true)`.
+
 The `evaluate_with_host(callback)` continuation may read published output ports
 and update independent external models. It must not change graph inputs,
 clocks, RAM or state, or reenter an executor shared by a model copy. The generated

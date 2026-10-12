@@ -332,7 +332,7 @@ struct std::formatter<FP<W,EW>>
     }
 };
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<typename STYPE, typename DTYPE, size_t LENGTH, bool USE_REG>
 class FpConverter : public Module
@@ -395,7 +395,7 @@ public:
 };
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -727,7 +727,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestFpConverter, MODEL: {}, LENGTH: {}, USE_REG: {}...", STRINGIFY(VERILATOR_MODEL), LENGTH, USE_REG);
 #else
-        std::print("CppHDL TestFpConverter, STYPE: {}, DTYPE: {}, LENGTH: {}, USE_REG: {}...", typeid(STYPE).name(), typeid(DTYPE).name(), LENGTH, USE_REG);
+        std::print("C++HDL TestFpConverter, STYPE: {}, DTYPE: {}, LENGTH: {}, USE_REG: {}...", typeid(STYPE).name(), typeid(DTYPE).name(), LENGTH, USE_REG);
 #endif
         if (debugen_in) {
             std::print("\n");

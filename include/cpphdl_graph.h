@@ -974,8 +974,9 @@ public:
     // Compatibility entry point; implementation lives in the native backend.
     // hostOverlap keeps observable sinks on the caller so an external host
     // continuation can run while workers prepare inactive register state.
+    // balanceLanes spreads sink work instead of compacting overlapping cones.
     void emit(const std::string& path, unsigned chunkSize = 0, unsigned threads = CPPHDL_NATIVE_THREADS,
-              bool hostOverlap = false);
+              bool hostOverlap = false, bool balanceLanes = false);
 
 };
 }

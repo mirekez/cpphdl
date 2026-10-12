@@ -4,7 +4,7 @@ Value conversions written as `static_cast<T>(x)`, `(T)x`, or `T(x)` use the
 same lowering. Integer widths and signedness come from Clang's target ABI,
 including aliases, character types, `long long`, and 128-bit integers. Enum
 casts use the declared underlying type and a generated enum package.
-CppHDL `logic<N>` and `u<N>` conversions preserve their width; symbolic
+C++HDL `logic<N>` and `u<N>` conversions preserve their width; symbolic
 module-parameter widths remain symbolic.
 
 Conversions preserve truncation, signed/unsigned extension, integer

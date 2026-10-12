@@ -8,7 +8,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 class LogicBitsIndexing : public Module
 {
@@ -87,7 +87,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -235,7 +235,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestLogicBitsIndexing...");
 #else
-        std::print("CppHDL TestLogicBitsIndexing...");
+        std::print("C++HDL TestLogicBitsIndexing...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "logic_bits_indexing_test";

@@ -22,6 +22,10 @@ int main(int argc, char** argv) {
                 text.size() > 3 || (threads = std::stoul(text)) < 1 || threads > 256)
                 throw std::runtime_error("native graph threads must be between 1 and 256");
         }
+        const char* balanceArgument = std::getenv("CPPHDL_BALANCE_LANES");
+        if (balanceArgument && std::string(balanceArgument) != "0" && std::string(balanceArgument) != "1")
+            throw std::runtime_error("CPPHDL_BALANCE_LANES must be 0 or 1");
+        const bool balanceLanes = balanceArgument && std::string(balanceArgument) == "1";
         std::ifstream plan(argv[1]);
         if (!plan) throw std::runtime_error("cannot read graph link plan");
         Graph graph;
@@ -139,7 +143,9 @@ int main(int argc, char** argv) {
         if (!chunkSize) throw std::runtime_error("chunk size must be positive");
         // Reserve a caller lane for host work only when at least two lanes
         // remain for register cones. Keep the existing one/two-thread schedules.
-        graph.emit(argv[2], chunkSize, threads, hosts != 0 && threads >= 3);
+        // Distributed sinks must finish before host callbacks: otherwise all
+        // observable cones are pinned to one caller regardless of CPU count.
+        graph.emit(argv[2], chunkSize, threads, hosts != 0 && threads >= 3 && !balanceLanes, balanceLanes);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "graph link: " << error.what() << '\n'; return 1;

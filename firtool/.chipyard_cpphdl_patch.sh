@@ -13,6 +13,15 @@ circt_dir=${CIRCT_CPPHDL_SOURCE_DIR:-"$chipyard_root/tools/circt-cpphdl"}
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "error: $*" >&2; exit 1; }
 
+has_cpphdl_exporter() {
+  local repo=$1
+  # Existing SDK checkouts may retain the previous mixed-case source names.
+  local headers=("$repo/include/circt/Conversion"/Export[Cc]pp[Hh][Dd][Ll].h)
+  local sources=("$repo/lib/Conversion"/Export[Cc]pp[Hh][Dd][Ll]/Export[Cc]pp[Hh][Dd][Ll].cpp)
+  [[ -f "${headers[0]}" && -f "${sources[0]}" && -f "$repo/tools/firtool/firtool.cpp" ]] &&
+    grep -qF '"split-cpphdl"' "$repo/tools/firtool/firtool.cpp"
+}
+
 [[ -f "$chipyard_root/build.sbt" ]] || die "$chipyard_root is not a Chipyard checkout"
 [[ -f "$chipyard_patch" ]] || die "missing $chipyard_patch"
 [[ -f "$firrtl_patch" ]] || die "missing $firrtl_patch"
@@ -45,10 +54,7 @@ apply_once() {
        grep -qF 'CPPHDL_BUILD_JOBS:-2' \
          "$repo/scripts/build-cpphdl-rocket64.sh"; then
     echo "$label patch is already applied (with local extensions)"
-  elif [[ "$label" == firtool ]] &&
-       [[ -f "$repo/include/circt/Conversion/ExportCppHDL.h" ]] &&
-       [[ -f "$repo/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp" ]] &&
-       grep -qF 'OutputSplitCppHDL' "$repo/tools/firtool/firtool.cpp"; then
+  elif [[ "$label" == firtool ]] && has_cpphdl_exporter "$repo"; then
     echo "$label patch is already applied (with local extensions)"
   else
     die "$label patch does not apply cleanly in $repo"
@@ -83,9 +89,7 @@ if [[ ! -d "$circt_dir/.git" ]]; then
 fi
 if [[ -n "$(git -C "$circt_dir" status --porcelain)" ]]; then
   if ! git -C "$circt_dir" apply --reverse --check "$firrtl_patch" 2>/dev/null; then
-    if [[ ! -f "$circt_dir/include/circt/Conversion/ExportCppHDL.h" ]] ||
-       [[ ! -f "$circt_dir/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp" ]] ||
-       ! grep -qF 'OutputSplitCppHDL' "$circt_dir/tools/firtool/firtool.cpp"; then
+    if ! has_cpphdl_exporter "$circt_dir"; then
       die "$circt_dir has unrelated local changes"
     fi
     echo "using locally extended firtool C++HDL exporter"

@@ -256,7 +256,7 @@ public:
     }
 };
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(AVALON_EXAMPLE_NO_MAINFILE)
 
@@ -691,7 +691,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestAvalonEndpoint<DATA={},AVALON={}>...", DATA_WIDTH, AVALON_WIDTH);
 #else
-        std::print("CppHDL TestAvalonEndpoint<DATA={},AVALON={}>...", DATA_WIDTH, AVALON_WIDTH);
+        std::print("C++HDL TestAvalonEndpoint<DATA={},AVALON={}>...", DATA_WIDTH, AVALON_WIDTH);
 #endif
         if (debug) {
             std::print("\n");

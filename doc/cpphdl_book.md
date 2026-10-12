@@ -41,7 +41,7 @@ date: "2026"
     - [3.6 Link the model into a C++ test](#section-3-6)
     - [3.7 Test the buffer and inspect its generated RTL](#section-3-7)
 - [4. Connect Reusable Interface Endpoints](#chapter-4)
-    - [4.1 Declare a CppHDL interface](#section-4-1)
+    - [4.1 Declare a C++HDL interface](#section-4-1)
     - [4.2 Learn the two direction conventions](#section-4-2)
     - [4.3 Divide work between components and subclasses](#section-4-3)
     - [4.4 Define local signals, then connect interfaces](#section-4-4)
@@ -69,7 +69,7 @@ date: "2026"
     - [7.4 Keep the algorithm in C++; choose its execution in the wrapper](#section-7-4)
     - [7.5 Pipeline independent words; keep feedback deliberate](#section-7-5)
     - [7.6 Retain quote fields, not whole packets](#section-7-6)
-    - [7.7 Use HLS without CppHDL synthesis or retiming](#section-7-7)
+    - [7.7 Use HLS without C++HDL synthesis or retiming](#section-7-7)
 - [8. Synthesis and Retiming](#chapter-8)
     - [8.1 Turn the scheduled design into gates](#section-8-1)
     - [8.2 Separate HLS stage placement from timing-driven retiming](#section-8-2)
@@ -111,7 +111,7 @@ and read clocks.
 
 We will implement this familiar RTL task in C++, then run the same description
 as a native executable and convert it to SystemVerilog. The four steps introduce
-the CppHDL constructs needed for each implementation:
+the C++HDL constructs needed for each implementation:
 
 ```text
 Chapter 2: sensor -> threshold/capture stage -> consumer
@@ -124,7 +124,7 @@ Chapter 5 develops and tests a queue whose input and output use different clocks
 We test this queue separately, then explain how to connect it to the earlier
 modules. We do not build a complete two-clock version of the earlier design.
 
-CppHDL describes RTL in C++. A class represents a module, a member object can
+C++HDL describes RTL in C++. A class represents a module, a member object can
 represent a child module, a function can represent combinational logic, and a
 `reg<T>` object stores a value that changes at a clock edge. The converter
 emits SystemVerilog.
@@ -153,7 +153,7 @@ where each tool helps and where the designer still chooses the architecture.
    design rather than assuming a universal speedup.
 
 2. **Generate RTL from C++ type parameters.** `Block<TYPE>` can use the selected
-   type's fields, constants, and supported methods; CppHDL generates the corresponding RTL.
+   type's fields, constants, and supported methods; C++HDL generates the corresponding RTL.
    The benefit is using C++ templates and specialization in the executable
    design, not merely parameterizing a width.
 
@@ -194,9 +194,9 @@ testing with the target synthesis tools.
 
 In Part I we build and test a sample stage, add a memory queue, connect the modules
 through interfaces, and finally implement a two-clock FIFO. Each chapter
-introduces the CppHDL constructs needed for the next step.
+introduces the C++HDL constructs needed for the next step.
 
-| Chapter | Example | CppHDL focus | Check |
+| Chapter | Example | C++HDL focus | Check |
 | --- | --- | --- | --- |
 | 1. Introduction | The development workflow | Native execution and conversion | Build prerequisites |
 | 2. Capture a sample | A one-slot register stage | Ports, comb methods, work/strobe, and native VCD | Capture, hold, and drain |
@@ -224,8 +224,8 @@ across implementations.
 ## 1.4 Prerequisites and notation {#section-1-4}
 
 This book assumes basic SystemVerilog RTL knowledge and familiarity with C++
-classes, functions, and references. Explanations focus on CppHDL's syntax and
-execution rules; no previous CppHDL experience is required.
+classes, functions, and references. Explanations focus on C++HDL's syntax and
+execution rules; no previous C++HDL experience is required.
 
 The API reference is [spec.md](spec.md); coding guidance is
 [best_practice.md](best_practice.md). The repository's
@@ -243,7 +243,7 @@ Part II uses short excerpts from the checked-in HFT example and separate small
 examples for individual HLS features. Its excerpts are not another complete HFT
 implementation. Links identify the full sources and runnable tests.
 
-### Get and build CppHDL
+### Get and build C++HDL
 
 Get the source from [github.com/mirekez/cpphdl](https://github.com/mirekez/cpphdl).
 On Linux, with Git and Conda installed, create the supplied dependency
@@ -276,7 +276,7 @@ Keep the example files together so later chapters can include earlier headers.
 From the repository root, set the working paths:
 
 ```sh
-# Run this setup from the CppHDL repository root.
+# Run this setup from the C++HDL repository root.
 export CPPHDL_SRC="$PWD"
 export CPPHDL="$CPPHDL_SRC/build/cpphdl"
 export BOOK="$CPPHDL_SRC/build/book-check"
@@ -308,7 +308,7 @@ such as `--generated-dir` go before `--`; parsing options such as `-I` go after
 it. `--lint-only` checks generated RTL without running stimulus. Chapter 5 adds
 the Verilator build-and-run flow.
 
-CppHDL emits struct definitions in packages and adds `Predef_pkg.sv` for its
+C++HDL emits struct definitions in packages and adds `Predef_pkg.sv` for its
 supporting declarations. The commands list these before the importing modules.
 
 ## 1.5 Three rules for every module and testbench {#section-1-5}
@@ -379,7 +379,7 @@ are needed for asynchronous reset.
 
 # 2. Capture a Sample {#chapter-2}
 
-This example maps a one-slot RTL stage to CppHDL ports, combs, and registers,
+This example maps a one-slot RTL stage to C++HDL ports, combs, and registers,
 then runs a native test and writes VCD without generating SystemVerilog first.
 
 ## 2.1 The example's behavior {#section-2-1}
@@ -399,7 +399,7 @@ not the clock signal.
 
 ## 2.2 Define when a sample transfers {#section-2-2}
 
-The example uses rising-edge valid/ready handshakes. In CppHDL, parentheses
+The example uses rising-edge valid/ready handshakes. In C++HDL, parentheses
 read a port's current value:
 
 - The stage accepts an input when `valid_in() && ready_out()` is true.
@@ -620,7 +620,7 @@ The checks cover:
 
 ## 2.6 Write the first waveform {#section-2-6}
 
-CppHDL's `VcdFile` reads values from addresses supplied by the testbench.
+C++HDL's `VcdFile` reads values from addresses supplied by the testbench.
 We copy the three outputs into ordinary testbench variables and
 give their addresses to `VcdFile`. We do not pass port objects, comb results,
 or whole `reg<T>` objects. A `reg<T>` object also stores the next value, so its
@@ -754,7 +754,7 @@ The native executable should print `PASS: capture, hold, drain, enable; wrote
 samples.vcd`. The conversion and lint commands check that the design can also
 be represented as RTL. They do not yet run this test against that RTL.
 
-**Check your CppHDL understanding:** Why does changing a bound input require
+**Check your C++HDL understanding:** Why does changing a bound input require
 incrementing `_system_clock`? Why does this test copy outputs into `shown_*`
 variables instead of dumping the whole `reg<T>` object?
 
@@ -767,7 +767,7 @@ while the consumer is paused.
 
 # 3. Absorb Bursts with Memory and Child Modules {#chapter-3}
 
-This chapter adds `memory<>` and child modules. The main CppHDL concern is
+This chapter adds `memory<>` and child modules. The main C++HDL concern is
 preserving simultaneous register and memory updates despite sequential C++ calls.
 
 ## 3.1 The queue behavior used here {#section-3-1}
@@ -799,7 +799,7 @@ That means `DEPTH` rows, each containing **two byte elements**. The second
 argument is not a bit count. This differs from `array<COUNT, TYPE, PACKED>`,
 whose first argument is an element count.
 
-Here `u8` is CppHDL's byte class, and `MemoryQueue<8>` selects eight rows.
+Here `u8` is C++HDL's byte class, and `MemoryQueue<8>` selects eight rows.
 This example demonstrates a numeric template parameter, not the type-based
 specialization discussed in the introduction.
 
@@ -1134,7 +1134,7 @@ The expected native result is `PASS: 128 ordered samples under backpressure`.
 The test checks ordering and observes backpressure. It does not assert exact
 E0/E1/E2 latency or exhaustively test full/empty transitions.
 
-**Check your CppHDL understanding:** What would change if the parent called
+**Check your C++HDL understanding:** What would change if the parent called
 `stage._strobe()` before `queue._work()`? How would you detect that scheduling
 bug even if output ordering remained correct?
 
@@ -1148,17 +1148,17 @@ so developers can connect and extend modules without handling every wire separat
 
 # 4. Connect Reusable Interface Endpoints {#chapter-4}
 
-This chapter replaces scalar connections with CppHDL interfaces and uses
+This chapter replaces scalar connections with C++HDL interfaces and uses
 C++ inheritance to extend a synthesizable endpoint. The native test stays the same.
 
-## 4.1 Declare a CppHDL interface {#section-4-1}
+## 4.1 Declare a C++HDL interface {#section-4-1}
 
 Derive `StreamIf<WIDTH>` from `Interface` and declare its signals with `_PORT`.
 It carries the same streaming protocol as before:
 
 ![Data and valid travel from producer to consumer; ready travels back to the producer.](cpphdl_book_images/schema-valid-ready.png)
 
-CppHDL determines interface directions from the member name's `_in` or `_out`
+C++HDL determines interface directions from the member name's `_in` or `_out`
 suffix instead of a SystemVerilog modport. Both endpoints use the same C++ type.
 
 ## 4.2 Learn the two direction conventions {#section-4-2}
@@ -1188,7 +1188,7 @@ interface field. For example, the source's C++ `source_out.data_in` becomes
 an RTL output named `source_out__data_out`, while `source_out.ready_out`
 becomes an RTL input named `source_out__ready_in`.
 
-The important CppHDL detail is that the source binds `source_out.data_in`
+The important C++HDL detail is that the source binds `source_out.data_in`
 despite its `_in` leaf suffix. Interface reuse itself is not a new RTL capability.
 
 ## 4.3 Divide work between components and subclasses {#section-4-3}
@@ -1493,7 +1493,7 @@ generation discussed in the introduction, beyond selecting a numeric width.
 work and base strobe methods? Which generated instance corresponds to the
 inherited queue member?
 
-Next, we add CppHDL's named clock methods and testbench scheduling for CDC.
+Next, we add C++HDL's named clock methods and testbench scheduling for CDC.
 
 \clearpage
 
@@ -1502,7 +1502,7 @@ Next, we add CppHDL's named clock methods and testbench scheduling for CDC.
 # 5. Cross Clock Domains and Test Both Flows {#chapter-5}
 
 The FIFO uses a conventional Gray-pointer CDC architecture. The new material
-is how CppHDL assigns methods to clocks, how a native test schedules coincident
+is how C++HDL assigns methods to clocks, how a native test schedules coincident
 edges, and how one C++ test can exercise both native and generated RTL models.
 The FIFO is tested separately from chapter 4's adapters.
 
@@ -1515,8 +1515,8 @@ occupancy count with local pointers and synchronized remote pointers; retain
 ## 5.2 Scope of this example {#section-5-2}
 
 The example implements a memory-backed FIFO with two-stage pointer
-synchronizers. CppHDL examples for single-bit, toggle, and mailbox crossings
-are in [TwoClocksCdc.cpp](../tests/cdc/TwoClocksCdc.cpp). CppHDL does not choose
+synchronizers. C++HDL examples for single-bit, toggle, and mailbox crossings
+are in [TwoClocksCdc.cpp](../tests/cdc/TwoClocksCdc.cpp). C++HDL does not choose
 a CDC architecture for you or simulate analog metastability.
 
 ## 5.3 Give every register one clock owner {#section-5-3}
@@ -1597,7 +1597,7 @@ Section 5.7 shows how to declare these clocks to the converter.
 The write method tests `write_release_reg[1]`; the read method tests
 `read_release_reg[1]`. Each keeps its pointers at zero while that bit is zero.
 
-CppHDL passes the `ASYNC_REG` comments into generated RTL attributes, including
+C++HDL passes the `ASYNC_REG` comments into generated RTL attributes, including
 those on the release pipelines. They do not change native simulation behavior.
 
 `read_data_comb_func()` reads memory only when `read_valid_comb_func()` returns
@@ -1876,7 +1876,7 @@ edges; the native model has no falling-edge methods in this example.
 `TestModel` implements [Rule 3](#rule-3-call-work-and-strobe-methods-through-all-hierarchy-to-make-a-clock-tick)
 for both models:
 
-| Step | Native CppHDL | Verilated RTL |
+| Step | Native C++HDL | Verilated RTL |
 | --- | --- | --- |
 | Drive inputs | Update bound variables and advance `_system_clock` | Assign input members and call `eval()` |
 | Observe transfers | Read port getters before work | Read output members before changing clocks |
@@ -2144,11 +2144,11 @@ consumer pauses randomly. Add an assertion that output valid stays asserted
 and output data stays unchanged while the consumer is blocked.
 These are useful extensions, not claims about what the listing already tests.
 
-CppHDL adds no exemption from normal CDC signoff: metastability, placement,
+C++HDL adds no exemption from normal CDC signoff: metastability, placement,
 timing constraints, reset safety, and memory implementation still require
 the usual physical-design checks.
 
-**Check your CppHDL understanding:** Which methods must run when two clocks
+**Check your C++HDL understanding:** Which methods must run when two clocks
 rise together? Which additional testbench calls would asynchronous reset need?
 Why does passing the native test not validate the converter output?
 
@@ -2210,11 +2210,11 @@ choices to the HFT example.
 
 HLS constructs the initial control logic and pipeline. Optional synthesis
 retiming uses delay estimates to adjust register boundaries; chapter 8 covers
-that step. HLS can also emit scheduled SystemVerilog without CppHDL synthesis.
+that step. HLS can also emit scheduled SystemVerilog without C++HDL synthesis.
 
 ## 7.1. HLS modes {#hls-modes}
 
-CppHDL has two HLS execution modes:
+C++HDL has two HLS execution modes:
 
 - **Delayed execution, `ClockedDelayer<T>`:** one invocation runs at a time.
   Each new call sees the preceding call's completed state changes. Use it for
@@ -2470,7 +2470,7 @@ uses delayed scheduling.
 ## 7.2. Memory types {#hls-memory-types}
 
 After choosing how calls execute, choose how their data is accessed.
-CppHDL provides the following storage contracts:
+C++HDL provides the following storage contracts:
 
 1. **Direct register storage:** local objects become register-backed storage
    or individual signals. Accesses do not require a scheduled memory-read
@@ -2563,7 +2563,7 @@ not a guaranteed physical layout. Reset restarts object initialization rather
 than clearing every RAM bit.
 
 Keep the two compilation routes distinct: ordinary HLS SV can retain these
-inferred RAMs for a technology tool. CppHDL's current **generic gate mapper
+inferred RAMs for a technology tool. C++HDL's current **generic gate mapper
 expands memories into registers and muxes**. The block-RAM policy is not yet a
 BRAM-macro mapping option for `--synth`.
 
@@ -2839,7 +2839,7 @@ selects their execution policy by declaring a child:
 cpphdl::hls::ClockedPipeline<HftWordMethods, 4> receiver;
 ```
 
-Include `hls/Clocked.h` to use the wrappers. CppHDL recognizes the wrapper type
+Include `hls/Clocked.h` to use the wrappers. C++HDL recognizes the wrapper type
 and schedules the reachable method bodies from the Clang AST. It does not
 compile them into CPU instructions and then synthesize a processor to run those
 instructions. Local values become signals; values needed across clock
@@ -2922,13 +2922,13 @@ frame's EOF before loading another order, so it cannot replace the descriptor
 while old words still use it. Words within a frame can be consecutive;
 order loading and pipeline draining still create a gap between frames.
 
-## 7.7 Use HLS without CppHDL synthesis or retiming {#section-7-7}
+## 7.7 Use HLS without C++HDL synthesis or retiming {#section-7-7}
 
 HLS alone already replaces a handwritten loop FSM or distributes independent
 calculations among a chosen number of stages. It emits synthesizable
 SystemVerilog which you can inspect, simulate with Verilator, and give to your
 existing FPGA or ASIC flow. This is useful even when a project does not use
-CppHDL's experimental gate mapper or delay estimates.
+C++HDL's experimental gate mapper or delay estimates.
 
 For the checked-in HFT top, ordinary conversion is:
 
@@ -2976,7 +2976,7 @@ The HFT example now has explicit RTL around three scheduled HLS pipelines.
 We want to implement that complete design and determine where additional
 registers are needed for a requested clock period.
 
-CppHDL synthesis exports typed operations, registers, memory accesses, and
+C++HDL synthesis exports typed operations, registers, memory accesses, and
 connections into a shared graph. For an HLS wrapper it exports the **actual
 scheduled implementation**, not the native wrapper that evaluates a C++ method
 as a reference transaction. It can then estimate delays, retime the graph,
@@ -3239,7 +3239,7 @@ removes those requirements.
 Use explicit C++ RTL for cycle-sensitive protocol state. Use delayed HLS for
 ordered methods and memory waits. Use pipeline HLS for independent or
 latency-tolerant calls that need to overlap. Generate ordinary SV when an
-existing technology flow will implement it; add CppHDL synthesis and fit
+existing technology flow will implement it; add C++HDL synthesis and fit
 retiming when you want its graph-based gate implementation and timing-driven
 pipeline construction.
 
@@ -3534,7 +3534,7 @@ Logical row width is not physical bank count. The current shared HLS BRAM
 backend emits eight byte-lane RAMs, even for small workloads. A device mapper
 may use separate physical blocks with unused capacity. Count the mapped RAM
 primitives, not just total bytes divided by a block's advertised capacity.
-CppHDL's generic gate backend instead expands this storage into registers and
+C++HDL's generic gate backend instead expands this storage into registers and
 muxes. Use the appropriate report for the route you actually build.
 
 Avoid declaring several large banks "for future parallelism" before assigning
@@ -3833,7 +3833,7 @@ implementation timing checks.
 
 # Materials and Example Sources {#materials .unnumbered}
 
-All links below point to the CppHDL repository on GitHub. They follow the
+All links below point to the C++HDL repository on GitHub. They follow the
 `main` branch, so source files may change after this edition.
 
 **Book listings, chapters 2-5**
@@ -3894,7 +3894,7 @@ the repository examples below provide complete build and test flows.
 
 **Tool and API references**
 
-- [Repository README](https://github.com/mirekez/cpphdl/blob/main/README.md): obtain, build, and test CppHDL.
+- [Repository README](https://github.com/mirekez/cpphdl/blob/main/README.md): obtain, build, and test C++HDL.
 - [RTL specification](https://github.com/mirekez/cpphdl/blob/main/doc/spec.md) and [best practices](https://github.com/mirekez/cpphdl/blob/main/doc/best_practice.md): RTL APIs and design conventions.
 - [Clocked.h](https://github.com/mirekez/cpphdl/blob/main/hls/Clocked.h): clocked HLS wrapper declarations.
 - [HLS guide](https://github.com/mirekez/cpphdl/blob/main/doc/hls.md): scheduling and memory options.

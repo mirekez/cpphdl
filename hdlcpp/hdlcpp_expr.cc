@@ -124,7 +124,7 @@
         if (width.empty()) {
             return "";
         }
-        return "logic<1>((((uint64_t)(static_cast<logic<" + width + ">>(" + value + "))) >> (unsigned)(" + index + ")) & 1ull)";
+        return "logic<1>((static_cast<logic<" + width + ">>(" + value + ")) >> (unsigned)(" + index + "))";
     }
 
     std::string integralStringLiteral(const ExpressionSyntax& expr)
@@ -155,9 +155,24 @@
 
     std::string emitTypedExpr(const ExpressionSyntax& expr, const std::string& type)
     {
-        if (!resolvedTypeWidth(unwrapRegType(type)).empty()) {
+        auto width = foldWidth(resolvedTypeWidth(unwrapRegType(type)));
+        if (!width.empty()) {
             if (auto literal = integralStringLiteral(expr); !literal.empty()) {
                 return literal;
+            }
+            if (!isNumber(width) || std::stoul(width) > 64) {
+                if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+                    return "(" + emitTypedExpr(*expr.as<ParenthesizedExpressionSyntax>().expression, type) + ")";
+                }
+                if (BinaryExpressionSyntax::isKind(expr.kind)) {
+                    auto& binary = expr.as<BinaryExpressionSyntax>();
+                    const auto op = tok(binary.operatorToken);
+                    if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
+                        op == "&" || op == "|" || op == "^") {
+                        return "(logic<" + width + ">(" + emitTypedExpr(*binary.left, type) + ") " +
+                            op + " logic<" + width + ">(" + emitTypedExpr(*binary.right, type) + "))";
+                    }
+                }
             }
         }
         return emitExpr(expr);
@@ -623,11 +638,14 @@
     std::string usableTemplateLogicWidth(std::string width)
     {
         width = foldWidth(std::move(width));
-        if (width.find(".bits(") != std::string::npos ||
-            width.find("'(") != std::string::npos ||
-            width.find('[') != std::string::npos ||
-            width.find(']') != std::string::npos ||
-            width.find(" | ") != std::string::npos) {
+        // Runtime selections inside decltype only identify an instantiated
+        // value type; they do not make type_width<T>() a runtime width.
+        const auto evaluatedWidth = stripDecltypeExpressions(width);
+        if (evaluatedWidth.find(".bits(") != std::string::npos ||
+            evaluatedWidth.find("'(") != std::string::npos ||
+            evaluatedWidth.find('[') != std::string::npos ||
+            evaluatedWidth.find(']') != std::string::npos ||
+            evaluatedWidth.find(" | ") != std::string::npos) {
             return "";
         }
         return width;
@@ -3589,7 +3607,7 @@
                     base = textBase;
                 }
             }
-            auto rhs = emitExpr(*b.right);
+            auto rhs = emitTypedExpr(*b.right, exprType(*b.left));
             auto designatedAggregateRhs = [](const std::string& text) {
                 auto s = trim(text);
                 return s.rfind("{.", 0) == 0 || s.rfind("{ .", 0) == 0;
@@ -4315,7 +4333,7 @@
                       << " width=" << width << "\n";
         }
         // A type-parameter element can have no foldable width in the generic module.
-        // CppHDL's type_width<T>() remains valid after specialization, so materialize
+        // C++HDL's type_width<T>() remains valid after specialization, so materialize
         // the packed proxy whenever its element type is known instead of emitting `.field`.
         if (elementType.empty()) {
             return {};

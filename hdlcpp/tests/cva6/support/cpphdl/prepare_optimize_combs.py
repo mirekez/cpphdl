@@ -195,7 +195,7 @@ def main() -> int:
         if alias_weights[name] >= args.collection_isolate_definition_bytes
     }
     # Keep the concrete root visible so L1 can flatten its lifecycle. Large
-    # descendants remain ordinary opaque CppHDL subtrees.
+    # descendants remain ordinary opaque C++HDL subtrees.
     opaque_names.discard("cpphdl_opt_t0")
     collection_names = [name for name in alias_names if name != "cpphdl_opt_t0"]
     groups: list[list[str]] = []

@@ -196,7 +196,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestUnionParamAccess...");
 #else
-        std::print("CppHDL TestUnionParamAccess...");
+        std::print("C++HDL TestUnionParamAccess...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "union_param_access_test";

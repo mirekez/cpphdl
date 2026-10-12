@@ -8,7 +8,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 class BlockingOptimize : public Module
 {
@@ -48,7 +48,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -183,7 +183,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestBlockingOptimize...");
 #else
-        std::print("CppHDL TestBlockingOptimize...");
+        std::print("C++HDL TestBlockingOptimize...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "blocking_optimize_test";

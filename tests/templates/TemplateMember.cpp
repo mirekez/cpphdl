@@ -324,7 +324,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestTemplateMember...");
 #else
-        std::print("CppHDL TestTemplateMember...");
+        std::print("C++HDL TestTemplateMember...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "template_member_test";

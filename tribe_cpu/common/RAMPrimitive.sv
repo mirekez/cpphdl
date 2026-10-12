@@ -1,6 +1,6 @@
 `default_nettype none
 
-// Physical storage leaf for Tribe's CppHDL RAM. Cache organization and all
+// Physical storage leaf for Tribe's C++HDL RAM. Cache organization and all
 // cache/CPU control remain generated from C++; this module only presents the
 // synchronous single-address RAM pattern expected by FPGA synthesis tools.
 module RAM #(

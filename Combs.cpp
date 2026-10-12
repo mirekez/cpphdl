@@ -685,7 +685,7 @@ struct ClassInfo {
   bool useTemplatePatternMethods = false;
   bool supportsTemplateArgumentDeduction = true;
   bool typeAlias = false;
-  // Oversized concrete specializations can remain normal CppHDL subtrees.
+  // Oversized concrete specializations can remain normal C++HDL subtrees.
   // Their lifecycle calls are preserved while the surrounding hierarchy is
   // flattened, avoiding semantic instantiation solely for optimization.
   bool opaque = false;
@@ -2360,7 +2360,7 @@ singleStorageAssignmentExpression(const std::string &body,
   }
   // Whole-storage assignment followed by its return is a pure graph value.
   // Recognizing the generated form lets compact projected values be inlined
-  // without materializing their byte-oriented CppHDL storage object.
+  // without materializing their byte-oriented C++HDL storage object.
   return expression;
 }
 
@@ -3914,7 +3914,7 @@ struct CombsOptimizer::Impl {
                 continue;
               }
               if (child->second->type->opaque) {
-                // Opaque subtrees retain their normal CppHDL ports and combs.
+                // Opaque subtrees retain their normal C++HDL ports and combs.
                 // Keep the getter call so function_ref evaluates that subtree
                 // on demand instead of replacing an observable value with zero.
                 output += child->second->alias + "." + method + "()";
@@ -7408,7 +7408,7 @@ struct CombsOptimizer::Impl {
     }
     internal << "#pragma once\n#include <atomic>\n#include <cstddef>\n#include <cstdint>\n#include <limits>\n#include <memory>\n#include <thread>\n#include "
                 "<type_traits>\n#include <unordered_map>\n#include <utility>\n";
-    // Load CppHDL and its standard-library dependencies before changing
+    // Load C++HDL and its standard-library dependencies before changing
     // access control. The root and concrete model headers are then included
     // under the access shim; including seed headers first would lock their
     // private declarations behind include guards before the shim is active.
@@ -8258,7 +8258,7 @@ inline std::uint64_t bit_reverse64(std::uint64_t value) {
         std::filesystem::last_write_time(path, previous.modified);
       }
     }
-    llvm::outs() << "CppHDL comb optimizer: " << instances.size()
+    llvm::outs() << "C++HDL comb optimizer: " << instances.size()
                  << " instances, " << schedule.size() << " scheduled values, "
                  << (threadedCombs ? combThreadCount : 1) << " comb threads, "
                  << componentCount << " independent stage components, "

@@ -1,15 +1,15 @@
 # Native value-graph backend
 
 `cpphdl --native-graph` implements an opt-in simulation representation with
-two inputs: ordinary CppHDL C++ elaborated by Clang, or graph-construction C++
+two inputs: ordinary C++HDL C++ elaborated by Clang, or graph-construction C++
 from the preserved `hdlcpp --native-graph` Slang frontend. Both use the same
-CppHDL graph compiler and a host C++ compiler. **Neither invokes sv2v,
+C++HDL graph compiler and a host C++ compiler. **Neither invokes sv2v,
 Yosys, CXXRTL, or Verilator.** The older callback/L1 path remains available;
 this is a replacement representation, not another callback scheduling pass.
 
 ## Ordinary C++ frontend
 
-`cpphdl --native-graph --top ROOT_VARIABLE` also accepts ordinary CppHDL C++:
+`cpphdl --native-graph --top ROOT_VARIABLE` also accepts ordinary C++HDL C++:
 
 ```sh
 hdlcpp /path/to/Design.sv
@@ -24,6 +24,17 @@ C++ templates inside cpphdl; `CppGraph.h` lowers hardware types, connections,
 procedural values and explicit register transactions into the same graph
 backend. The generated C++ and its included headers are authoritative. The
 second stage neither reads the original SV nor reconstructs SV from C++.
+
+For large ordinary C++ designs, `--chunk-size=512` writes a compact
+`model.graph` instead of compiling a giant serialized C++ string literal.
+`tools/cpphdl-graph-emit.cpp` emits bounded native functions and `memories.tsv`,
+which identifies unchanged graph RAMs for host-side ELF preloading.
+Single-lane chunks preserve ordered `random`, `jtag_tick`, and `debug_tick`
+transactions, including pointer outputs used by later chunks. Settling invokes
+none of those callbacks. Parallel implicit callbacks still require explicit
+host boundaries. Module-array port bindings remain hierarchy aliases rather
+than packed values; packed element proxies lower directly to their original
+storage slices, and `std::as_const` retains its argument's storage identity.
 
 Ordinary hdlcpp output includes `__cpphdl_net_STORAGE` metadata for methods
 consisting solely of concurrent continuous assignments. This leaves their
@@ -134,7 +145,7 @@ Native emission optionally splits operations into bounded, non-inlined C++
 functions sharing intermediate storage. Values consumed only within their own
 chunk use local scalar temporaries; only values read across chunks or by the
 final state/output phase occupy shared slots. Register and memory updates use
-one simultaneous transaction commit. Chunked emission rejects implicit host
+one simultaneous transaction commit. Parallel emission rejects implicit host
 effects: the Rocket runner explicitly snapshots graph/host ports and invokes
 the existing TSI, DRAM and UART models. Hardware modules execute in the graph.
 
@@ -394,7 +405,7 @@ embedded, text-readable graph records contain resolved bit widths, operations,
 connections, ports and state transitions. Keeping these records as data avoids
 creating an enormous C++ AST of template and initializer-list expressions.
 The second stage compiles that C++ program with `cpphdl_graph.h`, executes the
-CppHDL graph optimizer/code generator, and optionally builds the runner with
+C++HDL graph optimizer/code generator, and optionally builds the runner with
 the resulting `model.h`. Original SV, frontend intermediates and netlist
 sidecars are not consulted. The regression deletes its RTL before this stage
 and verifies that a deliberate C++ graph mutation changes simulation outputs.
@@ -410,7 +421,7 @@ and verifies that a deliberate C++ graph mutation changes simulation outputs.
 * Hierarchy ports, slices and concatenations are bit-reference wiring, not
   runtime aggregate conversions. NBA destinations are separate from current
   values; disjoint processes can own disjoint fields of one packed array.
-* The CppHDL compiler resolves wiring, folds constants, shares equivalent
+* The C++HDL compiler resolves wiring, folds constants, shares equivalent
   combinational producers, and schedules only live outputs and next-state
   values. Word-level false cycles are split at bitwise producers; real live
   combinational cycles and incomplete writes fail instead of being guessed.
@@ -1535,7 +1546,7 @@ All build, timing and profiling artifacts should stay outside the checkout.
 
 ### HPDcache upsize wide-write investigation (2026-09-25)
 
-This blocker belongs to CppHDL's C++-to-graph lvalue lowering, not to an inability
+This blocker belongs to C++HDL's C++-to-graph lvalue lowering, not to an inability
 of the ordinary C++ runtime to store or update 128-bit values. No production
 lowering change was made during this investigation.
 

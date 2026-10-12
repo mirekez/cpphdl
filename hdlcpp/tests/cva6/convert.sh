@@ -268,7 +268,7 @@ PY
 # specialization or comb collection. Keep this CVA6-only control in the fixture so
 # the generic hdlcpp converter remains free of test-design workflow policy.
 if [[ "$CPPHDL_CVA6_SKIP_OPTIMIZE" == "1" ]]; then
-    echo "skipped CppHDL specialization and comb optimization"
+    echo "skipped C++HDL specialization and comb optimization"
     exit 0
 fi
 

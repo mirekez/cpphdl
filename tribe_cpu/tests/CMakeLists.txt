@@ -72,7 +72,7 @@ file(WRITE "${TRIBE_RISCV_TOOLCHAIN_RUNNER}"
     "#!/usr/bin/env bash\nset -euo pipefail\n\n"
     "# CTest test-specific ENVIRONMENT properties intentionally replace one another.\n"
     "# Always expose the configured host-tool directory so the conda Verilator\n"
-    "# used to build CppHDL remains available to every native/RTL regression.\n"
+    "# used to build C++HDL remains available to every native/RTL regression.\n"
     "export PATH=\"${TRIBE_HOST_TOOLS_DIR}:\${PATH}\"\n\n")
 file(APPEND "${TRIBE_RISCV_TOOLCHAIN_RUNNER}" [=[
 

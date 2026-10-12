@@ -1,6 +1,6 @@
 # Shared Lowering, Simulation, and Synthesis
 
-CppHDL needs two consumers of the same design semantics: a fast native simulator
+C++HDL needs two consumers of the same design semantics: a fast native simulator
 and a hardware synthesis flow. They should share operation and dependency
 analysis, but must not share an optimization objective or silently change each
 other's clock behavior.
@@ -97,7 +97,7 @@ This is an incremental separation, not a finished abstract synthesis IR:
 
 ## Initial Synthesis Flow
 
-`synth/` implements an experimental consumer of ordinary CppHDL AST lowering:
+`synth/` implements an experimental consumer of ordinary C++HDL AST lowering:
 
 ```sh
 build/cpphdl --synth --top cpphdl_top --module SynthMath \

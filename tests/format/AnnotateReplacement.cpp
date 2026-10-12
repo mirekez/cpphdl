@@ -460,7 +460,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -604,7 +604,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR {}...", label);
 #else
-        std::print("CppHDL {}...", label);
+        std::print("C++HDL {}...", label);
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "annotate_replacement_test";

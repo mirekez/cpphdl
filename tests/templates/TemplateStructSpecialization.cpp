@@ -174,7 +174,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestTemplateStructSpecialization...");
 #else
-        std::print("CppHDL TestTemplateStructSpecialization...");
+        std::print("C++HDL TestTemplateStructSpecialization...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "template_struct_specialization_test";

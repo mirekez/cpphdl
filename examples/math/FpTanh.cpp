@@ -295,7 +295,7 @@ public:
 #ifdef VERILATOR
         std::printf("VERILATOR FpTanh<%zu,%zu>...", W, EW);
 #else
-        std::printf("CppHDL FpTanh<%zu,%zu>...", W, EW);
+        std::printf("C++HDL FpTanh<%zu,%zu>...", W, EW);
 #endif
         check(Format::zero(false));
         check(Format::zero(true));

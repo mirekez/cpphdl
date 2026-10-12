@@ -53,6 +53,19 @@ add_test(NAME hdlcpp_expression_helpers COMMAND bash
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME hdlcpp_wide_select_cpp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/WideSelectChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/wide-select")
+    set_tests_properties(hdlcpp_wide_select_cpp PROPERTIES TIMEOUT 300)
+    if(HDLCPP_WIDTHS_VERILATOR)
+        add_test(NAME hdlcpp_wide_select_verilator COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/WideSelectChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${HDLCPP_WIDTHS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/wide-select")
+        set_tests_properties(hdlcpp_wide_select_verilator PROPERTIES TIMEOUT 300)
+    endif()
     add_test(NAME hdlcpp_byte_string_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ByteStringChecks.py"
         --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"

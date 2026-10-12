@@ -37,7 +37,7 @@ actionable rather than loop-broken STA artifacts.
 
 ## Fixes implemented
 
-1. Added a conventional synchronous `RAMReplacement.sv` and a CppHDL
+1. Added a conventional synchronous `RAMReplacement.sv` and a C++HDL
    replacement annotation. L1 data/tag arrays now infer as RAMB primitives
    instead of very large FF/read-mux structures.
 
@@ -191,7 +191,7 @@ toggle/payload structure must therefore remain part of sign-off review.
 
 Direct C++ checks pass for CSR redirect selection, signed/unsigned iterative
 multiply/divide corner cases, and request/response mailbox payload capture.
-All 18 CppHDL L1 configurations and all six Verilated L1 configurations pass.
+All 18 C++HDL L1 configurations and all six Verilated L1 configurations pass.
 The rebuilt native `csr_time`, `fence`, `trap_ra`, and `sbi_return` CPU tests
 pass with the fetch and final-load-result stages. An actual generated-RTL
 Verilated `trap_ra` run also passes. Aggregate BUILD_TESTING remains blocked by

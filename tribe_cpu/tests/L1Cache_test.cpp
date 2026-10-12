@@ -1000,7 +1000,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestL1Cache<SIZE={},WAYS={},ID={},PORT_BITS={}>...", CACHE_SIZE, WAYS, CACHE_ID, PORT_BITS);
 #else
-        std::print("CppHDL TestL1Cache<SIZE={},WAYS={},ID={},PORT_BITS={}>...", CACHE_SIZE, WAYS, CACHE_ID, PORT_BITS);
+        std::print("C++HDL TestL1Cache<SIZE={},WAYS={},ID={},PORT_BITS={}>...", CACHE_SIZE, WAYS, CACHE_ID, PORT_BITS);
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "l1cache_test";
@@ -1220,7 +1220,7 @@ public:
 
     bool run()
     {
-        std::print("CppHDL TestL1CacheWideRefill<SIZE={},WAYS={},PORT_BITS={}>...", CACHE_SIZE, WAYS, PORT_BITS);
+        std::print("C++HDL TestL1CacheWideRefill<SIZE={},WAYS={},PORT_BITS={}>...", CACHE_SIZE, WAYS, PORT_BITS);
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "l1cache_wide_refill_test";
         _assign();

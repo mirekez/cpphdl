@@ -228,7 +228,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestTemplateDefaultParameter...");
 #else
-        std::print("CppHDL TestTemplateDefaultParameter...");
+        std::print("C++HDL TestTemplateDefaultParameter...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "template_default_parameter_test";

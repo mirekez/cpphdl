@@ -145,7 +145,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestTemplateBaseAliasPackage...");
 #else
-        std::print("CppHDL TestTemplateBaseAliasPackage...");
+        std::print("C++HDL TestTemplateBaseAliasPackage...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "template_base_alias_package_test";

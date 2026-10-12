@@ -27,9 +27,9 @@ execute_process(
 set(diagnostic "${output}${error}")
 
 if(result EQUAL 0)
-    message(FATAL_ERROR "CppHDL unexpectedly accepted ${CASE}")
+    message(FATAL_ERROR "C++HDL unexpectedly accepted ${CASE}")
 endif()
 if(NOT diagnostic MATCHES "${expected}")
     message(FATAL_ERROR
-        "CppHDL failed without the expected ${CASE} diagnostic:\n${diagnostic}")
+        "C++HDL failed without the expected ${CASE} diagnostic:\n${diagnostic}")
 endif()

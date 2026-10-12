@@ -43,14 +43,15 @@ int main(int argc,char**argv) {
  }
  g.ports.push_back({"read",read,false});
  if(named)for(auto&w:g.memoryWrites)w.clock=0;
- g.emit(argv[1],7,std::stoul(argv[2]),std::stoul(argv[3]));
+ g.emit(argv[1],7,std::stoul(argv[2]),std::stoul(argv[3]),argc>5);
 }
 ''')
     run([a.cxx,'-std=c++23','-O1','-I'+str(root/'include'),w/'emit.cpp','-o',w/'emit'])
-    for name,n,overlap in [('serial',1,0),('parallel',3,0),('overlap',3,1)]:
+    for name,n,overlap in [('serial',1,0),('parallel',3,0),('overlap',3,1),('balanced',3,0)]:
         for named in (0,1):
             header = w/(name+('_named' if named else '')+'.h')
-            run([w/'emit',header,n,overlap,named])
+            run([w/'emit',header,n,overlap,named,*(['balanced'] if name=='balanced' else [])])
+            header.write_text(header.read_text().replace('#pragma once', '// '+header.stem, 1))
             if name == 'serial':
                 # Keep full-width reference storage to detect truncation or
                 # promotion mistakes shared by the compact serial/parallel paths.
@@ -69,6 +70,12 @@ int main(int argc,char**argv) {
 #undef cpphdl_native
 #define cpphdl_native overlap_named
 #include "overlap_named.h"
+#undef cpphdl_native
+#define cpphdl_native balanced
+#include "balanced.h"
+#undef cpphdl_native
+#define cpphdl_native balanced_named
+#include "balanced_named.h"
 #undef cpphdl_native
 #include <cassert>
 #include <cstdio>
@@ -115,6 +122,8 @@ struct Work {std::atomic<unsigned> started{0},done{0};std::atomic<bool> release{
 int main() {
  parallel::Model p;cpphdl_native::Model m;check(p);check(m);
  overlap_named::Model named;check<serial_named::Model>(named);
+ balanced::Model distributed;check(distributed);
+ balanced_named::Model distributedNamed;check<serial_named::Model>(distributedNamed);
  // A barrier-driven handshake proves the continuation actually overlaps
  // workers, and throwing from it drains every worker before returning.
  cpphdl::graph_runtime::Threads executor(3,3);Work work;
@@ -129,7 +138,7 @@ int main() {
  });}catch(const std::runtime_error&){threw=true;}
  assert(threw && work.done.load()==2);
  executor.run(&work,lane);assert(work.done.load()==4);
- std::puts("host overlap: mixed-width registers, old-state outputs, RAM ordering, validation rollback, host exceptions, copies and worker drain PASS");
+ std::puts("host overlap and balanced lanes: mixed-width registers, old-state outputs, RAM ordering, validation rollback, host exceptions, copies and worker drain PASS");
 }
 ''')
     run([a.cxx,'-std=c++23','-O2','-pthread','-fsanitize=undefined','-fno-sanitize-recover=all',

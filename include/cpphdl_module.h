@@ -19,7 +19,7 @@ public:
 #ifdef SYNTHESIS
     void assignIf(ModA&& /*modA*/, ModB&& /*modB*/, A&& /*a*/, B&& /*b*/)
     {
-        // CppHDL expands this structural call directly from its AST arguments.
+        // C++HDL expands this structural call directly from its AST arguments.
         // Forwarding references keep indexed module and interface expressions
         // well-formed so Clang does not replace the call with RecoveryExpr.
     }

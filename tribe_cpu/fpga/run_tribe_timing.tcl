@@ -98,7 +98,7 @@ create_clock -name l2_clk -period $l2_period [get_ports l2_clock]
 set_clock_uncertainty 0.200 [get_clocks cpu_clk]
 set_clock_uncertainty 0.200 [get_clocks l2_clk]
 
-# The CppHDL crossings are toggle mailboxes.  Only synchronizer stage 1 is an
+# The C++HDL crossings are toggle mailboxes.  Only synchronizer stage 1 is an
 # asynchronous sampling point; stage 2 remains normally timed in its receiving
 # domain.  The bundled payload registers remain stable until the synchronized
 # toggle is observed, so give those buses a finite placement bound matching the

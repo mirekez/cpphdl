@@ -1,11 +1,11 @@
-# HLS Above CppHDL
+# HLS Above C++HDL
 
 ## Design Boundary
 
-HLS is an experimental superstructure over CppHDL, not a change to the RTL
+HLS is an experimental superstructure over C++HDL, not a change to the RTL
 contract. Keep HLS-specific source, scheduling, allocation policy, and tests
 in `hls/`. Reuse the existing Clang AST and Sema specialization machinery so
-improvements to normal CppHDL parsing remain available to HLS.
+improvements to normal C++HDL parsing remain available to HLS.
 
 **Translate actual `std::` container methods. Do not implement substitute
 containers or select replacement algorithms by container name.** For example,
@@ -547,10 +547,10 @@ Install Clang, libc++ development headers, and libc++abi. CMake checks that
 the HLS compiler can compile, link, and run a vector/map program. Select another
 Clang installation with `-DHLS_CXX=/path/to/clang++`; a nonstandard library
 directory can be supplied with `-DHLS_LIBCXX_LIBRARY_DIR=/path/to/lib`.
-The tests pass that compiler's header search paths explicitly to CppHDL so
+The tests pass that compiler's header search paths explicitly to C++HDL so
 the converter's build-time libstdc++ headers cannot enter the HLS source AST.
 Projects not building HLS examples can set `-DCPPHDL_BUILD_HLS_TESTS=OFF`
-without disabling the ordinary CppHDL tests.
+without disabling the ordinary C++HDL tests.
 
 ```sh
 build/cpphdl --generated-dir build/clocked-map \
@@ -1370,7 +1370,7 @@ libc++ headers, but their unwrapped container members do not opt into the
 `ClockedDelayer<T>` scheduler and are still rejected for RTL emission.
 
 The separate scalar recursion pass in `HLS.cpp` remains available for ordinary
-CppHDL methods: bounded, numbered functions with an explicit terminal method.
+C++HDL methods: bounded, numbered functions with an explicit terminal method.
 It is independent of the clocked-object scheduler's bounded call scheduling;
 neither mechanism emits recursive SystemVerilog or an unbounded runtime stack.
 

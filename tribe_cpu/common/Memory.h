@@ -5,7 +5,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true, int ID = 0>
 class Memory : public Module

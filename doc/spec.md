@@ -1,5 +1,5 @@
 ---
-title: "CppHDL Specification"
+title: "C++HDL Specification"
 author: "Mike Reznikov"
 date: 2026-08-21
 version: "v0.9"
@@ -15,7 +15,7 @@ Content may change significantly before final approval.
 
 # Mapping of SystemVerilog Expressions to C++
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL code should be read as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections are declared in port member initializers or written in the `_assign()` section. This connection setup runs only once, before the work cycle starts, and binds C++ lambdas that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in those static connection contexts.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL code should be read as a direct C++ mapping of synthesizable SystemVerilog RTL. Continuous assignments and module port connections are declared in port member initializers or written in the `_assign()` section. This connection setup runs only once, before the work cycle starts, and binds C++ lambdas that are used later during simulation and SystemVerilog generation. The `_ASSIGNxxx()` macros are only allowed in those static connection contexts.
 
 SystemVerilog (assignments inside a module with 32-bit `out` and one-bit `valid_out` ports):
 
@@ -24,7 +24,7 @@ assign out = a_in + b_in;
 assign valid_out = valid_reg;
 ```
 
-CppHDL:
+C++HDL:
 
 ```cpp
 _PORT(u<32>) out = _ASSIGN(a_in() + b_in());
@@ -36,7 +36,7 @@ void _assign()
 }
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a CppHDL combinational function. Both reference-binding macros take the address of an lvalue; do not pass a temporary, cast result, or by-value function call. `_ASSIGN_COMB()` invokes the comb chain on the first port read in a new `_system_clock` epoch and reuses the cached reference on later reads. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
+&nbsp;&nbsp;&nbsp;&nbsp;Use `_ASSIGN(expr)` for expressions. Use `_ASSIGN_REG(reg_or_signal)` for direct storage bindings such as registers, logic values, memories, or ports whose final object reference is enough. Use `_ASSIGN_COMB(comb_func())` when assigning the result of a C++HDL combinational function. Both reference-binding macros take the address of an lvalue; do not pass a temporary, cast result, or by-value function call. `_ASSIGN_COMB()` invokes the comb chain on the first port read in a new `_system_clock` epoch and reuses the cached reference on later reads. For loop-indexed assignments use `_ASSIGN_I`, `_ASSIGN_REG_I`, `_ASSIGN_COMB_I`, or the indexed forms such as `_ASSIGN_INDEXED((i,j,k), expr)` and `_ASSIGN_REG_INDEXED((i,j,k), object[i][j][k])`.
 
 &nbsp;&nbsp;&nbsp;&nbsp;In the default single-clock flow, positive-edge sequential logic maps into `_work(bool reset)` and `_strobe()`. Negative-edge logic uses `_work_neg(bool reset)` and `_strobe_neg()`. Work methods compute next register values and may contain logic that would be split across several SystemVerilog `always_ff` blocks on the same edge. Multi-clock designs use named work/strobe pairs per clock and edge, as described in the Clock Domain Crossing chapter.
 
@@ -54,7 +54,7 @@ always_ff @(posedge clk) begin
 end
 ```
 
-CppHDL:
+C++HDL:
 
 ```cpp
 reg<u<8>> count_reg;
@@ -75,7 +75,7 @@ void _work(bool reset)
 }
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;SystemVerilog `always_comb` blocks map to CppHDL combinational functions, usually named `*_comb_func()`. They calculate temporary combinational values from current inputs and current register values. The usual style is to store the result in a member variable and return it by reference, as shown in the root examples.
+&nbsp;&nbsp;&nbsp;&nbsp;SystemVerilog `always_comb` blocks map to C++HDL combinational functions, usually named `*_comb_func()`. They calculate temporary combinational values from current inputs and current register values. The usual style is to store the result in a member variable and return it by reference, as shown in the root examples.
 
 SystemVerilog:
 
@@ -86,7 +86,7 @@ always_comb begin
 end
 ```
 
-CppHDL:
+C++HDL:
 
 ```cpp
 bool hit_comb;
@@ -104,7 +104,7 @@ u<32>& read_data_comb_func()
 }
 ```
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL commits registers and memories in the mandatory `_strobe()` method. The testbench calls the top-level `_strobe()` after work evaluation, and each parent explicitly calls its children's strobe methods. Register `.strobe()` calls and memory `.apply()` calls are only allowed in a strobe method, not in `_assign()`, a work method, or comb functions. Multi-clock designs use a separate named strobe method for each clock and edge.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL commits registers and memories in the mandatory `_strobe()` method. The testbench calls the top-level `_strobe()` after work evaluation, and each parent explicitly calls its children's strobe methods. Register `.strobe()` calls and memory `.apply()` calls are only allowed in a strobe method, not in `_assign()`, a work method, or comb functions. Multi-clock designs use a separate named strobe method for each clock and edge.
 
 ```cpp
 void _strobe()
@@ -117,17 +117,17 @@ void _strobe()
 
 # Introduction
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL is a C++ hardware definition language extension for digital integrated circuit development, designed for two purposes:
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL is a C++ hardware definition language extension for digital integrated circuit development, designed for two purposes:
 
 1. Building a full cycle of digital RTL development and testing using the C++ language
 2. Executing cycle-accurate RTL directly as native C++, with explicit next-state computation and register commits
 
-&nbsp;&nbsp;&nbsp;&nbsp;Synthesizable CppHDL describes register-to-register logic
+&nbsp;&nbsp;&nbsp;&nbsp;Synthesizable C++HDL describes register-to-register logic
 that maps to SystemVerilog. Earlier behavioral C++ sketches need not be
 synthesizable; they must be refined into supported RTL constructs before conversion.
-This live CppHDL to SystemVerilog conversion makes it possible to
+This live C++HDL to SystemVerilog conversion makes it possible to
 
-* Connect CppHDL teams to classical verification and testing teams
+* Connect C++HDL teams to classical verification and testing teams
 * Deliver SV RTL to fabrication processes and tools or third-party companies
 
 &nbsp;&nbsp;&nbsp;&nbsp;The main benefits of using C++ for RTL development are replacing slow **simulation**
@@ -137,7 +137,7 @@ The following properties of the C++ language provide a strong foundation for the
 * Ability to use many professional IDEs and tools for development and debugging, including support for large project management
 * C++ is one of the most popular and powerful programming languages in the world, with an extremely wide community
 * C++ is precisely understood language by modern AI models and extremely useful in both rapid hardware verification and developmet
-* CppHDL makes many of C++ developers accessible for chipmaking industry
+* C++HDL makes many of C++ developers accessible for chipmaking industry
 * C++ is extremely fast in compilation and execution
 * It is free and does not require paying for instances
 * **Build large, complex multithreaded or cluster-based RTL simulations.** Use
@@ -152,17 +152,17 @@ The following properties of the C++ language provide a strong foundation for the
   register-to-register logic. Keep the sketch as a reference for tests. This
   refinement is a design task, not automatic RTL conversion.
 
-&nbsp;&nbsp;&nbsp;&nbsp;RTL modeling using CppHDL includes verification and testing, providing the power and speed of
+&nbsp;&nbsp;&nbsp;&nbsp;RTL modeling using C++HDL includes verification and testing, providing the power and speed of
 the C++ language for modeling digital signaling and digital system interaction.
 It makes the verification process simpler, more flexible, faster, and purely programmatic.
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL generates pure SystemVerilog output that is mostly a reflection of the C++ source, providing line-to-line visibility.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL generates pure SystemVerilog output that is mostly a reflection of the C++ source, providing line-to-line visibility.
 It is even possible to apply patches synchronously to both RTL representations during finalization.
 Generated SystemVerilog files can be frozen at any moment and used as the main source code for the next stage of the ASIC/FPGA production process.
 
 \newpage
 
-## Who is CppHDL for
+## Who is C++HDL for
 
 * IC development AI Agent's shepherds (agent does 100 times more iterations per day and understands C++ language better)
 * Digital IC development teams (ASIC, IP, libraries, FPGA) - for faster development and testing of complex digital designs, free of charge
@@ -173,26 +173,26 @@ Generated SystemVerilog files can be frozen at any moment and used as the main s
 
 ## What is the difference from other C++ to Verilog products
 
-* CppHDL is not HLS; it is a representation of SystemVerilog, register to register and clock to clock, completely repeating model behavior line by line
-* A CppHDL module is a simple single-process activity without waits for synchronization, notifications, `yield()`, streams, or cooperative multitasking
+* C++HDL is not HLS; it is a representation of SystemVerilog, register to register and clock to clock, completely repeating model behavior line by line
+* A C++HDL module is a simple single-process activity without waits for synchronization, notifications, `yield()`, streams, or cooperative multitasking
 
 ## Limitations
 
-* CppHDL models digital RTL with ordinary C++ statements. Register writes use `._next` and are committed by `.strobe()`; memory writes are deferred until `.apply()`. Arbitrary event-driven SystemVerilog processes and delays are not C++ syntax.
+* C++HDL models digital RTL with ordinary C++ statements. Register writes use `._next` and are committed by `.strobe()`; memory writes are deferred until `.apply()`. Arbitrary event-driven SystemVerilog processes and delays are not C++ syntax.
 * Multi-clock RTL and common digital CDC structures are supported, but analog behavior, physical implementation, and timing constraints require external CDC and implementation tools
 * Timing- or power-critical sections should be isolated at the architectural level
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL is intended to bring ease and speed to the development of various digital circuits such as controllers,
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL is intended to bring ease and speed to the development of various digital circuits such as controllers,
 multiplexers, cache and memory functions, mathematical functions, digital data processing, transmitting circuits, etc.
 
 ## Requirements
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL is delivered in two parts:
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL is delivered in two parts:
 
-* C++ headers that contain definitions of CppHDL datatypes
-* A conversion/linter tool that provides CppHDL to SystemVerilog conversion
+* C++ headers that contain definitions of C++HDL datatypes
+* A conversion/linter tool that provides C++HDL to SystemVerilog conversion
 
-&nbsp;&nbsp;&nbsp;&nbsp;Since CppHDL works as a reflection of the SystemVerilog RTL model, a strong understanding of SystemVerilog modeling techniques is required,
+&nbsp;&nbsp;&nbsp;&nbsp;Since C++HDL works as a reflection of the SystemVerilog RTL model, a strong understanding of SystemVerilog modeling techniques is required,
 in particular:
 
 * Synchronous logic digital circuits
@@ -202,16 +202,16 @@ in particular:
 
 \newpage
 
-# CppHDL syntax
+# C++HDL syntax
 
-&nbsp;&nbsp;&nbsp;&nbsp;A CppHDL source file can be written as an `.h` header or a `.cpp` object file.
+&nbsp;&nbsp;&nbsp;&nbsp;A C++HDL source file can be written as an `.h` header or a `.cpp` object file.
 Each header file should describe a module or auxiliary information such as datatypes, constants, interfaces, inline function definitions, etc.
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL provides the ability to use C++ structures and custom datatypes in order to build
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL provides the ability to use C++ structures and custom datatypes in order to build
 a comfortable and consistent ecosystem for project development. All types and constants are translated into
 SystemVerilog datatypes during the conversion process.
 
-&nbsp;&nbsp;&nbsp;&nbsp;The following example shows appropriate usage of C++ defines and structures in CppHDL.
+&nbsp;&nbsp;&nbsp;&nbsp;The following example shows appropriate usage of C++ defines and structures in C++HDL.
 
 ```cpp
 #pragma once
@@ -323,7 +323,7 @@ public:
 In more complex situations, it is recommended to initialize output ports in a special *\_assign*() function.
 Input ports can be assigned an explicit *\_ASSIGN(0)* tie-off when the surrounding native simulation does not provide a source.
 
-&nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus interface between a CppHDL module and a third-party SV module,
+&nbsp;&nbsp;&nbsp;&nbsp;**NOTE!** To build a complex bus interface between a C++HDL module and a third-party SV module,
 use packed *structs* to achieve proper `<8`bit fields packing.
 
 ## Clock and reset
@@ -341,7 +341,7 @@ use packed *structs* to achieve proper `<8`bit fields packing.
 &nbsp;&nbsp;&nbsp;&nbsp;Registers are of type **reg`<TYPE>`** and contain value, updated on strobing clock edge. To access next value of a register the *reg_name.\_next* property is used.
 It is recommended to give register names with a *reg* suffix in case when register is used as output port or in parent modules.
 
-* Registers can carry class/struct types, including CppHDL scalars and arrays. Because `reg<T>` inherits from `T`, native scalars such as `uint32_t` are not valid register base types; use `u32` or `logic<32>`.
+* Registers can carry class/struct types, including C++HDL scalars and arrays. Because `reg<T>` inherits from `T`, native scalars such as `uint32_t` are not valid register base types; use `u32` or `logic<32>`.
 
 * Combinational variable can be of any type.
 
@@ -368,7 +368,7 @@ Also, `_strobe()` should be called for each nested instance of the class.
 Forgotten registers will be reported by *cpphdl* tool.
 In a multi-clock design, each register or memory must be committed by exactly one clock-and-edge-specific strobe method.
 
-During conversion, CppHDL checks for missing register `.strobe()`, memory
+During conversion, C++HDL checks for missing register `.strobe()`, memory
 `.apply()`, child `_work()`, and child `_strobe()` calls. Each missing call
 produces a four-line `MISSED CALL FOUND` warning with the module, member, and
 source location. Conversion continues so that you can inspect all warnings.
@@ -399,13 +399,13 @@ execution of those calls.
 
 ## Data types
 
-&nbsp;&nbsp;&nbsp;&nbsp;To repeat SystemVerilog behavior, CppHDL implements a number of basic data types, each corresponding to a specific
-SystemVerilog datatype. Currently, the list of CppHDL datatypes includes:
+&nbsp;&nbsp;&nbsp;&nbsp;To repeat SystemVerilog behavior, C++HDL implements a number of basic data types, each corresponding to a specific
+SystemVerilog datatype. Currently, the list of C++HDL datatypes includes:
 
 * *logic`<WIDTH>`* - any width variable, optimized for bit-access
 * *u`<WIDTH>`*, u1, u8, u16, u32, u64 - unsigned variables
 * *i8*, *i16*, *i32*, *i64* - fixed-width signed native aliases
-* *reg`<TYPE>`* - register definition, works only with CppHDL types or any structs
+* *reg`<TYPE>`* - register definition, works only with C++HDL types or any structs
 * *array`<COUNT,TYPE,PACKED=false>`* - fixed-size packed or unpacked array
 * *array2D*, *array3D*, *array4D* - multidimensional array aliases
 * *memory`<TYPE,ROW_SIZE,DEPTH>`* - deferred-write memory container committed by `apply()`
@@ -415,13 +415,13 @@ SystemVerilog datatype. Currently, the list of CppHDL datatypes includes:
 
 &nbsp;&nbsp;&nbsp;&nbsp;Indexes and loop variables that are converted into RTL must not be 64-bit. Some synthesis and RTL-processing tools
 cannot reliably elaborate 64-bit array selectors and may report width errors, fail optimization, or terminate with an internal error.
-Use `uint32_t`, a narrower native unsigned type, or an explicitly sized CppHDL type such as `u<WIDTH>` according to the required
+Use `uint32_t`, a narrower native unsigned type, or an explicitly sized C++HDL type such as `u<WIDTH>` according to the required
 index range. In particular, do not use `size_t` for synthesizable array indexes or loop variables on 64-bit hosts. `size_t` remains
 appropriate for compile-time template parameters and other C++ elaboration-only values that do not become RTL signals.
 
 ### logic`<WIDTH>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;logic`<>` is the basic type of the CppHDL toolchain, representing the SystemVerilog `logic` type.
+&nbsp;&nbsp;&nbsp;&nbsp;logic`<>` is the basic type of the C++HDL toolchain, representing the SystemVerilog `logic` type.
 It is universal, can be of any width, and can be used as a standalone variable or inside a reg`<>` construction.
 
 &nbsp;&nbsp;&nbsp;&nbsp;Example usage as a variable:
@@ -486,7 +486,7 @@ u<STEPS_SIZE> cmd_steps;
 
 ### Cat`{...}`
 
-&nbsp;&nbsp;&nbsp;&nbsp;*Cat`{...}`* builds a packed concatenation from CppHDL values and maps directly to a SystemVerilog concatenation expression.
+&nbsp;&nbsp;&nbsp;&nbsp;*Cat`{...}`* builds a packed concatenation from C++HDL values and maps directly to a SystemVerilog concatenation expression.
 Arguments are placed from high bits to low bits in the same order as SystemVerilog `{a, b, c}`. The result width is inferred from the argument types.
 Supported operands include `logic<WIDTH>`, `u<WIDTH>`, fixed unsigned aliases such as `u8` and `u32`, and `reg<T>` values whose stored type is supported.
 
@@ -559,7 +559,7 @@ mask._next.bits((i+1)*32-1,i*32) = 0;
 
 ### array`<COUNT, TYPE, PACKED>`
 
-&nbsp;&nbsp;&nbsp;&nbsp;The `array<>` type stores `COUNT` elements of `TYPE` and can be used with `reg<>`. `PACKED` defaults to `false`; pass `true` when a packed CppHDL representation is required. The `array2D`, `array3D`, and `array4D` aliases take all dimensions first, followed by the element type and optional packed flag.
+&nbsp;&nbsp;&nbsp;&nbsp;The `array<>` type stores `COUNT` elements of `TYPE` and can be used with `reg<>`. `PACKED` defaults to `false`; pass `true` when a packed C++HDL representation is required. The `array2D`, `array3D`, and `array4D` aliases take all dimensions first, followed by the element type and optional packed flag.
 
 ```cpp
 reg<array<WIDTH/8, u8>> buffer1;
@@ -782,7 +782,7 @@ Connect each interface bundle through `assignIf()` in the immediate common paren
 
 # Clock Domain Crossing (CDC)
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL can generate and simulate modules with multiple independent clock domains. The converter creates one clock input port and one sequential SystemVerilog process for each declared clock and edge. CppHDL does not make an unsafe crossing safe automatically: the RTL author must select an appropriate synchronizer, handshake, or asynchronous FIFO for every value crossing between domains.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL can generate and simulate modules with multiple independent clock domains. The converter creates one clock input port and one sequential SystemVerilog process for each declared clock and edge. C++HDL does not make an unsafe crossing safe automatically: the RTL author must select an appropriate synchronizer, handshake, or asynchronous FIFO for every value crossing between domains.
 
 ## Declaring clock domains
 
@@ -803,7 +803,7 @@ The clock options follow these rules:
 * Clock names must be valid, unique, non-keyword C++ identifiers.
 * Frequencies are positive integers. Use one consistent unit, normally hertz.
 * The primary clock frequency must be greater than or equal to every secondary clock frequency.
-* With no clock options, CppHDL retains the legacy `clk`, `_work(bool reset)`, and `_strobe()` flow.
+* With no clock options, C++HDL retains the legacy `clk`, `_work(bool reset)`, and `_strobe()` flow.
 * A single named primary clock changes the generated clock port name but retains the legacy `_work(bool reset)` and `_strobe()` methods.
 * With two or more clocks, clock declarations are design-global. Every generated module receives every declared clock port.
 
@@ -930,7 +930,7 @@ Do not write the same storage from two domains. Cross a control value into the d
 
 For synchronous-reset processes, reset is complete only after `reset` has remained asserted across at least one active edge of every clock-and-edge process that owns storage. If both positive- and negative-edge state exist, both edges must observe reset. Holding reset for additional edges repeats the reset assignments and must be harmless. A one-primary-clock-cycle reset pulse is unsafe because a slower or stopped clock can miss it entirely.
 
-Use this sequence in native CppHDL and Verilator testbenches:
+Use this sequence in native C++HDL and Verilator testbenches:
 
 1. Quiesce normal transaction inputs and keep all declared clocks running.
 2. Assert the shared `reset` input before any reset edge is evaluated.
@@ -939,15 +939,15 @@ Use this sequence in native CppHDL and Verilator testbenches:
 5. Deassert reset according to each domain's synchronous timing requirements. Use a per-domain synchronization chain when reset release can arrive asynchronously.
 6. Resume traffic only after every required domain-local reset-release indication is active.
 
-&nbsp;&nbsp;&nbsp;&nbsp;CppHDL statically lints the structural part of this protocol. Every named work method must have the `void _work_<clk_name>(bool reset)` signature, where the C++ parameter may be unnamed, every strobe method must have a `void _strobe_<clk_name>()` signature, required method pairs must exist, and each register must have one clock/edge owner. The converter cannot prove that a testbench holds reset long enough, that every register is intentionally reset, that clocks continue running during reset, or that an external reset meets recovery/removal timing. Those properties require dynamic regression checks, generated-SystemVerilog assertions, and implementation CDC/reset-domain-crossing analysis.
+&nbsp;&nbsp;&nbsp;&nbsp;C++HDL statically lints the structural part of this protocol. Every named work method must have the `void _work_<clk_name>(bool reset)` signature, where the C++ parameter may be unnamed, every strobe method must have a `void _strobe_<clk_name>()` signature, required method pairs must exist, and each register must have one clock/edge owner. The converter cannot prove that a testbench holds reset long enough, that every register is intentionally reset, that clocks continue running during reset, or that an external reset meets recovery/removal timing. Those properties require dynamic regression checks, generated-SystemVerilog assertions, and implementation CDC/reset-domain-crossing analysis.
 
 Asynchronous handlers can assert reset without a clock edge; their dispatch and clocked hold behavior are described in the Asynchronous Reset chapter.
 
-`test_shared_reset_sampling_per_domain()` in `tests/cdc/TwoClocksCdc.cpp` verifies that advancing only the fast clock resets only fast-owned state, that repeated asserted edges are idempotent, and that reset becomes complete after the slow domain also receives an active edge. `test_synchronized_reset_release()` separately verifies two-stage domain-local release in both native CppHDL and Verilator flows.
+`test_shared_reset_sampling_per_domain()` in `tests/cdc/TwoClocksCdc.cpp` verifies that advancing only the fast clock resets only fast-owned state, that repeated asserted edges are idempotent, and that reset becomes complete after the slow domain also receives an active edge. `test_synchronized_reset_release()` separately verifies two-stage domain-local release in both native C++HDL and Verilator flows.
 
 ## Native and Verilator simulation
 
-&nbsp;&nbsp;&nbsp;&nbsp;A native CppHDL testbench schedules every clock independently. For all edges at one timestamp, first evaluate every active work method against the pre-edge state, then commit every active strobe. Do not interleave one domain's work/strobe with another domain's work at the same timestamp.
+&nbsp;&nbsp;&nbsp;&nbsp;A native C++HDL testbench schedules every clock independently. For all edges at one timestamp, first evaluate every active work method against the pre-edge state, then commit every active strobe. Do not interleave one domain's work/strobe with another domain's work at the same timestamp.
 
 ```cpp
 // Inputs and edge flags have been set for this timestamp.
@@ -990,7 +990,7 @@ Use a CDC structure that matches the transferred information:
 * Streams: use a dual-clock asynchronous FIFO with domain-local binary pointers and synchronized Gray pointers.
 * Reset release: use clocked assertion or an asynchronous reset handler as required, and release through a per-domain synchronizer.
 
-&nbsp;&nbsp;&nbsp;&nbsp;Synchronizer registers can carry synthesis attributes through an adjacent CppHDL annotation comment:
+&nbsp;&nbsp;&nbsp;&nbsp;Synchronizer registers can carry synthesis attributes through an adjacent C++HDL annotation comment:
 
 ```cpp
 // (* ASYNC_REG = "TRUE" *)
@@ -1020,11 +1020,11 @@ Each item has dedicated regression coverage in `tests/cdc/TwoClocksCdc.cpp` or
 * Positive/negative-edge processes
 * `ASYNC_REG` synthesis attributes
 
-These regressions exercise both native CppHDL and Verilator flows. The CTest suite also includes CLI failures for invalid clock declarations and process signatures; run the current suite to verify a particular toolchain.
+These regressions exercise both native C++HDL and Verilator flows. The CTest suite also includes CLI failures for invalid clock declarations and process signatures; run the current suite to verify a particular toolchain.
 
 ## Current Limits
 
-The following behavior cannot presently be validated or fully represented by CppHDL:
+The following behavior cannot presently be validated or fully represented by C++HDL:
 
 * Analog metastability behavior and mean time between failures (MTBF)
 * Physical synchronizer placement and routing skew
@@ -1036,7 +1036,7 @@ The following behavior cannot presently be validated or fully represented by Cpp
 * Module-local clock subsets or clock-name remapping; clocks are currently design-global
 * Power-domain isolation and level-shifter behavior
 
-These limits require dedicated CDC analysis, static timing analysis, physical implementation constraints, and hardware signoff outside CppHDL.
+These limits require dedicated CDC analysis, static timing analysis, physical implementation constraints, and hardware signoff outside C++HDL.
 
 \newpage
 
@@ -1075,7 +1075,7 @@ See `tests/reset/AsyncReset.cpp` for native and Verilator examples.
 
 # VCD dumping
 
-&nbsp;&nbsp;&nbsp;&nbsp;Native CppHDL simulation can write a Value Change Dump file with the lightweight `VcdFile` helper from `cpphdl_vcd.h`. VCD dumping is controlled by the C++ testbench; the converter does not automatically discover signals or sample simulation time.
+&nbsp;&nbsp;&nbsp;&nbsp;Native C++HDL simulation can write a Value Change Dump file with the lightweight `VcdFile` helper from `cpphdl_vcd.h`. VCD dumping is controlled by the C++ testbench; the converter does not automatically discover signals or sample simulation time.
 
 Register each signal with a stable name, its RTL width in bits, and a pointer to storage that remains alive for the complete trace:
 
@@ -1149,9 +1149,9 @@ for (unsigned cycle = 1; cycle <= 100; ++cycle) {
 
 `VcdFile::create()` currently emits a `1ns` timescale. The argument to `sample(time_ns)` is therefore the VCD timestamp in nanoseconds; it does not advance the model. For multiple clocks, sample after every clock transition or scheduled event and use timestamps that represent the testbench's actual edge schedule.
 
-The signal pointer must refer to contiguous raw storage such as a CppHDL scalar, `logic<>`, or the current-value storage of `reg<>`. The width is the RTL value width, not `sizeof(reg<T>) * 8`, which would include next-state storage. For arrays or structs, check their actual byte/bit layout before using raw tracing. Do not register a temporary expression or a `_PORT`/`function_ref` object. If a port value is needed, copy it into persistent testbench storage before sampling. Limit long traces explicitly because VCD files grow quickly. `examples/basic/Buffer.cpp`, `examples/basic/Fifo.cpp`, and `examples/basic/Memory.cpp` contain complete native examples and cap the number of samples.
+The signal pointer must refer to contiguous raw storage such as a C++HDL scalar, `logic<>`, or the current-value storage of `reg<>`. The width is the RTL value width, not `sizeof(reg<T>) * 8`, which would include next-state storage. For arrays or structs, check their actual byte/bit layout before using raw tracing. Do not register a temporary expression or a `_PORT`/`function_ref` object. If a port value is needed, copy it into persistent testbench storage before sampling. Limit long traces explicitly because VCD files grow quickly. `examples/basic/Buffer.cpp`, `examples/basic/Fifo.cpp`, and `examples/basic/Memory.cpp` contain complete native examples and cap the number of samples.
 
-This helper traces the native CppHDL model. To trace internal signals of generated RTL under Verilator, build the generated SystemVerilog with Verilator's `--trace` option. The testbench must enable tracing before time advances, register the model, and call `dump()` after every evaluated clock transition:
+This helper traces the native C++HDL model. To trace internal signals of generated RTL under Verilator, build the generated SystemVerilog with Verilator's `--trace` option. The testbench must enable tracing before time advances, register the model, and call `dump()` after every evaluated clock transition:
 
 ```cpp
 #include <verilated.h>
@@ -1191,19 +1191,19 @@ int main(int argc, char** argv)
 
 For example, pass `--trace` alongside the usual Verilator generation options before building the generated model. Replace `VTop` and `VTop.h` with the selected top-module model. The repository's normal `VerilatorCompile()` test helper does not enable internal tracing automatically.
 
-# CppHDL SV Conversion tool
+# C++HDL SV Conversion tool
 
 &nbsp;&nbsp;&nbsp;&nbsp;The main purposes of the *cpphdl* tool are to
 
-* Provide conversion of CppHDL code to SystemVerilog models
-* Check dependencies in combinational chains and forgotten strobe calls in CppHDL source code
+* Provide conversion of C++HDL code to SystemVerilog models
+* Check dependencies in combinational chains and forgotten strobe calls in C++HDL source code
 
 ## Structures
 
 * Each structure or union is converted into SystemVerilog package in a separate file
 * The order of fields is reversed due to differences between C++ and SystemVerilog
 * Anonymous structures and unions declared inside other structures get 'anon' name substitution
-* CppHDL aligns non-bitfield structure members to byte boundaries and emits hidden `_alignN` fields when padding is needed
+* C++HDL aligns non-bitfield structure members to byte boundaries and emits hidden `_alignN` fields when padding is needed
 * Packed unions use the largest branch size; smaller struct/union branches get hidden `_padN` fields so all union alternatives have the same packed width
 * `cpphdl::array<N,T>` fields are emitted as packed SystemVerilog arrays inside the generated struct package
 * C++ enums are emitted with a four-state SystemVerilog `logic` base preserving the C++ underlying width and signedness

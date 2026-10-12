@@ -512,7 +512,7 @@ public:
 #ifdef VERILATOR
         std::printf("VERILATOR TestArrayUnpacked...");
 #else
-        std::printf("CppHDL TestArrayUnpacked...");
+        std::printf("C++HDL TestArrayUnpacked...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "array_unpacked_test";

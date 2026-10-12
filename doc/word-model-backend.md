@@ -13,7 +13,7 @@ SystemVerilog
 This is a **different hdlcpp output representation**, not a repair of the
 legacy callback C++ -> SystemVerilog round-trip. The first stage explicitly
 uses sv2v/Yosys; this is not the existing Slang/textual C++ emitter. Neither
-stage uses Verilator. The default hdlcpp emitter and CppHDL L1 scheduler remain
+stage uses Verilator. The default hdlcpp emitter and C++HDL L1 scheduler remain
 unchanged. No hardware block is handwritten or selected by design name.
 
 The C++ model is the second stage's actual input. It does not read the original
@@ -32,7 +32,7 @@ Hidden constant/replicated-single-bit aliases are split structurally so they
 cannot introduce artificial feedback; no CVA6 names or diagnostic-log matching
 are used. Real feedback is not deleted or assumed away.
 
-CppHDL recognizes typed `cxxrtl::concat_expr::val()` calls through Clang's AST.
+C++HDL recognizes typed `cxxrtl::concat_expr::val()` calls through Clang's AST.
 Their leaves become direct word placements into one destination, rather than
 shifted/zero-extended full-width intermediates for every concatenation prefix.
 Only recognized CXXRTL value, slice, and concatenation types are eligible.
@@ -130,7 +130,7 @@ Five alternating-order trials on CPU 2, execution only (no conversion/build):
 
 | Model | Median wall time |
 | --- | ---: |
-| Existing CppHDL L1 baseline | 4.668621 s |
+| Existing C++HDL L1 baseline | 4.668621 s |
 | New automatic word-model pipeline | 0.329564 s |
 | Original-SV Verilator | 0.167884 s |
 

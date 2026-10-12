@@ -45,7 +45,7 @@ def ordered_sources(directory):
     for path in files:
         visit(path)
     if not result:
-        raise RuntimeError('CppHDL produced no SystemVerilog')
+        raise RuntimeError('C++HDL produced no SystemVerilog')
     return result
 
 
@@ -94,7 +94,7 @@ def main(arguments=None):
             # Some legacy converter assertions log an error without a nonzero
             # exit code. Never accept their partial RTL as a runnable model.
             if 'ASSERT at ' in (output / 'cpphdl.log').read_text():
-                raise RuntimeError(f"CppHDL assertion; see {output / 'cpphdl.log'}")
+                raise RuntimeError(f"C++HDL assertion; see {output / 'cpphdl.log'}")
             generated = ordered_sources(rtl)
             manifest['generated_rtl'] = {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
                                          for path in generated}

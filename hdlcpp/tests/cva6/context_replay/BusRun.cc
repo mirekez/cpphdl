@@ -65,7 +65,7 @@ public:
         model.responses = input.responses;
 #ifdef USE_CPP_GRAPH
         model.work_reset[0] = !input.reset_n;
-        // Ordinary CppHDL exposes work/strobe transactions, not SV clock pins.
+        // Ordinary C++HDL exposes work/strobe transactions, not SV clock pins.
         // Match its reset transaction before sampling, then commit and settle.
         if (!input.reset_n) model.step();
         else model.eval();

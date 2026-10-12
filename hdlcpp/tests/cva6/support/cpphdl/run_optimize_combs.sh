@@ -45,9 +45,9 @@ cleanup_intermediates() {
 }
 trap cleanup_intermediates EXIT
 
-# The context header includes the CppHDL runtime, so checking only the wrapper
+# The context header includes the C++HDL runtime, so checking only the wrapper
 # can retain an ABI-stale PCH after a runtime update. Rebuild when any public
-# CppHDL header is newer than the cached compilation context.
+# C++HDL header is newer than the cached compilation context.
 runtime_header_newer=0
 if [[ -f "$PCH" ]] && find /home/me/cpphdl/include -type f -newer "$PCH" -print -quit | grep -q .; then
     runtime_header_newer=1

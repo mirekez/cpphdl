@@ -14,7 +14,7 @@ using namespace cpphdl;
 
 #include "Axi4.h"
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t N, size_t ADDR_WIDTH, size_t ID_WIDTH, size_t DATA_WIDTH>
 class Axi4MuxToMaster : public Module
@@ -159,7 +159,7 @@ public:
 };
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -781,7 +781,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestAxi4MuxToMaster, N: {}, ADDR_WIDTH: {}, ID_WIDTH: {}, DATA_WIDTH: {}...", N, ADDR_WIDTH, ID_WIDTH, DATA_WIDTH);
 #else
-        std::print("CppHDL TestAxi4MuxToMaster, N: {}, ADDR_WIDTH: {}, ID_WIDTH: {}, DATA_WIDTH: {}...", N, ADDR_WIDTH, ID_WIDTH, DATA_WIDTH);
+        std::print("C++HDL TestAxi4MuxToMaster, N: {}, ADDR_WIDTH: {}, ID_WIDTH: {}, DATA_WIDTH: {}...", N, ADDR_WIDTH, ID_WIDTH, DATA_WIDTH);
 #endif
         if (debugen_in) {
             std::print("\n");

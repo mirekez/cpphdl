@@ -128,7 +128,7 @@ class TestTemplateEmptyStructArg : Module
 public:
     bool run()
     {
-        std::print("CppHDL TestTemplateEmptyStructArg...");
+        std::print("C++HDL TestTemplateEmptyStructArg...");
         auto start = std::chrono::high_resolution_clock::now();
 
         dut._assign();

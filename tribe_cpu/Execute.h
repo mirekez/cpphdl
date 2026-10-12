@@ -156,7 +156,7 @@ private:
         b = state_in().rs2_val;
         // Express signed comparison using only unsigned operations.  Some
         // SystemVerilog tools make a mixed signed/unsigned relational
-        // expression unsigned; in particular, the CppHDL translation of
+        // expression unsigned; in particular, the C++HDL translation of
         // int32_t(a) >= int32_t(b) previously became `a >= signed'(b)` and
         // misclassified every negative `a` as greater than zero.
         signed_less = ((a ^ b) >> 31) != 0 ? ((a >> 31) != 0) : a < b;

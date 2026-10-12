@@ -201,7 +201,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestTemplateStaticCall...");
 #else
-        std::print("CppHDL TestTemplateStaticCall...");
+        std::print("C++HDL TestTemplateStaticCall...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "template_static_call_test";

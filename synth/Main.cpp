@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
         cpphdl::synth::emitVerilog(gates, (directory / "gates.v").string(), argv[2]);
         cpphdl::synth::writeGateReport(gates, (directory / "gates.json").string(), argv[2]);
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "CppHDL synthesis: %s\n", error.what());
+        std::fprintf(stderr, "C++HDL synthesis: %s\n", error.what());
         return 1;
     }
 }

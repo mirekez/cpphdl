@@ -6,7 +6,7 @@ index 2d48742..249ff20 100644
  add_subdirectory(ConvertToArcs)
  add_subdirectory(DCToHW)
  add_subdirectory(ExportChiselInterface)
-+add_subdirectory(ExportCppHDL)
++add_subdirectory(Exportcpphdl)
  add_subdirectory(ExportVerilog)
  add_subdirectory(FIRRTLToHW)
  add_subdirectory(FSMToSV)
@@ -18,7 +18,7 @@ index 37fb822..1fe0f1e 100644
  )
  llvm_update_compile_flags(firtool)
  target_link_libraries(firtool PRIVATE
-+  CIRCTExportCppHDL
++  CIRCTExportcpphdl
    CIRCTExportVerilog
    CIRCTImportFIRFile
    CIRCTFIRRTLTransforms
@@ -30,7 +30,7 @@ index da247a9..c25e214 100644
  //===----------------------------------------------------------------------===//
  
  #include "circt/Firtool/Firtool.h"
-+#include "circt/Conversion/ExportCppHDL.h"
++#include "circt/Conversion/Exportcpphdl.h"
  #include "circt/Conversion/ExportVerilog.h"
  #include "circt/Conversion/Passes.h"
  #include "circt/Dialect/Comb/CombDialect.h"
@@ -38,8 +38,8 @@ index da247a9..c25e214 100644
    OutputIRHW,
    OutputIRSV,
    OutputIRVerilog,
-+  OutputCppHDL,
-+  OutputSplitCppHDL,
++  Outputcpphdl,
++  OutputSplitcpphdl,
    OutputVerilog,
    OutputBTOR2,
    OutputSplitVerilog,
@@ -47,8 +47,8 @@ index da247a9..c25e214 100644
          clEnumValN(OutputIRSV, "ir-sv", "Emit SV dialect"),
          clEnumValN(OutputIRVerilog, "ir-verilog",
                     "Emit IR after Verilog lowering"),
-+        clEnumValN(OutputCppHDL, "cpphdl", "Emit C++HDL directly from FIRRTL"),
-+        clEnumValN(OutputSplitCppHDL, "split-cpphdl",
++        clEnumValN(Outputcpphdl, "cpphdl", "Emit C++HDL directly from FIRRTL"),
++        clEnumValN(OutputSplitcpphdl, "split-cpphdl",
 +                   "Emit one C++HDL header/implementation pair per module"),
          clEnumValN(OutputVerilog, "verilog", "Emit Verilog"),
          clEnumValN(OutputBTOR2, "btor2", "Emit BTOR2"),
@@ -58,8 +58,8 @@ index da247a9..c25e214 100644
                                              (*outputFile)->os())))
          return failure();
 -    if (outputFormat != OutputIRHW)
-+    if (outputFormat != OutputIRHW && outputFormat != OutputCppHDL &&
-+        outputFormat != OutputSplitCppHDL)
++    if (outputFormat != OutputIRHW && outputFormat != Outputcpphdl &&
++        outputFormat != OutputSplitcpphdl)
        if (failed(firtool::populateHWToSV(pm, firtoolOptions)))
          return failure();
      if (!svPassPlugin.empty())
@@ -67,11 +67,11 @@ index da247a9..c25e214 100644
    if (failed(pm.run(module.get())))
      return failure();
  
-+  if (outputFormat == OutputCppHDL)
-+    if (failed(exportCppHDL(*module, (*outputFile)->os())))
++  if (outputFormat == Outputcpphdl)
++    if (failed(exportcpphdl(*module, (*outputFile)->os())))
 +      return failure();
-+  if (outputFormat == OutputSplitCppHDL)
-+    if (failed(exportSplitCppHDL(*module, firtoolOptions.getOutputFilename())))
++  if (outputFormat == OutputSplitcpphdl)
++    if (failed(exportSplitcpphdl(*module, firtoolOptions.getOutputFilename())))
 +      return failure();
 +
    if (outputFormat == OutputIRFir || outputFormat == OutputIRHW ||
@@ -83,17 +83,17 @@ index da247a9..c25e214 100644
    std::optional<std::unique_ptr<llvm::ToolOutputFile>> outputFile;
 -  if (outputFormat != OutputSplitVerilog) {
 +  if (outputFormat != OutputSplitVerilog &&
-+      outputFormat != OutputSplitCppHDL) {
++      outputFormat != OutputSplitcpphdl) {
      // Create an output file.
      outputFile.emplace(
          openOutputFile(firtoolOptions.getOutputFilename(), &errorMessage));
-diff --git a/include/circt/Conversion/ExportCppHDL.h b/include/circt/Conversion/ExportCppHDL.h
+diff --git a/include/circt/Conversion/Exportcpphdl.h b/include/circt/Conversion/Exportcpphdl.h
 new file mode 100644
 index 0000000..98789d9
 --- /dev/null
-+++ b/include/circt/Conversion/ExportCppHDL.h
++++ b/include/circt/Conversion/Exportcpphdl.h
 @@ -0,0 +1,29 @@
-+//===- ExportCppHDL.h - C++HDL exporter -------------------------*- C++ -*-===//
++//===- Exportcpphdl.h - C++HDL exporter -------------------------*- C++ -*-===//
 +
 +#ifndef CIRCT_CONVERSION_EXPORTCPPHDL_H
 +#define CIRCT_CONVERSION_EXPORTCPPHDL_H
@@ -112,24 +112,24 @@ index 0000000..98789d9
 +namespace circt {
 +
 +/// Emit a C++HDL representation of the lowered HW/Comb/Seq circuit.
-+mlir::LogicalResult exportCppHDL(mlir::ModuleOp module,
++mlir::LogicalResult exportcpphdl(mlir::ModuleOp module,
 +                                llvm::raw_ostream &os);
 +
 +/// Emit one header and implementation file per module into `directory`.
-+mlir::LogicalResult exportSplitCppHDL(mlir::ModuleOp module,
++mlir::LogicalResult exportSplitcpphdl(mlir::ModuleOp module,
 +                                     llvm::StringRef directory);
 +
 +} // namespace circt
 +
 +#endif // CIRCT_CONVERSION_EXPORTCPPHDL_H
-diff --git a/lib/Conversion/ExportCppHDL/CMakeLists.txt b/lib/Conversion/ExportCppHDL/CMakeLists.txt
+diff --git a/lib/Conversion/Exportcpphdl/CMakeLists.txt b/lib/Conversion/Exportcpphdl/CMakeLists.txt
 new file mode 100644
 index 0000000..374acef
 --- /dev/null
-+++ b/lib/Conversion/ExportCppHDL/CMakeLists.txt
++++ b/lib/Conversion/Exportcpphdl/CMakeLists.txt
 @@ -0,0 +1,12 @@
-+add_circt_translation_library(CIRCTExportCppHDL
-+  ExportCppHDL.cpp
++add_circt_translation_library(CIRCTExportcpphdl
++  Exportcpphdl.cpp
 +
 +  LINK_COMPONENTS
 +  Core
@@ -140,15 +140,15 @@ index 0000000..374acef
 +  CIRCTSeq
 +  MLIRIR
 +)
-diff --git a/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp b/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp
+diff --git a/lib/Conversion/Exportcpphdl/Exportcpphdl.cpp b/lib/Conversion/Exportcpphdl/Exportcpphdl.cpp
 new file mode 100644
 index 0000000..49d9d6b
 --- /dev/null
-+++ b/lib/Conversion/ExportCppHDL/ExportCppHDL.cpp
++++ b/lib/Conversion/Exportcpphdl/Exportcpphdl.cpp
 @@ -0,0 +1,1410 @@
-+//===- ExportCppHDL.cpp - C++HDL emitter --------------------------------===//
++//===- Exportcpphdl.cpp - C++HDL emitter --------------------------------===//
 +
-+#include "circt/Conversion/ExportCppHDL.h"
++#include "circt/Conversion/Exportcpphdl.h"
 +
 +#include "circt/Dialect/HW/HWOps.h"
 +#include "circt/Dialect/HW/HWTypes.h"
@@ -176,7 +176,7 @@ index 0000000..49d9d6b
 +
 +namespace {
 +
-+static void emitCppHDLSupport(raw_ostream &os) {
++static void emitcpphdlSupport(raw_ostream &os) {
 +  os << "// Generated directly from FIRRTL by firtool.\n"
 +        "#pragma once\n#include <cpphdl.h>\n#include <type_traits>\n\n"
 +        "namespace firtool_cpphdl {\n"
@@ -1469,8 +1469,8 @@ index 0000000..49d9d6b
 +
 +} // namespace
 +
-+LogicalResult circt::exportCppHDL(ModuleOp module, raw_ostream &os) {
-+  emitCppHDLSupport(os);
++LogicalResult circt::exportcpphdl(ModuleOp module, raw_ostream &os) {
++  emitcpphdlSupport(os);
 +  os << "\n";
 +  for (auto external : module.getOps<hw::HWModuleExternOp>()) {
 +    os << "class " << cppIdentifier(external.getModuleName())
@@ -1491,7 +1491,7 @@ index 0000000..49d9d6b
 +  return success();
 +}
 +
-+LogicalResult circt::exportSplitCppHDL(ModuleOp module, StringRef directory) {
++LogicalResult circt::exportSplitcpphdl(ModuleOp module, StringRef directory) {
 +  if (auto error = llvm::sys::fs::create_directories(directory)) {
 +    llvm::errs() << "cannot create C++HDL directory '" << directory
 +                 << "': " << error.message() << "\n";
@@ -1501,7 +1501,7 @@ index 0000000..49d9d6b
 +  auto support = openGeneratedFile(directory, "cpphdl_support.h");
 +  if (failed(support))
 +    return failure();
-+  emitCppHDLSupport(**support);
++  emitcpphdlSupport(**support);
 +
 +  SmallVector<std::string> sources;
 +  for (auto external : module.getOps<hw::HWModuleExternOp>()) {
@@ -1547,7 +1547,7 @@ index 0000000..49d9d6b
 +  **cmake << "cmake_minimum_required(VERSION 3.20)\n"
 +             "project(firtool_generated_cpphdl LANGUAGES CXX)\n"
 +             "set(CMAKE_CXX_STANDARD 17)\n"
-+             "set(CPPHDL_INCLUDE_DIR \"$ENV{HOME}/cpphdl/include\" CACHE PATH \"CppHDL include directory\")\n"
++             "set(CPPHDL_INCLUDE_DIR \"$ENV{HOME}/cpphdl/include\" CACHE PATH \"C++HDL include directory\")\n"
 +             "add_library(firtool_generated_cpphdl OBJECT\n";
 +  for (auto &source : sources)
 +    **cmake << "  " << source << "\n";

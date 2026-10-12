@@ -1,6 +1,6 @@
 # Experimental netlist simulation backend
 
-For the working opt-in SV -> word C++ -> CppHDL pipeline, see
+For the working opt-in SV -> word C++ -> C++HDL pipeline, see
 [word-model-backend.md](word-model-backend.md). It uses a new Yosys-assisted
 hdlcpp output representation. The legacy C++ -> SV round-trip described here
 is separate and its representative-bus lowering limitations remain.
@@ -9,7 +9,7 @@ is separate and its representative-bus lowering limitations remain.
 another optimization pass over the packed-proxy runtime:
 
 ```
-authoritative CppHDL C++
+authoritative C++HDL C++
   -> existing cpphdl SystemVerilog conversion
   -> sv2v
   -> Yosys RTLIL: processes, flattened connectivity, word-level optimization
@@ -27,7 +27,7 @@ there is no blanket gate mapping or LUT expansion.
 This backend is **experimental and opt-in**. It does not replace the default
 optimizer, and the representative converted CVA6 bus cannot yet complete this
 round-trip. Do not use the original-RTL feasibility numbers below as a working
-CppHDL conversion result. Removing the old execution path before establishing
+C++HDL conversion result. Removing the old execution path before establishing
 equivalence would hide that missing functionality rather than fix it.
 
 ## Use
@@ -112,14 +112,14 @@ advance; file reading and correctness checking excluded):
 | Execution path | Median seconds |
 | --- | ---: |
 | Original-SV Verilator reference | 0.162909 |
-| Existing production CppHDL replay | 7.066880 |
+| Existing production C++HDL replay | 7.066880 |
 | Original-SV CXXRTL, unsplit internal nets | 3.001579 |
 | Original-SV CXXRTL, driver-separated nets | 1.318287 |
 
 Every trial checks all 4,052 output bits on all 46,264 cycles and reports
 checksum `0261761b2a1c459e`. Driver splitting reduces CXXRTL time by 56.1%.
-That feasibility path is 5.36x faster than the existing CppHDL replay but
-still 8.09x slower than Verilator. This is not a completed CppHDL speedup.
+That feasibility path is 5.36x faster than the existing C++HDL replay but
+still 8.09x slower than Verilator. This is not a completed C++HDL speedup.
 
 Blindly splitting every internal bit was rejected: generated C++ grew from
 1.91 MB to 8.06 MB and Clang exhausted its compilation stack. Driver splitting
@@ -143,5 +143,5 @@ was stopped after exceeding 2 GiB RSS. There is no equivalent-output timing
 result for that experiment and none of its rewriting is in the driver.
 
 The production acceptance gate remains: complete conversion from authoritative
-CppHDL C++, check every replay output and cycle, then repeat the timing test.
+C++HDL C++, check every replay output and cycle, then repeat the timing test.
 Do not delete the current backend or regenerate full CVA6 before that gate.

@@ -181,7 +181,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -333,7 +333,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestAssignPorts...");
 #else
-        std::print("CppHDL TestAssignPorts...");
+        std::print("C++HDL TestAssignPorts...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "assign_ports_test";

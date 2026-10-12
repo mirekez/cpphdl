@@ -63,7 +63,7 @@ int main(int argc,char**argv) {
   assert(shared.nodes.size()>before);independent(shared,plan);
   // A dominant cone makes the greedy scheduler reuse a small shared cone.
   // The requested maximum must not become hundreds of empty worker lanes.
-  for(bool overlap:{false,true}) {
+  for(bool overlap:{false,true}) for(bool balance:{false,true}) {
    Graph sparse;auto input=sparse.wire(64,"input","input");auto heavy=input;
    for(unsigned i=0;i<4096;++i)heavy=sparse.binary("add",heavy,constant(i+1,64),64);
    sparse.ports.push_back({"heavy",heavy,false});
@@ -72,8 +72,8 @@ int main(int argc,char**argv) {
     auto state=sparse.wire(64,"state"+std::to_string(i),"state");
     sparse.states.push_back({state,common,{1}});
    }
-   auto compact=nativeParallelPlan(sparse,sparse.dependencyOrder(),256,overlap);
-   assert(compact.lanes==2);assert(compact.ports[0]==0);
+   auto compact=nativeParallelPlan(sparse,sparse.dependencyOrder(),256,overlap,balance);
+   assert(compact.lanes==(balance?256:2));assert(compact.ports[0]==0);
    independent(sparse,compact);
    std::vector<bool> sinks(compact.lanes);
    for(auto lane:compact.ports)sinks[lane]=true;
@@ -112,7 +112,7 @@ int main(int argc,char**argv) {
  g.ports.push_back({"result",g.mux(enable,sum,falling),false});
  g.ports.push_back({"counter",state,false});g.ports.push_back({"read",read,false});
  g.ports.push_back({"early",saved,false});
- g.emit(argv[1],std::stoul(argv[2]),argc>3?std::stoul(argv[3]):1);
+ g.emit(argv[1],std::stoul(argv[2]),argc>3?std::stoul(argv[3]):1,false,argc>4);
 }
 ''')
 print(run([args.cxx,'-std=c++23','-O1','-I'+str(root/'include'),work/'emit.cpp','-o',work/'emit']))
@@ -125,6 +125,8 @@ if args.threaded:
         # Compaction can produce identical headers for different requested
         # maxima. Each is included once under its own namespace below.
         header.write_text(header.read_text().replace('#pragma once', f'// Requested lanes: {threads}', 1))
+    print(run([work/'emit', work/'balanced.h', '19', '4', 'balanced']))
+    (work/'balanced.h').write_text((work/'balanced.h').read_text().replace('#pragma once', '// Balanced lanes', 1))
 (work/'check.cpp').write_text(r'''
 #define cpphdl_native reference
 #include "model0.h"
@@ -146,6 +148,9 @@ if args.threaded:
 #define cpphdl_native parallel256
 #include "threads256.h"
 #undef cpphdl_native
+#define cpphdl_native balanced
+#include "balanced.h"
+#undef cpphdl_native
 #include <thread>
 #include <cassert>
 #endif
@@ -161,6 +166,7 @@ int main() {
  reference::Model r;small::Model a;cpphdl_native::Model b;uint64_t random=42;
 #ifdef CHECK_THREADS
  parallel2::Model p2;parallel3::Model p3;parallel4::Model p4;parallel256::Model p256;
+ balanced::Model distributed;
  auto copied=p2;
  static_assert(parallel2::Model::__cpphdl_thread_count==2);
  static_assert(parallel3::Model::__cpphdl_thread_count>=2 && parallel3::Model::__cpphdl_thread_count<=3);
@@ -173,13 +179,16 @@ int main() {
   inputs(r,random,i);inputs(a,random,i);inputs(b,random,i);
 #ifdef CHECK_THREADS
   inputs(p2,random,i);inputs(p3,random,i);inputs(p4,random,i);inputs(p256,random,i);inputs(copied,random,i);
+  inputs(distributed,random,i);
 #endif
   for(bool commit:{false,true,false}) {
    r.eval(commit);a.eval(commit);b.eval(commit);
    if(!same(r,a)||!same(r,b)){std::printf("mismatch at %u commit=%d\n",i,commit);return 1;}
 #ifdef CHECK_THREADS
    p2.eval(commit);p3.eval(commit);p4.eval(commit);p256.eval(commit);copied.eval(commit);
+   distributed.eval(commit);
    assert(same(r,p2)&&same(r,p3)&&same(r,p4)&&same(r,p256)&&same(r,copied));
+   assert(same(r,distributed));
 #endif
   }
  }

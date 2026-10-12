@@ -53,7 +53,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -209,7 +209,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestEmptyArrayField...");
 #else
-        std::print("CppHDL TestEmptyArrayField...");
+        std::print("C++HDL TestEmptyArrayField...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "empty_array_field_test";

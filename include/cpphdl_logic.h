@@ -109,7 +109,7 @@ struct can_assign_from : std::false_type {};
 template<typename T, typename V>
 struct can_assign_from<T, V, std::void_t<decltype(std::declval<T&>() = std::declval<V>())>> : std::true_type {};
 
-// CppHDL headers retain C++17 compatibility, where the standard query is unavailable.
+// C++HDL headers retain C++17 compatibility, where the standard query is unavailable.
 // GCC and Clang expose the same constant-evaluation predicate as a builtin in that mode.
 // Conservatively select the constexpr path on compilers that provide neither facility.
 constexpr bool is_constant_evaluated_compat() noexcept

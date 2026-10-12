@@ -1,6 +1,6 @@
 // Shared L1 layer-test harness requirements:
 // 1. Report the exact behavior section that fails without relying on std::format.
-// 2. Compare CppHDL integer-like values through their stable uint64_t conversion.
+// 2. Compare C++HDL integer-like values through their stable uint64_t conversion.
 // 3. Return conventional process status for CTest.
 #pragma once
 

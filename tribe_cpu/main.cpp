@@ -5,7 +5,7 @@
 
 #include "TribeTestModule.h"
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS)
 
@@ -1100,7 +1100,7 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
         }
 #else
         if (!quiet_harness_output) {
-            std::print("CppHDL TestTribe[{}]...", label);
+            std::print("C++HDL TestTribe[{}]...", label);
         }
 #endif
         if (debugen_in) {

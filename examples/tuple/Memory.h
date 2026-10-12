@@ -5,7 +5,7 @@ using namespace cpphdl;
 
 extern long _system_clock;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true>
 class Memory : public Module

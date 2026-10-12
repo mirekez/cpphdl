@@ -11,7 +11,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t WIDTH, size_t DEPTH>
 class Buffer : public Module
@@ -125,7 +125,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -341,7 +341,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestBuffer<WIDTH={},DEPTH={}>...", WIDTH, DEPTH);
 #else
-        std::print("CppHDL TestBuffer<WIDTH={},DEPTH={}>...", WIDTH, DEPTH);
+        std::print("C++HDL TestBuffer<WIDTH={},DEPTH={}>...", WIDTH, DEPTH);
 #endif
         if (debugen_in) {
             std::print("\n");

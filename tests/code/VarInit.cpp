@@ -192,7 +192,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestVarInit...");
 #else
-        std::print("CppHDL TestVarInit...");
+        std::print("C++HDL TestVarInit...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         bool ok = true;

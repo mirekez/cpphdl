@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthesize ordinary CppHDL or a scheduled HLS design through the shared graph."""
+"""Synthesize ordinary C++HDL or a scheduled HLS design through the shared graph."""
 import argparse
 import json
 import os
@@ -75,7 +75,7 @@ def main():
             if result.returncode:
                 raise RuntimeError(f'{label} failed: see {output / (label + ".log")}')
 
-        manifest['graph_frontend'] = 'C++ RTL with automatic AST Clocked scheduling -> CppHDL graph'
+        manifest['graph_frontend'] = 'C++ RTL with automatic AST Clocked scheduling -> C++HDL graph'
         run([cpphdl, '--lower-synthesis-graph', source, output / 'graph.cc', args.top, *clocks,
              '--', '-std=c++17', '-DSYNTHESIS', '-I' + str(root / 'include'), *flags], 'lower', cwd=Path.cwd())
         run([compiler, '-std=c++17', '-O1', '-DCPPHDL_GRAPH_NO_MAIN', '-DCPPHDL_GRAPH_CORE_ONLY',
@@ -108,7 +108,7 @@ def main():
         manifest.update(status='failed', error=str(error))
         if output.is_dir():
             (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-        print(f'CppHDL synthesis: {error}', file=sys.stderr)
+        print(f'C++HDL synthesis: {error}', file=sys.stderr)
         return 1
 
 

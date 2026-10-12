@@ -2375,14 +2375,14 @@ namespace
 
 void printCpphdlHelp()
 {
-    llvm::outs() << R"help(CppHDL - convert C++ RTL to SystemVerilog or optimized native C++ simulation
+    llvm::outs() << R"help(C++HDL - convert C++ RTL to SystemVerilog or optimized native C++ simulation
 
 Usage:
-  cpphdl [CppHDL options] source.cpp [source.h ...] -- [Clang arguments]
+  cpphdl [C++HDL options] source.cpp [source.h ...] -- [Clang arguments]
   cpphdl --help
 
-Before --: CppHDL options and source files (.cpp, .cc, .h, .hpp).
-After  --: compiler arguments used to parse those sources, not CppHDL options.
+Before --: C++HDL options and source files (.cpp, .cc, .h, .hpp).
+After  --: compiler arguments used to parse those sources, not C++HDL options.
 The legacy form without -- is also supported: put all sources before compiler
 arguments. Prefer an explicit -- to make the boundary unambiguous.
 
@@ -2412,7 +2412,7 @@ Clocks:
   Frequencies validate the design; the testbench must schedule clock edges.
 
 Experimental gate synthesis:
-  --synth [options]             Synthesize CppHDL to generic gate-level Verilog;
+  --synth [options]             Synthesize C++HDL to generic gate-level Verilog;
                                 use --synth --help for options.
                                 --top names a C++ module class or root object.
                                 ClockedPipeline/ClockedDelayer automatically select
@@ -2424,7 +2424,7 @@ Native simulation optimizer (generates C++, not SystemVerilog):
                                 --word-model --help for backend options.
   --native-graph [options]      Compile an hdlcpp value graph without Yosys;
                                 use --native-graph --help for options.
-                                With --top VARIABLE, lower ordinary CppHDL C++.
+                                With --top VARIABLE, lower ordinary C++HDL C++.
   --lower-word-model IN OUT -- [Clang arguments]
                                 Lower typed concatenation trees to word stores.
   --optimize-combs <root>        Generate a dependency-scheduled model for the
@@ -2454,7 +2454,7 @@ Compiler arguments after -- (common examples, not an exhaustive Clang list):
   -include <file>               Include a header before parsing the source.
   -W<warning>, -Wno-<warning>   Control Clang diagnostics.
   --sysroot=<directory>         Select the compiler's system-header root.
-  CppHDL adds C++ language mode (-std=c++26), detected include paths, and
+  C++HDL adds C++ language mode (-std=c++26), detected include paths, and
   -DSYNTHESIS unless disabled above. These defaults are appended to compiler
   arguments, so an earlier -std= does not override the converter's language mode.
   This tool parses C++; it does not build/link a simulation executable. Use your
@@ -2987,7 +2987,7 @@ int main(int argc, const char **argv)
     }
 
     if (cpphdlDebugEnabled) {
-        llvm::errs() << "CppHDL clang args:";
+        llvm::errs() << "C++HDL clang args:";
         for (const auto& arg : args) {
             llvm::errs() << " " << arg;
         }

@@ -233,7 +233,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestTemplateModuleSpecialization...");
 #else
-        std::print("CppHDL TestTemplateModuleSpecialization...");
+        std::print("C++HDL TestTemplateModuleSpecialization...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "template_module_specialization_test";

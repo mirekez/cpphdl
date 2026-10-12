@@ -9,7 +9,7 @@
 
 using namespace cpphdl;
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t FIFO_WIDTH_BYTES, size_t FIFO_DEPTH, bool SHOWAHEAD = true, bool OUTPUT_REG = false>
 class Fifo : public Module
@@ -248,7 +248,7 @@ public:
 };
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -460,7 +460,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}, OUTPUT_REG: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD, OUTPUT_REG);
 #else
-        std::print("CppHDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}, OUTPUT_REG: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD, OUTPUT_REG);
+        std::print("C++HDL TestFifo, FIFO_WIDTH_BYTES: {}, FIFO_DEPTH: {}, SHOWAHEAD: {}, OUTPUT_REG: {}...", FIFO_WIDTH_BYTES, FIFO_DEPTH, SHOWAHEAD, OUTPUT_REG);
 #endif
         if (debugen_in) {
             std::print("\n");

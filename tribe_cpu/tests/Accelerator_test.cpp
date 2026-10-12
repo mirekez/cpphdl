@@ -203,7 +203,7 @@ public:
 
     bool run()
     {
-        std::print("CppHDL TestAccelerator direct...");
+        std::print("C++HDL TestAccelerator direct...");
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "accelerator_direct_test";
         _assign();

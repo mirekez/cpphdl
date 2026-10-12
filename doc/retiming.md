@@ -1,4 +1,4 @@
-# Retiming over CppHDL Synthesis
+# Retiming over C++HDL Synthesis
 
 Retiming operates on the shared operation graph in `synth/` without modifying
 the C++ source. Both the original and retimed graph can be simulated
@@ -153,7 +153,7 @@ Current rejection conditions include:
 - A single indivisible operation that exceeds the target by itself.
 
 Fit mode expands an oversized arithmetic operator, including multiplication
-or division, into CppHDL's generic gates before placing register boundaries.
+or division, into C++HDL's generic gates before placing register boundaries.
 This permits registers inside the calculation, rather than only around it.
 Memory operations and explicit `keep_box` / `one_clock` regions remain intact.
 If an indivisible region or the transformed design still exceeds its target,

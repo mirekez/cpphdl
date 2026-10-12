@@ -35,7 +35,7 @@ struct DataValidReadyIf : public Interface
 //    }
 };
 
-// CppHDL MODEL /////////////////////////////////////////////////////////
+// C++HDL MODEL /////////////////////////////////////////////////////////
 
 template<size_t DATAWIDTH>
 class VRDriver : public Module
@@ -186,7 +186,7 @@ public:
 
 /////////////////////////////////////////////////////////////////////////
 
-// CppHDL INLINE TEST ///////////////////////////////////////////////////
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
 
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
@@ -397,7 +397,7 @@ public:
         std::print("VERILATOR TestValidReady Responder, DATAWIDTH: {}, COUNT: {}...", DATAWIDTH, VALID_READY_COUNT);
 #endif
 #else
-        std::print("CppHDL TestValidReady, DATAWIDTH: {}, COUNT: {}...", DATAWIDTH, VALID_READY_COUNT);
+        std::print("C++HDL TestValidReady, DATAWIDTH: {}, COUNT: {}...", DATAWIDTH, VALID_READY_COUNT);
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "valid_ready_test";

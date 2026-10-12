@@ -42,7 +42,7 @@
     <path d="M5 15h-8 M5 25h-8 M5 35h-8 M41 15h8 M41 25h8 M41 35h8 M14 11V3 M23 11V3 M32 11V3 M14 39v8 M23 39v8 M32 39v8"
           stroke="#7255c7" stroke-width="3" stroke-linecap="round"/>
     <text x="64" y="31" class="title">TRIBE CPU</text>
-    <text x="64" y="54" class="subtitle">RV32 multicore system architecture - CppHDL native simulation and generated SystemVerilog</text>
+    <text x="64" y="54" class="subtitle">RV32 multicore system architecture - C++HDL native simulation and generated SystemVerilog</text>
   </g>
 
   <!-- Top control and interrupt paths -->

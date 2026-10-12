@@ -406,7 +406,7 @@ public:
 
     bool run()
     {
-        std::print("CppHDL TestEthGigDMA<{}>...", DATA_WIDTH);
+        std::print("C++HDL TestEthGigDMA<{}>...", DATA_WIDTH);
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "ethgig_dma_test";
         _assign();

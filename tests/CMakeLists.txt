@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(tests LANGUAGES CXX)
+add_executable(cpp_graph_environment graph/CppGraphEnvironmentChecks.cc)
+target_include_directories(cpp_graph_environment PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_features(cpp_graph_environment PRIVATE cxx_std_23)
+add_test(NAME cpp_graph_environment COMMAND cpp_graph_environment)
+set_tests_properties(cpp_graph_environment PROPERTIES TIMEOUT 120)
 add_test(NAME cpp_graph_clocked_boundary_rejected COMMAND "${CMAKE_COMMAND}"
     "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/clocked-boundary"
@@ -232,6 +237,11 @@ if(Python3_Interpreter_FOUND)
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME hdlcpp_wide_select_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/WideSelectChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+            --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/wide-select-graph")
+        set_tests_properties(hdlcpp_wide_select_graph PROPERTIES TIMEOUT 300)
         add_test(NAME hdlcpp_byte_string_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/ByteStringChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
@@ -272,6 +282,12 @@ if(Python3_Interpreter_FOUND)
         # This pipeline compiles dozens of sanitized graph runners. Allow the
         # complete matrix to finish on the same low-parallelism test machines.
         set_tests_properties(cpp_graph_pipeline PROPERTIES TIMEOUT 900
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_chunked_host COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/ChunkedHostChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/chunked-host")
+        set_tests_properties(cpp_graph_chunked_host PROPERTIES TIMEOUT 900
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     add_test(NAME netlist_driver COMMAND "${Python3_EXECUTABLE}"
@@ -473,7 +489,7 @@ set(template_hierarchy_tests
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
-# directory. They contain generated .cpp files, not independent CppHDL tests.
+# directory. They contain generated .cpp files, not independent C++HDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
 # These fixtures are built by SwitchControlChecks.py with a separate runner
 # and flow-specific definitions, not as standalone inline-test executables.
@@ -950,7 +966,7 @@ add_test(
 )
 set_tests_properties(optimizer_module_array_call PROPERTIES TIMEOUT 120)
 
-# Very large concrete classes may remain ordinary CppHDL subtrees while the
+# Very large concrete classes may remain ordinary C++HDL subtrees while the
 # surrounding hierarchy is flattened. Preserve their lifecycle calls, and
 # never move structural _assign() setup into generated runtime functions.
 add_test(

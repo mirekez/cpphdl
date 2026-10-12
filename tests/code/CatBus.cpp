@@ -271,7 +271,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestCatBus...");
 #else
-        std::print("CppHDL TestCatBus...");
+        std::print("C++HDL TestCatBus...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "cat_bus_test";

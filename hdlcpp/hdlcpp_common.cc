@@ -93,7 +93,7 @@ struct ModuleGen {
     std::set<std::string> seqAssignedVars;
     // Clocked blocking assignments must be visible immediately after the process runs.
     // Track explicit <= targets separately so only true nonblocking state uses reg<>
-    // storage, _next seeding, and strobe commits in the generated CppHDL model.
+    // storage, _next seeding, and strobe commits in the generated C++HDL model.
     std::set<std::string> nonblockingAssignedVars;
     std::set<std::string> partialSeqAssignedVars;
     std::set<std::string> assignDrivenVars;
@@ -2564,7 +2564,7 @@ static size_t matchingTemplateClose(const std::string& s, size_t open)
 }
 
 // hdlcpp keeps array dimensions internally as element, count, packed because that
-// matches SystemVerilog type construction. CppHDL's public array template now uses
+// matches SystemVerilog type construction. C++HDL's public array template now uses
 // count, element, packed, so reorder only the final emitted C++ representation.
 static std::string emitCurrentCpphdlArrayOrder(std::string text)
 {

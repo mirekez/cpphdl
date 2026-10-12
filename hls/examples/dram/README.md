@@ -92,7 +92,7 @@ build/cpphdl --synth --top DramStream --module DramStream \
 Only the calculation pipeline is retimed. Loader FSMs, arbitration and the DDR
 handshake retain their behavior. The completion handshake naturally waits when
 the pipeline cannot accept data; retiming carries tag and error metadata with
-each result. The 5 ns target uses CppHDL's cell-delay estimates, not placed-and-
+each result. The 5 ns target uses C++HDL's cell-delay estimates, not placed-and-
 routed DDR or FPGA timing sign-off.
 
 The current synthesis report expands the arithmetic pipeline from 3 to 6

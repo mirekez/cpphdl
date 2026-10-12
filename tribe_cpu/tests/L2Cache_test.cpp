@@ -1887,7 +1887,7 @@ public:
         std::print("VERILATOR Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={},CPU_PORTS={}>...",
             L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS, CPU_PORTS);
 #else
-        std::print("CppHDL Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={},CPU_PORTS={}>...",
+        std::print("C++HDL Test{}<SIZE={},WAYS={},PORT_BITS={},MEM_PORTS={},CPU_PORTS={}>...",
             L2CACHE_TEST_TOP_NAME, L2_SIZE, WAYS, PORT_BITS, MEM_PORTS, CPU_PORTS);
 #endif
         std::print("\n  features under test:"
@@ -2001,7 +2001,7 @@ int main(int argc, char** argv)
         ok &= compile_l2(0, 16384, 64, 4, 1, cpu_ports);
         ok &= compile_l2(1, 16384, 64, 4, 2, cpu_ports);
         ok &= compile_l2(2, 16384, 64, 4, 4, cpu_ports);
-        // CppHDL currently emits one L2Cache SV module name, and flattened
+        // C++HDL currently emits one L2Cache SV module name, and flattened
         // interface widths are fixed by the first specialization. Keep the
         // Verilator sweep on 64-bit ports; the C++ model below still covers
         // the 256-bit configurations.

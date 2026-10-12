@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check integration patch paths and upgrades without fetching external tools."""
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 import unittest
@@ -76,6 +77,61 @@ class ChipyardPatchTest(unittest.TestCase):
         self.assertIn('does not apply cleanly', result.stderr)
         self.assertEqual((checkout / 'build.sbt').read_text(), 'user edit\n')
         self.assertFalse((checkout / 'created').exists())
+
+    def test_exporter_lowercase_paths(self):
+        repo = self.base / 'exporter'
+        repo.mkdir()
+        self.git(repo, 'init', '-q')
+        self.git(repo, 'apply', '--include=include/circt/Conversion/Exportcpphdl.h',
+                 '--include=lib/Conversion/Exportcpphdl/*', ROOT / 'firrtl_cpphdl.patch')
+        header = repo / 'include/circt/Conversion/Exportcpphdl.h'
+        source = repo / 'lib/Conversion/Exportcpphdl/Exportcpphdl.cpp'
+        self.assertIn('exportcpphdl(', header.read_text())
+        self.assertIn('circt::exportcpphdl(', source.read_text())
+        self.assertIn('CIRCTExportcpphdl',
+                      (source.parent / 'CMakeLists.txt').read_text())
+        self.git(repo, 'apply', '--reverse', '--check',
+                 '--include=include/circt/Conversion/Exportcpphdl.h',
+                 '--include=lib/Conversion/Exportcpphdl/*', ROOT / 'firrtl_cpphdl.patch')
+
+    def test_exporter_detection_preserves_existing_checkouts(self):
+        repo, checkout, product = self.fixture()
+        self.git(repo, 'apply', '--include=tools/firtool-cpphdl/CMakeLists.txt',
+                 ROOT / 'chipyard_cpphdl.patch')
+        cmake = (repo / 'tools/firtool-cpphdl/CMakeLists.txt').read_text()
+        discovery = 'file(GLOB CPPHDL_EXPORT_SOURCE ' + cmake.split(
+            'file(GLOB CPPHDL_EXPORT_SOURCE ', 1)[1].split('add_executable', 1)[0]
+        script = (product / 'install.sh').read_text().split(
+            '[[ -f "$chipyard_root/build.sbt" ]]')[0]
+        script += '\nhas_cpphdl_exporter "$CIRCT_CPPHDL_SOURCE_DIR"\n'
+        (product / 'detect.sh').write_text(script)
+        for suffix in ('cpphdl', 'cpp'.capitalize() + 'hdl'.upper()):
+            with self.subTest(suffix=suffix):
+                circt = self.base / suffix
+                header = circt / f'include/circt/Conversion/Export{suffix}.h'
+                source = circt / f'lib/Conversion/Export{suffix}/Export{suffix}.cpp'
+                tool = circt / 'tools/firtool/firtool.cpp'
+                for path in (header, source, tool):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('')
+                tool.write_text('"split-cpphdl"\n')
+                result = subprocess.run(['bash', str(product / 'detect.sh'), str(checkout)],
+                                        env={**os.environ, 'CIRCT_CPPHDL_SOURCE_DIR': str(circt)},
+                                        text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                # Exercise the installed template's source discovery without an SDK.
+                probe = product / 'source.cmake'
+                probe.write_text(f'set(CIRCT_CPPHDL_SOURCE_DIR "{circt}")\n' + discovery +
+                                 'message("selected=${CPPHDL_EXPORT_SOURCE}")\n')
+                result = subprocess.run(['cmake', '-P', str(probe)], text=True,
+                                        capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f'selected={source}', result.stderr)
+                source.unlink()
+                result = subprocess.run(['bash', str(product / 'detect.sh'), str(checkout)],
+                                        env={**os.environ, 'CIRCT_CPPHDL_SOURCE_DIR': str(circt)},
+                                        text=True, capture_output=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_options_upgrade_matches_fresh_install(self):
         repo = self.base / 'repository'

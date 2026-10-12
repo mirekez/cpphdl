@@ -255,7 +255,7 @@ public:
 
 protected:
     // Only these storage leaves are FPGA-specific; all addressing, write
-    // enables, replacement policy and cache control remain generated CppHDL.
+    // enables, replacement policy and cache control remain generated C++HDL.
     // Fixed maxima allow _assign() to bind every leaf with literal indices.
     // Inactive leaves are tied off by the zeroed control bundle and are pruned
     // for one- and two-way configurations.

@@ -217,7 +217,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestConstexprPortsize...");
 #else
-        std::print("CppHDL TestConstexprPortsize...");
+        std::print("C++HDL TestConstexprPortsize...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "constexpr_portsize_test";

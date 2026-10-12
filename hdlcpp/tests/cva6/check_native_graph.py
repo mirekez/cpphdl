@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the small original-SV CVA6 bus with the native CppHDL graph backend."""
+"""Regenerate the small original-SV CVA6 bus with the native C++HDL graph backend."""
 
 import argparse
 import hashlib

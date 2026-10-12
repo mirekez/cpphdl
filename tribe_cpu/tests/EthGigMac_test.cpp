@@ -469,7 +469,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestEthGigMac...");
 #else
-        std::print("CppHDL TestEthGigMac...");
+        std::print("C++HDL TestEthGigMac...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "ethgig_mac_test";

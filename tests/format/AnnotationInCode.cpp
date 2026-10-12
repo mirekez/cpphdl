@@ -153,7 +153,7 @@ public:
 #ifdef VERILATOR
         std::print("VERILATOR TestAnnotationInCode...");
 #else
-        std::print("CppHDL TestAnnotationInCode...");
+        std::print("C++HDL TestAnnotationInCode...");
 #endif
         auto start = std::chrono::high_resolution_clock::now();
         __inst_name = "annotation_in_code_test";
