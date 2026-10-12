@@ -67,7 +67,17 @@ cpphdl::hls::ClockedMemory<LoadWeight> loader;
 ```
 
 `ClockedMemory<T>` uses the delayed scheduler with an explicit external memory
-channel; it has the same command/response contract as `ClockedDelayer`.
+interface. `ClockedMemory<T,32,true>` additionally maps local memory-backed
+objects through synchronous banked block RAM; nonescaping scalar temporaries
+can remain registers. External pointers still target the independent external
+interface, while local pointers address local storage. The optional third
+argument defaults to false, preserving existing register-backed/direct local
+storage and the default local arena implementation. Large aggregate zero
+initialization uses a counted RAM-port loop instead of an unrolled FSM;
+startup latency grows with capacity. Both memory resources currently use a
+sequential access schedule.
+
+The wrapper has the same command/response contract as `ClockedDelayer`.
 Pointer indexing, dereferencing, pointer arithmetic, aliases and helper arguments
 of type `cpphdl::hls::external_ptr<T>` retain external address-space identity.
 Local pointers still address local HLS storage. Do not cast external pointers

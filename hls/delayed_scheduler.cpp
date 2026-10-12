@@ -665,6 +665,24 @@ class DelayedScheduler {
     }
     void store(Value target, Value value) {
         if (!target.location) reject(nullptr, "assignment needs an lvalue: " + target.type.getAsString() + " " + target.text);
+        if (blockRam && bytes(target.type) >= 256 && value.text == "'0") {
+            // Large clears use a counted RAM-port loop, not an unrolled FSM
+            // and a whole-aggregate temporary for every beat.
+            const unsigned count = bytes(target.type), words = count / 8;
+            Value offset = slot(ctx.UnsignedIntTy, "zero_offset");
+            store(offset, {"0", ctx.UnsignedIntTy});
+            const int test = block(), body = block(), after = block();
+            jump(test, true); current = test;
+            branch("(" + read(offset) + " < " + std::to_string(words * 8) + ")", body, after);
+            current = body;
+            store({"(" + target.text + " + " + read(offset) + ")", ctx.UnsignedLongLongTy, true},
+                  {"0", ctx.UnsignedLongLongTy});
+            store(offset, {"(" + read(offset) + " + 8)", ctx.UnsignedIntTy});
+            jump(test, true); current = after;
+            for (unsigned i = words * 8; i < count; ++i)
+                store({offsetAddress(target.text, i), ctx.UnsignedCharTy, true}, {"0", ctx.UnsignedCharTy});
+            return;
+        }
         std::string data = read(value);
         emit(access({target.text, data, target.type, true}));
     }
@@ -1185,6 +1203,11 @@ class DelayedScheduler {
     void initialize(Value target, const E* init) {
         target = reference(target);
         init = init->IgnoreParens();
+        if (auto* defaultInit = dyn_cast<CXXDefaultInitExpr>(init)) {
+            // Initialize the destination directly. Materializing an array's
+            // in-class initializer first would create a whole-array RAM copy.
+            initialize(target, defaultInit->getExpr()); return;
+        }
         if (auto* cast = dyn_cast<CastExpr>(init); cast &&
             (cast->getCastKind() == CK_ConstructorConversion || cast->getCastKind() == CK_NoOp) &&
             init->isPRValue() && init->getType()->isRecordType()) {
@@ -1754,6 +1777,9 @@ public:
             if (externalMemory) {
                 addressWidth = args[1].getAsIntegral().getLimitedValue();
                 if (addressWidth != 32) reject(nullptr, "external memory currently requires 32-bit byte addresses");
+                // Local RAM and the external memory channel are independent.
+                if (args.size() > 2) blockRam = args[2].getAsIntegral().getBoolValue();
+                sharedMemory = blockRam;
             } else {
                 if (args.size() > 1) recursionLimit = args[1].getAsIntegral().getLimitedValue();
                 if (recursionLimit > 16) reject(nullptr, "MAX_RECURSION must be in 0..16");

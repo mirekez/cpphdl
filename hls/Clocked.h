@@ -55,7 +55,7 @@ public:
     void _strobe() { pending_reg.strobe(); result_reg.strobe(); }
 };
 
-template<class T, unsigned ADDRESS_BITS = 32>
+template<class T, unsigned ADDRESS_BITS = 32, bool BLOCK_RAM = false>
 class
 #ifdef __clang__
 [[clang::annotate("CPPHDL_HLS_CLOCKED"), clang::annotate("CPPHDL_HLS_EXTERNAL_MEMORY")]]
