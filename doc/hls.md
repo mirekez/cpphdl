@@ -296,6 +296,36 @@ packet contents, backpressure and reset. Full-design retiming now estimates
 checks the retimed design with the same packet testbench. This is an estimated
 timing result, not physical timing closure.
 
+## OpenMP Parallel Loops
+
+Bounded OpenMP `parallel for`, `parallel for simd`, and `simd` loops can be
+elaborated into independent hardware lanes. Pass `-fopenmp` after the converter's
+`--` separator. Native GCC/Clang builds use the same pragma to run the iterations
+on host threads; generated RTL contains no OpenMP runtime.
+
+```cpp
+uint32_t sum = 19;
+#pragma omp parallel for reduction(+:sum)
+for (int i = 0; i < 8; ++i) sum += (value + uint32_t(i)) * 3u;
+```
+
+Wrap the owning algorithm in `ClockedPipeline` for overlapping commands. Each
+iteration gets its own values; the unsigned reduction uses a balanced tree,
+combining the original `sum` once. Synthesis with `fit_pipeline_retiming` can
+insert further stages to meet an estimated period without serializing lanes.
+The same loop lowering is available in `ClockedDelayer`, but that wrapper
+still serializes separate invocations.
+
+Bounds/stride must be constant, indices at most 32 bits, with at most 256 total
+lanes. The subset supports private/firstprivate integers, disjoint fixed-array
+accesses, unsigned `+`, `*`, `&`, `|`, `^` reductions, and `collapse(1..3)`.
+It rejects shared scalar races, unsafe lane dependencies, runtime bounds,
+pointer accesses and unsupported directives/clauses rather than silently
+serializing them. Firstprivate mutation must not carry state between host
+iterations. Parallel array accesses do not imply a multiported BRAM or DDR.
+See [the OpenMP examples](../hls/examples/openmp/README.md) for the complete
+supported contract, native/RTL/gate-level tests, and commands.
+
 ## Delayed Class Instantiation
 
 An ordinary class can be a clocked member of an RTL module:

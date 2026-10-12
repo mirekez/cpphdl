@@ -2452,6 +2452,7 @@ Compiler arguments after -- (common examples, not an exhaustive Clang list):
   -DNAME[=value]                Define a preprocessor macro.
   -UNAME                        Undefine a preprocessor macro.
   -include <file>               Include a header before parsing the source.
+  -fopenmp                      Parse supported OpenMP HLS parallel loops.
   -W<warning>, -Wno-<warning>   Control Clang diagnostics.
   --sysroot=<directory>         Select the compiler's system-header root.
   C++HDL adds C++ language mode (-std=c++26), detected include paths, and

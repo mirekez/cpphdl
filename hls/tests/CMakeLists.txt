@@ -152,6 +152,14 @@ add_subdirectory(../examples/map "${CMAKE_BINARY_DIR}/hls/examples/map")
 add_subdirectory(../examples/net "${CMAKE_BINARY_DIR}/hls/examples/net")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
+add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
+foreach(case RANGE 0 20)
+    add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
+        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
+        "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/OpenMPReject.cmake")
+    set_tests_properties(hls_openmp_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;openmp;expected-rejection")
+endforeach()
 
 add_executable(hls_shared_blocks SharedBlocks_test.cpp ../SharedBlocks.cpp ../Combinational.cpp)
 set_target_properties(hls_shared_blocks PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
