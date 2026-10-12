@@ -145,7 +145,7 @@ new file mode 100644
 index 0000000..49d9d6b
 --- /dev/null
 +++ b/lib/Conversion/Exportcpphdl/Exportcpphdl.cpp
-@@ -0,0 +1,1410 @@
+@@ -0,0 +1,1485 @@
 +//===- Exportcpphdl.cpp - C++HDL emitter --------------------------------===//
 +
 +#include "circt/Conversion/Exportcpphdl.h"
@@ -180,6 +180,24 @@ index 0000000..49d9d6b
 +  os << "// Generated directly from FIRRTL by firtool.\n"
 +        "#pragma once\n#include <cpphdl.h>\n#include <type_traits>\n\n"
 +        "namespace firtool_cpphdl {\n"
++        "template <size_t Width, typename Left, typename Right>\n"
++        "cpphdl::logic<Width> multiply(const Left& left, const Right& right) {\n"
++        "  if constexpr (Width <= 64) {\n"
++        "    return cpphdl::logic<Width>(static_cast<uint64_t>(left) * static_cast<uint64_t>(right));\n"
++        "  } else {\n"
++        "    cpphdl::logic<Width> lhs(left), rhs(right), result(0);\n"
++        "    for (size_t a = 0; a < Width; a += 32) {\n"
++        "      const uint64_t x = static_cast<uint64_t>(lhs >> a) & 0xffffffffULL;\n"
++        "      for (size_t b = 0; a + b < Width; b += 32) {\n"
++        "        const uint64_t y = static_cast<uint64_t>(rhs >> b) & 0xffffffffULL;\n"
++        "        const cpphdl::logic<Width> product(x * y);\n"
++        "        result = result + (product << (a + b));\n"
++        "      }\n"
++        "    }\n"
++        "    for (size_t bit = Width; bit < cpphdl::logic<Width>::SIZE * 8; ++bit) result.set(bit, 0);\n"
++        "    return result;\n"
++        "  }\n"
++        "}\n"
 +        "template <size_t Width> constexpr cpphdl::logic<Width> constant(std::initializer_list<uint64_t> words) {\n"
 +        "  cpphdl::logic<Width> result = 0; size_t word = 0;\n"
 +        "  for (uint64_t value : words) { for (size_t bit = 0; bit < 64 && word * 64 + bit < Width; ++bit)\n"
@@ -1231,13 +1249,21 @@ index 0000000..49d9d6b
 +                        shiftToken + *shiftAmount + ")");
 +    }
 +
++    // Built-in C++ multiplication narrows logic<W> to uint64_t, losing
++    // high product bits before a later result cast can recover them.
++    if (name == "comb.mul" && !operands.empty()) {
++      std::string result = operands.front();
++      for (unsigned i = 1; i < operands.size(); ++i)
++        result = (Twine("firtool_cpphdl::multiply<") + Twine(*resultWidth) +
++                  ">(" + result + ", " + operands[i] + ")").str();
++      return castResult(result);
++    }
 +    StringRef token;
 +    if (name == "comb.and") token = " & ";
 +    else if (name == "comb.or") token = " | ";
 +    else if (name == "comb.xor") token = " ^ ";
 +    else if (name == "comb.add") token = " + ";
 +    else if (name == "comb.sub") token = " - ";
-+    else if (name == "comb.mul") token = " * ";
 +    if (!token.empty() && !operands.empty())
 +      return castResult(Twine("(") + llvm::join(operands, token) + ")");
 +
@@ -1410,6 +1436,53 @@ index 0000000..49d9d6b
 +  unsigned nextGeneratedValue = 0;
 +};
 +
++static LogicalResult emitExternalParameters(hw::HWModuleExternOp external,
++                                           raw_ostream &os) {
++  // FIRRTL puts concrete extern parameters on HW instances, not declarations.
++  // One host type is safe only when all bindings of that type agree.
++  llvm::StringMap<Attribute> bindings;
++  bool conflict = false;
++  external->getParentOp()->walk([&](hw::InstanceOp instance) {
++    if (instance.getModuleName() != external.getModuleName()) return;
++    for (auto attr : instance.getParameters()) {
++      auto parameter = cast<hw::ParamDeclAttr>(attr);
++      auto value = parameter.getValue();
++      auto inserted = bindings.try_emplace(parameter.getName().getValue(), value);
++      if (!inserted.second && inserted.first->second != value) conflict = true;
++    }
++  });
++  if (conflict)
++    return external.emitError("C++HDL external parameter bindings differ; specialize external module types first");
++  auto verilogName = external->getAttrOfType<StringAttr>("verilogName");
++  os << "  inline static constexpr const char* cpphdl_external_name = \"";
++  os.write_escaped(verilogName ? verilogName.getValue() : external.getModuleName());
++  os << "\";\n";
++  for (auto attr : external.getParameters()) {
++    auto parameter = cast<hw::ParamDeclAttr>(attr);
++    auto name = cppIdentifier(parameter.getName().getValue());
++    auto value = bindings.lookup(parameter.getName().getValue());
++    if (!value) value = parameter.getValue();
++    if (auto integer = dyn_cast_or_null<IntegerAttr>(value)) {
++      const auto &value = integer.getValue();
++      os << "  inline static constexpr cpphdl::logic<" << value.getBitWidth()
++         << "> cpphdl_parameter_" << name << " = firtool_cpphdl::constant<"
++         << value.getBitWidth() << ">({";
++      for (unsigned i = 0; i < value.getNumWords(); ++i) {
++        if (i) os << ", ";
++        os << value.getRawData()[i] << "ULL";
++      }
++      os << "});\n";
++    } else if (auto string = dyn_cast_or_null<StringAttr>(value)) {
++      os << "  inline static constexpr const char* cpphdl_parameter_" << name << " = \"";
++      os.write_escaped(string.getValue());
++      os << "\";\n";
++    } else {
++      return external.emitError("C++HDL external parameter must have a concrete integer or string value: ") << parameter.getName();
++    }
++  }
++  return success();
++}
++
 +static LogicalResult emitSplitExternal(hw::HWModuleExternOp external,
 +                                       raw_ostream &header,
 +                                       raw_ostream &implementation) {
@@ -1417,6 +1490,7 @@ index 0000000..49d9d6b
 +  header << "#pragma once\n#include \"cpphdl_support.h\"\n"
 +            "#include <memory>\n#include <utility>\n\nclass "
 +         << name << " : public cpphdl::Module {\npublic:\n";
++  if (failed(emitExternalParameters(external, header))) return failure();
 +  for (auto port : external.getPortList()) {
 +    auto type = cppType(port.type);
 +    if (failed(type))
@@ -1475,6 +1549,7 @@ index 0000000..49d9d6b
 +  for (auto external : module.getOps<hw::HWModuleExternOp>()) {
 +    os << "class " << cppIdentifier(external.getModuleName())
 +       << " : public cpphdl::Module {\npublic:\n";
++    if (failed(emitExternalParameters(external, os))) return failure();
 +    for (auto port : external.getPortList()) {
 +      auto type = cppType(port.type);
 +      if (failed(type))

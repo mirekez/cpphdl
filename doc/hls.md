@@ -67,7 +67,17 @@ cpphdl::hls::ClockedMemory<LoadWeight> loader;
 ```
 
 `ClockedMemory<T>` uses the delayed scheduler with an explicit external memory
-channel; it has the same command/response contract as `ClockedDelayer`.
+interface. `ClockedMemory<T,32,true>` additionally maps local memory-backed
+objects through synchronous banked block RAM; nonescaping scalar temporaries
+can remain registers. External pointers still target the independent external
+interface, while local pointers address local storage. The optional third
+argument defaults to false, preserving existing register-backed/direct local
+storage and the default local arena implementation. Large aggregate zero
+initialization uses a counted RAM-port loop instead of an unrolled FSM;
+startup latency grows with capacity. Both memory resources currently use a
+sequential access schedule.
+
+The wrapper has the same command/response contract as `ClockedDelayer`.
 Pointer indexing, dereferencing, pointer arithmetic, aliases and helper arguments
 of type `cpphdl::hls::external_ptr<T>` retain external address-space identity.
 Local pointers still address local HLS storage. Do not cast external pointers
@@ -295,6 +305,36 @@ packet contents, backpressure and reset. Full-design retiming now estimates
 3.12 ns against the 315 MHz target while keeping word-level II=1; the gate regression
 checks the retimed design with the same packet testbench. This is an estimated
 timing result, not physical timing closure.
+
+## OpenMP Parallel Loops
+
+Bounded OpenMP `parallel for`, `parallel for simd`, and `simd` loops can be
+elaborated into independent hardware lanes. Pass `-fopenmp` after the converter's
+`--` separator. Native GCC/Clang builds use the same pragma to run the iterations
+on host threads; generated RTL contains no OpenMP runtime.
+
+```cpp
+uint32_t sum = 19;
+#pragma omp parallel for reduction(+:sum)
+for (int i = 0; i < 8; ++i) sum += (value + uint32_t(i)) * 3u;
+```
+
+Wrap the owning algorithm in `ClockedPipeline` for overlapping commands. Each
+iteration gets its own values; the unsigned reduction uses a balanced tree,
+combining the original `sum` once. Synthesis with `fit_pipeline_retiming` can
+insert further stages to meet an estimated period without serializing lanes.
+The same loop lowering is available in `ClockedDelayer`, but that wrapper
+still serializes separate invocations.
+
+Bounds/stride must be constant, indices at most 32 bits, with at most 256 total
+lanes. The subset supports private/firstprivate integers, disjoint fixed-array
+accesses, unsigned `+`, `*`, `&`, `|`, `^` reductions, and `collapse(1..3)`.
+It rejects shared scalar races, unsafe lane dependencies, runtime bounds,
+pointer accesses and unsupported directives/clauses rather than silently
+serializing them. Firstprivate mutation must not carry state between host
+iterations. Parallel array accesses do not imply a multiported BRAM or DDR.
+See [the OpenMP examples](../hls/examples/openmp/README.md) for the complete
+supported contract, native/RTL/gate-level tests, and commands.
 
 ## Delayed Class Instantiation
 

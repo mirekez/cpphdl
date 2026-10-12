@@ -88,6 +88,8 @@ class ChipyardPatchTest(unittest.TestCase):
         source = repo / 'lib/Conversion/Exportcpphdl/Exportcpphdl.cpp'
         self.assertIn('exportcpphdl(', header.read_text())
         self.assertIn('circt::exportcpphdl(', source.read_text())
+        self.assertTrue(source.read_text().endswith('  return success();\n}\n'),
+                        'Patch hunk length must not truncate the exporter')
         self.assertIn('CIRCTExportcpphdl',
                       (source.parent / 'CMakeLists.txt').read_text())
         self.git(repo, 'apply', '--reverse', '--check',

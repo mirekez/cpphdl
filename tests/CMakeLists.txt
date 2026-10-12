@@ -153,6 +153,9 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME firtool_rocket_backends COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_rocket_backends.py")
     set_tests_properties(firtool_rocket_backends PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_emitter_support COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_emitter.py" --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(firtool_emitter_support PROPERTIES TIMEOUT 180)
     add_test(NAME cpp_graph_wide_shift COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideShiftChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")

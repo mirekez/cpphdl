@@ -1,15 +1,27 @@
 include("${TOOLCHAIN}")
-file(REMOVE_RECURSE "${WORK}/generated")
+file(REMOVE_RECURSE "${WORK}/generated" "${WORK}/obj")
 file(MAKE_DIRECTORY "${WORK}")
 set(source "${ROOT}/hls/tests/ExternalPointer.cpp")
+set(top ExternalPointerTop)
+set(definitions)
+set(bench_definitions)
+if(LOCAL_RAM)
+    set(source "${ROOT}/hls/tests/ExternalLocalRam.cpp")
+    set(top ExternalLocalRamTop)
+    if(NOT LOCAL_BYTES)
+        set(LOCAL_BYTES 513)
+    endif()
+    list(APPEND definitions "-DLOCAL_RAM_BYTES=${LOCAL_BYTES}" "-DLOCAL_RAM_BLOCK=${LOCAL_BLOCK}")
+    list(APPEND bench_definitions -DEXTERNAL_LOCAL_TEST "-DLOCAL_RAM_BYTES=${LOCAL_BYTES}")
+endif()
 if(SYNTH)
-    execute_process(COMMAND "${CPPHDL}" --synth --top ExternalPointerTop --module ExternalPointerTop
-        --output "${WORK}/generated" --cxx "${CXX}" "${source}" -- "-I${ROOT}/include" ${HLS_PARSE_FLAGS}
+    execute_process(COMMAND "${CPPHDL}" --synth --top "${top}" --module "${top}"
+        --output "${WORK}/generated" --cxx "${CXX}" "${source}" -- "-I${ROOT}/include" ${definitions} ${HLS_PARSE_FLAGS}
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
     set(modules "${WORK}/generated/gates.v")
 else()
     execute_process(COMMAND "${CPPHDL}" --generated-dir "${WORK}/generated" "${source}"
-        -- "-I${ROOT}/include" ${HLS_PARSE_FLAGS}
+        -- "-I${ROOT}/include" ${definitions} ${HLS_PARSE_FLAGS}
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
     file(GLOB modules "${WORK}/generated/*.sv")
     list(REMOVE_ITEM modules "${WORK}/generated/Predef_pkg.sv")
@@ -19,6 +31,23 @@ file(WRITE "${WORK}/conversion.log" "${output}\n${error}")
 if(NOT result EQUAL 0)
     message(FATAL_ERROR "External pointer conversion failed: ${output}\n${error}")
 endif()
+if(LOCAL_RAM AND NOT SYNTH AND LOCAL_BLOCK)
+    file(GLOB worker "${WORK}/generated/*ClockedMemory*BRAM.sv")
+    list(LENGTH worker count)
+    if(NOT count EQUAL 1)
+        message(FATAL_ERROR "Local BRAM policy must have a distinct module name")
+    endif()
+    file(READ "${worker}" rtl)
+    if(NOT rtl MATCHES "ram_style = .block." OR NOT rtl MATCHES "zero_offset"
+        OR NOT rtl MATCHES "external_read" OR NOT rtl MATCHES "memory_read")
+        message(FATAL_ERROR "Missing counted clear or independent local/external memory resources")
+    endif()
+    # Increasing capacity must not unroll one FSM state or huge value per beat.
+    string(LENGTH "${rtl}" rtl_length)
+    if(rtl_length GREATER 250000)
+        message(FATAL_ERROR "Local BRAM initialization expanded into a capacity-sized FSM (${rtl_length} bytes)")
+    endif()
+endif()
 list(JOIN HLS_CXX_FLAGS " " cxx_flags)
 list(JOIN HLS_LINK_FLAGS " " link_flags)
 execute_process(COMMAND "${CXX}" -print-file-name=libatomic.so OUTPUT_VARIABLE atomic OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -26,7 +55,7 @@ get_filename_component(atomic_dir "${atomic}" DIRECTORY)
 execute_process(COMMAND "${VERILATOR}" --binary --timing --assert -Wno-fatal
     --top-module ExternalPointerChecks --Mdir "${WORK}/obj" -j 2
     -CFLAGS "${cxx_flags} -std=c++20" -LDFLAGS "${link_flags} -L${atomic_dir}"
-    -MAKEFLAGS "CXX=${CXX} LINK=${CXX}" -DMEMORY_DUT=ExternalPointerTop
+    -MAKEFLAGS "CXX=${CXX} LINK=${CXX}" "-DMEMORY_DUT=${top}" ${bench_definitions}
     ${modules} "${ROOT}/hls/tests/ExternalPointer.sv"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 file(WRITE "${WORK}/build.log" "${output}\n${error}")

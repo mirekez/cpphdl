@@ -5,6 +5,7 @@
 #include "BlockRam.h"
 #include "FunctionOverrides.h"
 #include "MemoryEffects.h"
+#include "OpenMP.h"
 #include "../synth/ScheduledGraph.h"
 #include "../Module.h"
 #include "../Field.h"
@@ -664,6 +665,24 @@ class DelayedScheduler {
     }
     void store(Value target, Value value) {
         if (!target.location) reject(nullptr, "assignment needs an lvalue: " + target.type.getAsString() + " " + target.text);
+        if (blockRam && bytes(target.type) >= 256 && value.text == "'0") {
+            // Large clears use a counted RAM-port loop, not an unrolled FSM
+            // and a whole-aggregate temporary for every beat.
+            const unsigned count = bytes(target.type), words = count / 8;
+            Value offset = slot(ctx.UnsignedIntTy, "zero_offset");
+            store(offset, {"0", ctx.UnsignedIntTy});
+            const int test = block(), body = block(), after = block();
+            jump(test, true); current = test;
+            branch("(" + read(offset) + " < " + std::to_string(words * 8) + ")", body, after);
+            current = body;
+            store({"(" + target.text + " + " + read(offset) + ")", ctx.UnsignedLongLongTy, true},
+                  {"0", ctx.UnsignedLongLongTy});
+            store(offset, {"(" + read(offset) + " + 8)", ctx.UnsignedIntTy});
+            jump(test, true); current = after;
+            for (unsigned i = words * 8; i < count; ++i)
+                store({offsetAddress(target.text, i), ctx.UnsignedCharTy, true}, {"0", ctx.UnsignedCharTy});
+            return;
+        }
         std::string data = read(value);
         emit(access({target.text, data, target.type, true}));
     }
@@ -1184,6 +1203,11 @@ class DelayedScheduler {
     void initialize(Value target, const E* init) {
         target = reference(target);
         init = init->IgnoreParens();
+        if (auto* defaultInit = dyn_cast<CXXDefaultInitExpr>(init)) {
+            // Initialize the destination directly. Materializing an array's
+            // in-class initializer first would create a whole-array RAM copy.
+            initialize(target, defaultInit->getExpr()); return;
+        }
         if (auto* cast = dyn_cast<CastExpr>(init); cast &&
             (cast->getCastKind() == CK_ConstructorConversion || cast->getCastKind() == CK_NoOp) &&
             init->isPRValue() && init->getType()->isRecordType()) {
@@ -1548,8 +1572,81 @@ class DelayedScheduler {
         return invoke(fn, args, self, destination);
     }
 
+    void parallelStatement(const OMPExecutableDirective* directive) {
+        OpenMPPlan plan;
+        try { plan = planOpenMP(ctx, directive); }
+        catch (const std::runtime_error& error) { reject(directive, error.what()); }
+        auto original = contexts.back().variables;
+        auto binding = [&](const VarDecl* variable) {
+            auto found = original.find(variable);
+            if (found == original.end())
+                reject(directive, "OpenMP HLS: expected a bound automatic variable: " + variable->getNameAsString());
+            return found->second;
+        };
+        std::vector<std::vector<Value>> reductions(plan.reductions.size());
+        std::map<const VarDecl*, Value> firstprivates;
+        for (auto* var : plan.firstprivates) {
+            Value saved = slot(var->getType(), "omp_firstprivate");
+            store(saved, binding(var));
+            firstprivates[var] = saved;
+        }
+        std::function<void(unsigned)> elaborate = [&](unsigned depth) {
+            if (depth < plan.loops.size()) {
+                const auto& loop = plan.loops[depth];
+                for (auto value : loop.values) {
+                    contexts.back().variables[loop.variable] = {std::to_string(value), loop.variable->getType()};
+                    elaborate(depth + 1);
+                }
+                return;
+            }
+            for (auto* var : plan.privates)
+                contexts.back().variables[var] = slot(var->getType(), "omp_private");
+            for (auto* var : plan.firstprivates) {
+                Value lane = slot(var->getType(), "omp_firstprivate_lane");
+                store(lane, firstprivates.at(var));
+                contexts.back().variables[var] = lane;
+            }
+            for (const auto& reduction : plan.reductions) {
+                Value lane = slot(reduction.variable->getType(), "omp_reduction_lane");
+                store(lane, {reduction.identity, lane.type});
+                contexts.back().variables[reduction.variable] = lane;
+            }
+            statement(plan.body);
+            for (unsigned n = 0; n < plan.reductions.size(); ++n) {
+                auto lane = contexts.back().variables.at(plan.reductions[n].variable);
+                Value saved = slot(lane.type, "omp_reduction_result");
+                store(saved, lane);
+                reductions[n].push_back(saved);
+            }
+        };
+        elaborate(0);
+        contexts.back().variables = original;
+        for (unsigned n = 0; n < plan.reductions.size(); ++n) {
+            const auto& reduction = plan.reductions[n];
+            auto values = std::move(reductions[n]);
+            // A logarithmic reduction tree, not a lane-to-lane accumulator chain.
+            while (values.size() > 1) {
+                std::vector<Value> next;
+                for (unsigned i = 0; i < values.size(); i += 2) {
+                    if (i + 1 == values.size()) { next.push_back(values[i]); continue; }
+                    Value result = slot(values[i].type, "omp_reduction_tree");
+                    store(result, {"(" + read(values[i]) + " " + reduction.operation + " " + read(values[i+1]) + ")", result.type});
+                    next.push_back(result);
+                }
+                values = std::move(next);
+            }
+            if (!values.empty()) {
+                auto target = binding(reduction.variable);
+                store(target, {"(" + read(target) + " " + reduction.operation + " " + read(values.front()) + ")", target.type});
+            }
+        }
+    }
+
     void statement(const Stmt* stmt) {
         if (!stmt) return;
+        if (auto* directive = dyn_cast<OMPExecutableDirective>(stmt)) {
+            parallelStatement(directive); return;
+        }
         if (auto* jumpStmt = dyn_cast<GotoStmt>(stmt)) {
             const auto* label = jumpStmt->getLabel();
             if (!contexts.back().labels.count(label) || contexts.back().visitedLabels.count(label))
@@ -1680,6 +1777,9 @@ public:
             if (externalMemory) {
                 addressWidth = args[1].getAsIntegral().getLimitedValue();
                 if (addressWidth != 32) reject(nullptr, "external memory currently requires 32-bit byte addresses");
+                // Local RAM and the external memory channel are independent.
+                if (args.size() > 2) blockRam = args[2].getAsIntegral().getBoolValue();
+                sharedMemory = blockRam;
             } else {
                 if (args.size() > 1) recursionLimit = args[1].getAsIntegral().getLimitedValue();
                 if (recursionLimit > 16) reject(nullptr, "MAX_RECURSION must be in 0..16");

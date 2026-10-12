@@ -27,7 +27,11 @@ module ExternalPointerChecks;
   end
   always @(posedge clk) begin
     cycles <= cycles+1;
+`ifdef EXTERNAL_LOCAL_TEST
+    if (cycles>50000+64*`LOCAL_RAM_BYTES) $fatal(1,"external/local pointer watchdog");
+`else
     if (cycles>10000) $fatal(1,"external pointer watchdog");
+`endif
     if (reset) begin busy<=0; memory_out__valid_in<=0; held<=0; end
     else begin
       if (held && (!memory_out__valid_out || held_request !== {memory_out__write_out,memory_out__addr_out,memory_out__size_out,memory_out__data_out}))
@@ -80,6 +84,23 @@ module ExternalPointerChecks;
   initial begin
     for(int i=0;i<64;i=i+1) bytes[i]=0;
     bytes[0]=10; bytes[8]=20; bytes[16]=30; bytes[24]=40;
+`ifdef EXTERNAL_LOCAL_TEST
+    restart(); command(0,0,0,64'h6688aacc);
+    command(1,17,2,22); command(2,17,8,30);
+    command(3,0,165,64'h6688abcb);
+    command(4,0,0,90); command(4,`LOCAL_RAM_BYTES-1,0,165);
+    command(0,0,0,64'h6688abe1);
+    if(reads!=2 || writes!=1) $fatal(1,"local RAM leaked onto external interface %d/%d",reads,writes);
+    restart(); command(0,0,0,64'h6688aacc); command(4,17,0,0);
+    command(1,17,3,23);
+    @(negedge clk); operation_in=1; index_in=0; value_in=0; command_valid_in=1;
+    @(negedge clk); command_valid_in=0;
+    wait(busy); restart();
+    repeat(30) begin @(negedge clk); if(response_valid_out) $fatal(1,"stale external response after local RAM reset"); end
+    command(0,0,0,64'h6688aacc);
+    if(reads!=4 || writes!=1) $fatal(1,"unexpected external traffic after reset %d/%d",reads,writes);
+    $display("PASS: external pointers + local storage, counted clears, padding/tail guards, stalls and reset");
+`else
     restart();
     command(0,2,7,37); command(2,4,0,100);
     command(1,4,11,22); command(4,3,2,42);
@@ -95,6 +116,7 @@ module ExternalPointerChecks;
     repeat(30) begin @(negedge clk); if(response_valid_out) $fatal(1,"stale response after reset"); end
     command(0,0,1,11);
     $display("PASS: external pointer delayed reads/writes, aliases, loops, stalls, faults, reset");
+`endif
     $finish;
   end
 endmodule

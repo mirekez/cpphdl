@@ -152,6 +152,14 @@ add_subdirectory(../examples/map "${CMAKE_BINARY_DIR}/hls/examples/map")
 add_subdirectory(../examples/net "${CMAKE_BINARY_DIR}/hls/examples/net")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
+add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
+foreach(case RANGE 0 20)
+    add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
+        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
+        "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/OpenMPReject.cmake")
+    set_tests_properties(hls_openmp_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;openmp;expected-rejection")
+endforeach()
 
 add_executable(hls_shared_blocks SharedBlocks_test.cpp ../SharedBlocks.cpp ../Combinational.cpp)
 set_target_properties(hls_shared_blocks PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
@@ -165,7 +173,32 @@ add_hls_native(hls_memory_port MemoryPort.cpp)
 add_test(NAME hls_memory_port_native COMMAND "${HLS_NATIVE_BINARY}")
 add_hls_native(hls_external_pointer ExternalPointer.cpp)
 add_test(NAME hls_external_pointer_native COMMAND "${HLS_NATIVE_BINARY}")
+foreach(block 0 1)
+    add_hls_native(hls_external_local_${block}_native_build ExternalLocalRam.cpp LOCAL_RAM_BLOCK=${block})
+    add_test(NAME hls_external_local_${block}_native COMMAND "${HLS_NATIVE_BINARY}")
+endforeach()
 if(HLS_VERILATOR)
+    foreach(flow rtl gates)
+        foreach(block 0 1)
+            set(synth OFF)
+            if(flow STREQUAL "gates")
+                set(synth ON)
+            endif()
+            add_test(NAME hls_external_local_${block}_${flow} COMMAND "${CMAKE_COMMAND}"
+                "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+                "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-local-${block}-${flow}"
+                "-DVERILATOR=${HLS_VERILATOR}" "-DCXX=${CMAKE_CXX_COMPILER}" "-DSYNTH=${synth}"
+                -DLOCAL_RAM=ON "-DLOCAL_BLOCK=${block}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
+            set_tests_properties(hls_external_local_${block}_${flow} PROPERTIES TIMEOUT 300)
+        endforeach()
+    endforeach()
+    add_test(NAME hls_external_local_large_rtl COMMAND "${CMAKE_COMMAND}"
+        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-local-large"
+        "-DVERILATOR=${HLS_VERILATOR}" -DLOCAL_RAM=ON -DLOCAL_BLOCK=1 -DLOCAL_BYTES=2049
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
+    set_tests_properties(hls_external_local_large_rtl PROPERTIES TIMEOUT 300)
     foreach(flow rtl gates)
         set(synth OFF)
         if(flow STREQUAL "gates")
