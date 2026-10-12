@@ -170,10 +170,8 @@ static bool check_generated_sv()
     ok &= leaf.find("unknown(") == std::string::npos;
     ok &= leaf.find("DependentScopeDeclRefExpr") == std::string::npos;
     ok &= leaf.find("unknown:") == std::string::npos;
-    ok &= leaf.find("TypeTemplateNative16_pkg::MANT_WIDTH") != std::string::npos;
-    ok &= leaf.find("TypeTemplateConv16_pkg::MANT_WIDTH") != std::string::npos;
-    ok &= leaf.find("TypeTemplateNative16_pkg::EXP_WIDTH") != std::string::npos;
-    ok &= leaf.find("TypeTemplateConv16_pkg::EXP_WIDTH") != std::string::npos;
+    // Non-module constexprs may be folded instead of package-qualified.
+    // The exhaustive input sweep below checks the specialized field widths.
     ok &= leaf.find("TypeTemplateArithmeticTypeTemplateConv16___convert_default_to_conv") != std::string::npos;
     ok &= leaf.find("TypeTemplateArithmetic___convert_default_to_conv") == std::string::npos;
     ok &= parent.find("TypeTemplateModuleLeafTypeTemplateConv16") != std::string::npos;
@@ -250,7 +248,7 @@ public:
 
         error |= !check_generated_sv();
 
-        for (uint32_t i = 0; i < 4096 && !error; ++i) {
+        for (uint32_t i = 0; i < 65536 && !error; ++i) {
             uint16_t lo = (uint16_t)((i * 29u) ^ 0x8a53u);
             uint16_t hi = (uint16_t)((i * 47u) ^ 0x31f5u);
             value = logic<32>(((uint32_t)hi << 16) | lo);

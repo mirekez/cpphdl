@@ -2,6 +2,27 @@
 
 uint32_t pipeline_global;
 uint64_t unavailable(uint32_t);
+#if PIPELINE_REJECT >= 20
+#if PIPELINE_REJECT == 24
+union RejectedPacket { uint32_t a; uint32_t b; };
+#else
+struct RejectedPacket {
+#if PIPELINE_REJECT == 20
+    uint8_t a; uint32_t b; // Implicit padding is not a wire field.
+#elif PIPELINE_REJECT == 21
+    int32_t a;
+#elif PIPELINE_REJECT == 22
+    float a;
+#elif PIPELINE_REJECT == 23
+    uint32_t a : 31;
+#elif PIPELINE_REJECT == 25
+    uint32_t* a;
+#elif PIPELINE_REJECT == 26
+    bool a;
+#endif
+};
+#endif
+#endif
 struct
 #if PIPELINE_REJECT == 12 && defined(__clang__)
 [[clang::annotate("CPPHDL_KEEP_BOX=1.2")]]
@@ -17,7 +38,9 @@ PipelineUnsupported {
 #if PIPELINE_REJECT == 11 && defined(__clang__)
     [[clang::annotate("CPPHDL_ONE_CLOCK")]]
 #endif
-#if PIPELINE_REJECT == 13
+#if PIPELINE_REJECT >= 20
+    RejectedPacket command(RejectedPacket op, RejectedPacket index, RejectedPacket value) {
+#elif PIPELINE_REJECT == 13
     uint64_t command(uint64_t op, uint64_t index, uint64_t value) {
 #elif PIPELINE_REJECT == 14
     __uint128_t command(uint32_t op, uint32_t index, uint32_t value) {
@@ -52,6 +75,12 @@ PipelineUnsupported {
         return unavailable(value);
 #elif PIPELINE_REJECT == 16 || PIPELINE_REJECT == 17
         return cpphdl::hls::external_memory<uint64_t>(index)[value];
+#elif PIPELINE_REJECT == 18
+        for (uint32_t i = 0; ; ++i) value += i;
+        return value;
+#elif PIPELINE_REJECT == 19
+        for (uint32_t i = 0; i < 4;) value += i;
+        return value;
 #else
         return value;
 #endif
@@ -65,6 +94,8 @@ public:
     cpphdl::hls::ClockedPipeline<PipelineUnsupported,65> worker;
 #elif PIPELINE_REJECT == 17
     cpphdl::hls::ClockedDelayer<PipelineUnsupported> worker;
+#elif PIPELINE_REJECT >= 20
+    cpphdl::hls::ClockedPipeline<PipelineUnsupported,3,RejectedPacket,RejectedPacket> worker;
 #else
     cpphdl::hls::ClockedPipeline<PipelineUnsupported,3> worker;
 #endif

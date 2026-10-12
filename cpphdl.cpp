@@ -937,10 +937,11 @@ bool structHasAnonymousAggregateWrapper(const std::string& typeName)
 
 static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp)
 {
-    if (!RD || !RD->hasDefinition() || RD->isLambda()) {
+    if (!RD || !RD->hasDefinition() || RD->isLambda() || RD->isDependentContext()) {
         return false;
     }
-    if (RD->getQualifiedNameAsString().find("cpphdl::") == 0 ||
+    if ((RD->getQualifiedNameAsString().find("cpphdl::") == 0
+            && RD->getQualifiedNameAsString().find("cpphdl::hls::math::") != 0) ||
         RD->getQualifiedNameAsString().find("std::") == 0) {
         return false;
     }
@@ -2019,9 +2020,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                         // declaration instead of flattening its canonical
                         // spelling into an invented identifier. digQT keeps
                         // width expressions and their parameter bindings.
-                        cpphdl::Expr aliasExpr = cpphdlAlias
-                            ? hlp.digQT(aliasQT)
-                            : cpphdl::Expr{genTypeName(TypeAlias->getUnderlyingType().getCanonicalType().getAsString(hlp.ctx->getPrintingPolicy())), cpphdl::Expr::EXPR_TYPE};
+                        cpphdl::Expr aliasExpr = hlp.digQT(aliasQT);
                         if (aliasExpr.type == cpphdl::Expr::EXPR_TEMPLATE
                             && (aliasExpr.value == "cpphdl_logic" || aliasExpr.value == "cpphdl_u"
                                 || aliasExpr.value == "cpphdl_i")) {
@@ -2029,7 +2028,13 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
                             // args; the alias's sugared type retains WIDTH.
                             aliasExpr = cpphdl::Expr{hlp.castTypeName(aliasQT), cpphdl::Expr::EXPR_TYPE};
                         }
-                        mod.aliases.emplace_back(cpphdl::Field{TypeAlias->getNameAsString(), std::move(aliasExpr)});
+                        cpphdl::Field alias{TypeAlias->getNameAsString(), std::move(aliasExpr)};
+                        if (alias.expr.type == cpphdl::Expr::EXPR_ARRAY) {
+                            alias.array.assign(alias.expr.sub.begin(), alias.expr.sub.end()-1);
+                            auto element = std::move(alias.expr.sub.back());
+                            alias.expr = std::move(element);
+                        }
+                        mod.aliases.emplace_back(std::move(alias));
                     }
                 }
             }// else

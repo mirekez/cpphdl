@@ -37,16 +37,64 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
     auto order = graph.dependencyOrder();
     KeepBoxes boxes(graph);
     auto nodeName = [](size_t index) { return "__cpphdl_node_" + std::to_string(index); };
+    // Batch independent bit muxes, never a chain with dependencies inside it.
+    // The mapped graph/cell inventory stays bit-level; only its spelling changes.
+    std::vector<std::vector<size_t>> bundles;
+    std::map<size_t, std::pair<size_t, unsigned>> bundled;
+    if (boxes.boxes.empty()) {
+        std::vector<size_t> depth(graph.nodes.size());
+        std::map<std::pair<size_t, Bit>, std::vector<size_t>> candidates;
+        for (auto index : order) {
+            const auto& node = graph.nodes[index];
+            if (node.op == "input" || node.op == "state") continue;
+            for (const auto* operand : {&node.left, &node.right, &node.select})
+                for (auto bit : graph.resolved(*operand)) if (bit > 1)
+                    depth[index] = std::max(depth[index], depth[Graph::owner(bit)] + 1);
+            if (node.op == "mux" && node.width == 1 && node.select.size() == 1)
+                candidates[{depth[index], graph.resolved(node.select)[0]}].push_back(index);
+        }
+        for (const auto& [key, nodes] : candidates) for (size_t start = 0; start < nodes.size(); start += 64) {
+            auto count = std::min<size_t>(64, nodes.size() - start);
+            if (count < 2) continue;
+            auto group = bundles.size();
+            bundles.emplace_back(nodes.begin() + start, nodes.begin() + start + count);
+            for (unsigned lane = 0; lane < count; ++lane) bundled[nodes[start + lane]] = {group, lane};
+        }
+    }
+    auto bundleName = [](size_t index) { return "__cpphdl_node_bundle_" + std::to_string(index); };
+    auto reference = [&](Bit bit) {
+        auto owner = Graph::owner(bit);
+        if (auto found = bundled.find(owner); found != bundled.end())
+            return std::make_pair(bundleName(found->second.first), found->second.second);
+        return std::make_pair(nodeName(owner), unsigned(Graph::lane(bit)));
+    };
     auto bits = [&](Value value) {
         if (value.empty()) throw std::runtime_error("empty synthesis operand");
         value = graph.resolved(value);
-        std::string result = "{";
-        for (size_t i = value.size(); i-- > 0;) {
-            if (i + 1 != value.size()) result += ",";
-            auto bit = value[i];
-            result += bit < 2 ? (bit ? "1'b1" : "1'b0") :
-                nodeName(Graph::owner(bit)) + "[" + std::to_string(Graph::lane(bit)) + "]";
+        std::vector<std::string> parts;
+        for (size_t end = value.size(); end;) {
+            size_t start = end - 1;
+            if (value[start] < 2) {
+                while (start && value[start - 1] < 2) --start;
+                std::string literal = std::to_string(end - start) + "'b";
+                for (size_t i = end; i-- > start;) literal += value[i] ? '1' : '0';
+                parts.push_back(std::move(literal));
+            } else {
+                auto [name, high] = reference(value[start]);
+                unsigned low = high;
+                while (start && value[start - 1] > 1) {
+                    auto previous = reference(value[start - 1]);
+                    if (previous.first != name || previous.second + 1 != low) break;
+                    --start; low = previous.second;
+                }
+                parts.push_back(name + "[" + std::to_string(high) +
+                    (high == low ? "" : ":" + std::to_string(low)) + "]");
+            }
+            end = start;
         }
+        if (parts.size() == 1) return parts.front();
+        std::string result = "{";
+        for (const auto& part : parts) { if (result.size() > 1) result += ','; result += part; }
         return result + "}";
     };
     auto memoryIndex = [&](size_t memory, const Value& address) {
@@ -65,9 +113,16 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
         out << ",\n" << (port.input ? "input" : "output") << " wire [" << port.bits.size()-1 << ":0] " << identifier(port.name);
     out << ");\n";
     // Keep original node IDs stable for source/debug correspondence.
-    for (size_t i = 0; i < graph.nodes.size(); ++i)
+    std::set<size_t> declarations(order.begin(), order.end());
+    for (const auto& port : graph.ports) for (auto bit : graph.resolved(port.bits))
+        if (bit > 1) declarations.insert(Graph::owner(bit));
+    for (const auto& state : graph.states) for (auto bit : graph.resolved(state.bits))
+        if (bit > 1) declarations.insert(Graph::owner(bit));
+    for (size_t i : declarations) if (!bundled.count(i))
         out << (graph.nodes[i].op == "state" ? "reg" : "wire") << " [" << graph.nodes[i].width-1
             << ":0] " << nodeName(i) << ";\n";
+    for (size_t i = 0; i < bundles.size(); ++i)
+        out << "wire [" << bundles[i].size() - 1 << ":0] " << bundleName(i) << ";\n";
     for (size_t i = 0; i < graph.memories.size(); ++i) {
         out << "reg [" << graph.memories[i].width - 1 << ":0] __cpphdl_memory_" << i
             << " [0:" << graph.memories[i].depth - 1 << "];\n";
@@ -93,9 +148,18 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
         {"mul","*"}, {"div","/"}, {"mod","%"}, {"eq","=="}, {"lt","<"},
         {"shl","<<"}, {"shr",">>"}};
     std::vector<std::ostringstream> boxBodies(boxes.boxes.size());
+    for (size_t group = 0; group < bundles.size(); ++group) {
+        Value left, right;
+        for (auto index : bundles[group]) {
+            left.push_back(graph.nodes[index].left.at(0));
+            right.push_back(graph.nodes[index].right.at(0));
+        }
+        out << "assign " << bundleName(group) << " = "
+            << bits(graph.nodes[bundles[group][0]].select) << " ? " << bits(left) << " : " << bits(right) << ";\n";
+    }
     for (auto index : order) {
         const auto& node = graph.nodes[index];
-        if (node.op == "state" || node.op == "input") continue;
+        if (node.op == "state" || node.op == "input" || bundled.count(index)) continue;
         if (node.op == "blackbox") {
             blackBoxDelay(node);
             auto& destination = boxes.owner.count(index) ? boxBodies[boxes.owner.at(index)] : out;

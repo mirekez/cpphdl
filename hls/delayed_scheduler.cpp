@@ -99,6 +99,7 @@ class DelayedScheduler {
     bool sharedMemory = false;
     bool blockRam = false;
     bool pipelineMode = false;
+    StaticIntegers elaboratedIndices;
     bool externalMemory = false;
     unsigned portBytes = 1;
     int current = 0;
@@ -187,6 +188,26 @@ class DelayedScheduler {
         if (type->isReferenceType() || type->isPointerType()) return addressWidth;
         if (type->isBooleanType()) return 1;
         return bytes(type) * 8;
+    }
+    bool wireValue(QualType type) {
+        if (type.isVolatileQualified()) return false;
+        if (type->isUnsignedIntegerType() && !type->isBooleanType()) {
+            auto width = bits(type);
+            return width == 8 || width == 16 || width == 32 || width == 64 || width == 128;
+        }
+        if (auto* array = ctx.getAsConstantArrayType(type))
+            return array->getSize().getLimitedValue() != 0 && wireValue(array->getElementType());
+        auto* record = type->getAsCXXRecordDecl();
+        if (!record || !record->hasDefinition() || record->isUnion() || !record->isAggregate() ||
+            !record->isStandardLayout() || !type.isTriviallyCopyableType(ctx) || !record->bases().empty()) return false;
+        const auto& layout = ctx.getASTRecordLayout(record);
+        uint64_t end = 0;
+        for (auto* field : record->fields()) {
+            if (field->isBitField() || !wireValue(field->getType()) ||
+                layout.getFieldOffset(field->getFieldIndex()) != end) return false;
+            end += ctx.getTypeSize(field->getType());
+        }
+        return end && end == ctx.getTypeSize(type) && end <= 1048576;
     }
     Value slot(QualType type, const std::string& source = "temporary") {
         std::string name = scope + "__" + identifier(source);
@@ -1402,6 +1423,22 @@ class DelayedScheduler {
             return member(base, field);
         }
         if (auto* cast = dyn_cast<CastExpr>(expr)) {
+            // A value read of a conditional lvalue is a data mux, not an
+            // escaping runtime pointer. Keep true reference bindings intact.
+            if (pipelineMode && cast->getCastKind() == CK_LValueToRValue && type->isScalarType()) {
+                if (auto* select = dyn_cast<ConditionalOperator>(cast->getSubExpr()->IgnoreParens())) {
+                    if (auto known = staticInteger(ctx, select->getCond(), elaboratedIndices)) {
+                        Value chosen = expression(*known ? select->getTrueExpr() : select->getFalseExpr());
+                        return {read(chosen), type};
+                    }
+                    Value condition = expression(select->getCond()), result = slot(type);
+                    int yes = block(expr), no = block(expr), done = block(expr);
+                    branch(read(condition), yes, no);
+                    current = yes; store(result, expression(select->getTrueExpr())); jump(done);
+                    current = no; store(result, expression(select->getFalseExpr())); jump(done);
+                    current = done; return {read(result), type};
+                }
+            }
             Value sub = expression(cast->getSubExpr());
             switch (cast->getCastKind()) {
             case CK_NoOp: case CK_ConstructorConversion: return sub;
@@ -1440,11 +1477,9 @@ class DelayedScheduler {
             if (pipelineMode && (locations.count(base.text) || arraySelections.count(base.text))) {
                 const auto* array = ctx.getAsConstantArrayType(index->getBase()->IgnoreParenImpCasts()->getType());
                 if (array && array->getSize().getLimitedValue() <= 64) {
-                    E::EvalResult known;
-                    if (!index->getIdx()->HasSideEffects(ctx) && index->getIdx()->EvaluateAsInt(known, ctx)) {
-                        auto n = known.Val.getInt().getLimitedValue();
-                        if (n < array->getSize().getLimitedValue())
-                            return {offsetAddress(base.text, n * bytes(type)), type, true};
+                    auto known = staticInteger(ctx, index->getIdx(), elaboratedIndices);
+                    if (known && *known >= 0 && uint64_t(*known) < array->getSize().getLimitedValue()) {
+                        return {offsetAddress(base.text, uint64_t(*known) * bytes(type)), type, true};
                     }
                     ArraySelection selection{read(i), {}};
                     for (unsigned n = 0; n < array->getSize().getLimitedValue(); ++n)
@@ -1468,6 +1503,8 @@ class DelayedScheduler {
             return {"(" + UnaryOperator::getOpcodeStr(unary->getOpcode()).str() + read(sub) + ")", type};
         }
         if (auto* conditional = dyn_cast<ConditionalOperator>(expr)) {
+            if (pipelineMode) if (auto known = staticInteger(ctx, conditional->getCond(), elaboratedIndices))
+                return expression(*known ? conditional->getTrueExpr() : conditional->getFalseExpr());
             Value cond = expression(conditional->getCond());
             int yes = block(expr), no = block(expr), done = block(expr);
             Value result = slot(conditional->isGLValue() ? ctx.VoidPtrTy : type);
@@ -1490,8 +1527,14 @@ class DelayedScheduler {
             Value rhs = capture(expression(binary->getRHS())), lhs = expression(binary->getLHS());
             if (binary->getOpcode() == BO_Assign) { store(lhs, rhs); return lhs; }
             if (lhs.type->isFloatingType() || rhs.type->isFloatingType()) {
-                if (binary->isCompoundAssignmentOp()) reject(expr, "floating-point compound assignment requires explicit source expansion");
-                return floatingOperation(binary->getOpcodeStr().str(), type, {lhs, rhs});
+                std::string operation = binary->getOpcodeStr().str();
+                if (binary->isCompoundAssignmentOp()) {
+                    if (!lhs.type->isFloatingType()) reject(expr, "mixed integer/floating compound assignment requires an explicit cast policy");
+                    operation.pop_back();
+                    Value result = floatingOperation(operation, lhs.type, {lhs, rhs});
+                    store(lhs, result); return lhs;
+                }
+                return floatingOperation(operation, type, {lhs, rhs});
             }
             std::string a = read(lhs), b = read(rhs), op = binary->getOpcodeStr().str();
             if (binary->isCompoundAssignmentOp()) op.pop_back();
@@ -1579,9 +1622,19 @@ class DelayedScheduler {
 
     void parallelStatement(const OMPExecutableDirective* directive) {
         OpenMPPlan plan;
-        try { plan = planOpenMP(ctx, directive); }
+        auto resolve = [&](const CallExpr* call) {
+            auto* fn = const_cast<FunctionDecl*>(call->getDirectCallee());
+            if (!fn) return fn;
+            std::vector<QualType> args;
+            for (auto* arg : call->arguments()) args.push_back(arg->getType());
+            if (auto* replacement = overrides.find(fn, args)) fn = replacement;
+            (void)definition(fn);
+            return fn;
+        };
+        try { plan = planOpenMP(ctx, directive, resolve, elaboratedIndices); }
         catch (const std::runtime_error& error) { reject(directive, error.what()); }
         auto original = contexts.back().variables;
+        auto originalIndices = elaboratedIndices;
         auto binding = [&](const VarDecl* variable) {
             auto found = original.find(variable);
             if (found == original.end())
@@ -1600,6 +1653,7 @@ class DelayedScheduler {
                 const auto& loop = plan.loops[depth];
                 for (auto value : loop.values) {
                     contexts.back().variables[loop.variable] = {std::to_string(value), loop.variable->getType()};
+                    elaboratedIndices[loop.variable] = value;
                     elaborate(depth + 1);
                 }
                 return;
@@ -1626,6 +1680,7 @@ class DelayedScheduler {
         };
         elaborate(0);
         contexts.back().variables = original;
+        elaboratedIndices = originalIndices;
         for (unsigned n = 0; n < plan.reductions.size(); ++n) {
             const auto& reduction = plan.reductions[n];
             auto values = std::move(reductions[n]);
@@ -1635,14 +1690,16 @@ class DelayedScheduler {
                 for (unsigned i = 0; i < values.size(); i += 2) {
                     if (i + 1 == values.size()) { next.push_back(values[i]); continue; }
                     Value result = slot(values[i].type, "omp_reduction_tree");
-                    store(result, {"(" + read(values[i]) + " " + reduction.operation + " " + read(values[i+1]) + ")", result.type});
+                    if (result.type->isFloatingType()) store(result, floatingOperation(reduction.operation, result.type, {values[i], values[i+1]}));
+                    else store(result, {"(" + read(values[i]) + " " + reduction.operation + " " + read(values[i+1]) + ")", result.type});
                     next.push_back(result);
                 }
                 values = std::move(next);
             }
             if (!values.empty()) {
                 auto target = binding(reduction.variable);
-                store(target, {"(" + read(target) + " " + reduction.operation + " " + read(values.front()) + ")", target.type});
+                if (target.type->isFloatingType()) store(target, floatingOperation(reduction.operation, target.type, {target, values.front()}));
+                else store(target, {"(" + read(target) + " " + reduction.operation + " " + read(values.front()) + ")", target.type});
             }
         }
     }
@@ -1724,6 +1781,9 @@ class DelayedScheduler {
                 if (!selected) reject(stmt, "dependent constexpr if");
                 statement(*selected); return;
             }
+            if (pipelineMode) if (auto known = staticInteger(ctx, conditional->getCond(), elaboratedIndices)) {
+                statement(*known ? conditional->getThen() : conditional->getElse()); return;
+            }
             E::EvalResult known;
             if (!runtimeCall(conditional->getCond()) && !conditional->getCond()->HasSideEffects(ctx) && conditional->getCond()->EvaluateAsInt(known, ctx)) {
                 statement(known.Val.getInt().getBoolValue() ? conditional->getThen() : conditional->getElse()); return;
@@ -1734,6 +1794,19 @@ class DelayedScheduler {
             current = yes; statement(conditional->getThen()); jump(done);
             current = no; statement(conditional->getElse()); jump(done);
             current = done; return;
+        }
+        if (pipelineMode) if (auto* loop = dyn_cast<ForStmt>(stmt)) {
+            OpenMPLoop plan;
+            try { plan = planStaticLoop(ctx, loop); }
+            catch (const std::runtime_error& error) { reject(loop, "ClockedPipeline cannot achieve II=1: " + std::string(error.what())); }
+            auto original = contexts.back().variables;
+            auto originalIndices = elaboratedIndices;
+            for (auto i : plan.values) {
+                contexts.back().variables[plan.variable] = {std::to_string(i), plan.variable->getType()};
+                elaboratedIndices[plan.variable] = i;
+                statement(loop->getBody());
+            }
+            contexts.back().variables = original; elaboratedIndices = originalIndices; return;
         }
         if (isa<ForStmt>(stmt) || isa<WhileStmt>(stmt) || isa<DoStmt>(stmt)) {
             const E* condition = nullptr; const E* increment = nullptr; const Stmt* body = nullptr;
@@ -1775,6 +1848,7 @@ public:
     std::string generate(const CXXRecordDecl* wrapper, const std::string& name, graph::Graph* graph = nullptr,
                          synth::ScheduledDesign* pipeline = nullptr) {
         pipelineMode = pipeline != nullptr;
+        if (pipelineMode) addressWidth = 32; // Virtual register addresses for large spatial arrays.
         for (const auto* attr : wrapper->specific_attrs<AnnotateAttr>())
             externalMemory |= attr->getAnnotation() == "CPPHDL_HLS_EXTERNAL_MEMORY";
         if (auto* specialization = dyn_cast<ClassTemplateSpecializationDecl>(wrapper); specialization && !pipeline) {
@@ -1808,8 +1882,8 @@ public:
         for (auto* method : record->methods()) if (method->getNameAsString() == "command") {
             if (command) reject(nullptr, "overloaded command entry"); command = method;
         }
-        if (!command || command->getNumParams() != 3 || !command->getReturnType()->isUnsignedIntegerType() ||
-            (!pipeline && bits(command->getReturnType()) != 64))
+        if (!command || command->getNumParams() != 3 ||
+            (!pipeline && (!command->getReturnType()->isUnsignedIntegerType() || bits(command->getReturnType()) != 64)))
             reject(nullptr, "clocked object requires uint64_t command(uint32_t, uint32_t, uint32_t)");
         unsigned argumentBits = pipeline ? bits(command->getParamDecl(0)->getType()) : 32;
         unsigned commandResultBits = bits(command->getReturnType());
@@ -1819,11 +1893,12 @@ public:
             if (args.size() != 4 || !ctx.hasSameType(args[2].getAsType(), command->getParamDecl(0)->getType()) ||
                 !ctx.hasSameType(args[3].getAsType(), command->getReturnType()))
                 reject(nullptr, "ClockedPipeline Argument/Result must match command signature");
-            if ((argumentBits != 8 && argumentBits != 16 && argumentBits != 32 && argumentBits != 64 && argumentBits != 128) ||
-                (commandResultBits != 8 && commandResultBits != 16 && commandResultBits != 32 && commandResultBits != 64 && commandResultBits != 128))
-                reject(nullptr, "ClockedPipeline requires native unsigned integer argument/result types up to 128 bits");
+            if (!wireValue(command->getParamDecl(0)->getType()) || !wireValue(command->getReturnType()))
+                reject(nullptr, "ClockedPipeline wire values require unsigned integers or padding-free trivial aggregate records/arrays");
         }
-        for (auto* param : command->parameters()) if (!param->getType()->isUnsignedIntegerType() || bits(param->getType()) != argumentBits)
+        for (auto* param : command->parameters()) if (pipeline ?
+                !ctx.hasSameType(param->getType(), command->getParamDecl(0)->getType()) :
+                (!param->getType()->isUnsignedIntegerType() || bits(param->getType()) != argumentBits))
             reject(nullptr, "clocked command arguments must have the same unsigned integer width as the wrapper");
         contexts.push_back({});
         int resetEntry = current;

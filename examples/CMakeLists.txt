@@ -47,6 +47,9 @@ foreach(src ${EXAMPLE_SOURCES})
             "--primary_clock write_clk 100000000 --secondary_clock read_clk 50000000")
     elseif(rel_path STREQUAL "math/FpAdd.cpp")
         set(cpphdl_clock_args "--primary_clock sum_clock 100000000")
+    elseif(rel_path STREQUAL "math/FpConverter.cpp")
+        # Concrete type combinations are instantiated by this example's testbench.
+        set(cpphdl_clock_args "--no-synthesis-flag")
     endif()
 
     # verilator tests
@@ -63,6 +66,24 @@ foreach(src ${EXAMPLE_SOURCES})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
 
     cpphdl_add_converter_dependency(${target_name})
+
+    if(BUILD_TESTING AND rel_path MATCHES "^math/Fp(Add|Converter|Sqrt|Tanh)\\.cpp$")
+        add_test(NAME ${target_name}_native COMMAND $<TARGET_FILE:${target_name}> --noveril)
+        find_program(CPPHDL_MATH_VERILATOR NAMES verilator
+            HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
+        set(math_tests ${target_name}_native)
+        if(CPPHDL_MATH_VERILATOR)
+            add_test(NAME ${target_name}_verilator COMMAND $<TARGET_FILE:${target_name}>)
+            list(APPEND math_tests ${target_name}_verilator)
+            if(CPPHDL_LOCAL_CONDA_PREFIX)
+                set_tests_properties(${target_name}_verilator PROPERTIES
+                    ENVIRONMENT_MODIFICATION
+                        "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+            endif()
+        endif()
+        set_tests_properties(${math_tests} PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/examples" TIMEOUT 600 LABELS "math;rtl")
+    endif()
 
     if(rel_path STREQUAL "math/Transposer.cpp" AND BUILD_TESTING)
         add_test(NAME math_Transposer_cpp

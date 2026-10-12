@@ -326,13 +326,19 @@ insert further stages to meet an estimated period without serializing lanes.
 The same loop lowering is available in `ClockedDelayer`, but that wrapper
 still serializes separate invocations.
 
-Bounds/stride must be constant, indices at most 32 bits, with at most 256 total
-lanes. The subset supports private/firstprivate integers, disjoint fixed-array
-accesses, unsigned `+`, `*`, `&`, `|`, `^` reductions, and `collapse(1..3)`.
-It rejects shared scalar races, unsafe lane dependencies, runtime bounds,
-pointer accesses and unsupported directives/clauses rather than silently
-serializing them. Firstprivate mutation must not carry state between host
-iterations. Parallel array accesses do not imply a multiported BRAM or DDR.
+Bounds/stride must be constant, indices at most 32 bits, with at most 4,096
+combined lanes (including 64x64). The subset supports private/firstprivate
+unsigned integers and FP32, unsigned `+`, `*`, `&`, `|`, `^` reductions,
+FP32 `+`/`*` reductions through an explicit math policy, and `collapse(1..3)`.
+Pure scalar helpers and fixed control loops are supported after transitive
+value/purity checks. Constant lane indices are propagated into arrays/guards;
+bounded affine indices and read-only neighbor snapshots are accepted. Bounds,
+write ownership and cross-lane read/write dependence remain checked.
+Runtime bounds, escaping pointers, mutable helper globals and unsafe state
+recurrences are rejected. Constant `if` controls host parallel-team creation;
+it does not change hardware lane allocation. Floating reduction association
+is unspecified by OpenMP: use numerical tolerances or an explicit tree for
+non-exact data. Parallel array access does not infer multiported BRAM or DDR.
 See [the OpenMP examples](../hls/examples/openmp/README.md) for the complete
 supported contract, native/RTL/gate-level tests, and commands.
 
@@ -1440,3 +1446,57 @@ The new admission/commit signals require explicit integration; this is not
 transparent cycle-preserving retiming. See
 [scheduled HLS graphs](retiming.md#scheduled-hls-graphs) for the port
 contract, artifacts and current restrictions.
+
+## Shared FP32 math and wide streaming records
+
+`hls/math/Float.h` registers FP32 add/subtract/multiply and representation
+transport policies. Native code uses ordinary float operations; RTL uses
+`Fp32Bits.h` (separate multiply/add, round-to-nearest-even and FTZ arithmetic).
+See [the library contract](../hls/math/README.md). Existing FpAdd, FpConverter,
+FpSqrt and FpTanh examples now include reusable headers from that directory.
+
+`ClockedPipeline` arguments/results may be unsigned 8/16/32/64/128-bit integers
+or padding-free standard-layout POD records/fixed arrays of those integers.
+The three arguments must have identical types; record width is bounded to
+1,048,576 bits. Signed/float fields, implicit padding, references, pointers,
+bases, unions and bitfields are rejected at this boundary. Internal arithmetic
+can use float through the registered policies. Record fields with SV keyword
+names are escaped consistently. Library records under `cpphdl::hls::math`
+use normal concrete specialization packages, not primitive-width syntax.
+Canonical fixed loops in a streaming method are elaborated with constant
+indices; runtime loops continue to require the delayed/memory flow.
+
+## Explicit synchronous RAM banks
+
+For modules owning `cpphdl::memory`, clocked lifecycle bodies are emitted inline
+in their clocked process. This lets FPGA tools recognize synchronous RAM ports;
+task-hidden writes can prevent inference. Keep RAM accesses directly in the
+clocked method, and explicitly arbitrate multiple possible writers with mutually
+exclusive branches. A registered RAM read and at most one write per bank per
+clock provide a straightforward dual-port implementation. Never reset all RAM
+contents just to reset valid state. Clock/reset ownership and early-return
+semantics are preserved; reset argument names need not be `reset`.
+
+Inlining is not a guarantee of block-RAM inference. Large dynamic selectors or
+aggregate updates can still turn member arrays into registers. For explicit
+bank ports, include `hls/SynchronousRam.h` and declare a member such as:
+
+```cpp
+cpphdl::hls::SynchronousRam<16, 256> bank; // 256 addresses of 512 bits
+```
+
+Bind `read_in`, `read_address_in`, `write_in`, `write_address_in`, and `data_in`
+in the parent's `_assign()`, then call `bank._assign()` once. Call
+`bank._work(reset)` and `bank._strobe()` with the parent's clock lifecycle.
+`data_out()` contains the registered read result after the read clock edge;
+track its validity in the controller. `WORDS` counts 32-bit words, so
+`SynchronousRam<1, 64>` is a 64-address, 32-bit bank, suitable for FP32 bit
+patterns. Each bank permits one read and one write per clock. Use independent
+member banks for independent parallel accesses, and avoid read/write collisions
+at the same address. Reset validity/control, not the RAM contents.
+
+The primitive's native C++ model uses `cpphdl::memory`. Conversion uses its
+`CPPHDL_REPLACEMENT` synchronous RAM module with block-RAM attributes. This is
+an explicit C++ RTL building block; arbitrary high-level C++ array accesses do
+not automatically acquire this port schedule. Always confirm physical RAM
+usage in the FPGA synthesis report.

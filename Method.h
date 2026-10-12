@@ -20,6 +20,7 @@ struct Method
     // methods
 
     bool print(std::ofstream& out);
+    bool printInlineClocked(std::ofstream& out);
     bool printAssigns(std::ofstream& out);
     bool printComb(std::ofstream& out);
 };

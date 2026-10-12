@@ -2,6 +2,30 @@ find_program(HLS_VERILATOR NAMES verilator HINTS "${CMAKE_SOURCE_DIR}/.conda/bin
 find_program(HLS_MAKE NAMES gmake make REQUIRED)
 add_custom_target(hls_tests DEPENDS cpphdl)
 include(Libcxx.cmake)
+add_executable(hls_fp32_math Fp32Math.cpp)
+set_target_properties(hls_fp32_math PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+target_compile_options(hls_fp32_math PRIVATE -ffp-contract=off)
+add_dependencies(hls_tests hls_fp32_math)
+add_test(NAME hls_fp32_math COMMAND hls_fp32_math)
+foreach(top BankedRamTop RamPrimitiveTop)
+    if(top STREQUAL "BankedRamTop")
+        set(ram_source hls/examples/dram/BankedRam.cpp)
+    else()
+        set(ram_source hls/tests/RamPrimitive.cpp)
+    endif()
+    set(ram_flows native)
+    if(HLS_VERILATOR)
+        list(APPEND ram_flows rtl gates)
+    endif()
+    foreach(flow IN LISTS ram_flows)
+        add_test(NAME hls_${top}_${flow} COMMAND "${CMAKE_COMMAND}"
+            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/${top}-${flow}"
+            "-DVERILATOR=${HLS_VERILATOR}" "-DSOURCE=${ram_source}" "-DTOP=${top}" "-DFLOW=${flow}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Ram.cmake")
+        set_tests_properties(hls_${top}_${flow} PROPERTIES TIMEOUT 300 LABELS "hls;memory")
+    endforeach()
+endforeach()
 foreach(stages 1 3)
     add_hls_native(hls_pipeline_array_${stages} PipelineArray.cpp PIPELINE_STAGES=${stages})
     add_test(NAME hls_pipeline_array_${stages}_native COMMAND "${HLS_NATIVE_BINARY}")
@@ -139,7 +163,7 @@ foreach(case RANGE 0 22)
     set_tests_properties(hls_delayed_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;expected-rejection")
 endforeach()
 
-foreach(case RANGE 0 17)
+foreach(case RANGE 0 26)
     add_test(NAME hls_pipeline_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-reject-${case}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
@@ -153,7 +177,7 @@ add_subdirectory(../examples/net "${CMAKE_BINARY_DIR}/hls/examples/net")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
-foreach(case RANGE 0 20)
+foreach(case RANGE 0 26)
     add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"

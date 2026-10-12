@@ -1,7 +1,11 @@
 #include "../Clocked.h"
+#include "../math/Float.h"
 static constexpr uint32_t global_seed = 17;
+static uint32_t mutable_seed = 1;
 struct OpenMPRejectedMethods {
-    static uint32_t helper(uint32_t value) { return value * 3u; }
+    static uint32_t aliased(const uint32_t& x) { return x; }
+    static uint32_t recursive(uint32_t x) { return x?recursive(x-1):0; }
+    static uint32_t helper(uint32_t value) { return value * 3u + mutable_seed++; }
     uint64_t command(uint32_t operation, uint32_t index, uint32_t value) const {
         uint32_t sum = 0, values[8]{}, scratch = 0;
 #if OPENMP_REJECT == 0
@@ -21,7 +25,7 @@ struct OpenMPRejectedMethods {
         { scratch = value; }
 #elif OPENMP_REJECT == 5
 #pragma omp parallel for reduction(+:sum)
-        for (int i = 0; i < 257; ++i) sum += value;
+        for (int i = 0; i < 4097; ++i) sum += value;
 #elif OPENMP_REJECT == 6
         int32_t signed_sum = 0;
 #pragma omp parallel for reduction(+:signed_sum)
@@ -45,12 +49,12 @@ struct OpenMPRejectedMethods {
 #elif OPENMP_REJECT == 12
 #pragma omp parallel for reduction(+:sum)
         for (int i = 0; i < 8; ++i) {
-            for (int j = 0; j < 2; ++j) sum += value;
+            for (int j = 0; j < index; ++j) sum += value;
         }
 #elif OPENMP_REJECT == 13
 #pragma omp parallel for collapse(2) reduction(+:sum)
-        for (int i = 0; i < 20; ++i)
-            for (int j = 0; j < 20; ++j) sum += value;
+        for (int i = 0; i < 65; ++i)
+            for (int j = 0; j < 64; ++j) sum += value;
 #elif OPENMP_REJECT == 14
 #pragma omp parallel for default(private)
         for (int i = 0; i < 8; ++i) scratch = value;
@@ -73,6 +77,29 @@ struct OpenMPRejectedMethods {
 #elif OPENMP_REJECT == 20
 #pragma omp parallel for firstprivate(global_seed) reduction(+:sum)
         for (int i = 0; i < 8; ++i) sum += global_seed;
+#elif OPENMP_REJECT == 21
+#pragma omp simd reduction(+:sum)
+        for(int i=0;i<4;++i)sum+=aliased(value);
+#elif OPENMP_REJECT == 22
+        double total;
+#pragma omp simd reduction(+:total)
+        for(int i=0;i<4;++i)total+=1.0;
+        sum=uint32_t(total);
+#elif OPENMP_REJECT == 23
+#pragma omp simd reduction(+:sum)
+        for(int i=0;i<4;++i)sum+=recursive(value);
+#elif OPENMP_REJECT == 24
+#pragma omp simd
+        for(int i=0;i<4;++i)if(value)values[i-1]=value;
+#elif OPENMP_REJECT == 25
+#pragma omp simd
+        for(int i=0;i<4;++i)values[0]=value+uint32_t(i);
+#elif OPENMP_REJECT == 26
+        float uninitialized;
+        float total=0.0f;
+#pragma omp simd private(uninitialized) reduction(+:total)
+        for(int i=0;i<4;++i)total+=uninitialized;
+        sum=uint32_t(total);
 #endif
         return sum ^ values[0] ^ scratch;
     }

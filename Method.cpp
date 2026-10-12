@@ -310,7 +310,6 @@ bool Method::print(std::ofstream& out)
             out << localDeclInitializer(stmt);
             continue;
         }
-//        out << stmt.debug() << "\n";
         auto s = stmt.str();
         if (!s.empty() && s.back() != '\n') {
             s += ";\n";
@@ -325,6 +324,58 @@ bool Method::print(std::ofstream& out)
     else {
         out << "    endfunction\n";
     }
+    return true;
+}
+
+bool Method::printInlineClocked(std::ofstream& out)
+{
+    currMethod = this;
+    const std::vector<std::string> formatted_buffers = formattedBufferNames(statements);
+    // An explicit block retains task-local declarations and early-return
+    // disable semantics, while making synchronous RAM ports visible to tools.
+    out << "        begin : " << escapeIdentifier(name) << "\n";
+    const bool resetAlias = arguments.size() == 1 && arguments[0].name != "reset";
+    if (resetAlias) out << "            " << arguments[0].expr.str() << " " << escapeIdentifier(arguments[0].name) << ";\n";
+    // Tasks and functions have the same SystemVerilog declaration-order rule
+    // as always_comb blocks: every local declaration must precede the first
+    // executable initializer or statement.
+    for (auto& stmt : statements) {
+        if (!isTopLevelLocalDeclWithType(stmt)) {
+            continue;
+        }
+        Expr decl = *topLevelLocalDecl(stmt);
+        decl.indent = 3;
+        if (std::find(formatted_buffers.begin(), formatted_buffers.end(), decl.value) != formatted_buffers.end()) {
+            // C character buffers written by sprintf-family calls become native SV strings.
+            decl.sub[0] = Expr{"std::string", Expr::EXPR_TYPE};
+        }
+        if (decl.sub.size() > 1) {
+            decl.sub[1] = Expr{};
+        }
+        auto s = decl.str();
+        if (!s.empty() && s.back() != '\n') {
+            s += ";\n";
+        }
+        out << s;
+    }
+
+    if (resetAlias) out << "            " << escapeIdentifier(arguments[0].name) << " = reset;\n";
+
+    for (auto& stmt : statements) {
+        stmt.indent = 3;
+        if (isTopLevelLocalDeclWithType(stmt)) {
+            out << localDeclInitializer(stmt);
+            continue;
+        }
+//        out << stmt.debug() << "\n";
+        auto s = stmt.str();
+        if (!s.empty() && s.back() != '\n') {
+            s += ";\n";
+        }
+        out << s;
+    }
+
+    out << "        end\n";
     return true;
 }
 

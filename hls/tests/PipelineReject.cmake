@@ -4,7 +4,10 @@ set(reasons "II=1" "II=1" "memory/escaping pointers" "recursive clocked call"
     "floating-point" "missing instantiated body" "STAGES must be in 1..64"
     "function timing/keep-box constraints" "function timing/keep-box constraints"
     "Argument/Result must match" "Argument/Result must match" "same unsigned integer width"
-    "external pointer access requires ClockedMemory" "external pointer access requires ClockedMemory")
+    "external pointer access requires ClockedMemory" "external pointer access requires ClockedMemory"
+    "expected induction-variable" "unsupported loop stride"
+    "wire values require" "wire values require" "wire values require" "wire values require"
+    "wire values require" "wire values require" "wire values require")
 list(GET reasons ${CASE} reason)
 file(REMOVE_RECURSE "${WORK}/generated")
 file(MAKE_DIRECTORY "${WORK}")

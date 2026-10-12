@@ -245,7 +245,7 @@ bool Struct::print(std::ofstream& out/*, std::vector<Field>* params*/)
     for (int i=0; i < indent; ++i) {
         out << "    ";
     }
-    out << "} " << (name.length()?name:"_");
+    out << "} " << escapeIdentifier(name.length()?name:"_");
 
     out << ";\n";
     return true;

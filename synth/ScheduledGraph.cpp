@@ -376,10 +376,77 @@ public:
         for (auto [name,val] : std::map<std::string,uint64_t>{{"phase",uint64_t(d.resetEntry+1)},{"fault",0},{"pending",0},{"result",0},{"booting",1},{"heap_next",d.heapBase}})
             env[name] = g.mux(reset,constant(val,env[name].size()),env[name]);
         if (d.externalMemory) env["phase"] = g.mux(both(inv(reset),accepted),constant(d.commandEntry+1,32),env["phase"]);
+        // Reconverging pure command paths carry the activation of their
+        // dominating fork. Rebuilding it as a sum of branch predicates creates
+        // spurious dependencies between independent inlined arithmetic calls
+        // (especially FP helpers with early returns). Find the nearest such
+        // fork using dominator and postdominator trees of this acyclic CFG.
+        // Keep the current fault guard at the join: faults still suppress all
+        // subsequent effects. Clocked/memory schedules retain their old paths.
+        std::vector<int> joinSource(d.blocks.size(), -1);
+        if (pipeline) {
+            auto degrees = incoming;
+            auto queue = todo;
+            std::vector<int> order;
+            std::vector<std::vector<int>> predecessors(d.blocks.size());
+            for (int n : reachable) {
+                const auto& b = d.blocks[n];
+                for (int next : {b.yes, b.no}) if (next >= 0) {
+                    if (!predecessors[next].empty() && predecessors[next].back() == n) continue;
+                    predecessors[next].push_back(n);
+                }
+            }
+            while (!queue.empty()) {
+                int n = *queue.begin(); queue.erase(queue.begin()); order.push_back(n);
+                const auto& b = d.blocks[n];
+                for (unsigned edge = 0; edge < 2; ++edge) {
+                    int next = edge ? b.no : b.yes;
+                    if (next < 0 || (edge && b.no == b.yes)) continue;
+                    if (--degrees[next] == 0) queue.insert(next);
+                }
+            }
+            if (order.size() != reachable.size())
+                throw std::runtime_error("cycle in combinational command joins");
+            const int exit = d.blocks.size();
+            std::vector<int> dominator(exit + 1, -1), postdominator(exit + 1, -1);
+            std::vector<unsigned> depth(exit + 1), postdepth(exit + 1);
+            auto common = [](int a, int b, const auto& parent, const auto& level) {
+                while (a != b) {
+                    if (level[a] > level[b]) a = parent[a];
+                    else b = parent[b];
+                }
+                return a;
+            };
+            for (int n : order) {
+                if (predecessors[n].empty()) dominator[n] = n;
+                else {
+                    int parent = predecessors[n].front();
+                    for (int previous : predecessors[n]) parent = common(parent, previous, dominator, depth);
+                    dominator[n] = parent; depth[n] = depth[parent] + 1;
+                }
+            }
+            postdominator[exit] = exit;
+            for (auto i = order.rbegin(); i != order.rend(); ++i) {
+                int n = *i;
+                const auto& b = d.blocks[n];
+                int parent = b.yes < 0 ? exit : b.yes;
+                if (b.no >= 0) parent = common(parent, b.no, postdominator, postdepth);
+                else if (!b.condition.empty()) parent = exit;
+                postdominator[n] = parent; postdepth[n] = postdepth[parent] + 1;
+            }
+            for (int n : order) for (int ancestor = dominator[n]; ancestor != n;) {
+                int cursor = ancestor;
+                while (postdepth[cursor] > postdepth[n]) cursor = postdominator[cursor];
+                if (cursor == n) { joinSource[n] = ancestor; break; }
+                if (dominator[ancestor] == ancestor) break;
+                ancestor = dominator[ancestor];
+            }
+        }
         size_t visited = 0;
         while (!todo.empty()) {
             int n = *todo.begin(); todo.erase(todo.begin()); ++visited; const auto& b = d.blocks[n];
             g.currentScope = scope + "." + b.method;
+            if (joinSource[n] >= 0) active[n] = active[joinSource[n]];
             auto enabled = both(active[n],inv(env["fault"]));
             for (auto& s : b.statements) {
                 try { Tokens t(s); while(!t.peek().empty()) statement(t,enabled); }

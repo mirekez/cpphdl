@@ -153,7 +153,7 @@ public:
         }
         if (reset) {
             next_object = T{};
-            for (unsigned i = 0; i < STAGES; ++i) { valid[i].clr(); next_result[i] = 0; }
+            for (unsigned i = 0; i < STAGES; ++i) { valid[i].clr(); next_result[i] = Result{}; }
         } else if (command_ready_out()) {
             for (unsigned i = 1; i < STAGES; ++i) {
                 valid[i]._next = valid[i-1];

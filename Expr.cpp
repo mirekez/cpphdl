@@ -385,7 +385,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
     }
 
     unsigned childFlags = flags;
-    if (type == EXPR_TEMPLATE && value.rfind("cpphdl_", 0) != 0) {
+    if (type == EXPR_TEMPLATE && !isBuiltinTemplate(value)) {
         // A user-defined template specialization is one SV data type.  Port
         // net qualifiers belong to that completed type, not to the template
         // arguments used to form its generated specialization name.
@@ -487,7 +487,7 @@ std::string Expr::str(std::string prefix, std::string suffix)
                 declSize = sub[1].declSize * atoi(sub[0].str().c_str());
                 return indent_str + prefix + str;
             }
-            if (value.find("cpphdl_") == 0 && sub.size()) {
+            if (isBuiltinTemplate(value) && sub.size()) {
                 declSize = atoi(sub[0].str().c_str());
                 return indent_str + prefix + typeToSV(value, suffix + "[" + sub[0].str() + "-1:0]");
             }
@@ -1170,12 +1170,18 @@ std::string Expr::str(std::string prefix, std::string suffix)
             if (sub[1].str() == "") {  // all __ vars are hidden
                 return "";
             }
-            std::string init = sub[0].str();
-            if ((flags&FLAG_ASSIGN) && init.empty()
-                && sub[0].type == EXPR_BODY && sub[0].sub.size() == 1
-                && sub[0].sub[0].type == EXPR_DECL && sub[0].sub[0].sub.size() > 1) {
-                init = sub[0].sub[0].value + " = " + sub[0].sub[0].sub[1].str();
-            }
+            std::string init;
+            if (sub[0].type == EXPR_BODY && sub[0].sub.size() == 1
+                && sub[0].sub[0].type == EXPR_DECL) {
+                // A loop-local declaration belongs inside the for header.
+                // Normal DECL printing splits declaration/initialization into
+                // statements, which adds illegal semicolons here.
+                auto& declaration = sub[0].sub[0];
+                if (!(flags & FLAG_ASSIGN)) init = declaration.sub[0].str() + " ";
+                init += escapeIdentifier(declaration.value);
+                if (declaration.sub.size() > 1)
+                    init += " = " + declaration.sub[1].str();
+            } else init = sub[0].str();
             std::string str;
             str += indent_str + "for (" + init + ";" + sub[1].str() + ";" + sub[2].str() + ") begin\n";
             sub[3].indent = indent + 1;

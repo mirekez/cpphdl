@@ -244,6 +244,15 @@ class Lowering {
             if (containsClocked(member->getType(), visited)) return true;
         return false;
     }
+    bool containsMemory(QualType type) {
+        type = clean(type);
+        const auto name = templateName(type);
+        if (name == "cpphdl::memory") return true;
+        if (auto array = context.getAsConstantArrayType(type)) return containsMemory(array->getElementType());
+        if (name == "cpphdl::array" || name == "std::array")
+            return containsMemory(specialization(type)->getTemplateArgs()[name == "cpphdl::array" ? 1 : 0].getAsType());
+        return false;
+    }
     bool containsOpaqueCall(const Stmt* statement, std::set<const FunctionDecl*>& visited) {
         if (!statement) return false;
         if (auto call = dyn_cast<CallExpr>(statement)) if (auto function = call->getDirectCallee()) {
@@ -850,9 +859,16 @@ class Lowering {
                 result.type = result.type->getPointeeType();
             }
             if (templateName(result.type) == "cpphdl::reg" && member->hasInClassInitializer()) {
+                if (!member->getInClassInitializer() &&
+                    sema.BuildCXXDefaultInitExpr(member->getLocation(), const_cast<FieldDecl*>(member)).isInvalid())
+                    fail("cannot instantiate C++ register initializer");
                 auto initializer = member->getInClassInitializer()->IgnoreImplicit();
                 auto construction = dyn_cast<CXXConstructExpr>(initializer);
-                if (!construction || construction->getNumArgs()) fail("initialized C++ register unsupported");
+                auto list = dyn_cast<InitListExpr>(initializer);
+                if (list && list->getSyntacticForm()) list = list->getSyntacticForm();
+                bool valueInitialized = list && list->getNumInits() == 0;
+                if (!valueInitialized && (!construction || construction->getNumArgs()))
+                    fail("initialized C++ register unsupported");
             }
             if (templateName(result.type) == "cpphdl::memory" && member->hasInClassInitializer()) fail("initialized C++ memory unsupported");
             if (port(result.type) && !bindings.count(result.key) && !interfaceBindings.count(result.key) && member->hasInClassInitializer()) {
@@ -909,9 +925,9 @@ class Lowering {
             count = array->getSize().getLimitedValue(); elementType = array->getElementType();
         } else if (name == "cpphdl::logic" || name == "cpphdl::cat" || integerWrapperWidth(sourceType)) { count = width(sourceType); base.bitSelection = true; }
         else fail("unsupported C++ indexing: " + sourceType.getAsString());
-        // An intermediate dimension of a module/interface array is hierarchy,
-        // not a packed value whose element needs a bit width.
-        if (containsHierarchy(elementType)) {
+        // Static module/interface and RAM-bank arrays identify separate resources,
+        // not packed values containing their host pointers or implementation state.
+        if (containsHierarchy(elementType) || containsMemory(elementType)) {
             base.key += "[" + std::to_string(integer(indexValue)) + "]";
             base.type = elementType;
             return base;

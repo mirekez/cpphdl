@@ -5,6 +5,8 @@
 #include <set>
 #include <map>
 #include <stdexcept>
+#include <limits>
+#include "clang/AST/DeclCXX.h"
 
 namespace cpphdl::hls {
 using namespace clang;
@@ -33,12 +35,13 @@ OpenMPLoop loopPlan(ASTContext& ctx, const ForStmt* loop) {
     if (!var->getType()->isIntegerType() || ctx.getTypeSize(var->getType()) > 32)
         unsupported("induction variables must be integers of at most 32 bits");
     int64_t start = constant(ctx, var->getInit());
-    auto* cond = dyn_cast_or_null<BinaryOperator>(loop->getCond()->IgnoreParenImpCasts());
+    auto* cond = loop->getCond() ? dyn_cast<BinaryOperator>(loop->getCond()->IgnoreParenImpCasts()) : nullptr;
     if (!cond || variable(cond->getLHS()) != var ||
         (cond->getOpcode() != BO_LT && cond->getOpcode() != BO_LE &&
          cond->getOpcode() != BO_GT && cond->getOpcode() != BO_GE))
         unsupported("expected induction-variable <, <=, > or >= constant");
     int64_t bound = constant(ctx, cond->getRHS()), step = 0;
+    if (!loop->getInc()) unsupported("unsupported loop stride");
     auto* inc = strip(loop->getInc());
     if (auto* unary = dyn_cast<UnaryOperator>(inc)) {
         if (variable(unary->getSubExpr()) != var || !unary->isIncrementDecrementOp())
@@ -68,12 +71,12 @@ OpenMPLoop loopPlan(ASTContext& ctx, const ForStmt* loop) {
     for (int64_t i = start; active(i); i += step) {
         if (i < minimum || i > maximum || step > maximum - i || step < minimum - i)
             unsupported("induction arithmetic overflows its source type");
-        if (result.values.size() == 256) unsupported("parallel loop exceeds 256 hardware lanes");
+        if (result.values.size() == OpenMPMaxLanes) unsupported("parallel loop exceeds 4096 hardware lanes");
         result.values.push_back(i);
     }
     return result;
 }
-void validateBody(ASTContext& ctx, const OpenMPPlan& plan) {
+void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResolver& resolver, const StaticIntegers& inherited) {
     std::set<const ValueDecl*> local, independent;
     for (auto* var : plan.privates) independent.insert(var);
     for (auto* var : plan.firstprivates) independent.insert(var);
@@ -91,69 +94,175 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan) {
         for (auto* child : stmt->children()) declarations(child);
     };
     declarations(plan.body);
-    struct ArrayAccess { const ValueDecl* root; std::string signature; };
-    auto access = [&](const Expr* expr, bool disjoint = false) {
-        ArrayAccess result{};
-        std::set<const VarDecl*> used;
-        expr = strip(expr);
-        while (auto* sub = dyn_cast<ArraySubscriptExpr>(expr)) {
-            auto* index = strip(sub->getIdx());
-            auto* array = ctx.getAsConstantArrayType(strip(sub->getBase())->getType());
-            if (!array) unsupported("parallel memory accesses require fixed arrays, not pointers");
-            uint64_t extent = array->getSize().getLimitedValue();
-            auto* ref = dyn_cast<DeclRefExpr>(index);
-            auto* indexVar = ref ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
-            if (indexVar && indices.count(indexVar)) {
-                auto* var = cast<VarDecl>(ref->getDecl());
-                for (const auto& loop : plan.loops) if (loop.variable == var)
-                    for (auto i : loop.values) if (i < 0 || uint64_t(i) >= extent)
-                        unsupported("parallel array index is outside the fixed array");
-                used.insert(var);
-                result.signature += ":" + var->getNameAsString();
-            } else {
-                auto i = constant(ctx, index);
-                if (i < 0 || uint64_t(i) >= extent) unsupported("parallel array index is outside the fixed array");
-                result.signature += ":constant" + std::to_string(i);
-            }
-            expr = strip(sub->getBase());
+    // Calls are allowed only after a transitive scalar-value purity check.
+    std::set<const FunctionDecl*> checking, checked;
+    std::function<void(const CallExpr*)> pureCall;
+    pureCall = [&](const CallExpr* call) {
+        auto* fn = resolver ? resolver(call) : call->getDirectCallee();
+        if (!fn) unsupported("pure helpers require a direct call with a visible body");
+        if (auto* method = dyn_cast<CXXMethodDecl>(fn); method && !method->isStatic())
+            unsupported("pure helpers must be free or static value functions");
+        auto scalar = [](QualType type) { return !type.isVolatileQualified() &&
+            (type->isIntegerType() || type->isRealFloatingType()); };
+        if (!scalar(fn->getReturnType())) unsupported("pure helpers require an arithmetic value result");
+        std::set<const ValueDecl*> own;
+        for (auto* param : fn->parameters()) {
+            if (!scalar(param->getType())) unsupported("pure helpers require arithmetic value parameters, not aliases");
+            own.insert(param);
         }
-        if (auto* ref = dyn_cast<DeclRefExpr>(expr)) result.root = ref->getDecl();
-        else if (auto* member = dyn_cast<MemberExpr>(expr)) result.root = member->getMemberDecl();
-        if (!result.root || !result.root->getType()->isArrayType())
-            unsupported("parallel memory accesses require fixed arrays, not pointers");
-        if (disjoint && used != indices) unsupported("array writes must use every induction variable as a direct index");
-        return result;
-    };
-    std::map<const ValueDecl*, std::string> written;
-    auto write = [&](const Expr* expr) {
-        expr = strip(expr);
-        if (auto* ref = dyn_cast<DeclRefExpr>(expr)) {
-            if (!local.count(ref->getDecl()) && !independent.count(ref->getDecl()))
-                unsupported("shared scalar write needs a reduction or private clause");
-        } else if (isa<ArraySubscriptExpr>(expr)) {
-            auto item = access(expr, true);
-            if (!local.count(item.root)) {
-                auto [found, inserted] = written.emplace(item.root, item.signature);
-                if (!inserted && found->second != item.signature)
-                    unsupported("cannot prove disjoint array writes");
+        auto* canonical = fn->getCanonicalDecl();
+        if (checked.count(canonical)) return;
+        if (!checking.insert(canonical).second) unsupported("recursive pure helpers are not parallel lane operations");
+        auto* body = fn->getBody();
+        if (!body) unsupported("pure helpers require a visible instantiated body");
+        std::function<void(const Stmt*)> collect = [&](const Stmt* stmt) {
+            if (!stmt) return;
+            if (auto* ds = dyn_cast<DeclStmt>(stmt)) for (auto* declaration : ds->decls()) {
+                auto* var = dyn_cast<VarDecl>(declaration);
+                if (!var || var->isStaticLocal() || !scalar(var->getType()))
+                    unsupported("pure helpers require automatic arithmetic locals");
+                own.insert(var);
             }
-        } else unsupported("unsupported parallel write target");
+            for (auto* child : stmt->children()) collect(child);
+        };
+        collect(body);
+        std::function<void(const Stmt*)> check = [&](const Stmt* stmt) {
+            if (!stmt) return;
+            if (auto* call = dyn_cast<CallExpr>(stmt)) pureCall(call);
+            if (auto* loop = dyn_cast<ForStmt>(stmt)) (void)loopPlan(ctx, loop);
+            if (isa<WhileStmt>(stmt) || isa<DoStmt>(stmt) || isa<GotoStmt>(stmt) ||
+                isa<CXXConstructExpr>(stmt) || isa<CXXNewExpr>(stmt) || isa<CXXDeleteExpr>(stmt) ||
+                isa<CXXThrowExpr>(stmt) || isa<BreakStmt>(stmt) || isa<ContinueStmt>(stmt) ||
+                isa<OMPExecutableDirective>(stmt)) unsupported("pure helpers require bounded arithmetic control flow");
+            if (auto* ref = dyn_cast<DeclRefExpr>(stmt)) if (auto* var = dyn_cast<VarDecl>(ref->getDecl()))
+                if (!own.count(var) && !var->isConstexpr()) unsupported("pure helper reads a mutable or nonconstant global");
+            const Expr* target = nullptr;
+            if (auto* b = dyn_cast<BinaryOperator>(stmt); b && b->isAssignmentOp()) target = b->getLHS();
+            if (auto* u = dyn_cast<UnaryOperator>(stmt)) {
+                if (u->isIncrementDecrementOp()) target = u->getSubExpr();
+                if (u->getOpcode()==UO_AddrOf || u->getOpcode()==UO_Deref)
+                    unsupported("pure helpers cannot escape addresses or dereference pointers");
+            }
+            if (target) {
+                auto* ref = dyn_cast<DeclRefExpr>(strip(target));
+                if (!ref || !own.count(ref->getDecl())) unsupported("pure helper writes outside its value locals");
+            }
+            for (auto* child : stmt->children()) check(child);
+        };
+        check(body);checking.erase(canonical);checked.insert(canonical);
     };
     std::function<void(const Stmt*)> check = [&](const Stmt* stmt) {
         if (!stmt) return;
-        if (isa<CallExpr>(stmt) || isa<CXXConstructExpr>(stmt) || isa<ReturnStmt>(stmt) ||
-            isa<GotoStmt>(stmt) || isa<ForStmt>(stmt) || isa<WhileStmt>(stmt) || isa<DoStmt>(stmt) ||
-            isa<BreakStmt>(stmt) || isa<ContinueStmt>(stmt) || isa<OMPExecutableDirective>(stmt))
-            unsupported("lane bodies currently require straight-line arithmetic/branches without calls or nested control loops");
-        if (auto* binary = dyn_cast<BinaryOperator>(stmt); binary && binary->isAssignmentOp()) write(binary->getLHS());
-        if (auto* unary = dyn_cast<UnaryOperator>(stmt)) {
-            if (unary->isIncrementDecrementOp()) write(unary->getSubExpr());
-            if (unary->getOpcode() == UO_AddrOf || unary->getOpcode() == UO_Deref)
+        if (auto* call = dyn_cast<CallExpr>(stmt)) pureCall(call);
+        if (auto* loop = dyn_cast<ForStmt>(stmt)) (void)loopPlan(ctx, loop);
+        if (isa<CXXConstructExpr>(stmt) || isa<ReturnStmt>(stmt) || isa<GotoStmt>(stmt) ||
+            isa<WhileStmt>(stmt) || isa<DoStmt>(stmt) || isa<BreakStmt>(stmt) ||
+            isa<ContinueStmt>(stmt) || isa<OMPExecutableDirective>(stmt))
+            unsupported("lane bodies require bounded arithmetic/branches and pure scalar helpers");
+        if (auto* unary = dyn_cast<UnaryOperator>(stmt))
+            if (unary->getOpcode()==UO_AddrOf || unary->getOpcode()==UO_Deref)
                 unsupported("address escapes and pointer dereferences are not parallel lane operations");
-        }
         for (auto* child : stmt->children()) check(child);
     };
     check(plan.body);
+    // Enumerate bounded affine accesses using the actual lane coordinates and
+    // constant guards. Ownership checks are O(accesses log accesses), not an
+    // all-pairs comparison. Read-only neighbor snapshots are legal; in-place
+    // cross-lane recurrences remain races and are rejected.
+    using Address = std::vector<int64_t>;
+    using Root = std::vector<const ValueDecl*>;
+    std::map<Root, std::map<Address, unsigned>> writers;
+    struct Read { Root root; Address address; unsigned lane; };
+    std::vector<Read> reads;
+    auto access = [&](const Expr* expr, const StaticIntegers& values) {
+        Root root;
+        Address address;
+        expr = strip(expr);
+        while (auto* sub = dyn_cast<ArraySubscriptExpr>(expr)) {
+            auto* array = ctx.getAsConstantArrayType(strip(sub->getBase())->getType());
+            if (!array) unsupported("parallel memory accesses require fixed arrays, not pointers");
+            auto i = staticInteger(ctx, sub->getIdx(), values);
+            if (!i) unsupported("parallel array indices must be bounded static affine expressions");
+            if (*i < 0 || uint64_t(*i) >= array->getSize().getLimitedValue())
+                unsupported("parallel array index is outside the fixed array");
+            address.push_back(*i);expr = strip(sub->getBase());
+        }
+        while (auto* member = dyn_cast<MemberExpr>(expr)) {
+            root.push_back(member->getMemberDecl());expr=strip(member->getBase());
+        }
+        if(auto* ref=dyn_cast<DeclRefExpr>(expr)) root.push_back(ref->getDecl());
+        else if(isa<CXXThisExpr>(expr)) root.push_back(nullptr);
+        else unsupported("parallel array roots require distinct fixed value objects");
+        if(root.empty() || !root.front() || !root.front()->getType().getNonReferenceType()->isArrayType())
+            unsupported("parallel memory accesses require fixed arrays, not pointers");
+        return std::make_pair(root, address);
+    };
+    StaticIntegers values = inherited;
+    unsigned lane = 0;
+    std::function<void(const Stmt*)> memory;
+    auto write = [&](const Expr* target, bool read) {
+        target = strip(target);
+        if (auto* ref = dyn_cast<DeclRefExpr>(target)) {
+            if (indices.count(dyn_cast<VarDecl>(ref->getDecl()))) unsupported("parallel induction variables cannot be modified in a lane");
+            if (!local.count(ref->getDecl()) && !independent.count(ref->getDecl()))
+                unsupported("shared scalar write needs a reduction or private clause");
+        } else if (auto* sub = dyn_cast<ArraySubscriptExpr>(target)) {
+            auto [root,address] = access(sub,values);
+            if (!local.count(root.back())) {
+                auto [owner,fresh] = writers[root].emplace(address,lane);
+                if (!fresh && owner->second!=lane) unsupported("cannot prove disjoint array writes");
+                if (read) reads.push_back({root,address,lane});
+            }
+        } else unsupported("unsupported parallel write target");
+    };
+    memory = [&](const Stmt* stmt) {
+        if (!stmt) return;
+        if (auto* branch = dyn_cast<IfStmt>(stmt)) {
+            memory(branch->getInit());memory(branch->getConditionVariableDeclStmt());memory(branch->getCond());
+            auto known=staticInteger(ctx,branch->getCond(),values);
+            if (!known || *known) memory(branch->getThen());
+            if (!known || !*known) memory(branch->getElse());
+            return;
+        }
+        if (auto* conditional = dyn_cast<ConditionalOperator>(stmt)) {
+            memory(conditional->getCond());auto known=staticInteger(ctx,conditional->getCond(),values);
+            if (!known || *known) memory(conditional->getTrueExpr());
+            if (!known || !*known) memory(conditional->getFalseExpr());return;
+        }
+        if (auto* loop = dyn_cast<ForStmt>(stmt)) {
+            auto nested=loopPlan(ctx,loop);
+            for(auto i:nested.values) {values[nested.variable]=i;memory(loop->getBody());}
+            values.erase(nested.variable);return;
+        }
+        if (auto* binary=dyn_cast<BinaryOperator>(stmt)) {
+            if (binary->isAssignmentOp()) {memory(binary->getRHS());write(binary->getLHS(),binary->isCompoundAssignmentOp());return;}
+            if (binary->getOpcode()==BO_LAnd || binary->getOpcode()==BO_LOr) {
+                memory(binary->getLHS());auto known=staticInteger(ctx,binary->getLHS(),values);
+                if (!known || (*known!=0)==(binary->getOpcode()==BO_LAnd)) memory(binary->getRHS());return;
+            }
+        }
+        if (auto* unary=dyn_cast<UnaryOperator>(stmt); unary && unary->isIncrementDecrementOp()) {write(unary->getSubExpr(),true);return;}
+        if (auto* sub=dyn_cast<ArraySubscriptExpr>(stmt)) {
+            auto [root,address]=access(sub,values);
+            if (!local.count(root.back())) reads.push_back({root,address,lane});
+            return;
+        }
+        for(auto* child:stmt->children()) memory(child);
+    };
+    std::function<void(unsigned)> lanes = [&](unsigned depth) {
+        if(depth<plan.loops.size()) {
+            auto& loop=plan.loops[depth];
+            for(auto i:loop.values) {values[loop.variable]=i;lanes(depth+1);}
+            values.erase(loop.variable);return;
+        }
+        memory(plan.body);++lane;
+    };
+    lanes(0);
+    for(const auto& read:reads) {
+        auto arrays=writers.find(read.root);if(arrays==writers.end()) continue;
+        auto owner=arrays->second.find(read.address);
+        if(owner!=arrays->second.end() && owner->second!=read.lane) unsupported("cross-lane read/write dependence");
+    }
     // OpenMP private/firstprivate values belong to host threads, which may
     // process several iterations. Hardware lanes must not depend on that
     // assignment: reject a private read before a lane-local definite write.
@@ -210,21 +319,67 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan) {
     Defined defined;
     for (auto* var : plan.firstprivates) if (!mutated.count(var)) defined.insert(var);
     definite(plan.body, defined);
-    std::function<void(const Stmt*)> reads = [&](const Stmt* stmt) {
-        if (!stmt) return;
-        if (auto* sub = dyn_cast<ArraySubscriptExpr>(stmt)) {
-            auto item = access(sub);
-            if (written.count(item.root) && written.at(item.root) != item.signature)
-                unsupported("cross-lane read/write dependence");
-            // The inner subscripts of a multidimensional access are not separate accesses.
-            reads(sub->getIdx()); return;
+
+}
+}
+OpenMPLoop planStaticLoop(ASTContext& ctx,const ForStmt* loop) { return loopPlan(ctx,loop); }
+std::optional<int64_t> staticInteger(ASTContext& ctx,const Expr* input,const StaticIntegers& values) {
+    if (!input) return {};
+    auto* expr=input->IgnoreParens();
+    // A known result does not make evaluating the expression optional.
+    if (expr->HasSideEffects(ctx)) return {};
+    if (auto* ref=dyn_cast<DeclRefExpr>(expr)) {
+        if(auto* var=dyn_cast<VarDecl>(ref->getDecl())) {auto found=values.find(var);if(found!=values.end()) return found->second;}
+    }
+    Expr::EvalResult result;
+    if (!expr->HasSideEffects(ctx) && expr->EvaluateAsInt(result,ctx) && result.Val.getInt().isSignedIntN(63))
+        return result.Val.getInt().getSExtValue();
+    auto normalize=[&](int64_t value)->std::optional<int64_t> {
+        if(!expr->getType()->isIntegerType()) return {};
+        unsigned width=ctx.getTypeSize(expr->getType());
+        if(width>64) return {};
+        if(width==1) return value!=0;
+        if(width<64) {
+            uint64_t mask=(uint64_t(1)<<width)-1;uint64_t raw=uint64_t(value)&mask;
+            if(expr->getType()->isSignedIntegerType() && (raw&(uint64_t(1)<<(width-1)))) raw|=~mask;
+            return int64_t(raw);
         }
-        for (auto* child : stmt->children()) reads(child);
+        // StaticIntegers cannot represent an unsigned value above INT64_MAX.
+        // Leave its comparison/arithmetic to normal typed lowering.
+        if (expr->getType()->isUnsignedIntegerType() && value < 0) return {};
+        return value;
     };
-    reads(plan.body);
+    if(auto* cast=dyn_cast<CastExpr>(expr)) {auto v=staticInteger(ctx,cast->getSubExpr(),values);return v?normalize(*v):v;}
+    if(auto* unary=dyn_cast<UnaryOperator>(expr)) {
+        auto v=staticInteger(ctx,unary->getSubExpr(),values);if(!v) return {};
+        switch(unary->getOpcode()) {case UO_Plus:return normalize(*v);case UO_Minus:if(*v!=std::numeric_limits<int64_t>::min())return normalize(-*v);return {};
+            case UO_LNot:return !*v;case UO_Not:return normalize(~*v);default:return {};}
+    }
+    if(auto* cond=dyn_cast<ConditionalOperator>(expr)) {
+        auto test=staticInteger(ctx,cond->getCond(),values);
+        return test?staticInteger(ctx,*test?cond->getTrueExpr():cond->getFalseExpr(),values):std::optional<int64_t>{};
+    }
+    if(auto* binary=dyn_cast<BinaryOperator>(expr)) {
+        auto a=staticInteger(ctx,binary->getLHS(),values),b=staticInteger(ctx,binary->getRHS(),values);
+        if(binary->getOpcode()==BO_LAnd) {if((a && !*a)||(b && !*b))return 0;if(a&&b)return 1;return {};}
+        if(binary->getOpcode()==BO_LOr) {if((a && *a)||(b && *b))return 1;if(a&&b)return 0;return {};}
+        if(!a||!b) return {};
+        __int128 wide=0;
+        switch(binary->getOpcode()) {
+        case BO_Add:wide=__int128(*a)+*b;break;case BO_Sub:wide=__int128(*a)-*b;break;case BO_Mul:wide=__int128(*a)* *b;break;
+        case BO_Div:if(!*b)return {};wide=__int128(*a)/ *b;break;case BO_Rem:if(!*b)return {};wide=__int128(*a)% *b;break;
+        case BO_Shl:if(*b<0||*b>=63||*a<0)return {};wide=__int128(*a)<<*b;break;
+        case BO_Shr:if(*b<0||*b>=64)return {};return normalize(*a>>*b);
+        case BO_And:return normalize(*a&*b);case BO_Or:return normalize(*a|*b);case BO_Xor:return normalize(*a^*b);
+        case BO_LT:return *a<*b;case BO_LE:return *a<=*b;case BO_GT:return *a>*b;case BO_GE:return *a>=*b;
+        case BO_EQ:return *a==*b;case BO_NE:return *a!=*b;default:return {};
+        }
+        if(wide<std::numeric_limits<int64_t>::min() || wide>std::numeric_limits<int64_t>::max())return {};
+        return normalize(int64_t(wide));
+    }
+    return {};
 }
-}
-OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive) {
+OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive, const OpenMPCallResolver& resolver, const StaticIntegers& inherited) {
     using namespace llvm::omp;
     auto kind = directive->getDirectiveKind();
     if (kind != OMPD_parallel_for && kind != OMPD_parallel_for_simd && kind != OMPD_simd)
@@ -234,7 +389,8 @@ OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive) 
     auto append = [](auto* clause, auto& list) {
         for (auto* expr : llvm::make_range(clause->varlist_begin(), clause->varlist_end())) {
             auto* var = variable(expr);
-            if (!var->getType()->isIntegerType()) unsupported("private/reduction variables must be scalar integers");
+            if (!var->getType()->isIntegerType() && !(var->getType()->isRealFloatingType() && var->getType()->isSpecificBuiltinType(BuiltinType::Float)))
+                unsupported("private variables must be scalar integers or FP32");
             list.push_back(var);
         }
     };
@@ -265,9 +421,11 @@ OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive) 
             else unsupported("supported integer reductions are +, *, &, | and ^");
             for (auto* expr : llvm::make_range(c->varlist_begin(), c->varlist_end())) {
                 auto* var = variable(expr);
-                if (!var->getType()->isUnsignedIntegerType() || ctx.getTypeSize(var->getType()) > 64)
-                    unsupported("reductions require unsigned integers of at most 64 bits");
-                plan.reductions.push_back({var, op, identity});
+                bool fp32=var->getType()->isSpecificBuiltinType(BuiltinType::Float);
+                if (fp32 && op!="+" && op!="*") unsupported("FP32 reductions support + and *");
+                if (!fp32 && (!var->getType()->isUnsignedIntegerType() || ctx.getTypeSize(var->getType())>64))
+                    unsupported("reductions require unsigned integers of at most 64 bits or FP32");
+                plan.reductions.push_back({var,op,fp32 && op=="*" ? "32'h3f800000" : identity});
             }
         } else if (auto* c = dyn_cast<OMPScheduleClause>(clause)) {
             if (c->getScheduleKind() != OMPC_SCHEDULE_static) unsupported("hardware lanes support only schedule(static)");
@@ -276,6 +434,10 @@ OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive) 
         } else if (auto* c = dyn_cast<OMPDefaultClause>(clause)) {
             if (c->getDefaultKind() != OMP_DEFAULT_shared && c->getDefaultKind() != OMP_DEFAULT_none)
                 unsupported("supported defaults are shared and none; declare private variables explicitly");
+        } else if (auto* c = dyn_cast<OMPIfClause>(clause)) {
+            // OpenMP if controls host team creation, not whether loop work
+            // executes. Constant team policy never changes hardware lanes.
+            (void)constant(ctx, c->getCondition());
         } else if (!isa<OMPSharedClause>(clause))
             unsupported("unsupported clause on parallel loop");
     }
@@ -288,13 +450,13 @@ OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive) 
         auto* loop = dyn_cast<ForStmt>(body);
         if (!loop) unsupported("expected a canonical for loop");
         plan.loops.push_back(loopPlan(ctx, loop));
-        if (plan.loops.back().values.size() && plan.lanes > 256 / plan.loops.back().values.size())
-            unsupported("parallel loop exceeds 256 hardware lanes");
+        if (plan.loops.back().values.size() && plan.lanes > OpenMPMaxLanes / plan.loops.back().values.size())
+            unsupported("parallel loop exceeds 4096 hardware lanes");
         plan.lanes *= plan.loops.back().values.size();
         body = loop->getBody();
     }
     plan.body = body;
-    validateBody(ctx, plan);
+    validateBody(ctx, plan, resolver, inherited);
     return plan;
 }
 }
