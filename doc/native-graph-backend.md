@@ -1,5 +1,68 @@
 # Native value-graph backend
 
+Builtin recognition in the ordinary C++ frontend compares declaration names
+without printing template arguments. Elaborated configuration NTTPs are not
+needed for this comparison; recursively printing them can dominate full-design
+lowering. This affects compiler work, not the reported simulation runtime.
+
+Standalone assignments of string literals to `std::string` may be discarded
+when diagnostic I/O has already been removed by conversion. This is not string
+simulation: observable string reads, method calls, nonliteral assignments and
+assignment results remain rejected. Hardware termination logic is still lowered.
+
+Conditional feedback is normalized rather than simulated by relaxation. When
+bitwise refinement leaves a mux cycle, the graph compiler may exhaust a selector
+of at most six independent input/state bits, including pairs of coupled FSM
+selectors. Every selector value must produce
+an acyclic expression before the replacement is accepted. This removes feedback
+paths enabled only in mutually exclusive FSM states; genuine loops, effects,
+opaque operations and cases exceeding the bounded search remain rejected.
+Selector-independent producers are shared rather than copied for each case,
+so specializing a small FSM does not replicate unrelated upstream logic.
+
+hdlcpp makes completely driverless module hardware values explicit zero
+configuration in `_assign()` for two-state simulation. Disabled generate branches
+can otherwise leave such a declaration behind (for example the shared TLB VMID
+register with hypervisor support disabled). This does not initialize interface
+pins, initialize memories or registers, override child outputs or fill partially driven signals; CppHDL still
+checks those drivers. Enabled and disabled generate fixtures compare ordinary
+C++, native graphs and original-SV Verilator against the same oracle, including
+driverless packed structs/arrays and field-wise driven siblings.
+Declarator-level unpacked backing arrays are excluded, as are variables written
+by an SV `initial` block. Ignoring an `initial` body during conversion does not
+prove its setup variables undriven or immutable; host testbench adapters may
+configure those variables before or during simulation.
+Driver collection also visits function calls nested inside assignment expressions,
+including their declared output/inout/ref arguments. A return assignment such as
+`status = debug_tick(request_data, ...)` does not make `request_data` driverless.
+
+hdlcpp keeps dependent-width arithmetic in native unsigned carriers when the
+resolved width is at most 64 bits, retaining explicit operand/result wrapping.
+Wider additions retain their logic carrier. Contextual ternaries construct the
+same logic type on both branches: equal SV concatenation widths alone do not
+give different C++ `cat` specializations a common conditional type. Regressions
+exercise 8-, 64- and 65-bit arithmetic in all three execution representations.
+Concatenation width calculation uses self-determined bit-select/bitwise widths;
+assignment-context widths must not change the sign bit interpreted by `$signed`.
+
+Child-field projection through a generated adapter requires a whole-return
+assignment. Finding one child getter anywhere in the adapter body is not a
+dataflow proof: it may supply a scalar sibling or an index. Without that proof,
+the compiler projects the completed adapter instead of inventing nested members
+such as `ar_valid.ar`. Array spelling normalization also preserves definite
+extent/type argument order across repeated processing of dependent types.
+
+Read-only packed-array proxies are materialized at their logical element width,
+including template arguments passed by value. Their captured bits are a snapshot,
+not a live read of the parent array. Writes through a captured proxy remain
+rejected rather than being incorrectly treated as writes to a local snapshot.
+
+SV `const` declarations remain const-qualified in the ordinary C++ model.
+The native frontend materializes immutable hardware-field initializers only
+when every result bit is constant, caching the value per instance. This includes
+packed boot-ROM arrays. Mutable initialized storage, input-dependent constant
+initializers and recursive initializers are not treated as reset/default drivers.
+
 `cpphdl --native-graph` implements an opt-in simulation representation with
 two inputs: ordinary C++HDL C++ elaborated by Clang, or graph-construction C++
 from the preserved `hdlcpp --native-graph` Slang frontend. Both use the same
@@ -35,6 +98,20 @@ none of those callbacks. Parallel implicit callbacks still require explicit
 host boundaries. Module-array port bindings remain hierarchy aliases rather
 than packed values; packed element proxies lower directly to their original
 storage slices, and `std::as_const` retains its argument's storage identity.
+
+Native emission derives phase liveness from the already validated dependency
+order. `eval(false)` retains only output cones and nontransactional RAM-read
+bounds checks, stopping at committed state/input storage. Work-only producers
+and their cross-chunk stores are guarded by `if constexpr(Commit)`; settling
+does not call chunks without a live settling node. Mixed chunks retain their
+live output logic. This applies to scalar, chunked, split and parallel emission
+(after lane-private cone cloning), without changing transaction ordering,
+clock/reset contracts, or host callback counts. A state-only output model can
+therefore publish its ports without reevaluating next-state logic. Validation
+still runs before liveness filtering, so this is not a way to hide bad drivers
+or combinational cycles. `native_graph_phase_liveness` checks both state-only
+and combinational-output models, mixed chunks, read/write validation, and
+unchanged work-only scratch slots during settling.
 
 Ordinary hdlcpp output includes `__cpphdl_net_STORAGE` metadata for methods
 consisting solely of concurrent continuous assignments. This leaves their
@@ -1900,3 +1977,22 @@ is retained but not registered as a passing test. No production code was
 modified. Full model emission and simulation remain blocked, so there is no
 new cycle/output equivalence or runtime comparison. Owned temporary artifacts
 (about 255 MiB at the end) were removed after preserving this evidence.
+
+### October 11, 2026: full CVA6 matched-work execution
+
+The later native-graph update and converter corrections supersede the preceding
+blocked checkpoint. Ordinary hdlcpp conversion, C++ graph extraction, separately
+compiled native emission and the unmodified-size SRAM now complete the original
+single-core CVA6 integer matmul. Both simulators pass at exactly 46,264 total
+cycles (10 reset plus 46,254 work); all 21,285 integer architectural commit
+records match. The diagnostic checker is
+`hdlcpp/tests/cva6/check_commit_trace.py`.
+
+Fresh three-trial, CPU-pinned simulation-loop medians are 0.806077422 s for
+original-SV Verilator and 27.020316519 s for ordinary C++ / native graph. The
+correct full chain is still 33.52x slower. The regenerated bus-only replay is
+near parity (1.601615311 s versus 1.564686474 s), so it is not a proxy for full
+CPU performance. These measurements exclude conversion/compilation and use the
+same ELF; Verilator's RTL diagnostic file I/O remains a host-I/O difference.
+Complete timing samples, correctness scope, executable hashes and the bounded
+sampling evidence are in `hdlcpp/tests/cva6/compare_matmul.md`.

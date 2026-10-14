@@ -9,6 +9,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -871,6 +872,156 @@ public:
         validateClocks();
     }
 
+    bool specializeGuardedCycle(size_t root, const std::vector<size_t>& path) {
+        // A mux dependency loop can be infeasible: a producer is used only
+        // in FSM state A, while its feedback is enabled only in state B.
+        // Exhaust small independent selectors and accept only if every case
+        // is acyclic. Never iterate a true loop or invent its signal values.
+        std::set<Value> controls;
+        auto consider = [&](size_t index) {
+            const auto& producer = nodes[index];
+            if (producer.op != "mux" || producer.select.empty()) return;
+            auto condition = resolve(producer.select[0]);
+            if (condition < 2) return;
+            const auto& comparison = nodes[owner(condition)];
+            if (comparison.op != "eq") return;
+            std::set<Bit> bits;
+            bool independent = true;
+            for (const auto* operand : {&comparison.left, &comparison.right}) for (auto raw : *operand) {
+                auto bit = resolve(raw);
+                if (bit < 2) continue;
+                const auto& source = nodes[owner(bit)];
+                independent &= source.op == "input" || source.op == "state";
+                bits.insert(bit);
+            }
+            if (independent && !bits.empty() && bits.size() <= 6 && controls.size() < 16)
+                controls.emplace(bits.begin(), bits.end());
+        };
+        for (auto index : path) consider(index);
+        const auto savedScope = currentScope;
+        struct UnresolvedCycle { const char* reason; Bit bit; };
+        std::set<Value> attempted;
+        while (attempted.size() < 32) {
+            std::set<Value> candidates = controls;
+            std::vector<Value> selectors(controls.begin(), controls.end());
+            for (size_t first = 0; first < selectors.size(); ++first)
+                for (size_t second = first + 1; second < selectors.size(); ++second) {
+                    Value combined;
+                    std::set_union(selectors[first].begin(), selectors[first].end(), selectors[second].begin(), selectors[second].end(),
+                                   std::back_inserter(combined));
+                    if (combined.size() <= 6) candidates.insert(std::move(combined));
+                }
+            selectors.assign(candidates.begin(), candidates.end());
+            std::sort(selectors.begin(), selectors.end(), [](const Value& left, const Value& right) {
+                return left.size() == right.size() ? left < right : left.size() < right.size();
+            });
+            auto pending = std::find_if(selectors.begin(), selectors.end(), [&](const Value& item) { return !attempted.count(item); });
+            if (pending == selectors.end()) break;
+            const auto selector = *pending;
+            attempted.insert(selector);
+            const auto begin = nodes.size();
+            bool valid = true;
+            Value replacement;
+            for (unsigned choice = 0; choice < (1u << selector.size()) && valid; ++choice) {
+                std::map<Bit, Bit> cache;
+                for (unsigned offset = 0; offset < selector.size(); ++offset)
+                    cache[selector[offset]] = (choice >> offset) & 1;
+                std::set<Bit> active;
+                size_t visits = 0;
+                std::function<Bit(Bit)> evaluate;
+                auto value = [&](const Value& input) {
+                    Value result; result.reserve(input.size());
+                    for (auto bit : input) result.push_back(evaluate(bit));
+                    return result;
+                };
+                evaluate = [&](Bit raw) -> Bit {
+                    auto bit = resolve(raw);
+                    if (bit < 2) return bit;
+                    if (auto found = cache.find(bit); found != cache.end()) return found->second;
+                    if (++visits > 30000 || nodes.size() - begin > 16384)
+                        throw UnresolvedCycle{"budget", bit};
+                    if (!active.insert(bit).second) {
+                        for (auto dependency : active) consider(owner(dependency));
+                        throw UnresolvedCycle{"feedback", bit};
+                    }
+                    auto index = owner(bit);
+                    const auto original = nodes[index];
+                    Bit result = bit;
+                    if (original.op == "input" || original.op == "state" || original.op == "wire") {
+                    } else if (original.hostEffect() || original.validation() || original.op == "blackbox" ||
+                               original.op == "memory_read" || original.op.rfind("fp_", 0) == 0) {
+                        throw UnresolvedCycle{"opaque operation", bit};
+                    } else if (original.op == "mux") {
+                        auto offset = lane(bit);
+                        auto savedActive = active;
+                        std::optional<Bit> condition;
+                        try { condition = evaluate(original.select[0]); }
+                        catch (const UnresolvedCycle&) { active = std::move(savedActive); }
+                        if (condition && *condition < 2)
+                            result = evaluate(*condition ? original.left[offset] : original.right[offset]);
+                        else {
+                            auto left = evaluate(original.left[offset]), right = evaluate(original.right[offset]);
+                            if (!condition && left != right) throw UnresolvedCycle{"selector feedback", bit};
+                            currentScope = original.scope;
+                            if (left == right) result = left;
+                            else if (left != resolve(original.left[offset]) || right != resolve(original.right[offset]) ||
+                                     *condition != resolve(original.select[0]))
+                                result = add("mux", 1, {left}, {right}, {*condition})[0];
+                        }
+                    } else if (original.op == "and" || original.op == "or" || original.op == "xor") {
+                        auto offset = lane(bit);
+                        auto left = evaluate(original.left[offset]);
+                        if ((original.op == "and" && left == 0) || (original.op == "or" && left == 1)) result = left;
+                        else {
+                            auto right = evaluate(original.right[offset]);
+                            currentScope = original.scope;
+                            if (left != resolve(original.left[offset]) || right != resolve(original.right[offset]))
+                                result = add(original.op, 1, {left}, {right})[0];
+                        }
+                    } else {
+                        auto left = value(original.left), right = value(original.right), select = value(original.select);
+                        if (left != resolved(original.left) || right != resolved(original.right) || select != resolved(original.select)) {
+                            currentScope = original.scope;
+                            auto output = add(original.op, original.width, std::move(left), std::move(right),
+                                              std::move(select), original.name);
+                            for (unsigned offset = 0; offset < output.size(); ++offset)
+                                cache[(index + 1) * 64 + 2 + offset] = output[offset];
+                            result = output[lane(bit)];
+                        }
+                    }
+                    active.erase(bit);
+                    cache[bit] = result;
+                    return result;
+                };
+                try {
+                    auto output = evaluate((root + 1) * 64 + 2);
+                    replacement = choice == 0 ? Value{output} :
+                        mux(binary("eq", selector, constant(choice, selector.size()), 1), {output}, replacement);
+                } catch (const UnresolvedCycle& error) {
+                    valid = false;
+                    if (std::getenv("CPPHDL_GRAPH_TRACE_CYCLES")) {
+                        std::cerr << "guarded cycle candidate rejected: node=" << root << " selector_bits=" << selector.size()
+                                  << " choice=" << choice << " reason=" << error.reason
+                                  << " dependency=" << owner(error.bit) << " visits=" << visits << " selector=";
+                        for (auto bit : selector) std::cerr << nodes[owner(bit)].name << '/' << lane(bit) << ',';
+                        std::cerr << '\n';
+                    }
+                }
+            }
+            currentScope = savedScope;
+            if (valid) {
+                aliases[(root + 1) * 64 + 2] = replacement[0];
+                if (std::getenv("CPPHDL_GRAPH_PROGRESS"))
+                    std::cerr << "guarded cycle specialized: node=" << root << " selector_bits=" << selector.size()
+                              << " added_nodes=" << nodes.size() - begin << '\n';
+                return true;
+            }
+            aliases.erase(aliases.lower_bound((begin + 1) * 64 + 2), aliases.end());
+            nodes.resize(begin);
+        }
+        return false;
+    }
+
     // Shared live dependency ordering, including bitwise-cycle refinement.
     std::vector<size_t> dependencyOrder() {
         std::vector<size_t> order;
@@ -881,6 +1032,7 @@ public:
             std::vector<unsigned> marks(nodes.size());
             std::vector<size_t> stack;
             std::optional<size_t> cycle;
+            std::vector<size_t> cyclePath;
             bool outputCone = true;
             order.clear();
             std::function<void(Bit)> visit = [&](Bit raw) {
@@ -890,6 +1042,28 @@ public:
                 if (marks[index] == 2) return;
                 if (marks[index] == 1) {
                     cycle = index;
+                    cyclePath.assign(std::find(stack.begin(), stack.end(), index), stack.end());
+                    if (std::getenv("CPPHDL_GRAPH_TRACE_CYCLES")) {
+                        auto begin = std::find(stack.begin(), stack.end(), index);
+                        size_t printed = 0;
+                        for (auto position = begin; position != stack.end() && printed < 32; ++position, ++printed) {
+                            const auto& producer = nodes[*position];
+                            std::cerr << "cycle dependency " << *position << ' ' << producer.op << ':' << producer.width
+                                      << ' ' << producer.name << " scope=" << producer.scope;
+                            for (const auto* operand : {&producer.left, &producer.right, &producer.select}) {
+                                std::cerr << " [";
+                                if (!operand->empty()) {
+                                    auto raw = operand->front();
+                                    auto first = resolve(raw);
+                                    if (raw > 1) std::cerr << nodes[owner(raw)].name << "=>";
+                                    std::cerr << first;
+                                    if (first > 1) std::cerr << ':' << nodes[owner(first)].op << ':' << nodes[owner(first)].name;
+                                }
+                                std::cerr << ']';
+                            }
+                            std::cerr << '\n';
+                        }
+                    }
                     for (auto position = std::find(stack.begin(),stack.end(),index); position != stack.end(); ++position) {
                         const auto& candidate = nodes[*position];
                         if (candidate.width > 1 && (candidate.op == "mux" || candidate.op == "and" || candidate.op == "or" || candidate.op == "xor")) {
@@ -960,8 +1134,10 @@ public:
             if (!cycle) break;
             auto index = *cycle;
             const auto node = nodes[index];
-            if (node.width == 1 || (node.op != "mux" && node.op != "and" && node.op != "or" && node.op != "xor"))
+            if (node.width == 1 || (node.op != "mux" && node.op != "and" && node.op != "or" && node.op != "xor")) {
+                if (node.width == 1 && specializeGuardedCycle(index, cyclePath)) continue;
                 throw std::runtime_error("combinational cycle at " + std::to_string(index) + " " + node.op);
+            }
             for (unsigned offset = 0; offset < node.width; ++offset) {
                 auto target = (index + 1) * 64 + 2 + offset;
                 if (!aliases.count(target))
@@ -976,7 +1152,7 @@ public:
     // continuation can run while workers prepare inactive register state.
     // balanceLanes spreads sink work instead of compacting overlapping cones.
     void emit(const std::string& path, unsigned chunkSize = 0, unsigned threads = CPPHDL_NATIVE_THREADS,
-              bool hostOverlap = false, bool balanceLanes = false);
+              bool hostOverlap = false, bool balanceLanes = false, unsigned splitChunks = 0);
 
 };
 }

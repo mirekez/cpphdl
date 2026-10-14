@@ -2,6 +2,7 @@
 
 #include "cpphdl_graph.h"
 #include <numeric>
+#include <filesystem>
 
 namespace cpphdl::graph {
 inline std::string nativeStringLiteral(const std::string& value) {
@@ -209,7 +210,8 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
 }
 
 inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned threads, bool hostOverlap,
-                        bool balanceLanes) {
+                        bool balanceLanes, unsigned splitChunks) {
+        if (splitChunks && !chunkSize) throw std::runtime_error("split native compilation requires chunking");
         if (!threads || threads > 256) throw std::runtime_error("native graph threads must be between 1 and 256");
         if (threads > 1 && !chunkSize) chunkSize = 512;
         validateClocks();
@@ -269,25 +271,49 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         }
         if (threads == 1) for (auto index : order)
             if (nodes[index].op != "state" && nodes[index].op != "input") taskNodes[0].push_back(index);
-        std::vector<int64_t> chunkOf(nodes.size(), -1);
-        std::vector<std::vector<size_t>> taskChunks(taskNodes.size());
-        if (chunkSize) {
-            size_t chunk = 0;
-            for (size_t task = 0; task < taskNodes.size(); ++task) {
-                for (size_t i = 0; i < taskNodes[task].size(); ++i) {
-                    if (i % chunkSize == 0) taskChunks[task].push_back(chunk++);
-                    chunkOf[taskNodes[task][i]] = chunk - 1;
-                }
-            }
-        }
         if (threads > 1) {
             order.clear();
             for (const auto& task : taskNodes) order.insert(order.end(), task.begin(), task.end());
             fprintf(stderr, "native graph parallel: %u lanes, %u stages, %zu tasks\n",
                     threads, parallel.stages, parallel.tasks.size());
         }
-        std::ofstream output(path);
-        if (!output) throw std::runtime_error("cannot write native model");
+        // Filter the validated dependency order, rather than introducing a
+        // second scheduler. Run after lane cloning so roots refer to each
+        // lane's private producers. Settling observes committed storage and
+        // outputs; next-state, transactional RAM checks and effects are work roots.
+        std::vector<bool> settleLive(nodes.size());
+        auto requireSettling = [&](const Value& value) {
+            for (auto bit : resolved(value)) if (bit > 1) settleLive[owner(bit)] = true;
+        };
+        for (const auto& port : ports) if (!port.input) requireSettling(port.bits);
+        for (const auto& access : memoryAccesses) if (!access.transaction) {
+            requireSettling(access.address);
+            requireSettling(access.enabled);
+        }
+        for (auto position = order.rbegin(); position != order.rend(); ++position) {
+            const auto& node = nodes[*position];
+            if (!settleLive[*position] || node.op == "state" || node.op == "input") continue;
+            for (const auto* value : {&node.left, &node.right, &node.select}) requireSettling(*value);
+        }
+        std::vector<int64_t> chunkOf(nodes.size(), -1);
+        std::vector<std::vector<size_t>> taskChunks(taskNodes.size());
+        std::vector<bool> settleChunks;
+        if (chunkSize) {
+            size_t chunk = 0;
+            for (size_t task = 0; task < taskNodes.size(); ++task) {
+                for (size_t i = 0; i < taskNodes[task].size(); ++i) {
+                    if (i % chunkSize == 0) {
+                        taskChunks[task].push_back(chunk++);
+                        settleChunks.push_back(false);
+                    }
+                    chunkOf[taskNodes[task][i]] = chunk - 1;
+                    if (settleLive[taskNodes[task][i]]) settleChunks.back() = true;
+                }
+            }
+        }
+        std::ofstream header(path), part;
+        if (!header) throw std::runtime_error("cannot write native model");
+        std::ostream output(header.rdbuf());
         output << "#pragma once\n";
         if (threads > 1) output << "#include <cpphdl_graph_threads.h>\n";
         if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_random"; }))
@@ -418,7 +444,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                            << "debug" << index << '_' << argument << " = 0;\n";
         }
         auto declaration = [&](size_t index) {
-            return sharedSlots.count(index) ? "" : "const uint64_t ";
+            return sharedSlots.count(index) || !settleLive[index] ? "" : "const uint64_t ";
         };
         auto assembly = [&](Value value) {
             value = resolved(value);
@@ -450,17 +476,22 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         // compile-time distinct so the host compiler can remove that work,
         // rather than testing a runtime flag after computing both schedules.
         unsigned chunks = 0;
-        int64_t previousChunk = -1;
-        if (!chunkSize) output << "template<bool Commit> void evaluate() {\n";
-        for (auto index : order) {
+        unsigned parts = 0;
+        auto closeChunk = [&] {
+            output << "}\n";
+            if (splitChunks)
+                for (const auto* mode : {"false", "true"})
+                    output << "template void Model::__cpphdl_chunk_" << chunks - 1 << '<' << mode << ">();\n";
+        };
+        auto closePart = [&] {
+            if (!part.is_open()) return;
+            output << "}\n";
+            output.flush();
+            output.rdbuf(header.rdbuf());
+            part.close();
+        };
+        auto emitNode = [&](size_t index) {
             const auto& node = nodes[index];
-            if (node.op == "state" || node.op == "input" || node.validation()) continue;
-            if (chunkSize && chunkOf[index] != previousChunk) {
-                if (chunks) output << "}\n";
-                if (hostEffects) output << "template<bool Commit> ";
-                output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks++ << "() {\n";
-                previousChunk = chunkOf[index];
-            }
             if (node.op == "memory_read") {
                 auto memory = number(node.right), word = number(node.select);
                 if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||
@@ -469,7 +500,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 auto address = assembly(node.left);
                 output << declaration(index) << valueName(index) << " = " << address << " < " << memories[*memory].depth
                        << "ull ? memory" << *memory << '[' << address << "][" << *word << "] : 0ull;\n";
-                continue;
+                return;
             }
             if (node.op == "host_debug_tick") {
                 if (node.width != 32 || node.right.size() != 192 || node.select.size() != 1)
@@ -482,12 +513,12 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 // may intentionally leave outputs unchanged on a stalled tick.
                 for (unsigned argument = 0; argument < 9; ++argument) {
                     auto type = sizes[argument] == 8 ? "unsigned char" : "int";
-                    if (!chunkSize) output << type << ' ';
+                    if (!chunkSize && settleLive[index]) output << type << ' ';
                     output << prefix << '_' << argument << " = static_cast<"
                            << type << ">(" << assembly(slice(node.right, offset, sizes[argument])) << ");\n";
                     offset += sizes[argument];
                 }
-                output << (sharedSlots.count(index) ? "" : "uint64_t ") << valueName(index) << " = 0;\n"
+                output << (sharedSlots.count(index) || !settleLive[index] ? "" : "uint64_t ") << valueName(index) << " = 0;\n"
                        << "if constexpr(Commit) { if(" << assembly(node.select) << ") {\n"
                        << valueName(index) << " = uint32_t(::debug_tick(";
                 for (unsigned argument = 0; argument < 9; ++argument) {
@@ -496,7 +527,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     output << prefix << '_' << argument;
                 }
                 output << "));\n} }\n";
-                continue;
+                return;
             }
             if (node.op == "host_debug_output") {
                 auto argument = number(node.select);
@@ -507,14 +538,14 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     throw std::runtime_error("invalid debug_tick output projection");
                 output << declaration(index) << valueName(index) << " = uint32_t(debug"
                        << owner(node.left.front()) << '_' << *argument << ");\n";
-                continue;
+                return;
             }
             auto left = assembly(node.left), right = assembly(node.right);
             if (node.op == "host_jtag_tick") {
                 if (node.width != 64 || node.right.size() != 40 || node.select.size() != 1)
                     throw std::runtime_error("invalid jtag_tick effect layout");
                 auto prefix = "jtag" + std::to_string(index);
-                output << (sharedSlots.count(index) ? "" : "uint64_t ") << valueName(index)
+                output << (sharedSlots.count(index) || !settleLive[index] ? "" : "uint64_t ") << valueName(index)
                        << " = (" << right << " & 4294967295ull) << 32;\n"
                        << "if constexpr(Commit) { if(" << assembly(node.select) << ") {\n";
                 for (unsigned argument = 0; argument < 4; ++argument)
@@ -528,7 +559,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 for (unsigned argument = 0; argument < 4; ++argument)
                     output << " | (uint64_t(" << prefix << '_' << argument << ") << " << 32 + 8 * argument << ')';
                 output << ";\n} }\n";
-                continue;
+                return;
             }
             std::string expr;
             auto op = node.op;
@@ -586,9 +617,54 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 if (op == "div" || op == "mod") expr = right + " ? (" + expr + ") : 0ull";
             }
             output << declaration(index) << valueName(index) << " = (" << expr << ") & " << mask(node.width) << "ull;\n";
+        };
+        int64_t previousChunk = -1;
+        if (!chunkSize) output << "template<bool Commit> void evaluate() {\n";
+        for (auto index : order) {
+            const auto& node = nodes[index];
+            if (node.op == "state" || node.op == "input" || node.validation()) continue;
+            if (chunkSize && chunkOf[index] != previousChunk) {
+                if (chunks) closeChunk();
+                if (splitChunks) {
+                    if (chunks % splitChunks == 0) {
+                        closePart();
+                        auto modelPath = std::filesystem::path(path);
+                        auto partPath = modelPath.parent_path() /
+                            (modelPath.stem().string() + ".part." + std::to_string(parts++) + ".cpp");
+                        part.open(partPath);
+                        if (!part) throw std::runtime_error("cannot write native model part");
+                        output.rdbuf(part.rdbuf());
+                        output << "#include " << nativeStringLiteral(modelPath.filename().string())
+                               << "\nnamespace cpphdl_native {\n";
+                    }
+                    header << "template<bool Commit> ";
+                    header << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks << "();\n";
+                }
+                output << "template<bool Commit> ";
+                output << "[[gnu::noinline]] void " << (splitChunks ? "Model::" : "")
+                       << "__cpphdl_chunk_" << chunks++ << "() {\n";
+                previousChunk = chunkOf[index];
+            }
+            // Cross-chunk stores are observable to the host compiler even
+            // when no output consumes them. Compile-time liveness removes
+            // those stores as well as their producers from the settling phase.
+            // Keep local declarations in scope for later work-only consumers.
+            if (!settleLive[index]) {
+                if (!sharedSlots.count(index)) output << "uint64_t " << valueName(index) << " = 0;\n";
+                if (!chunkSize && node.op == "host_debug_tick") {
+                    const unsigned sizes[] = {8, 8, 32, 32, 32, 8, 8, 32, 32};
+                    for (unsigned argument = 0; argument < 9; ++argument)
+                        output << (sizes[argument] == 8 ? "unsigned char " : "int ")
+                               << "debug" << index << '_' << argument << " = 0;\n";
+                }
+                output << "if constexpr(Commit) {\n";
+            }
+            emitNode(index);
+            if (!settleLive[index]) output << "}\n";
         }
         if (chunkSize) {
-            if (chunks) output << "}\n";
+            if (chunks) closeChunk();
+            if (splitChunks) closePart();
             if (threads > 1) {
                 // Endpoints are assembled on the same lane as their logic.
                 // Only compact host outputs, validation flags and RAM write
@@ -651,7 +727,10 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                           "auto& model = *static_cast<Model*>(target);\nswitch(lane) {\n";
                 for (unsigned lane = 0; lane < threads; ++lane) {
                     output << "case " << lane << ":\n";
-                    for (auto chunk : taskChunks[lane]) output << "model.__cpphdl_chunk_" << chunk << "();\n";
+                    for (auto chunk : taskChunks[lane]) {
+                        if (!settleChunks[chunk]) output << "if constexpr(Commit) ";
+                        output << "model.__cpphdl_chunk_" << chunk << "<Commit>();\n";
+                    }
                     output << "model.__cpphdl_sinks_" << lane << "<Commit>();\nbreak;\n";
                 }
                 output << "}\n}\nvoid __cpphdl_publish(bool commit = true) {\nunsigned errors = 0;\n";
@@ -700,8 +779,10 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 return;
             }
             output << "template<bool Commit> [[gnu::noinline]] void evaluate() {\n";
-            for (unsigned index = 0; index < chunks; ++index)
-                output << "__cpphdl_chunk_" << index << (hostEffects ? "<Commit>" : "") << "();\n";
+            for (unsigned index = 0; index < chunks; ++index) {
+                if (!settleChunks[index]) output << "if constexpr(Commit) ";
+                output << "__cpphdl_chunk_" << index << "<Commit>();\n";
+            }
         }
         for (const auto& node : nodes) if (node.validation())
             output << "if(Commit && " << assembly(node.left) << ") throw std::runtime_error("
@@ -755,7 +836,12 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             output << "__cpphdl_previous_clock_" << i << " = " << clocks[i].name << ";\n";
         output << "}\n}\nvoid eval(bool commit = false) { if(commit) evaluate<true>(); else evaluate<false>(); }\n"
                   "template<class Host> void evaluate_with_host(Host&& host) { evaluate<true>(); host(); }\n"
-                  "void step() { evaluate<true>(); evaluate<false>(); }\n};\n}\n";
+                  "void step() { evaluate<true>(); evaluate<false>(); }\n};\n";
+        if (splitChunks)
+            for (unsigned chunk = 0; chunk < chunks; ++chunk)
+                for (const auto* mode : {"false", "true"})
+                    output << "extern template void Model::__cpphdl_chunk_" << chunk << '<' << mode << ">();\n";
+        output << "}\n";
         fprintf(stderr, "native graph: %zu source nodes, %zu scheduled nodes, %zu state groups\n", nodes.size(), scheduledNodes, states.size());
     }
 }
