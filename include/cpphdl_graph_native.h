@@ -284,12 +284,12 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 }
             }
         }
-        std::map<int64_t,std::set<size_t>> chunkInputs;
+        std::map<int64_t,std::map<size_t,uint64_t>> chunkInputs;
         if (memoizeChunks) for (const auto& task:taskNodes) for (auto index:task)
             for (const auto* value:{&nodes[index].left,&nodes[index].right,&nodes[index].select})
                 for(auto bit:resolved(*value)) if(bit>1) {
                     auto producer=owner(bit);
-                    if(chunkOf[producer]!=chunkOf[index])chunkInputs[chunkOf[index]].insert(producer);
+                    if(chunkOf[producer]!=chunkOf[index])chunkInputs[chunkOf[index]][producer]|=uint64_t(1)<<lane(bit);
                 }
         if (threads > 1) {
             order.clear();
@@ -477,8 +477,11 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks << "() {\n";
                 if(memoizeChunks) {
                     std::vector<std::string> sources;
-                    for(auto producer:chunkInputs[chunkOf[index]])
-                        sources.push_back(names.count(producer)?names.at(producer):valueName(producer));
+                    for(auto [producer,bits]:chunkInputs[chunkOf[index]]) {
+                        auto source=names.count(producer)?names.at(producer):valueName(producer);
+                        if(bits!=mask(nodes[producer].width))source="("+source+" & "+std::to_string(bits)+"ull)";
+                        sources.push_back(std::move(source));
+                    }
                     output << "if(__cpphdl_cache_valid_" << chunks;
                     for(size_t i=0;i<sources.size();++i)
                         output << " && __cpphdl_cache_" << chunks << '[' << i << "] == (" << sources[i] << ')';
