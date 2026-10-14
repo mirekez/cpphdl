@@ -209,11 +209,15 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
 }
 
 inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned threads, bool hostOverlap,
-                        bool balanceLanes) {
+                        bool balanceLanes, bool memoizeChunks) {
         if (!threads || threads > 256) throw std::runtime_error("native graph threads must be between 1 and 256");
         if (threads > 1 && !chunkSize) chunkSize = 512;
+        if (memoizeChunks && !chunkSize) throw std::runtime_error("native chunk memoization requires chunking");
         validateClocks();
         const bool hostEffects = std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.hostEffect(); });
+        if (memoizeChunks && (hostEffects || std::any_of(memories.begin(),memories.end(),
+            [](const Memory& memory) { return memory.contents.empty(); })))
+            throw std::runtime_error("native chunk memoization requires pure logic or immutable ROM");
         if (threads > 1)
             for (const auto& node : nodes) if (node.hostEffect())
                 throw std::runtime_error("parallel native evaluation requires explicit host boundaries");
@@ -280,6 +284,13 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 }
             }
         }
+        std::map<int64_t,std::set<size_t>> chunkInputs;
+        if (memoizeChunks) for (const auto& task:taskNodes) for (auto index:task)
+            for (const auto* value:{&nodes[index].left,&nodes[index].right,&nodes[index].select})
+                for(auto bit:resolved(*value)) if(bit>1) {
+                    auto producer=owner(bit);
+                    if(chunkOf[producer]!=chunkOf[index])chunkInputs[chunkOf[index]].insert(producer);
+                }
         if (threads > 1) {
             order.clear();
             for (const auto& task : taskNodes) order.insert(order.end(), task.begin(), task.end());
@@ -457,8 +468,25 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             if (node.op == "state" || node.op == "input" || node.validation()) continue;
             if (chunkSize && chunkOf[index] != previousChunk) {
                 if (chunks) output << "}\n";
+                if(memoizeChunks) {
+                    output << "bool __cpphdl_cache_valid_" << chunks << " = false;\n"
+                           << "std::array<uint64_t," << chunkInputs[chunkOf[index]].size()
+                           << "> __cpphdl_cache_" << chunks << "{};\n";
+                }
                 if (hostEffects) output << "template<bool Commit> ";
-                output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks++ << "() {\n";
+                output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks << "() {\n";
+                if(memoizeChunks) {
+                    std::vector<std::string> sources;
+                    for(auto producer:chunkInputs[chunkOf[index]])
+                        sources.push_back(names.count(producer)?names.at(producer):valueName(producer));
+                    output << "if(__cpphdl_cache_valid_" << chunks;
+                    for(size_t i=0;i<sources.size();++i)
+                        output << " && __cpphdl_cache_" << chunks << '[' << i << "] == (" << sources[i] << ')';
+                    output << ") return;\n__cpphdl_cache_valid_" << chunks << " = true;\n";
+                    for(size_t i=0;i<sources.size();++i)
+                        output << "__cpphdl_cache_" << chunks << '[' << i << "] = " << sources[i] << ";\n";
+                }
+                ++chunks;
                 previousChunk = chunkOf[index];
             }
             if (node.op == "memory_read") {

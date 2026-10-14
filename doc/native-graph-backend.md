@@ -61,6 +61,18 @@ is separate from the graph core, so simulation-only helpers are not required by
 the synthesis backend. Eager identity/constant folding and segmented node storage
 remain shared by both consumers.
 
+`Graph::emit(path, chunkSize, threads, hostOverlap, balanceLanes,
+memoizeChunks)` optionally caches pure combinational chunks by all external
+input and state words they read. This requires chunking and rejects host
+effects and mutable RAM. Immutable ROM reads are supported. A chunk executes
+on first use and whenever any dependency changes; otherwise its intermediate
+results remain available. Registers, event detection, output publication and
+validation still run for each evaluation. Cache storage belongs to each model
+instance, including when instances share a worker executor. This changes host
+evaluation work, not hardware clocks or pipeline latency. The default is off.
+`cpp_graph_native_memoization` compares cached and uncached models with one and
+six lanes across clock phases, reset, ROM access and copied state.
+
 The root may be an `extern` declaration of a module template specialization;
 cpphdl completes its type and instantiates port bindings without constructing
 the simulation hierarchy. Nested module arrays remain hierarchy rather than
