@@ -285,6 +285,13 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             }
         }
         std::map<int64_t,std::map<size_t,uint64_t>> chunkInputs;
+        const bool adaptiveDispatch = memoizeChunks && threads > 1 && !hostOverlap;
+        std::map<int64_t,std::pair<size_t,size_t>> chunkWork;
+        if (adaptiveDispatch) for (size_t task=0;task<taskNodes.size();++task)
+            for (auto index:taskNodes[task]) {
+                auto& work=chunkWork[chunkOf[index]];
+                work.first=task;++work.second;
+            }
         if (memoizeChunks) for (const auto& task:taskNodes) for (auto index:task)
             for (const auto* value:{&nodes[index].left,&nodes[index].right,&nodes[index].select})
                 for(auto bit:resolved(*value)) if(bit>1) {
@@ -417,6 +424,10 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                    << "std::shared_ptr<cpphdl::graph_runtime::Threads> __cpphdl_threads = "
                       "std::make_shared<cpphdl::graph_runtime::Threads>("
                    << threads << ',' << taskNodes.size() << ");\n";
+        if (adaptiveDispatch)
+            output << "struct alignas(64) __cpphdl_Activity { uint64_t nodes = 0; };\n"
+                   << "std::array<__cpphdl_Activity," << threads << "> __cpphdl_activity{};\n"
+                      "bool __cpphdl_serial_dispatch = false;\n";
         auto valueName = [&](size_t index) {
             auto slot = sharedSlots.find(index);
             return slot != sharedSlots.end() ? "__cpphdl_values[" + std::to_string(slot->second) + "]" : "value" + std::to_string(index);
@@ -488,6 +499,10 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     output << ") return;\n__cpphdl_cache_valid_" << chunks << " = true;\n";
                     for(size_t i=0;i<sources.size();++i)
                         output << "__cpphdl_cache_" << chunks << '[' << i << "] = " << sources[i] << ";\n";
+                    if (adaptiveDispatch) {
+                        const auto [task,count]=chunkWork.at(chunkOf[index]);
+                        output << "__cpphdl_activity[" << task << "].nodes += " << count << ";\n";
+                    }
                 }
                 ++chunks;
                 previousChunk = chunkOf[index];
@@ -708,9 +723,19 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 output << "__cpphdl_current = !__cpphdl_current;\n";
                 for (size_t i = 0; i < clocks.size(); ++i)
                     output << "__cpphdl_previous_clock_" << i << " = " << clocks[i].name << ";\n";
-                output << "}\ntemplate<bool Commit> [[gnu::noinline]] void evaluate() {\n"
-                          "__cpphdl_threads->run(this, &Model::__cpphdl_lane<Commit>);\n"
-                          "__cpphdl_publish(Commit);\nif constexpr(Commit) __cpphdl_commit();\n}\n";
+                output << "}\ntemplate<bool Commit> [[gnu::noinline]] void evaluate() {\n";
+                if (adaptiveDispatch)
+                    output << "for(auto& activity:__cpphdl_activity) activity.nodes = 0;\n"
+                              "if(__cpphdl_serial_dispatch) {\n"
+                              "for(unsigned lane=0;lane<__cpphdl_thread_count;++lane)\n"
+                              "__cpphdl_lane<Commit>(this,*__cpphdl_threads,lane,0);\n"
+                              "} else ";
+                output << "__cpphdl_threads->run(this, &Model::__cpphdl_lane<Commit>);\n";
+                if (adaptiveDispatch)
+                    output << "uint64_t active_nodes = 0;\n"
+                              "for(const auto& activity:__cpphdl_activity) active_nodes += activity.nodes;\n"
+                              "__cpphdl_serial_dispatch = active_nodes < 4096;\n";
+                output << "__cpphdl_publish(Commit);\nif constexpr(Commit) __cpphdl_commit();\n}\n";
                 if (hostOverlap) {
                     // Host continuation may only consume the published ports
                     // and update external host models. Inputs, graph storage

@@ -24,7 +24,7 @@ int main(int argc,char**argv) {
  auto rom=g.add("memory_read",64,address,constant(0,64),constant(0,64));
  for(unsigned lane=0;lane<12;++lane) {
   auto state=g.wire(64,"state"+std::to_string(lane),"state");auto value=g.binary("xor",data,state,64);
-  for(unsigned i=0;i<70;++i)value=g.binary("xor",g.binary("add",value,rom,64),constant(i+lane*101,64),64);
+  for(unsigned i=0;i<350;++i)value=g.binary("xor",g.binary("add",value,rom,64),constant(i+lane*101,64),64);
   g.states.push_back({state,g.mux(enable,value,state),{1},0,bool(lane&1),reset,constant(lane,64)});
   g.ports.push_back({"out"+std::to_string(lane),value,false});
   g.ports.push_back({"state_out"+std::to_string(lane),state,false});
@@ -56,14 +56,15 @@ template<class M>void inputs(M& m,unsigned i,uint64_t data){m.data={uint32_t(dat
 template<class M>bool same(const plain::Model& a,const M& b){return '''
 checks=['a.'+name+'==b.'+name for i in range(12) for name in (f'out{i}',f'state_out{i}')]
 (work/'check.cpp').write_text(prefix+' && '.join(checks)+r''';}
-int main(){plain::Model a;cached::Model b;cached_one::Model c;uint64_t random=42;
+int main(){plain::Model a;cached::Model b;cached_one::Model c;uint64_t random=42;bool serial=false,parallel=false;
  for(unsigned i=0;i<4096;++i){if(i%101==0){random^=random<<13;random^=random>>7;random^=random<<17;}
   inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);
-  for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);assert(same(a,b)&&same(a,c));}
+  for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);assert(same(a,b)&&same(a,c));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
  }
+ assert(serial&&parallel);
  auto copied=b;auto reference=a;
  for(unsigned i=0;i<256;++i){inputs(copied,i,7919*i);inputs(reference,i,7919*i);copied.step();reference.step();assert(same(reference,copied));}
- std::puts("PASS native chunk memoization: 12288 phases, six/one lanes, both edges, reset, ROM, copied state and rejection checks");
+ std::puts("PASS native chunk memoization: 12288 phases, six/one lanes, adaptive serial/parallel dispatch, both edges, reset, ROM, copied state and rejection checks");
 }
 ''')
 run([a.cxx,'-std=c++23','-O1','-pthread','-fsanitize=undefined','-fno-sanitize-recover=all',

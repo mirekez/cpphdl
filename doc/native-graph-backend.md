@@ -73,6 +73,16 @@ evaluation work, not hardware clocks or pipeline latency. The default is off.
 `cpp_graph_native_memoization` compares cached and uncached models with one and
 six lanes across clock phases, reset, ROM access and copied state.
 
+Memoized multi-lane graphs without host overlap adapt dispatch to recent
+activity. Each lane counts nodes recomputed on cache misses. When fewer than
+4,096 nodes changed in the preceding evaluation, the caller executes the same
+independent lane schedules directly; larger updates use the configured worker
+pool again. An increase in activity is therefore evaluated serially once before
+parallel dispatch resumes. Both paths prepare the same inactive register bank
+and publish it only after all lanes finish. This removes worker wakeups during
+small counter updates without skipping a clock, state equation or validation.
+The memoization regression exercises both dispatch paths and their transitions.
+
 The root may be an `extern` declaration of a module template specialization;
 cpphdl completes its type and instantiates port bindings without constructing
 the simulation hierarchy. Nested module arrays remain hierarchy rather than
