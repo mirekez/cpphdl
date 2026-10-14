@@ -25,7 +25,13 @@ int main(int argc,char**argv) {
  for(unsigned lane=0;lane<12;++lane) {
   auto state=g.wire(64,"state"+std::to_string(lane),"state");auto value=g.binary("xor",data,state,64);
   for(unsigned i=0;i<350;++i)value=g.binary("xor",g.binary("add",value,rom,64),constant(i+lane*101,64),64);
-  g.states.push_back({state,g.mux(enable,value,state),{1},0,bool(lane&1),reset,constant(lane,64)});
+  auto next=g.mux(enable,value,state);
+  if(lane&2) {
+   next.clear();
+   for(unsigned bit=0;bit<64;++bit)
+    next.push_back(g.mux(enable,Value{value[(bit*13+7)%64]},Value{state[bit]})[0]);
+  }
+  g.states.push_back({state,next,{1},0,bool(lane&1),reset,constant(lane,64)});
   g.ports.push_back({"out"+std::to_string(lane),value,false});
   g.ports.push_back({"state_out"+std::to_string(lane),state,false});
  }
@@ -35,8 +41,11 @@ int main(int argc,char**argv) {
   assert(rejected);
  }
  g.emit(std::string(argv[1])+"plain.h",7,6);
- g.emit(std::string(argv[1])+"cached.h",7,6,false,false,true);
- g.emit(std::string(argv[1])+"cached_one.h",19,1,false,false,true);
+ bool rejected=false;try{g.emit(std::string(argv[1])+"invalid.h",7,6,false,false,false,true);}catch(const std::runtime_error&){rejected=true;}
+ assert(rejected);
+ g.emit(std::string(argv[1])+"cached_only.h",7,6,false,false,true);
+ g.emit(std::string(argv[1])+"cached.h",7,6,false,false,true,true);
+ g.emit(std::string(argv[1])+"cached_one.h",19,1,false,false,true,true);
 }
 ''')
 run([a.cxx,'-std=c++23','-O1','-I'+str(root/'include'),work/'emit.cpp','-o',work/'emit'])
@@ -50,16 +59,22 @@ prefix='''#define cpphdl_native plain
 #define cpphdl_native cached_one
 #include "cached_one.h"
 #undef cpphdl_native
+#define cpphdl_native cached_only
+#include "cached_only.h"
+#undef cpphdl_native
 #include <cassert>
 #include <cstdio>
 template<class M>void inputs(M& m,unsigned i,uint64_t data){m.data={uint32_t(data),uint32_t(data>>32)};m.enable[0]=(i/73)%2;m.reset[0]=i%257==0;m.address[0]=(i/17)%4;m.clock=(i/3)%2;}
 template<class M>bool same(const plain::Model& a,const M& b){return '''
 checks=['a.'+name+'==b.'+name for i in range(12) for name in (f'out{i}',f'state_out{i}')]
 (work/'check.cpp').write_text(prefix+' && '.join(checks)+r''';}
-int main(){plain::Model a;cached::Model b;cached_one::Model c;uint64_t random=42;bool serial=false,parallel=false;
+int main(){plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;uint64_t random=42;bool serial=false,parallel=false;
+ static_assert(plain::Model::__cpphdl_cached_next_words==0);
+ static_assert(cached_only::Model::__cpphdl_cached_next_words==0);
+ static_assert(cached::Model::__cpphdl_cached_next_words>0&&cached_one::Model::__cpphdl_cached_next_words>0);
  for(unsigned i=0;i<4096;++i){if(i%101==0){random^=random<<13;random^=random>>7;random^=random<<17;}
-  inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);
-  for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);assert(same(a,b)&&same(a,c));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
+  inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);inputs(d,i,random);
+  for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);d.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
  }
  assert(serial&&parallel);
  auto copied=b;auto reference=a;

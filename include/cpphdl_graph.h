@@ -976,7 +976,8 @@ public:
     // continuation can run while workers prepare inactive register state.
     // balanceLanes spreads sink work instead of compacting overlapping cones.
     void emit(const std::string& path, unsigned chunkSize = 0, unsigned threads = CPPHDL_NATIVE_THREADS,
-              bool hostOverlap = false, bool balanceLanes = false, bool memoizeChunks = false);
+              bool hostOverlap = false, bool balanceLanes = false, bool memoizeChunks = false,
+              bool memoizeNextWords = false);
 
 };
 }

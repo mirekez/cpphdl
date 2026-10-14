@@ -62,7 +62,7 @@ the synthesis backend. Eager identity/constant folding and segmented node storag
 remain shared by both consumers.
 
 `Graph::emit(path, chunkSize, threads, hostOverlap, balanceLanes,
-memoizeChunks)` optionally caches pure combinational chunks by all external
+memoizeChunks, memoizeNextWords)` optionally caches pure combinational chunks by all external
 input and state words they read. This requires chunking and rejects host
 effects and mutable RAM. Immutable ROM reads are supported. A chunk executes
 on first use and whenever any dependency changes; otherwise its intermediate
@@ -82,6 +82,13 @@ parallel dispatch resumes. Both paths prepare the same inactive register bank
 and publish it only after all lanes finish. This removes worker wakeups during
 small counter updates without skipping a clock, state equation or validation.
 The memoization regression exercises both dispatch paths and their transitions.
+The separate `memoizeNextWords` option (default false) places register next-word
+assembly in the memoized combinational schedule: unchanged scattered input
+bits reuse the assembled word. It requires `memoizeChunks`. This can help large
+scattered register banks but add overhead for small/simple banks, so measure
+before enabling it for a model. Register
+clock/reset conditions and bank publication still execute on every evaluation.
+No state, clock boundary or arithmetic operation is removed by this cache.
 
 The root may be an `extern` declaration of a module template specialization;
 cpphdl completes its type and instantiates port bindings without constructing

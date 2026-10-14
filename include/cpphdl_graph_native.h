@@ -209,10 +209,11 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
 }
 
 inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned threads, bool hostOverlap,
-                        bool balanceLanes, bool memoizeChunks) {
+                        bool balanceLanes, bool memoizeChunks, bool memoizeNextWords) {
         if (!threads || threads > 256) throw std::runtime_error("native graph threads must be between 1 and 256");
         if (threads > 1 && !chunkSize) chunkSize = 512;
         if (memoizeChunks && !chunkSize) throw std::runtime_error("native chunk memoization requires chunking");
+        if (memoizeNextWords && !memoizeChunks) throw std::runtime_error("native next-word memoization requires chunk memoization");
         validateClocks();
         const bool hostEffects = std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.hostEffect(); });
         if (memoizeChunks && (hostEffects || std::any_of(memories.begin(),memories.end(),
@@ -256,6 +257,29 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         if (pruneUnusedState()) {
             compact();
             order = dependencyOrder();
+        }
+        size_t cachedNextWords=0;
+        if (memoizeNextWords) {
+            // A register word can gather many scattered producer bits. Put
+            // that assembly in the cached combinational schedule, rather
+            // than reconstructing it in every commit sink. The identity
+            // AND is introduced after optimization so it becomes a retained
+            // chunk result; a later emit/optimization can remove it normally.
+            for (auto& state:states) {
+                Value next;
+                for (size_t offset=0;offset<state.next.size();offset+=64) {
+                    auto width=std::min<size_t>(64,state.next.size()-offset);
+                    // add() canonicalizes identities immediately; retain
+                    // this one explicitly until native chunks are emitted.
+                    auto base=(nodes.size()+1)*64+2;
+                    nodes.push_back({"and",unsigned(width),slice(state.next,offset,width),
+                                     constant(mask(width),width),{},"native_next_word",currentScope});
+                    for(size_t bit=0;bit<width;++bit)next.push_back(base+bit);
+                    ++cachedNextWords;
+                }
+                state.next=std::move(next);
+            }
+            order=dependencyOrder();
         }
         auto scheduledNodes = order.size();
         NativeParallelPlan parallel;
@@ -316,6 +340,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             output << "extern \"C\" int debug_tick(unsigned char*, unsigned char, int*, int*, int*, unsigned char, unsigned char*, int, int);\n";
         output << "#include <array>\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <stdexcept>\n#include <vector>\n"
                   "namespace cpphdl_native {\nstruct Model {\n";
+        output << "static constexpr uint64_t __cpphdl_cached_next_words = " << cachedNextWords << ";\n";
         for (size_t i = 0; i < clocks.size(); ++i)
             output << "bool " << clocks[i].name << " = false;\nbool __cpphdl_previous_clock_" << i << " = false;\n";
         // Memory depth belongs to runtime storage, never to the bit graph or
