@@ -682,6 +682,25 @@ endif()
 
 find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
 find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
+if(Python3_Interpreter_FOUND)
+    foreach(alias_flow cpp verilator)
+        if(alias_flow STREQUAL "verilator" AND NOT CPPHDL_TEMPLATE_VERILATOR)
+            continue()
+        endif()
+        add_test(NAME templates_ResolvedTypeAliases_${alias_flow}
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/templates/ResolvedTypeAliasesChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+                --verilator "${CPPHDL_TEMPLATE_VERILATOR}" --flow "${alias_flow}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/resolved_type_aliases")
+        set_tests_properties(templates_ResolvedTypeAliases_${alias_flow} PROPERTIES
+            TIMEOUT 300 ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        if(CPPHDL_LOCAL_CONDA_PREFIX)
+            set_tests_properties(templates_ResolvedTypeAliases_${alias_flow} PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
+        endif()
+    endforeach()
+endif()
 add_test(NAME code_NativeLambdaHarness
     COMMAND ${CMAKE_COMMAND}
         -DCPPHDL=$<TARGET_FILE:cpphdl>
