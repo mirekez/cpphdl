@@ -90,6 +90,11 @@ before enabling it for a model. Register
 clock/reset conditions and bank publication still execute on every evaluation.
 No state, clock boundary or arithmetic operation is removed by this cache.
 
+Native storage contains only state words referenced by live expressions or
+state writers. Obsolete nodes left by register aliases do not allocate duplicate
+fields, including when retained streaming metadata prevents graph compaction.
+Initialized read-only state remains present in serial and parallel models.
+
 The root may be an `extern` declaration of a module template specialization;
 cpphdl completes its type and instantiates port bindings without constructing
 the simulation hierarchy. Nested module arrays remain hierarchy rather than

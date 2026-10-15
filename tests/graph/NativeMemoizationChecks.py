@@ -1,5 +1,6 @@
 """Check memoized pure native chunks against uncached evaluation."""
 import argparse
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -22,8 +23,13 @@ int main(int argc,char**argv) {
  auto data=input("data",64),enable=input("enable",1),reset=input("reset",1),address=input("address",2);
  g.memories.push_back({"rom",64,4,{11,23,37,59}});
  auto rom=g.add("memory_read",64,address,constant(0,64),constant(0,64));
+ auto fixed=g.add("state",64,constant(0xa735800012345678ull,64),{}, {},"fixed");
+ g.ports.push_back({"fixed",fixed,false});
+ g.pipelines.push_back({"retained_metadata"});
  for(unsigned lane=0;lane<12;++lane) {
   auto state=g.wire(64,"state"+std::to_string(lane),"state");auto value=g.binary("xor",data,state,64);
+  // Model the obsolete per-bit nodes left after register-word packing.
+  for(unsigned bit=0;bit<64;++bit){auto alias=g.add("state",1,constant(0,1),{}, {},"old");g.connect(alias,{state[bit]});}
   for(unsigned i=0;i<350;++i)value=g.binary("xor",g.binary("add",value,rom,64),constant(i+lane*101,64),64);
   auto next=g.mux(enable,value,state);
   if(lane&2) {
@@ -50,6 +56,9 @@ int main(int argc,char**argv) {
 ''')
 run([a.cxx,'-std=c++23','-O1','-I'+str(root/'include'),work/'emit.cpp','-o',work/'emit'])
 run([work/'emit',str(work)+'/'])
+for name in ('plain.h','cached_only.h','cached.h','cached_one.h'):
+    fields=re.findall(r'uint(?:8|16|32|64)_t state\d+ =', (work/name).read_text())
+    if len(fields)!=13:raise RuntimeError(f'{name}: expected 12 written and one fixed live state word, got {len(fields)}')
 prefix='''#define cpphdl_native plain
 #include "plain.h"
 #undef cpphdl_native
@@ -67,6 +76,7 @@ prefix='''#define cpphdl_native plain
 template<class M>void inputs(M& m,unsigned i,uint64_t data){m.data={uint32_t(data),uint32_t(data>>32)};m.enable[0]=(i/73)%2;m.reset[0]=i%257==0;m.address[0]=(i/17)%4;m.clock=(i/3)%2;}
 template<class M>bool same(const plain::Model& a,const M& b){return '''
 checks=['a.'+name+'==b.'+name for i in range(12) for name in (f'out{i}',f'state_out{i}')]
+checks+=['a.fixed==b.fixed','a.fixed[0]==0x12345678u','a.fixed[1]==0xa7358000u']
 (work/'check.cpp').write_text(prefix+' && '.join(checks)+r''';}
 int main(){plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;uint64_t random=42;bool serial=false,parallel=false;
  static_assert(plain::Model::__cpphdl_cached_next_words==0);

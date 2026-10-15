@@ -322,6 +322,11 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     auto producer=owner(bit);
                     if(chunkOf[producer]!=chunkOf[index])chunkInputs[chunkOf[index]][producer]|=uint64_t(1)<<lane(bit);
                 }
+        // Capture live state before the parallel schedule narrows order to
+        // combinational tasks. Read-only initialized state has no writer task.
+        std::vector<bool> storedState(nodes.size());
+        for(auto index:order)if(nodes[index].op=="state")storedState[index]=true;
+        for(const auto& state:states)for(auto bit:state.bits)storedState[owner(bit)]=true;
         if (threads > 1) {
             order.clear();
             for (const auto& task : taskNodes) order.insert(order.end(), task.begin(), task.end());
@@ -376,6 +381,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         auto stateStorageWidth = [](unsigned width) {
             return width <= 8 ? 8u : width <= 16 ? 16u : width <= 32 ? 32u : 64u;
         };
+        // Aliasing/packing leaves old state nodes outside the live schedule.
+        // Streaming metadata prevents graph compaction, so filter storage.
         if (threads > 1) {
             // A state word has one writer. Lay out the two banks by owner and
             // keep lane boundaries on distinct cache lines. All lanes read the
@@ -391,7 +398,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 // Group by size to avoid padding between narrow registers.
                 for (unsigned storageWidth : {64u, 32u, 16u, 8u})
                     for (size_t index = 0; index < nodes.size(); ++index)
-                        if (nodes[index].op == "state" && stateOwner[index] == lane) {
+                        if (nodes[index].op == "state" && storedState[index] && stateOwner[index] == lane) {
                             if (stateStorageWidth(nodes[index].width) != storageWidth) continue;
                             auto field = "state" + std::to_string(index);
                             names[index] = "uint64_t(__cpphdl_state[__cpphdl_current]." + field + ")";
@@ -403,7 +410,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             output << "};\n__cpphdl_StateBank __cpphdl_state[2]{};\nbool __cpphdl_current = false;\n";
         } else for (unsigned storageWidth : {64u, 32u, 16u, 8u})
             for (size_t index = 0; index < nodes.size(); ++index)
-                if (nodes[index].op == "state" && stateStorageWidth(nodes[index].width) == storageWidth) {
+                if (nodes[index].op == "state" && storedState[index] && stateStorageWidth(nodes[index].width) == storageWidth) {
                     auto field = "state" + std::to_string(index);
                     names[index] = "uint64_t(" + field + ")";
                     output << "uint" << storageWidth << "_t " << field << " = "
