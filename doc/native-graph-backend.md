@@ -72,6 +72,11 @@ instance, including when instances share a worker executor. This changes host
 evaluation work, not hardware clocks or pipeline latency. The default is off.
 `cpp_graph_native_memoization` compares cached and uncached models with one and
 six lanes across clock phases, reset, ROM access and copied state.
+Chunks with at least 32 dependency words gather their masked keys into a
+contiguous array and compare that array with the previous key. Smaller chunks
+retain short-circuit scalar comparisons. Both forms compare every relevant
+bit exactly; no hash or approximate match is used. The regression exercises
+both forms, including a 4,096-bit input and copying populated wide-key caches.
 
 Memoized multi-lane graphs without host overlap adapt dispatch to recent
 activity. Each lane counts nodes recomputed on cache misses. When fewer than

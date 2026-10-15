@@ -525,12 +525,25 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                         if(bits!=mask(nodes[producer].width))source="("+source+" & "+std::to_string(bits)+"ull)";
                         sources.push_back(std::move(source));
                     }
-                    output << "if(__cpphdl_cache_valid_" << chunks;
-                    for(size_t i=0;i<sources.size();++i)
-                        output << " && __cpphdl_cache_" << chunks << '[' << i << "] == (" << sources[i] << ')';
-                    output << ") return;\n__cpphdl_cache_valid_" << chunks << " = true;\n";
-                    for(size_t i=0;i<sources.size();++i)
-                        output << "__cpphdl_cache_" << chunks << '[' << i << "] = " << sources[i] << ";\n";
+                    if (sources.size() >= 32) {
+                        // A large short-circuit expression makes the host
+                        // compiler optimize hundreds of branch edges. Gather
+                        // each immutable key once and compare contiguous words.
+                        output << "const std::array<uint64_t," << sources.size() << "> __cpphdl_key{{";
+                        for (size_t i=0;i<sources.size();++i)
+                            output << (i ? "," : "") << sources[i];
+                        output << "}};\nif(__cpphdl_cache_valid_" << chunks
+                               << " && __cpphdl_cache_" << chunks << " == __cpphdl_key) return;\n"
+                               << "__cpphdl_cache_" << chunks << " = __cpphdl_key;\n"
+                               << "__cpphdl_cache_valid_" << chunks << " = true;\n";
+                    } else {
+                        output << "if(__cpphdl_cache_valid_" << chunks;
+                        for(size_t i=0;i<sources.size();++i)
+                            output << " && __cpphdl_cache_" << chunks << '[' << i << "] == (" << sources[i] << ')';
+                        output << ") return;\n__cpphdl_cache_valid_" << chunks << " = true;\n";
+                        for(size_t i=0;i<sources.size();++i)
+                            output << "__cpphdl_cache_" << chunks << '[' << i << "] = " << sources[i] << ";\n";
+                    }
                     if (adaptiveDispatch) {
                         const auto [task,count]=chunkWork.at(chunkOf[index]);
                         output << "__cpphdl_activity[" << task << "].nodes += " << count << ";\n";

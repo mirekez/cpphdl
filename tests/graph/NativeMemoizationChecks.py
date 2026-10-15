@@ -21,6 +21,7 @@ int main(int argc,char**argv) {
  Graph g;g.clockContract=ClockContract::NamedEdges;g.clocks.push_back({"clock",100});
  auto input=[&](const char* n,unsigned width){auto v=g.wire(width,n,"input");g.ports.push_back({n,v,true});return v;};
  auto data=input("data",64),enable=input("enable",1),reset=input("reset",1),address=input("address",2);
+ auto wide=input("wide",4096);
  g.memories.push_back({"rom",64,4,{11,23,37,59}});
  auto rom=g.add("memory_read",64,address,constant(0,64),constant(0,64));
  auto fixed=g.add("state",64,constant(0xa735800012345678ull,64),{}, {},"fixed");
@@ -28,6 +29,8 @@ int main(int argc,char**argv) {
  g.pipelines.push_back({"retained_metadata"});
  for(unsigned lane=0;lane<12;++lane) {
   auto state=g.wire(64,"state"+std::to_string(lane),"state");auto value=g.binary("xor",data,state,64);
+  for(unsigned word=0;word<64;++word)
+   value=g.binary("add",value,slice(wide,word*64,64),64);
   // Model the obsolete per-bit nodes left after register-word packing.
   for(unsigned bit=0;bit<64;++bit){auto alias=g.add("state",1,constant(0,1),{}, {},"old");g.connect(alias,{state[bit]});}
   for(unsigned i=0;i<350;++i)value=g.binary("xor",g.binary("add",value,rom,64),constant(i+lane*101,64),64);
@@ -52,13 +55,16 @@ int main(int argc,char**argv) {
  g.emit(std::string(argv[1])+"cached_only.h",7,6,false,false,true);
  g.emit(std::string(argv[1])+"cached.h",7,6,false,false,true,true);
  g.emit(std::string(argv[1])+"cached_one.h",19,1,false,false,true,true);
+ g.emit(std::string(argv[1])+"cached_wide.h",512,6,false,false,true,true);
 }
 ''')
 run([a.cxx,'-std=c++23','-O1','-I'+str(root/'include'),work/'emit.cpp','-o',work/'emit'])
 run([work/'emit',str(work)+'/'])
-for name in ('plain.h','cached_only.h','cached.h','cached_one.h'):
+for name in ('plain.h','cached_only.h','cached.h','cached_one.h','cached_wide.h'):
     fields=re.findall(r'uint(?:8|16|32|64)_t state\d+ =', (work/name).read_text())
     if len(fields)!=13:raise RuntimeError(f'{name}: expected 12 written and one fixed live state word, got {len(fields)}')
+if '__cpphdl_key{{' not in (work/'cached_wide.h').read_text():
+    raise RuntimeError('Wide-key array comparison was not exercised')
 prefix='''#define cpphdl_native plain
 #include "plain.h"
 #undef cpphdl_native
@@ -71,25 +77,28 @@ prefix='''#define cpphdl_native plain
 #define cpphdl_native cached_only
 #include "cached_only.h"
 #undef cpphdl_native
+#define cpphdl_native cached_wide
+#include "cached_wide.h"
+#undef cpphdl_native
 #include <cassert>
 #include <cstdio>
-template<class M>void inputs(M& m,unsigned i,uint64_t data){m.data={uint32_t(data),uint32_t(data>>32)};m.enable[0]=(i/73)%2;m.reset[0]=i%257==0;m.address[0]=(i/17)%4;m.clock=(i/3)%2;}
+template<class M>void inputs(M& m,unsigned i,uint64_t data){m.data={uint32_t(data),uint32_t(data>>32)};for(unsigned k=0;k<128;++k)m.wide[k]=uint32_t(data>>((k&1)*32))^(k*7919u)^(i/97);m.enable[0]=(i/73)%2;m.reset[0]=i%257==0;m.address[0]=(i/17)%4;m.clock=(i/3)%2;}
 template<class M>bool same(const plain::Model& a,const M& b){return '''
 checks=['a.'+name+'==b.'+name for i in range(12) for name in (f'out{i}',f'state_out{i}')]
 checks+=['a.fixed==b.fixed','a.fixed[0]==0x12345678u','a.fixed[1]==0xa7358000u']
 (work/'check.cpp').write_text(prefix+' && '.join(checks)+r''';}
-int main(){plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;uint64_t random=42;bool serial=false,parallel=false;
+int main(){plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;cached_wide::Model e;uint64_t random=42;bool serial=false,parallel=false;
  static_assert(plain::Model::__cpphdl_cached_next_words==0);
  static_assert(cached_only::Model::__cpphdl_cached_next_words==0);
  static_assert(cached::Model::__cpphdl_cached_next_words>0&&cached_one::Model::__cpphdl_cached_next_words>0);
  for(unsigned i=0;i<4096;++i){if(i%101==0){random^=random<<13;random^=random>>7;random^=random<<17;}
-  inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);inputs(d,i,random);
-  for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);d.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
+  inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);inputs(d,i,random);inputs(e,i,random);
+  for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);d.eval(commit);e.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d)&&same(a,e));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
  }
  assert(serial&&parallel);
- auto copied=b;auto reference=a;
- for(unsigned i=0;i<256;++i){inputs(copied,i,7919*i);inputs(reference,i,7919*i);copied.step();reference.step();assert(same(reference,copied));}
- std::puts("PASS native chunk memoization: 12288 phases, six/one lanes, adaptive serial/parallel dispatch, both edges, reset, ROM, copied state and rejection checks");
+ auto copied=b;auto copied_wide=e;auto reference=a;
+ for(unsigned i=0;i<256;++i){inputs(copied,i,7919*i);inputs(copied_wide,i,7919*i);inputs(reference,i,7919*i);copied.step();copied_wide.step();reference.step();assert(same(reference,copied)&&same(reference,copied_wide));}
+ std::puts("PASS native chunk memoization: 12288 phases, six/one lanes, wide/short keys, adaptive serial/parallel dispatch, both edges, reset, ROM, copied state and rejection checks");
 }
 ''')
 run([a.cxx,'-std=c++23','-O1','-pthread','-fsanitize=undefined','-fno-sanitize-recover=all',
