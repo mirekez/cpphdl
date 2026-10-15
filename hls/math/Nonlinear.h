@@ -85,13 +85,13 @@ inline uint32_t fp32_exp(uint32_t a) {
     int32_t n=fp32_small_int(fp32_add(y,(a&0x80000000u)?0xbf000000u:0x3f000000u));
     uint32_t r=fp32_add(a,fp32_multiply(fp32_from_int(n)^0x80000000u,0x3f317218u));
     uint32_t p=0x39500d01u; // 1/5040
-    p=fp32_add(0x3ab60b61u,fp32_multiply(r,p)); // 1/720
-    p=fp32_add(0x3c088889u,fp32_multiply(r,p)); // 1/120
-    p=fp32_add(0x3d2aaaabu,fp32_multiply(r,p)); // 1/24
-    p=fp32_add(0x3e2aaaabu,fp32_multiply(r,p)); // 1/6
-    p=fp32_add(0x3f000000u,fp32_multiply(r,p)); // 1/2
-    p=fp32_add(0x3f800000u,fp32_multiply(r,p));
-    p=fp32_add(0x3f800000u,fp32_multiply(r,p));
+    // Preserve the FP32 Horner order. Delayed HLS can share one iteration
+    // instead of putting the complete polynomial in one controller edge;
+    // streaming HLS elaborates this bounded loop into its arithmetic pipeline.
+    const uint32_t coefficients[7]={0x3ab60b61u,0x3c088889u,0x3d2aaaabu,
+        0x3e2aaaabu,0x3f000000u,0x3f800000u,0x3f800000u};
+    for(unsigned term=0;term<7;++term)
+        p=fp32_add(coefficients[term],fp32_multiply(r,p));
     int32_t exponent=int32_t((p>>23)&255)+n;
     if (exponent<=0) return 0;
     if (exponent>=255) return 0x7f800000u;

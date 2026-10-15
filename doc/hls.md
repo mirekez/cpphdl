@@ -456,6 +456,13 @@ not recursively call one another. Comments identify instantiated methods and
 their source locations. The normal converter still handles the containing
 RTL module, its child instance, and port connections.
 
+Synthesis simplifies reconverging branches within each clock region using
+dominator/postdominator analysis. Delayed and pointer-memory schedules treat
+every continuation as an independent entry, and a suspended edge ends its
+region. The optimization therefore removes artificial control dependencies
+between pure helper calls without bypassing memory waits or fault guards.
+True and false edges to the same block remain distinct when only one suspends.
+
 ### Shared Memory Schedule
 
 The fifth `ClockedDelayer` template argument explicitly selects a smaller, slower
@@ -1477,6 +1484,13 @@ degree-seven approximation, tested to relative error 1e-5 for finite normal
 outputs. It is not a correctly rounded transcendental. `fp32_silu` uses a stable
 negative-exponent expression. Including `Float.h` alone retains the smaller
 add/subtract/multiply policy set.
+
+The exponential polynomial is written as a bounded Horner loop, preserving the
+same sequence of rounded FP32 operations. Delayed/pointer HLS schedules its
+iterations; streaming HLS statically elaborates them into a pipeline. Keeping
+this numerical loop explicit avoids placing the entire polynomial on one
+delayed controller edge. It does not independently pipeline pointer accesses
+or remove the global feedback schedule after retiming.
 
 These functions emit real integer arithmetic logic; they do not assume an
 unspecified external math block. Use the chosen scheduler and actual completion
