@@ -2100,6 +2100,13 @@ bool Helpers::templateToExpr(QualType QT, cpphdl::Expr& expr)
     auto* CRD = resolveCXXRecordDecl(QT);
     auto* TSD = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(CRD ? CRD->getDefinition() : CRD);
     auto* TST = QT->getAs<TemplateSpecializationType>();
+    // An instantiated alias template need not denote a class specialization:
+    // std::conditional_t<..., uint32_t, uint64_t>, for example, is a builtin.
+    // Let digQT desugar such aliases instead of inventing an SV template name.
+    // Keep dependent widths and record specializations on the existing path.
+    if (TST && TST->isTypeAlias() && !QT->isDependentType() && !CRD) {
+        return false;
+    }
     if (TSD || TST) {
         if (TSD) {
             DEBUG_AST1(" TSD");
