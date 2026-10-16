@@ -87,6 +87,27 @@ parallel dispatch resumes. Both paths prepare the same inactive register bank
 and publish it only after all lanes finish. This removes worker wakeups during
 small counter updates without skipping a clock, state equation or validation.
 The memoization regression exercises both dispatch paths and their transitions.
+Wide output ports are divided into 64-bit sink slices before cone planning.
+The slices may belong to different lanes; each lane writes private pending
+storage and the caller publishes the original port words only after the join
+and validation. A packed vector therefore does not force all its independent
+results onto one worker. With host overlap all observable slices still belong
+to the caller. `cpp_graph_native_wide_ports` checks one 1,025-bit output against
+an independent oracle with six lanes, partial words, copies and all dispatch
+policies. A scalar output of at most 64 bits keeps its original sink granularity.
+For profiling, set `CPPHDL_NATIVE_DISPATCH=auto`, `serial`, or `parallel`
+before constructing a newly emitted memoized multi-lane model. The default is
+`auto`. The override changes host dispatch only, and allows the same compiled
+graph to be compared without changing arithmetic, registers or device clocks.
+Invalid values fail at construction. Each model also exposes
+`__cpphdl_dispatch_policy` for controlled C++ profiling. A shared executor
+can have more workers than one graph needs: generated calls pass their active
+lane count, and only those workers receive commands or participate in the join.
+Workers skipped for many transactions rejoin using independent command stamps.
+Workers and joins spin for at most 64 iterations before sleeping, rather than
+keeping spare cores busy for 4,096 iterations. This bounds dispatch overhead
+on hosts running other simulations or compilers; it does not change the graph
+schedule or its synchronization guarantees.
 The separate `memoizeNextWords` option (default false) places register next-word
 assembly in the memoized combinational schedule: unchanged scattered input
 bits reuse the assembled word. It requires `memoizeChunks`. This can help large

@@ -27,6 +27,7 @@ int main(int argc,char**argv) {
  auto fixed=g.add("state",64,constant(0xa735800012345678ull,64),{}, {},"fixed");
  g.ports.push_back({"fixed",fixed,false});
  g.pipelines.push_back({"retained_metadata"});
+ Value packed;
  for(unsigned lane=0;lane<12;++lane) {
   auto state=g.wire(64,"state"+std::to_string(lane),"state");auto value=g.binary("xor",data,state,64);
   for(unsigned word=0;word<64;++word)
@@ -41,9 +42,11 @@ int main(int argc,char**argv) {
     next.push_back(g.mux(enable,Value{value[(bit*13+7)%64]},Value{state[bit]})[0]);
   }
   g.states.push_back({state,next,{1},0,bool(lane&1),reset,constant(lane,64)});
+  packed.insert(packed.end(),value.begin(),value.end());
   g.ports.push_back({"out"+std::to_string(lane),value,false});
   g.ports.push_back({"state_out"+std::to_string(lane),state,false});
  }
+ packed.insert(packed.end(),fixed.begin(),fixed.begin()+17);g.ports.push_back({"packed",packed,false});
  for(unsigned invalid=0;invalid<2;++invalid) {
   auto bad=g;if(invalid)bad.memories[0].contents.clear();else bad.add("host_random",32);
   bool rejected=false;try{bad.emit(std::string(argv[1])+"bad.h",7,6,false,false,true);}catch(const std::runtime_error&){rejected=true;}
@@ -85,13 +88,21 @@ prefix='''#define cpphdl_native plain
 template<class M>void inputs(M& m,unsigned i,uint64_t data){m.data={uint32_t(data),uint32_t(data>>32)};for(unsigned k=0;k<128;++k)m.wide[k]=uint32_t(data>>((k&1)*32))^(k*7919u)^(i/97);m.enable[0]=(i/73)%2;m.reset[0]=i%257==0;m.address[0]=(i/17)%4;m.clock=(i/3)%2;}
 template<class M>bool same(const plain::Model& a,const M& b){return '''
 checks=['a.'+name+'==b.'+name for i in range(12) for name in (f'out{i}',f'state_out{i}')]
-checks+=['a.fixed==b.fixed','a.fixed[0]==0x12345678u','a.fixed[1]==0xa7358000u']
+checks+=['a.packed==b.packed','a.fixed==b.fixed','a.fixed[0]==0x12345678u','a.fixed[1]==0xa7358000u']
 (work/'check.cpp').write_text(prefix+' && '.join(checks)+r''';}
-int main(){plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;cached_wide::Model e;uint64_t random=42;bool serial=false,parallel=false;
+int main(){
+ using Policy=cpphdl::graph_runtime::DispatchPolicy;
+ for(auto entry:{std::pair{"auto",Policy::Automatic},std::pair{"serial",Policy::Serial},std::pair{"parallel",Policy::Parallel}}){
+  setenv("CPPHDL_NATIVE_DISPATCH",entry.first,1);assert(cpphdl::graph_runtime::nativeDispatchPolicy()==entry.second);}
+ setenv("CPPHDL_NATIVE_DISPATCH","invalid",1);bool invalid=false;
+ try{cpphdl::graph_runtime::nativeDispatchPolicy();}catch(const std::invalid_argument&){invalid=true;}assert(invalid);
+ unsetenv("CPPHDL_NATIVE_DISPATCH");assert(cpphdl::graph_runtime::nativeDispatchPolicy()==Policy::Automatic);
+ plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;cached_wide::Model e;uint64_t random=42;bool serial=false,parallel=false;
  static_assert(plain::Model::__cpphdl_cached_next_words==0);
  static_assert(cached_only::Model::__cpphdl_cached_next_words==0);
  static_assert(cached::Model::__cpphdl_cached_next_words>0&&cached_one::Model::__cpphdl_cached_next_words>0);
  for(unsigned i=0;i<4096;++i){if(i%101==0){random^=random<<13;random^=random>>7;random^=random<<17;}
+  d.__cpphdl_dispatch_policy=i%3==0?Policy::Serial:(i%3==1?Policy::Parallel:Policy::Automatic);
   inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);inputs(d,i,random);inputs(e,i,random);
   for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);d.eval(commit);e.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d)&&same(a,e));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
  }

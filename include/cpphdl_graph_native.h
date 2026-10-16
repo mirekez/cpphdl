@@ -27,6 +27,7 @@ struct NativeParallelPlan {
     std::vector<std::vector<size_t>> tasks;
     std::vector<std::vector<size_t>> waits;
     std::vector<unsigned> ports, states, accesses, writes;
+    std::vector<std::vector<unsigned>> portWords;
 };
 
 inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<size_t>& order, unsigned lanes,
@@ -60,10 +61,20 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     // node IDs/storage, so lanes never communicate intermediate values.
     struct Root { std::vector<Value*> fields; std::vector<size_t> cone; uint64_t cost = 0; unsigned lane = 0; uint64_t sinkCost = 0; };
     std::vector<Root> roots;
-    std::vector<size_t> portRoots, stateRoots, accessRoots, writeRoots;
-    for (auto& port : graph.ports) {
-        portRoots.push_back(port.input ? size_t(-1) : roots.size());
-        if (!port.input) roots.push_back({{&port.bits}});
+    std::vector<size_t> stateRoots, accessRoots, writeRoots;
+    std::vector<std::vector<size_t>> portRoots(graph.ports.size());
+    std::vector<std::vector<Value>> portSlices(graph.ports.size());
+    for (size_t i=0;i<graph.ports.size();++i) {
+        const auto& port=graph.ports[i];
+        if(port.input)continue;
+        // A packed vector port is not one indivisible computation. Separate
+        // host words expose independent SIMD/MAC results without splitting
+        // 64-bit scalar operations or changing the public port interface.
+        auto& slices=portSlices[i];slices.resize((port.bits.size()+63)/64);
+        for(size_t word=0;word<slices.size();++word) {
+            slices[word]=slice(port.bits,word*64,std::min<size_t>(64,port.bits.size()-word*64));
+            portRoots[i].push_back(roots.size());roots.push_back({{&slices[word]}});
+        }
     }
     // Explicit-event graphs can have ordered updates to the same state word.
     // Keep all such sinks on one lane so their original priority is preserved.
@@ -122,7 +133,7 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     std::set<size_t> callerRoots;
     callerRoots.insert(validationRoots.begin(), validationRoots.end());
     if (hostOverlap) {
-        for (auto root : portRoots) if (root != size_t(-1)) callerRoots.insert(root);
+        for (const auto& port : portRoots) callerRoots.insert(port.begin(),port.end());
         callerRoots.insert(accessRoots.begin(), accessRoots.end());
         callerRoots.insert(writeRoots.begin(), writeRoots.end());
         // The caller owns every observable output and every validation that
@@ -172,7 +183,12 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     owned.resize(lanes);
     load.resize(lanes);
     NativeParallelPlan plan; plan.lanes = lanes; plan.stages = 1; plan.tasks.resize(lanes); plan.waits.resize(lanes);
-    for (auto root : portRoots) plan.ports.push_back(root == size_t(-1) ? 0 : roots[root].lane);
+    plan.portWords.resize(graph.ports.size());
+    for (size_t i=0;i<portRoots.size();++i) {
+        plan.ports.push_back(portRoots[i].empty()?0:roots[portRoots[i][0]].lane);
+        for(size_t word=0;word<(graph.ports[i].input?0:(graph.ports[i].bits.size()+31)/32);++word)
+            plan.portWords[i].push_back(roots[portRoots[i][word/2]].lane);
+    }
     for (auto root : stateRoots) plan.states.push_back(roots[root].lane);
     for (auto root : accessRoots) plan.accesses.push_back(roots[root].lane);
     for (auto root : writeRoots) plan.writes.push_back(roots[root].lane);
@@ -201,6 +217,10 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
             plan.tasks[lane].push_back(copy[node]);
         }
         for (auto& root : roots) if (root.lane == lane) for (auto* field : root.fields) remap(*field);
+    }
+    for(size_t i=0;i<portSlices.size();++i)if(!graph.ports[i].input) {
+        graph.ports[i].bits.clear();
+        for(const auto& bits:portSlices[i])graph.ports[i].bits.insert(graph.ports[i].bits.end(),bits.begin(),bits.end());
     }
     plan.cost = *std::max_element(load.begin(), load.end());
     fprintf(stderr, "native graph cones: base weight %llu; lane weights", (unsigned long long)total);
@@ -459,7 +479,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         if (adaptiveDispatch)
             output << "struct alignas(64) __cpphdl_Activity { uint64_t nodes = 0; };\n"
                    << "std::array<__cpphdl_Activity," << threads << "> __cpphdl_activity{};\n"
-                      "bool __cpphdl_serial_dispatch = false;\n";
+                      "bool __cpphdl_serial_dispatch = false;\n"
+                      "cpphdl::graph_runtime::DispatchPolicy __cpphdl_dispatch_policy = cpphdl::graph_runtime::nativeDispatchPolicy();\n";
         auto valueName = [&](size_t index) {
             auto slot = sharedSlots.find(index);
             return slot != sharedSlots.end() ? "__cpphdl_values[" + std::to_string(slot->second) + "]" : "value" + std::to_string(index);
@@ -688,7 +709,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 auto pending = [](unsigned lane) { return "__cpphdl_pending_" + std::to_string(lane); };
                 for (unsigned lane = 0; lane < threads; ++lane) {
                     output << "struct alignas(64) __cpphdl_Transaction_" << lane << " {\nunsigned errors = 0;\n";
-                    for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input && parallel.ports[i] == lane)
+                    for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input &&
+                            std::find(parallel.portWords[i].begin(),parallel.portWords[i].end(),lane)!=parallel.portWords[i].end())
                         output << "std::array<uint32_t," << (ports[i].bits.size()+31)/32 << "> port" << i << "{};\n";
                     for (size_t i = 0; i < memoryWrites.size(); ++i) if (parallel.writes[i] == lane)
                         output << "bool enable" << i << " = false;\nuint64_t address" << i << " = 0;\n"
@@ -702,8 +724,9 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                                << assembly(access.enabled) << " && " << assembly(access.address) << " >= "
                                << memories[access.memory].depth << "ull) tx.errors |= 1;\n";
                     }
-                    for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input && parallel.ports[i] == lane)
+                    for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input)
                         for (unsigned offset = 0; offset < ports[i].bits.size(); offset += 32)
+                            if(parallel.portWords[i][offset/32]==lane)
                             output << "tx.port" << i << '[' << offset/32 << "] = uint32_t("
                                    << assembly(slice(ports[i].bits, offset, std::min<size_t>(32,ports[i].bits.size()-offset))) << ");\n";
                     output << "if constexpr(Commit) {\n";
@@ -754,7 +777,9 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 output << "if(errors & 1) throw std::out_of_range(\"native graph memory address\");\n"
                           "if(errors & 2) throw std::out_of_range(\"native graph memory write address\");\n";
                 for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input)
-                    output << ports[i].name << " = " << pending(parallel.ports[i]) << ".port" << i << ";\n";
+                    for(size_t word=0;word<parallel.portWords[i].size();++word)
+                        output << ports[i].name << '[' << word << "] = " << pending(parallel.portWords[i][word])
+                               << ".port" << i << '[' << word << "];\n";
                 output << "}\nvoid __cpphdl_commit() noexcept {\n";
                 // Preserve global write order; workers only read RAM.
                 for (size_t i = 0; i < memoryWrites.size(); ++i) {
@@ -771,11 +796,12 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 output << "}\ntemplate<bool Commit> [[gnu::noinline]] void evaluate() {\n";
                 if (adaptiveDispatch)
                     output << "for(auto& activity:__cpphdl_activity) activity.nodes = 0;\n"
-                              "if(__cpphdl_serial_dispatch) {\n"
+                              "if(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Serial ||\n"
+                              "(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Automatic && __cpphdl_serial_dispatch)) {\n"
                               "for(unsigned lane=0;lane<__cpphdl_thread_count;++lane)\n"
                               "__cpphdl_lane<Commit>(this,*__cpphdl_threads,lane,0);\n"
                               "} else ";
-                output << "__cpphdl_threads->run(this, &Model::__cpphdl_lane<Commit>);\n";
+                output << "__cpphdl_threads->run(this, &Model::__cpphdl_lane<Commit>, __cpphdl_thread_count);\n";
                 if (adaptiveDispatch)
                     output << "uint64_t active_nodes = 0;\n"
                               "for(const auto& activity:__cpphdl_activity) active_nodes += activity.nodes;\n"
@@ -790,7 +816,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     output << "static constexpr bool __cpphdl_host_overlap = true;\n"
                               "template<class Host> void evaluate_with_host(Host&& host) {\n"
                               "bool published = false;\ntry {\n"
-                              "__cpphdl_threads->run(this, &Model::__cpphdl_lane<true>, [&] {\n"
+                              "__cpphdl_threads->run(this, &Model::__cpphdl_lane<true>, __cpphdl_thread_count, [&] {\n"
                               "__cpphdl_publish();\npublished = true;\nhost();\n});\n"
                               "} catch(...) { if(published) __cpphdl_commit(); throw; }\n"
                               "__cpphdl_commit();\n}\n";
