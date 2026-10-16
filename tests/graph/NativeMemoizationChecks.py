@@ -104,7 +104,7 @@ int main(){
  for(unsigned i=0;i<4096;++i){if(i%101==0){random^=random<<13;random^=random>>7;random^=random<<17;}
   d.__cpphdl_dispatch_policy=i%3==0?Policy::Serial:(i%3==1?Policy::Parallel:Policy::Automatic);
   inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);inputs(d,i,random);inputs(e,i,random);
-  for(bool commit:{false,true,false}){a.eval(commit);b.eval(commit);c.eval(commit);d.eval(commit);e.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d)&&same(a,e));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
+  for(bool commit:{false,true,false}){auto other=b.__cpphdl_serial_by_phase[!commit];a.eval(commit);b.eval(commit);assert(b.__cpphdl_serial_by_phase[!commit]==other);assert(b.__cpphdl_serial_by_phase[commit]==b.__cpphdl_serial_dispatch);c.eval(commit);d.eval(commit);e.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d)&&same(a,e));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
  }
  assert(serial&&parallel);
  auto copied=b;auto copied_wide=e;auto reference=a;

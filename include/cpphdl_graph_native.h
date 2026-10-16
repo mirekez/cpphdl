@@ -480,6 +480,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             output << "struct alignas(64) __cpphdl_Activity { uint64_t nodes = 0; };\n"
                    << "std::array<__cpphdl_Activity," << threads << "> __cpphdl_activity{};\n"
                       "bool __cpphdl_serial_dispatch = false;\n"
+                      "std::array<bool,2> __cpphdl_serial_by_phase{};\n"
                       "cpphdl::graph_runtime::DispatchPolicy __cpphdl_dispatch_policy = cpphdl::graph_runtime::nativeDispatchPolicy();\n";
         auto valueName = [&](size_t index) {
             auto slot = sharedSlots.find(index);
@@ -797,7 +798,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 if (adaptiveDispatch)
                     output << "for(auto& activity:__cpphdl_activity) activity.nodes = 0;\n"
                               "if(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Serial ||\n"
-                              "(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Automatic && __cpphdl_serial_dispatch)) {\n"
+                              "(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Automatic && __cpphdl_serial_by_phase[Commit])) {\n"
                               "for(unsigned lane=0;lane<__cpphdl_thread_count;++lane)\n"
                               "__cpphdl_lane<Commit>(this,*__cpphdl_threads,lane,0);\n"
                               "} else ";
@@ -805,7 +806,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 if (adaptiveDispatch)
                     output << "uint64_t active_nodes = 0;\n"
                               "for(const auto& activity:__cpphdl_activity) active_nodes += activity.nodes;\n"
-                              "__cpphdl_serial_dispatch = active_nodes < 4096;\n";
+                              "__cpphdl_serial_dispatch = active_nodes < 4096;\n"
+                              "__cpphdl_serial_by_phase[Commit] = __cpphdl_serial_dispatch;\n";
                 output << "__cpphdl_publish(Commit);\nif constexpr(Commit) __cpphdl_commit();\n}\n";
                 if (hostOverlap) {
                     // Host continuation may only consume the published ports

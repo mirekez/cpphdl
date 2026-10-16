@@ -80,13 +80,16 @@ both forms, including a 4,096-bit input and copying populated wide-key caches.
 
 Memoized multi-lane graphs without host overlap adapt dispatch to recent
 activity. Each lane counts nodes recomputed on cache misses. When fewer than
-4,096 nodes changed in the preceding evaluation, the caller executes the same
+4,096 nodes changed in the preceding evaluation of the same commit/settle
+phase, the caller executes the same
 independent lane schedules directly; larger updates use the configured worker
 pool again. An increase in activity is therefore evaluated serially once before
 parallel dispatch resumes. Both paths prepare the same inactive register bank
 and publish it only after all lanes finish. This removes worker wakeups during
 small counter updates without skipping a clock, state equation or validation.
 The memoization regression exercises both dispatch paths and their transitions.
+Commit and settle retain separate activity histories: a quiet pre-commit
+evaluation must not force a busy post-commit settle onto the caller.
 Wide output ports are divided into 64-bit sink slices before cone planning.
 The slices may belong to different lanes; each lane writes private pending
 storage and the caller publishes the original port words only after the join
