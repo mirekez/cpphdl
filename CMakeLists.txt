@@ -71,6 +71,8 @@ project(cpphdl
   VERSION 0.8
   LANGUAGES C CXX)
 
+include(cmake/CpphdlRuntime.cmake)
+
 add_compile_definitions(CPPHDL_CMAKE_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
 add_compile_definitions(CPPHDL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
@@ -80,6 +82,7 @@ option(CPPHDL_BUILD_TESTS "Build C++HDL standalone tests" ON)
 option(CPPHDL_BUILD_HLS_TESTS "Build experimental HLS tests (requires Clang and libc++)" ON)
 option(CPPHDL_BUILD_SYNTH_TESTS "Build experimental shared-graph synthesis tests" ON)
 option(CPPHDL_BUILD_TRIBE "Build Tribe CPU models and tests" OFF)
+option(CPPHDL_BUILD_ANALOG "Build analog schemas, mixed-signal examples and regression tests" ON)
 
 include(CTest)
 
@@ -152,6 +155,9 @@ if(CPPHDL_STACKTRACE_LINKS_WITH_DEFAULT_LIBS OR CPPHDL_STACKTRACE_LINKS_WITH_STD
   add_compile_definitions(CPPHDL_HAVE_STACKTRACE=1)
 else()
   message(STATUS "C++HDL stacktrace support disabled: <stacktrace> did not link")
+endif()
+if(CPPHDL_STACKTRACE_LINKS_WITH_STDCXXEXP AND CPPHDL_STDCXXEXP)
+  target_link_libraries(cpphdl_runtime INTERFACE "${CPPHDL_STDCXXEXP}")
 endif()
 
 function(cpphdl_link_stdcxxexp_if_available target)
@@ -436,4 +442,7 @@ if(CPPHDL_BUILD_TRIBE)
 endif()
 if(CPPHDL_BUILD_HDLCPP)
   add_subdirectory(hdlcpp)
+endif()
+if(CPPHDL_BUILD_ANALOG)
+  add_subdirectory(analog)
 endif()

@@ -10,6 +10,9 @@ file(GLOB_RECURSE EXAMPLE_SOURCES CONFIGURE_DEPENDS
 list(FILTER EXAMPLE_SOURCES EXCLUDE REGEX "/[.#][^/]*\\.cpp$")
 list(FILTER EXAMPLE_SOURCES EXCLUDE REGEX "~$")
 
+# Mixed physical simulation is built by analog/ as analog_mixed_signal, without RTL conversion.
+list(REMOVE_ITEM EXAMPLE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/mixed_signal/main.cpp")
+
 foreach(src ${EXAMPLE_SOURCES})
     get_filename_component(name ${src} NAME_WE)
     # prefix with relative path for uniqueness
