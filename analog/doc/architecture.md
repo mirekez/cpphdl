@@ -41,9 +41,8 @@ owns the model descriptors even after local C++ construction handles leave scope
 `capacitance` adds a storage model in its constructor and retains electrical
 connectivity. `cmos<Model>` is a normal C++ IC class with a typed output and a
 model policy. Libraries can define additional class hierarchies and policies
-without changing how terminal equations are assembled. A production model-plugin
-API should stabilize descriptor access, state coordinates, Jacobians, capabilities
-and version metadata; the initial built-in descriptors are inspection-oriented.
+without changing how terminal equations are assembled. The built-in descriptors
+support inspection of the declared models; there is no public model-plugin API.
 
 Functional ICs live in root `basic/`, outside the elementary device layer.
 `level_inverter` composes two complementary voltage-controlled resistor paths;
@@ -67,7 +66,7 @@ attributes primitive models to the IC whose `_assign()` created them; nested
 elaboration restores its parent's context. Simulation compilation rejects incomplete
 or failed components. All models remain in one global physical equation graph.
 
-## C++HDL references actually examined
+## Shared C++HDL conventions
 
 [Buffer.cpp](../../examples/basic/Buffer.cpp) demonstrates class templates,
 member ports/registers and separate `_work`/`_strobe` phases.
@@ -140,4 +139,4 @@ flux, phase and digital-state transfer rather than copying just an output voltag
 Hard real-time wall-clock execution needs its own timing and error contract.
 
 Formal assume/guarantee composition, all-envelope refinement, PLL/oscillator/memory
-libraries and technology synthesis are planned interfaces, not implemented features.
+libraries and technology synthesis are outside the implemented scope.

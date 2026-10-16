@@ -1,9 +1,9 @@
-# Decisions behind the C++ language update
+# Design decisions
 
-The supplied [context](language.md) establishes the
-purpose/constraint/consequence distinction. The later clarifications determine
-the actual surface: native C++ classes derived from `IC`, C++HDL-style member ports,
-`_assign()` for line-by-line purposes, and types that can add active behavior.
+The [language](language.md) uses native C++ classes derived from `IC`, C++HDL-style
+member ports, `_assign()` for line-by-line purposes, and types that can add active
+behavior. Purpose declarations build a circuit; constraints check its achieved
+behavior; the integration engine computes its physical consequences.
 
 ## Purpose declarations are the surface
 
@@ -15,9 +15,8 @@ Vss = nmos(A, Y); // Correct it by pulling low under the complementary condition
 
 The two purposes work together. Electrical `=` retains both device relations
 through their shared wire. Digital `=` binds computation or storage. This is a
-purpose declaration with type-defined assignment/connection semantics, not a
-new operator attempting to stand in for physical influence. The rejected `&`
-proposal and custom text syntax are not part of the current language.
+purpose declaration with assignment/connection semantics supplied by the
+participating C++ types.
 
 A model returning a terminal is the implementation mechanism; the public meaning
 is the device's purpose on the named target. The signature must say which terminal
@@ -51,7 +50,7 @@ equations, allowing pure digital and passive classes to use the same base.
 Model policies select fidelity with the same class usage pattern.
 
 This follows the useful approach in C++HDL examples: classes, members, templates,
-static member ports/bindings, `_assign()`, and separate state advancement/commit. The simulation
+typed member ports and bindings, `_assign()`, and separate state advancement/commit. The simulation
 engine must additionally solve coupled electrical equations. The runtime shares
 only typed port declaration plumbing with C++HDL. Analog `IC` and digital `Module`
 have independent lifecycles; the explicit adapter executes
@@ -60,14 +59,13 @@ is a separate capability.
 
 ## Do not infer a circuit from a technology name
 
-The previous built-in `cmos(...)` hid an inverter in compiler logic. The C++
-`cmos<>` class now visibly contains a channel-model policy whose body has the two
-purpose declarations. Its name is a library choice for this IC; CMOS technology
+The C++ `cmos<>` class contains a model policy whose channel implementation has
+the two transistor purpose declarations. Its name is a library choice for this IC; CMOS technology
 also supports many other circuit classes. They must have their own class bodies.
 
 The fast realization is also a schema: `level_inverter` in
 [basic/level_inverter.hpp](../basic/level_inverter.hpp) connects two complementary
-controlled-resistor paths. The generic framework law describes one bidirectional
+`sim_controlled_resistor` paths. This simulation-only law describes one bidirectional
 conductance controlled by a voltage difference. It does not contain rail selection
 or inverter topology. The schema supplies those connections. This keeps the
 approximation explicit while retaining load and supply coupling.

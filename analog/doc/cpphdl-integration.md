@@ -1,9 +1,7 @@
 # Shared C++HDL and analog runtime
 
-The package owns the analog framework under `analog/`. The original workspace
-path may be a convenience symlink; build scripts and shared include discovery use
-the physical package location. Source files, examples, basic schemas and tests
-belong to this package. Build products and generated results stay outside Git;
+The package owns the analog framework under `analog/`, including its source files,
+examples, basic schemas and tests. Build products and generated results stay outside Git;
 builds use `analog/build/` or the root package's `build/analog/` directory.
 
 ## Which definitions are shared
@@ -55,7 +53,7 @@ Analog `_assign()` creates the model graph once through `elaborate()`; native
 `CPPHDL_STATIC` is rejected for analog components because their rails and devices
 must belong to individual simulation instances.
 
-### Minimal intersection and the proposed lazy marker
+### Minimal shared interface
 
 The shared core contract is typed port declaration plumbing.
 Lazy callable evaluation belongs to native `function_ref<T>` ports; analog ports

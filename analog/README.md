@@ -64,7 +64,7 @@ pmos pull_up{A, Vdd}; // A named variable of a device type.
 
 The primary requirements are [purpose and mutual influence, #1](doc/requirements.md)
 and [line-by-line C++ device declarations, #2](doc/requirements.md).
-Read the [specification](doc/specification.md), [architecture](doc/architecture.md),
+Read the [language guide](doc/language.md), [specification](doc/specification.md), [architecture](doc/architecture.md),
 and [design decisions](doc/design-decisions.md). The local C++HDL
 [Buffer](../examples/basic/Buffer.cpp), [Fifo](../examples/basic/Fifo.cpp),
 and [Fifo2clk](../examples/cdc/Fifo2clk.cpp) examples informed typed class
