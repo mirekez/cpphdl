@@ -1,0 +1,7 @@
+*.osdi
+*.log
+*.dat
+*.raw
+spice.csv
+difference.csv
+comparison.json

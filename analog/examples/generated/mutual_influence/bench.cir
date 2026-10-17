@@ -1,0 +1,26 @@
+C++HDL Verilog-A independent transient experiment
+* Sources, initial charges and observations come from the same elaborated C++ bench.
+.model CircuitModel Example_mutual_influence_nominal
+Ndesign 0 n1 n11 n12 n14 n15 bit0 CircuitModel
+Vsource0 n1 0 DC 1.2
+Vsource2 n14 0 DC 0.0
+Vbit0 bit0 0 PWL(0 1 9.9999999999999995e-07 1 9.9999999999999995e-07 0 1.9999999999999999e-06 0)
+.ic V(n1)=1.2
+.ic V(n11)=1.2
+.ic V(n14)=0.0
+.ic V(n15)=1.2
+.options method=gear maxord=2 reltol=1e-5 abstol=1e-12 vntol=1e-8 trtol=7
+.control
+pre_osdi design.osdi
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+set numdgt=17
+tran 5.0000000000000001e-09 1.9999999999999999e-06 0 5.0000000000000001e-09 uic
+let observation0 = v(n11)
+let observation1 = v(n15)
+let observation2 = v(n12)
+wrdata spice.dat observation0 observation1 observation2
+quit
+.endc
+.end

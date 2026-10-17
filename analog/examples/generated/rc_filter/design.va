@@ -1,0 +1,15 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module Example_rc_filter_nominal(n0, n6, n7);
+    inout n0, n6, n7;
+    electrical n0, n6, n7;
+
+    analog begin
+        // device 1, analog/examples/rc_filter/main.cpp:3
+        I(n7, n0) <+ 1.0000000000000001e-09 * ddt(V(n7, n0)); // Bench initial voltage = 0.0 V.
+        // device 2, IC filter, analog/examples/rc_filter/main.cpp:9
+        I(n6, n7) <+ V(n6, n7) / 1000.0;
+    end
+endmodule

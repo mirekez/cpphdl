@@ -66,3 +66,9 @@ This simple LDO has no current limiting, protection, bandgap reference or valida
 stability specification. Low dropout refers to the demonstrated supply headroom;
 it does not promise regulation at arbitrarily small headroom. The amplifier also
 consumes bias current, so this is not a low quiescent current design.
+
+The [independent Verilog-A/ngspice comparison](../../VerilogA/tests/README.md)
+resolves startup with 2 ns / 1 ns native steps. It found that the coarse steps
+used by this longer example damp startup ringing substantially even when late
+regulation is correct. Use the finer experiment for waveform accuracy; the
+millisecond example checks settled recovery windows.

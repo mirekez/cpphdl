@@ -303,6 +303,9 @@ public:
     const std::string& status() const {
         return status_;
     }
+    const std::vector<observation>& observations() const {
+        return observations_;
+    }
     const std::vector<obligation>& obligations() const {
         return obligations_;
     }

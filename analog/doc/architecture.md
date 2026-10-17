@@ -152,3 +152,24 @@ evidence, subject to the same global assumption envelope as final-value checks.
 They do not participate in the physical residual or supply ideal control behavior.
 Feedback examples measure settling windows, interpolated edges/phase and positive
 peaks through this interface. CTest separately compares coarse and refined traces.
+
+## Verilog-A backend
+
+[VerilogA/](../VerilogA/README.md) exports the elaborated physical network to
+Verilog-A branch contributions. Native C++ resolves class hierarchy and model
+configuration; the backend preserves canonical node aliases, device laws and
+source/component attribution in one flat module. The root `cpphdl --verilog-a`
+entry and standalone driver share the same native elaboration implementation.
+Top electrical members are explicit compiler-checked interface arguments.
+
+The backend reads the existing element list and node identities. The core adds
+only a const observation-list accessor; no analog export traits or methods enter
+digital `Module` or its port lifecycle. Simulator sources/control approximations
+are rejected in reusable IC export and supported explicitly in experiment bundles.
+
+OpenVAF compiles generated modules to OSDI; ngspice independently integrates them.
+Tests normalize observations to native CSV names/units and check selected-model
+agreement, analytic RC behavior, refinement and detection of an intentionally
+altered exported resistor. Initial charge and clock-edge approximation are recorded
+bench conditions. Shared elaborated connectivity remains a common-mode limitation
+of this validation; agreement is not a proof of all source/topology/device physics.

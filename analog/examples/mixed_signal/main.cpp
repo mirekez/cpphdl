@@ -1,4 +1,5 @@
 #include <cpphdl_analog.h>
+#include <VerilogA/export.hpp>
 #include <iostream>
 
 long _system_clock = 0;
@@ -84,6 +85,16 @@ int main(int argc, char** argv) {
         sim.require_final("native pipeline captured input", receiver.SECOND, 1);
         sim.require_final("loaded output interpreted high", receiver.RETURN, 1);
         sim.require_final_voltage("loaded high", receiver.Y, Vss, 1.18_V, 1.20_V);
+        if (argc > 2 && std::string_view(argv[argc - 1]) == "--verilog-a") {
+            std::filesystem::path out(argv[1]);
+            std::filesystem::create_directories(out);
+            std::ofstream file(out / "MixedReceiverAnalog.va");
+            file << verilog_a::render_analog_partition(
+                sim, "MixedReceiverAnalog", {{"Vdd", Vdd}, {"Vss", Vss}, {"VIN", VIN}, {"IN", IN}, {"Y", receiver.Y}});
+            if (!file)
+                throw std::runtime_error("cannot write mixed-signal analog partition");
+            return 0;
+        }
         sim.run(4_us, 25_ns);
 
         auto sample_at = [&](duration time) -> const sample& {

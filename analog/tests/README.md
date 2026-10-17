@@ -72,7 +72,7 @@ influence example deliberately fails its output requirement; that expected failu
 is a passing regression outcome. An unrelated execution error cannot count as
 that expected failure.
 
-There are 31 tests with label `analog`. The optional `run_regressions.py` helper
+The core suite has 31 tests; Verilog-A coverage adds tests with the same `analog` label. The optional `run_regressions.py` helper
 configures, builds and invokes this same CTest suite; CTest itself does not need it.
 
 Fixed-step numerical limits and selected-model assumptions remain in
@@ -92,3 +92,16 @@ ctest --test-dir analog/build --output-on-failure -R 'analog.feedback.*convergen
 The expected-loss tests assert dropout or saturation explicitly. A generic solver
 error, missing edges, missing report, or unexpected unsuccessful requirement cannot
 count as successful stress behavior.
+
+## Verilog-A equivalence experiments
+
+[VerilogA/tests](../VerilogA/tests/README.md) adds exporter/CLI checks and optional
+OpenVAF/ngspice cross-simulator comparisons, including LDO/PLL/AGC. All carry the
+`analog` and `veriloga` labels. The original 31-test core suite remains available;
+additional test counts depend on external-tool availability and package/standalone
+build mode. Require the tools with `CPPHDL_ANALOG_VERILOGA_TESTS=ON` for CI.
+
+```bash
+cmake --build analog/build --target check-veriloga -j 4
+ctest --test-dir analog/build --output-on-failure -L veriloga -j 3
+```

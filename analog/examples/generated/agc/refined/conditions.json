@@ -1,0 +1,8 @@
+{
+  "stop_s": 0.23999999999999999,
+  "cpp_step_s": 2.5000000000000002e-06,
+  "spice_max_step_s": 2.5000000000000002e-06,
+  "driver_edge_s": 2.5000000000000002e-10,
+  "initialization": "explicit capacitor/source voltages, SPICE UIC",
+  "evidence": "selected-model trajectory comparison, not universal correctness proof"
+}

@@ -1,0 +1,43 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module Example_cmos_inverter_nominal(n0, n6, n8, n9);
+    inout n0, n6, n8, n9;
+    electrical n0, n6, n8, n9;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 2, IC gate, analog/examples/cmos_inverter/main.cpp:10
+        I(n9, n6) <+ cpphdl_channel(V(n8, n6), V(n9, n6), 0.001, 0.34999999999999998, -1.0);
+        // device 3, IC gate, analog/examples/cmos_inverter/main.cpp:11
+        I(n9, n0) <+ cpphdl_channel(V(n8, n0), V(n9, n0), 0.001, 0.34999999999999998, 1.0);
+        // device 4, analog/examples/cmos_inverter/main.cpp:29
+        I(n9, n0) <+ 9.9999999999999994e-12 * ddt(V(n9, n0)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

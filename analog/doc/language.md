@@ -146,3 +146,11 @@ The [CTest suite](../tests/README.md) checks physical behavior, IC hierarchy,
 simulation boundaries and native digital interoperability. The
 [architecture](architecture.md) and [specification](specification.md) document
 model and numerical limitations.
+
+## Verilog-A output
+
+`cpphdl --verilog-a source.hpp --top MyIC --ports Vdd,Vss,IN,OUT --output MyIC.va`
+compiles and elaborates the native class before emitting its physical relations.
+The [backend guide](../VerilogA/README.md) defines its supported subset, C++ API,
+initial-condition contract and independent OpenVAF/ngspice comparisons. This path
+adds no alternate electronic description syntax.

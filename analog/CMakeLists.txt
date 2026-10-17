@@ -18,6 +18,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(cpphdl_analog INTERFACE -Wall -Wextra)
 endif()
 
+add_subdirectory(VerilogA)
+
 set(analog_example_targets "")
 file(GLOB example_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/*/main.cpp")
 foreach(source IN LISTS example_sources)
@@ -28,6 +30,30 @@ foreach(source IN LISTS example_sources)
   target_link_libraries(${example_target} PRIVATE cpphdl::analog)
   list(APPEND analog_example_targets ${example_target})
 endforeach()
+
+# Re-elaborate the actual examples so checked-in models cannot drift from their C++ definitions.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  set(analog_generation_args
+    "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/VerilogA/generate.py"
+    --root "${CPPHDL_ANALOG_PACKAGE_ROOT}"
+    --models "$<TARGET_FILE:analog_veriloga_generate_models>")
+  foreach(example_target IN LISTS analog_example_targets)
+    string(REGEX REPLACE "^analog_" "" example_name "${example_target}")
+    list(APPEND analog_generation_args --example "${example_name}=$<TARGET_FILE:${example_target}>")
+  endforeach()
+  add_custom_target(generate-veriloga COMMAND ${analog_generation_args}
+    DEPENDS analog_veriloga_generate_models ${analog_example_targets} VERBATIM USES_TERMINAL)
+  if(BUILD_TESTING)
+    add_test(NAME analog.veriloga.generated COMMAND ${analog_generation_args} --check)
+    set_tests_properties(analog.veriloga.generated PROPERTIES LABELS "analog;veriloga" TIMEOUT 120)
+    if(OPENVAF_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+      add_test(NAME analog.veriloga.generated_compile COMMAND ${analog_generation_args}
+        --check --openvaf "${OPENVAF_EXECUTABLE}")
+      set_tests_properties(analog.veriloga.generated_compile PROPERTIES LABELS "analog;veriloga" TIMEOUT 180)
+    endif()
+  endif()
+endif()
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()

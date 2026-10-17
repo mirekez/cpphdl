@@ -4,6 +4,10 @@ This directory is the analog part of the C++HDL package. Include
 `<cpphdl_analog.h>` and use namespace `cpphdl::analog` (an alias of `::analog`).
 Link the CMake target `cpphdl::analog`.
 
+Checked-in Verilog-A models are in [basic/generated](basic/generated/README.md)
+and [examples/generated](examples/generated/README.md), with regeneration commands,
+complete simulation benches and explicit export limits for digital behavior.
+
 Describe an IC as a C++ class, line by line. Add a device to deliver a function,
 then another to correct or constrain it. Connect their purposes through wires;
 the framework solves their combined physical behavior.
@@ -162,3 +166,13 @@ Simulated physical time does not imply hard real-time wall-clock execution.
 Follow [.clang-format](.clang-format): four-space indentation, spaces around
 assignment operators, and a space after commas. Format changed C++ files with
 `clang-format -i path/to/file.cpp` and keep documentation examples consistent.
+
+## Verilog-A export and independent simulation
+
+The [Verilog-A backend](VerilogA/README.md) elaborates native `IC` classes into
+continuous branch contributions. Use the root `cpphdl --verilog-a` command or the
+standalone `cpphdl-veriloga` driver. [C++ export examples](VerilogA/examples/) and
+[ngspice/OpenVAF comparisons](VerilogA/tests/README.md) cover shared topology,
+initial charge, MOS polarity/regions and LDO/PLL/AGC feedback. Tests compare native
+step refinement with independently compiled/simulated Verilog-A and normalize both
+to CSV. External simulator tests are optional by default and can be required in CI.

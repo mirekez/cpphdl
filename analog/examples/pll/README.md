@@ -73,3 +73,7 @@ frequency is approximately 12 kHz with a finite phase offset around 0.17 cycles.
 Checks concern the sampled late trajectory; they do not prove all-start capture,
 arbitrary reference tracking, jitter, noise performance or unconditional stability.
 Finite detector loading/delay and numerical integration affect the measured phase.
+
+The [Verilog-A backend tests](../../VerilogA/tests/README.md) export this physical
+hierarchy and compare its measured loop behavior with an independently compiled
+OpenVAF model running in ngspice, including native timestep refinement.

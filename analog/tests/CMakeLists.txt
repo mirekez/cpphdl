@@ -83,5 +83,10 @@ endforeach()
 set_tests_properties(${analog_regression_tests} PROPERTIES LABELS "analog" TIMEOUT 120)
 add_custom_target(check-analog
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -L analog
-  DEPENDS analog_feedback_refinement analog_trace_requirements analog_semantics analog_cpphdl_interop analog_digital_ports analog_core_isolation ${analog_example_targets}
+  DEPENDS analog_veriloga_generate_models analog_veriloga_exporter analog_veriloga_cross_simulation cpphdl-veriloga analog_feedback_refinement analog_trace_requirements analog_semantics analog_cpphdl_interop analog_digital_ports analog_core_isolation ${analog_example_targets}
+  USES_TERMINAL)
+
+add_custom_target(check-veriloga
+  COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -L veriloga
+  DEPENDS analog_veriloga_generate_models analog_veriloga_exporter analog_veriloga_cross_simulation cpphdl-veriloga ${analog_example_targets}
   USES_TERMINAL)

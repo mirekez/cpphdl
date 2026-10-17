@@ -1,6 +1,7 @@
 #pragma once
 #include <analog.hpp>
 #include <basic/basic.hpp>
+#include <VerilogA/experiment.hpp>
 #include <iostream>
 
 using namespace analog;
@@ -13,6 +14,10 @@ int example_main(int argc, char** argv, const char* default_out, duration stop, 
     try {
         simulation sim;
         build(sim);
+        if (argc > 2 && std::string_view(argv[argc - 1]) == "--verilog-a") {
+            verilog_a::write_experiment(sim, out, {stop, step, step});
+            return 0;
+        }
         sim.run(stop, step);
         sim.write(out);
         std::cout << sim.status() << '\n';

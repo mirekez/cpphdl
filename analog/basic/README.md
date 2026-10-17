@@ -1,5 +1,9 @@
 # Basic circuit schemas
 
+Each basic IC also has a checked-in [generated Verilog-A module](generated/README.md).
+The C++ class is its source; `generate-veriloga` regenerates the catalog and CTest
+checks freshness and, when OpenVAF is enabled, compilation.
+
 These are reusable C++ circuit definitions. Each schema derives from `IC`, inherits
 its own Vdd/Vss member ports, declares additional ports, and adds device purposes in
 `_assign()`. Configure parameters, bind ports, then call `elaborate()`. All connected

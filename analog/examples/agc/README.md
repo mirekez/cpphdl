@@ -83,3 +83,7 @@ that expected limitation was observed, not that weak-input regulation succeeded.
 `equations.txt` lists actual devices and wires; `report.json` includes each
 trajectory requirement. Square-law MOS omissions, selected initial conditions,
 carrier shape and fixed-step integration limit what these tests establish.
+
+The [Verilog-A backend tests](../../VerilogA/tests/README.md) export this physical
+hierarchy and compare its measured loop behavior with an independently compiled
+OpenVAF model running in ngspice, including native timestep refinement.

@@ -1,0 +1,15 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module resistor_divider(Vdd, Vss, TOP, BOTTOM, TAP);
+    inout Vdd, Vss, TOP, BOTTOM, TAP;
+    electrical Vdd, Vss, TOP, BOTTOM, TAP;
+
+    analog begin
+        // device 0, IC resistor_divider, analog/basic/resistor_divider.hpp:15
+        I(TOP, TAP) <+ V(TOP, TAP) / 10000.0;
+        // device 1, IC resistor_divider, analog/basic/resistor_divider.hpp:16
+        I(TAP, BOTTOM) <+ V(TAP, BOTTOM) / 10000.0;
+    end
+endmodule

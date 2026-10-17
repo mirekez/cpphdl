@@ -1,3 +1,4 @@
+#include "VerilogA.h"
 #include "clang/AST/AST.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -2416,6 +2417,11 @@ Clocks:
   Negative edges use paired _work_neg_<name>() / _strobe_neg_<name>() methods.
   Frequencies validate the design; the testbench must schedule clock edges.
 
+Analog conversion:
+  --verilog-a SOURCE --top TYPE --ports MEMBERS [options]
+                                Elaborate an analog::IC class to Verilog-A;
+                                use --verilog-a --help for options.
+
 Experimental gate synthesis:
   --synth [options]             Synthesize C++HDL to generic gate-level Verilog;
                                 use --synth --help for options.
@@ -2603,6 +2609,14 @@ tooling::CommandLineArguments adjustCppInputKind(
 
 int main(int argc, const char **argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--verilog-a") {
+#ifdef CPPHDL_HAS_ANALOG_VERILOGA
+        return cpphdl::verilog_a::run(argc, argv);
+#else
+        llvm::errs() << "Verilog-A export requires CPPHDL_BUILD_ANALOG=ON\n";
+        return 2;
+#endif
+    }
     if (argc > 1 && (std::string_view(argv[1]) == "--lower-cpp-graph" ||
                      std::string_view(argv[1]) == "--lower-scheduled-graph" ||
                      std::string_view(argv[1]) == "--lower-synthesis-graph")) {

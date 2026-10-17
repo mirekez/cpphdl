@@ -62,6 +62,8 @@ ctest --test-dir analog/build --output-on-failure -L analog
 The package build includes analog by default (`CPPHDL_BUILD_ANALOG=ON`). Its
 `check-analog` target builds and runs the same regressions through CTest. See
 [analog/tests](analog/tests/README.md) for coverage and build options.
+Analog IC classes also export through `cpphdl --verilog-a`; see
+[Verilog-A conversion and independent ngspice comparisons](analog/VerilogA/README.md).
 
 ## author
 
