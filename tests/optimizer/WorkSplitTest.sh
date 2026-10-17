@@ -6,6 +6,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/Search.sh"
 cpphdl="$1"
 include_dir="$2"
 stdcxxexp_library="${3:-}"
+cxx="${4:-${CXX:-c++}}"
 link_options=()
 [[ -n "$stdcxxexp_library" ]] && link_options+=("$stdcxxexp_library")
 build_dir="$(mktemp -d)"
@@ -69,12 +70,12 @@ printf '%s\n' \
 objects=()
 for source in "$build_dir"/WorkSplitRoot_optimized_combs*.cpp; do
     object="${source%.cpp}.o"
-    g++ -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
+    "$cxx" -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
         -c "$source" -o "$object"
     objects+=("$object")
 done
 
-g++ -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
+"$cxx" -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
     "$build_dir/WorkSplitRun.cc" "${objects[@]}" "${link_options[@]}" \
     -o "$build_dir/run"
 "$build_dir/run"
@@ -140,12 +141,12 @@ printf '%s\n' \
 template_objects=()
 for source in "$build_dir"/TemplateWorkSplitRoot_optimized_combs*.cpp; do
     object="${source%.cpp}.o"
-    g++ -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
+    "$cxx" -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
         -c "$source" -o "$object"
     template_objects+=("$object")
 done
 
-g++ -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
+"$cxx" -std=c++23 -O0 -g0 -w -I"$build_dir" -I"$include_dir" \
     "$build_dir/TemplateWorkSplitRun.cc" "${template_objects[@]}" \
     "${link_options[@]}" -o "$build_dir/template_run"
 "$build_dir/template_run"

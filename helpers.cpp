@@ -2290,6 +2290,22 @@ bool Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::E
 
 bool Helpers::skipStdFunctionType(QualType& QT)
 {
+    // Keep the payload as written: desugaring port<logic<W>> first loses W
+    // inside the dependent port_traits<T>::type alias.
+    for (QualType candidate = QT; ;) {
+        if (const auto* alias = candidate->getAs<TemplateSpecializationType>()) {
+            const auto* declaration = alias->getTemplateName().getAsTemplateDecl();
+            if (declaration && declaration->getQualifiedNameAsString() == "cpphdl::port"
+                && alias->template_arguments().size() == 1
+                && alias->template_arguments()[0].getKind() == TemplateArgument::Type) {
+                QT = alias->template_arguments()[0].getAsType();
+                return true;
+            }
+        }
+        const QualType next = candidate.getSingleStepDesugaredType(*ctx);
+        if (next == candidate) break;
+        candidate = next;
+    }
     if (const auto *Record = QT->getAs<RecordType>()) {
         if (const auto *Spec = dyn_cast<ClassTemplateSpecializationDecl>(Record->getDecl())) {
             if (const TemplateDecl *TD = Spec->getSpecializedTemplate()) {

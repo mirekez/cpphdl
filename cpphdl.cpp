@@ -1211,6 +1211,9 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         DEBUG_AST1(" *pointer*");
     }
 
+    if (QT->isDependentType()) {
+        hlp.skipStdFunctionType(QT);
+    }
     QT = QT.getDesugaredType(*hlp.ctx);
 //!!!    QT = QT.getCanonicalType();
 //    auto T = QT.getUnqualifiedType();
@@ -2245,6 +2248,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             // with an incomplete symbolic module.
             Helpers hlp(context);
             std::function<bool(QualType)> selfContained = [&](QualType type) {
+                hlp.skipStdFunctionType(type);
                 type = type.getNonReferenceType().getDesugaredType(*context);
                 if (const auto* array = context->getAsArrayType(type)) {
                     return selfContained(array->getElementType());

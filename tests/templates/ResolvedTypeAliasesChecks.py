@@ -1,6 +1,10 @@
 import argparse
 from pathlib import Path
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -12,9 +16,10 @@ def main():
     include = fixtures.parents[1] / "include"
     work = Path(args.work).resolve() / args.flow
     work.mkdir(parents=True, exist_ok=True)
+    toolchain = TestToolchain(args.cxx, args.verilator, work)
 
     def run(command, directory, label):
-        result = subprocess.run([str(item) for item in command], cwd=directory,
+        result = subprocess.run(toolchain.command(command), cwd=directory, env=toolchain.env,
                                 capture_output=True, text=True, timeout=120)
         (directory / (label + ".log")).write_text(result.stdout + result.stderr)
         if result.returncode:
