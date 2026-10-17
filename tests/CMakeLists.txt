@@ -185,6 +185,19 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeMemoizationChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_memoization PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_settle COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSettleChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_settle PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_broadcast COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeBroadcastChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_broadcast PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_compiler COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/cpphdl_native_compiler.py"
+        --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/native-compiler-probe")
+    set_tests_properties(cpp_graph_native_compiler PROPERTIES TIMEOUT 60)
     add_test(NAME cpp_graph_native_wide_ports COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeWidePortChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")

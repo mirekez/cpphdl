@@ -59,11 +59,13 @@ int main(int argc,char**argv) {
  g.emit(std::string(argv[1])+"cached.h",7,6,false,false,true,true);
  g.emit(std::string(argv[1])+"cached_one.h",19,1,false,false,true,true);
  g.emit(std::string(argv[1])+"cached_wide.h",512,6,false,false,true,true);
+ g.emit(std::string(argv[1])+"delta.h",19,6,false,false,true,true,true);
+ g.emit(std::string(argv[1])+"delta_one.h",17,1,false,false,true,false,true);
 }
 ''')
 run([a.cxx,'-std=c++23','-O1','-I'+str(root/'include'),work/'emit.cpp','-o',work/'emit'])
 run([work/'emit',str(work)+'/'])
-for name in ('plain.h','cached_only.h','cached.h','cached_one.h','cached_wide.h'):
+for name in ('plain.h','cached_only.h','cached.h','cached_one.h','cached_wide.h','delta.h','delta_one.h'):
     fields=re.findall(r'uint(?:8|16|32|64)_t state\d+ =', (work/name).read_text())
     if len(fields)!=13:raise RuntimeError(f'{name}: expected 12 written and one fixed live state word, got {len(fields)}')
 if '__cpphdl_key{{' not in (work/'cached_wide.h').read_text():
@@ -83,6 +85,12 @@ prefix='''#define cpphdl_native plain
 #define cpphdl_native cached_wide
 #include "cached_wide.h"
 #undef cpphdl_native
+#define cpphdl_native delta
+#include "delta.h"
+#undef cpphdl_native
+#define cpphdl_native delta_one
+#include "delta_one.h"
+#undef cpphdl_native
 #include <cassert>
 #include <cstdio>
 template<class M>void inputs(M& m,unsigned i,uint64_t data){m.data={uint32_t(data),uint32_t(data>>32)};for(unsigned k=0;k<128;++k)m.wide[k]=uint32_t(data>>((k&1)*32))^(k*7919u)^(i/97);m.enable[0]=(i/73)%2;m.reset[0]=i%257==0;m.address[0]=(i/17)%4;m.clock=(i/3)%2;}
@@ -97,19 +105,21 @@ int main(){
  setenv("CPPHDL_NATIVE_DISPATCH","invalid",1);bool invalid=false;
  try{cpphdl::graph_runtime::nativeDispatchPolicy();}catch(const std::invalid_argument&){invalid=true;}assert(invalid);
  unsetenv("CPPHDL_NATIVE_DISPATCH");assert(cpphdl::graph_runtime::nativeDispatchPolicy()==Policy::Automatic);
- plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;cached_wide::Model e;uint64_t random=42;bool serial=false,parallel=false;
+ plain::Model a;cached::Model b;cached_one::Model c;cached_only::Model d;cached_wide::Model e;delta::Model f;delta_one::Model g;uint64_t random=42;bool serial=false,parallel=false;
+ static_assert(delta::Model::__cpphdl_delta_memoization&&delta_one::Model::__cpphdl_delta_memoization);
  static_assert(plain::Model::__cpphdl_cached_next_words==0);
  static_assert(cached_only::Model::__cpphdl_cached_next_words==0);
  static_assert(cached::Model::__cpphdl_cached_next_words>0&&cached_one::Model::__cpphdl_cached_next_words>0);
  for(unsigned i=0;i<4096;++i){if(i%101==0){random^=random<<13;random^=random>>7;random^=random<<17;}
   d.__cpphdl_dispatch_policy=i%3==0?Policy::Serial:(i%3==1?Policy::Parallel:Policy::Automatic);
-  inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);inputs(d,i,random);inputs(e,i,random);
-  for(bool commit:{false,true,false}){auto other=b.__cpphdl_serial_by_phase[!commit];a.eval(commit);b.eval(commit);assert(b.__cpphdl_serial_by_phase[!commit]==other);assert(b.__cpphdl_serial_by_phase[commit]==b.__cpphdl_serial_dispatch);c.eval(commit);d.eval(commit);e.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d)&&same(a,e));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
+  f.__cpphdl_dispatch_policy=d.__cpphdl_dispatch_policy;
+  inputs(a,i,random);inputs(b,i,random);inputs(c,i,random);inputs(d,i,random);inputs(e,i,random);inputs(f,i,random);inputs(g,i,random);
+  for(bool commit:{false,true,false}){auto other=b.__cpphdl_serial_by_phase[!commit];a.eval(commit);b.eval(commit);assert(b.__cpphdl_serial_by_phase[!commit]==other);assert(b.__cpphdl_serial_by_phase[commit]==b.__cpphdl_serial_dispatch);c.eval(commit);d.eval(commit);e.eval(commit);f.eval(commit);g.eval(commit);assert(same(a,b)&&same(a,c)&&same(a,d)&&same(a,e)&&same(a,f)&&same(a,g));serial|=b.__cpphdl_serial_dispatch;parallel|=!b.__cpphdl_serial_dispatch;}
  }
  assert(serial&&parallel);
- auto copied=b;auto copied_wide=e;auto reference=a;
- for(unsigned i=0;i<256;++i){inputs(copied,i,7919*i);inputs(copied_wide,i,7919*i);inputs(reference,i,7919*i);copied.step();copied_wide.step();reference.step();assert(same(reference,copied)&&same(reference,copied_wide));}
- std::puts("PASS native chunk memoization: 12288 phases, six/one lanes, wide/short keys, adaptive serial/parallel dispatch, both edges, reset, ROM, copied state and rejection checks");
+ auto copied=b;auto copied_wide=e;auto copied_delta=f;auto copied_delta_one=g;auto reference=a;
+ for(unsigned i=0;i<256;++i){inputs(copied,i,7919*i);inputs(copied_wide,i,7919*i);inputs(copied_delta,i,7919*i);inputs(copied_delta_one,i,7919*i);inputs(reference,i,7919*i);copied.step();copied_wide.step();copied_delta.step();copied_delta_one.step();reference.step();assert(same(reference,copied)&&same(reference,copied_wide)&&same(reference,copied_delta)&&same(reference,copied_delta_one));}
+ std::puts("PASS native chunk memoization: 12288 phases, six/one lanes, wide/short keys, exact delta invalidation, adaptive serial/parallel dispatch, both edges, reset, ROM, copied state and rejection checks");
 }
 ''')
 run([a.cxx,'-std=c++23','-O1','-pthread','-fsanitize=undefined','-fno-sanitize-recover=all',

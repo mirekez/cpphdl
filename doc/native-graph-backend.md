@@ -2010,3 +2010,44 @@ is retained but not registered as a passing test. No production code was
 modified. Full model emission and simulation remain blocked, so there is no
 new cycle/output equivalence or runtime comparison. Owned temporary artifacts
 (about 255 MiB at the end) were removed after preserving this evidence.
+
+### Output settling, dirty chunks and packed broadcasts
+
+Chunked native evaluation now distinguishes output settling (`eval(false)`) from
+preparing and committing register updates (`eval(true)`). Output settling calls
+chunks on output cones and combinational memory-validation cones. Ordered host
+effects retain the full schedule. This changes simulator work, not clock edges,
+register equations or memory transactions.
+
+The eighth `Graph::emit` argument, `memoizeDeltas`, enables exact changed-bit
+invalidation when chunk memoization is enabled. It is optional and accepts pure
+logic or immutable ROM. Roots are sampled before lane dispatch; changed exported
+intermediate bits invalidate downstream chunks in the same private lane. Pending
+invalidations survive output-only phases. Model copies include this cache state.
+Mutable RAM and callbacks retain their existing non-memoized evaluation rules.
+`NativeMemoizationChecks.py` and `NativeSettleChecks.py` cover both clock phases,
+reset, copies, held inputs, wide inputs, ROM and memory validation.
+
+Repeated copies of one bit in an assembled word use a masked multiplication
+instead of a long sequence of shifted ORs. `NativeBroadcastChecks.py` checks
+full and partial word broadcasts, high input bits, alternating gathers and
+register enables against a scalar oracle.
+
+`tools/cpphdl_native_compiler.py` checks a small masked-gather counterexample
+before compiling large native evaluators. The local Clang 21.1.3 x86 toolchain
+miscompiled this expression at both `-O1` and `-O2`; GCC and unoptimized Clang
+agree on its result. The first failing optimization-bisection stage was x86
+DAG instruction selection. With that compiler, the checker retries using
+`-mllvm -fast-isel=true` and accepts it only after the probe passes. Other
+incorrect compiler configurations are rejected. The returned flags must be
+used to compile the evaluator; a passed probe alone does not test a graph.
+A separate linker can be supplied for compiler-only toolchains.
+
+```sh
+python3 tools/cpphdl_native_compiler.py --cxx /usr/bin/g++ \
+  --work /large/work/native-compiler-check
+```
+
+The Llama project's native gate-library builder records the probe, effective
+compiler flags and mapped-gate comparison. These changes postdate the published
+cross-design benchmark matrix; that matrix is not a measurement of this emitter.

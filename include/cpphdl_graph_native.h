@@ -229,11 +229,12 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
 }
 
 inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned threads, bool hostOverlap,
-                        bool balanceLanes, bool memoizeChunks, bool memoizeNextWords) {
+                        bool balanceLanes, bool memoizeChunks, bool memoizeNextWords, bool memoizeDeltas) {
         if (!threads || threads > 256) throw std::runtime_error("native graph threads must be between 1 and 256");
         if (threads > 1 && !chunkSize) chunkSize = 512;
         if (memoizeChunks && !chunkSize) throw std::runtime_error("native chunk memoization requires chunking");
         if (memoizeNextWords && !memoizeChunks) throw std::runtime_error("native next-word memoization requires chunk memoization");
+        if (memoizeDeltas && !memoizeChunks) throw std::runtime_error("native delta memoization requires chunk memoization");
         validateClocks();
         const bool hostEffects = std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.hostEffect(); });
         if (memoizeChunks && (hostEffects || std::any_of(memories.begin(),memories.end(),
@@ -328,6 +329,35 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 }
             }
         }
+        // eval(false) publishes combinational outputs without preparing the
+        // next register bank. Chunk functions cannot be removed by the host
+        // compiler merely because their stored results are unused this phase.
+        // Retain every chunk on an observable cone, including combinational
+        // memory range checks, and defer next-state-only chunks until commit.
+        // Ordered host effects keep their existing full schedule.
+        std::set<size_t> settleNodes;
+        std::function<void(Bit)> markSettle = [&](Bit raw) {
+            auto bit = resolve(raw);
+            if (bit < 2) return;
+            auto index = owner(bit);
+            if (nodes[index].op == "input" || nodes[index].op == "state" ||
+                !settleNodes.insert(index).second) return;
+            for (const auto* value : {&nodes[index].left, &nodes[index].right, &nodes[index].select})
+                for (auto source : *value) markSettle(source);
+        };
+        if (chunkSize && !hostEffects) {
+            for (const auto& port : ports) if (!port.input)
+                for (auto bit : port.bits) markSettle(bit);
+            for (const auto& access : memoryAccesses) if (!access.transaction) {
+                for (auto bit : access.enabled) markSettle(bit);
+                for (auto bit : access.address) markSettle(bit);
+            }
+        }
+        std::set<size_t> settleChunks;
+        for (auto node : settleNodes) if (chunkOf[node] >= 0)
+            settleChunks.insert(size_t(chunkOf[node]));
+        if (hostEffects) for (const auto& chunks : taskChunks)
+            settleChunks.insert(chunks.begin(), chunks.end());
         std::map<int64_t,std::map<size_t,uint64_t>> chunkInputs;
         const bool adaptiveDispatch = memoizeChunks && threads > 1 && !hostOverlap;
         std::map<int64_t,std::pair<size_t,size_t>> chunkWork;
@@ -342,6 +372,18 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     auto producer=owner(bit);
                     if(chunkOf[producer]!=chunkOf[index])chunkInputs[chunkOf[index]][producer]|=uint64_t(1)<<lane(bit);
                 }
+        std::map<size_t,std::map<size_t,uint64_t>> chunkConsumers;
+        if (memoizeDeltas) for (const auto& [chunk,inputs]:chunkInputs)
+            for (const auto& [producer,bits]:inputs) chunkConsumers[producer][size_t(chunk)] |= bits;
+        if(memoizeDeltas) {
+            std::map<size_t,size_t> owners;
+            for(size_t task=0;task<taskChunks.size();++task)
+                for(auto chunk:taskChunks[task])owners[chunk]=task;
+            for(const auto& [producer,consumers]:chunkConsumers) if(chunkOf[producer]>=0)
+                for(const auto& [chunk,bits]:consumers)
+                    if(owners.at(size_t(chunkOf[producer]))!=owners.at(chunk)||size_t(chunkOf[producer])>=chunk)
+                        throw std::runtime_error("native delta cache requires ordered private lane cones");
+        }
         // Capture live state before the parallel schedule narrows order to
         // combinational tasks. Read-only initialized state has no writer task.
         std::vector<bool> storedState(nodes.size());
@@ -366,6 +408,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         output << "#include <array>\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <stdexcept>\n#include <vector>\n"
                   "namespace cpphdl_native {\nstruct Model {\n";
         output << "static constexpr uint64_t __cpphdl_cached_next_words = " << cachedNextWords << ";\n";
+        output << "static constexpr uint64_t __cpphdl_settle_chunks = " << settleChunks.size() << ";\n";
+        output << "static constexpr bool __cpphdl_delta_memoization = " << (memoizeDeltas?"true":"false") << ";\n";
         for (size_t i = 0; i < clocks.size(); ++i)
             output << "bool " << clocks[i].name << " = false;\nbool __cpphdl_previous_clock_" << i << " = false;\n";
         // Memory depth belongs to runtime storage, never to the bit graph or
@@ -506,6 +550,18 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 if (bit < 2) { constants |= bit << offset; ++offset; continue; }
                 auto index = owner(bit); auto first = lane(bit);
                 unsigned count = 1;
+                while (offset + count < value.size() && value[offset+count] == bit) ++count;
+                if (count > 1) {
+                    // Packed Boolean graphs frequently broadcast an enable
+                    // or sign bit across a word. Keep that operation compact
+                    // instead of emitting up to 64 shifted copies of it.
+                    std::string term = names.count(index) ? names.at(index) : valueName(index);
+                    if (first) term = "(" + term + " >> " + std::to_string(first) + ")";
+                    term = "((" + term + " & 1ull) * " + std::to_string(mask(count)) + "ull)";
+                    if (offset) term = "(" + term + " << " + std::to_string(offset) + ")";
+                    if (!result.empty()) result += " | "; result += term; offset += count;
+                    continue;
+                }
                 while (offset + count < value.size() && value[offset+count] == bit+count && first+count < nodes[index].width) ++count;
                 std::string term = names.count(index) ? names.at(index) : valueName(index);
                 if (first) term = "(" + term + " >> " + std::to_string(first) + ")";
@@ -522,6 +578,56 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             auto current = clocks.at(clock).name;
             return "(" + (falling ? "!" + current + " && " + previous : current + " && !" + previous) + ")";
         };
+        // Each intermediate has consumers only in its own independent lane.
+        // Root snapshots are updated by the caller before dispatch. Workers
+        // propagate exact changed-bit masks forward inside their lane; pending
+        // invalidations survive output-only phases which skip some chunks.
+        auto emitInvalidation = [&](size_t producer,const std::string& delta) {
+            auto consumers=chunkConsumers.find(producer);
+            if (consumers==chunkConsumers.end()) return;
+            output << "if(" << delta << ") {\n";
+            for (const auto& [chunk,bits]:consumers->second) {
+                if(bits!=mask(nodes[producer].width))output << "if(" << delta << " & " << bits << "ull) ";
+                output << "__cpphdl_dirty[" << chunk << "].pending = true;\n";
+            }
+            output << "}\n";
+        };
+        if(memoizeDeltas) {
+            size_t count=0;
+            for(const auto& chunks:taskChunks)count+=chunks.size();
+            output << "struct alignas(64) __cpphdl_Dirty { bool pending = true; };\n"
+                   << "std::array<__cpphdl_Dirty," << count << "> __cpphdl_dirty{};\n";
+            std::vector<size_t> roots;
+            for(const auto& [producer,consumers]:chunkConsumers)
+                if(nodes[producer].op=="input"||nodes[producer].op=="state")roots.push_back(producer);
+            output << "std::array<uint64_t," << roots.size() << "> __cpphdl_root_keys{};\n";
+            size_t groups=(roots.size()+127)/128;
+            for(size_t group=0;group<groups;++group) {
+                output << "[[gnu::noinline]] void __cpphdl_roots_" << group << "() {\n";
+                for(size_t i=group*128;i<std::min(roots.size(),(group+1)*128);++i) {
+                    auto producer=roots[i];const auto source=names.at(producer);
+                    output << "const uint64_t value" << i << " = " << source << ";\n"
+                           << "const uint64_t delta" << i << " = __cpphdl_root_keys[" << i << "] ^ value" << i << ";\n"
+                           << "__cpphdl_root_keys[" << i << "] = value" << i << ";\n";
+                    emitInvalidation(producer,"delta"+std::to_string(i));
+                }
+                output << "}\n";
+            }
+            output << "void __cpphdl_mark_roots() {\n";
+            for(size_t group=0;group<groups;++group)output << "__cpphdl_roots_" << group << "();\n";
+            output << "}\n";
+        }
+        auto deltaTracked = [&](size_t index) {return memoizeDeltas&&chunkConsumers.count(index);};
+        auto rememberPrevious = [&](size_t index) {
+            if(deltaTracked(index))output << "const uint64_t __cpphdl_before_" << index << " = " << valueName(index) << ";\n";
+        };
+        auto publishDelta = [&](size_t index) {
+            if(deltaTracked(index)) {
+                const auto delta="__cpphdl_delta_"+std::to_string(index);
+                output << "const uint64_t " << delta << " = __cpphdl_before_" << index << " ^ " << valueName(index) << ";\n";
+                emitInvalidation(index,delta);
+            }
+        };
         // Output settling does not need next-state logic. Make the two phases
         // compile-time distinct so the host compiler can remove that work,
         // rather than testing a runtime flag after computing both schedules.
@@ -534,13 +640,18 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             if (chunkSize && chunkOf[index] != previousChunk) {
                 if (chunks) output << "}\n";
                 if(memoizeChunks) {
-                    output << "bool __cpphdl_cache_valid_" << chunks << " = false;\n"
-                           << "std::array<uint64_t," << chunkInputs[chunkOf[index]].size()
-                           << "> __cpphdl_cache_" << chunks << "{};\n";
+                    output << "bool __cpphdl_cache_valid_" << chunks << " = false;\n";
+                    if(!memoizeDeltas)output << "std::array<uint64_t," << chunkInputs[chunkOf[index]].size()
+                                            << "> __cpphdl_cache_" << chunks << "{};\n";
                 }
                 if (hostEffects) output << "template<bool Commit> ";
                 output << "[[gnu::noinline]] void __cpphdl_chunk_" << chunks << "() {\n";
                 if(memoizeChunks) {
+                    if(memoizeDeltas) {
+                        output << "if(!__cpphdl_dirty[" << chunkOf[index] << "].pending) return;\n"
+                               << "__cpphdl_dirty[" << chunkOf[index] << "].pending = false;\n"
+                               << "__cpphdl_cache_valid_" << chunks << " = true;\n";
+                    } else {
                     std::vector<std::string> sources;
                     for(auto [producer,bits]:chunkInputs[chunkOf[index]]) {
                         auto source=names.count(producer)?names.at(producer):valueName(producer);
@@ -566,6 +677,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                         for(size_t i=0;i<sources.size();++i)
                             output << "__cpphdl_cache_" << chunks << '[' << i << "] = " << sources[i] << ";\n";
                     }
+                    }
                     if (adaptiveDispatch) {
                         const auto [task,count]=chunkWork.at(chunkOf[index]);
                         output << "__cpphdl_activity[" << task << "].nodes += " << count << ";\n";
@@ -574,6 +686,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 ++chunks;
                 previousChunk = chunkOf[index];
             }
+            rememberPrevious(index);
             if (node.op == "memory_read") {
                 auto memory = number(node.right), word = number(node.select);
                 if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||
@@ -582,6 +695,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 auto address = assembly(node.left);
                 output << declaration(index) << valueName(index) << " = " << address << " < " << memories[*memory].depth
                        << "ull ? memory" << *memory << '[' << address << "][" << *word << "] : 0ull;\n";
+                publishDelta(index);
                 continue;
             }
             if (node.op == "host_debug_tick") {
@@ -699,6 +813,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 if (op == "div" || op == "mod") expr = right + " ? (" + expr + ") : 0ull";
             }
             output << declaration(index) << valueName(index) << " = (" << expr << ") & " << mask(node.width) << "ull;\n";
+            publishDelta(index);
         }
         if (chunkSize) {
             if (chunks) output << "}\n";
@@ -766,7 +881,10 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                           "auto& model = *static_cast<Model*>(target);\nswitch(lane) {\n";
                 for (unsigned lane = 0; lane < threads; ++lane) {
                     output << "case " << lane << ":\n";
-                    for (auto chunk : taskChunks[lane]) output << "model.__cpphdl_chunk_" << chunk << "();\n";
+                    for (auto chunk : taskChunks[lane]) {
+                        if (!hostEffects && !settleChunks.count(chunk)) output << "if constexpr(Commit) ";
+                        output << "model.__cpphdl_chunk_" << chunk << "();\n";
+                    }
                     output << "model.__cpphdl_sinks_" << lane << "<Commit>();\nbreak;\n";
                 }
                 output << "}\n}\nvoid __cpphdl_publish(bool commit = true) {\nunsigned errors = 0;\n";
@@ -795,6 +913,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 for (size_t i = 0; i < clocks.size(); ++i)
                     output << "__cpphdl_previous_clock_" << i << " = " << clocks[i].name << ";\n";
                 output << "}\ntemplate<bool Commit> [[gnu::noinline]] void evaluate() {\n";
+                if(memoizeDeltas)output << "__cpphdl_mark_roots();\n";
                 if (adaptiveDispatch)
                     output << "for(auto& activity:__cpphdl_activity) activity.nodes = 0;\n"
                               "if(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Serial ||\n"
@@ -818,6 +937,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     output << "static constexpr bool __cpphdl_host_overlap = true;\n"
                               "template<class Host> void evaluate_with_host(Host&& host) {\n"
                               "bool published = false;\ntry {\n"
+                           << (memoizeDeltas?"__cpphdl_mark_roots();\n":"") <<
                               "__cpphdl_threads->run(this, &Model::__cpphdl_lane<true>, __cpphdl_thread_count, [&] {\n"
                               "__cpphdl_publish();\npublished = true;\nhost();\n});\n"
                               "} catch(...) { if(published) __cpphdl_commit(); throw; }\n"
@@ -829,8 +949,11 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 return;
             }
             output << "template<bool Commit> [[gnu::noinline]] void evaluate() {\n";
-            for (unsigned index = 0; index < chunks; ++index)
+            if(memoizeDeltas)output << "__cpphdl_mark_roots();\n";
+            for (unsigned index = 0; index < chunks; ++index) {
+                if (!hostEffects && !settleChunks.count(index)) output << "if constexpr(Commit) ";
                 output << "__cpphdl_chunk_" << index << (hostEffects ? "<Commit>" : "") << "();\n";
+            }
         }
         for (const auto& node : nodes) if (node.validation())
             output << "if(Commit && " << assembly(node.left) << ") throw std::runtime_error("
