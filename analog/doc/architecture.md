@@ -92,7 +92,7 @@ Mixed-signal synthesis remains outside this native co-simulation implementation.
    `_assign()` once; parent declarations bind child ports and elaborate child ICs.
    Purpose declarations register terminal relations or bit computations.
 3. Freeze topology, canonicalize wire identities and validate digital writers/dependencies.
-4. Assemble one voltage/KCL unknown per participating nonreference node, source/capacitor branch
+4. Assemble one voltage/KCL unknown per participating nonreference node, source/capacitor/inductor branch
    currents and explicit charge-storage state. Analog feedback is not topologically evaluated.
 5. Integrate and solve the combined network while coordinating sampled conversions,
    source steps and simultaneous register events.
@@ -111,8 +111,11 @@ states have explicit initialization. Known stimulus events preserve
 continuous state while algebraic variables settle; clocked bit next states are
 computed together from the precommit snapshot. Unknown thresholds remain unknown.
 
-The solver uses finite-difference Jacobians, scaled pivot elimination and damped
-Newton. It checks rank even for a zero residual, diagnosing floating nets instead
+The solver supports finite-difference and optional analytic piecewise Jacobians,
+scaled pivot elimination and damped Newton. Capacitor evolution uses the equivalent
+integral-voltage residual to avoid amplifying roundoff by C/dt for large DC blocks.
+Optional `minimum_step` bisection retries failed Newton steps; it does not estimate
+local integration error. The default retains fixed-step failure behavior. It checks rank even for a zero residual, diagnosing floating nets instead
 of treating their zero-valued initial guess as a uniquely determined solution.
 Independent sources and capacitor charges seed Newton iteration; resistor
 connections propagate tentative voltage guesses without imposing extra constraints.
@@ -130,7 +133,7 @@ An accuracy certificate needs observations, operating envelope, metric/bound,
 reference data/model, initial-state mapping and timing alignment. No class name,
 C++ subtype or number of equations proves precision.
 
-A production backend needs sparse/analytic Jacobians, adaptive DAE integration,
+A production backend needs sparse matrices, adaptive DAE integration,
 consistent-initialization analysis, root-localized events, validated foundry/device
 models, supply energy accounting, noise and thermal coupling. Shared environmental
 and technology contexts should supply defaults while retaining important local
@@ -141,8 +144,10 @@ behavior through its state law; physically replacing a model requires charge,
 flux, phase and digital-state transfer rather than copying just an output voltage.
 Hard real-time wall-clock execution needs its own timing and error contract.
 
-Formal assume/guarantee composition, all-envelope refinement, PLL/oscillator/memory
-libraries and technology synthesis are outside the implemented scope.
+Formal assume/guarantee composition, all-envelope refinement and technology synthesis
+remain outside the implemented scope. Basic PLL/oscillator examples and the
+[10G SFP+ prototype](../10G/README.md) exercise the existing coupled solver; they
+are selected-model experiments, not validated silicon libraries.
 
 ## Completed-trajectory checks
 

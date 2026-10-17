@@ -39,6 +39,8 @@ inline std::vector<double> linear_solve(std::vector<std::vector<double>> a, std:
         std::swap(a[k], a[pivot]);
         std::swap(b[k], b[pivot]);
         for (std::size_t i = k + 1; i < n; ++i) {
+            if (a[i][k] == 0)
+                continue; // Circuit matrices have many exact zeros; avoid arithmetic on an unchanged row.
             double factor = a[i][k] / a[k][k];
             for (std::size_t j = k + 1; j < n; ++j)
                 a[i][j] -= factor * a[k][j];
@@ -70,6 +72,8 @@ inline void simulation::compile() {
         use(e.a);
         switch (e.kind) {
         case law::resistor:
+        case law::inductor:
+        case law::diode:
         case law::capacitor:
         case law::sim_voltage_source:
             use(e.b);
@@ -79,6 +83,7 @@ inline void simulation::compile() {
             use(e.b);
             use(e.gate);
             break;
+        case law::transconductor:
         case law::sim_controlled_resistor:
             use(e.b);
             use(e.gate);
@@ -113,7 +118,7 @@ inline void simulation::compile() {
         }
     unknowns_ = nodes_.size();
     for (auto& e : elements)
-        if (e.kind == law::sim_voltage_source || e.kind == law::capacitor)
+        if (e.kind == law::sim_voltage_source || e.kind == law::capacitor || e.kind == law::inductor)
             e.auxiliary = unknowns_++;
     auto needs = [&](std::size_t n) {
         if (!digital.at(n).writer)
@@ -199,9 +204,8 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
             stamp(e.a, e.b, (v(e.a) - v(e.b)) / e.r);
             break;
         case law::sim_voltage_source: {
-            bool after = e.stepped && (right ? time >= e.at : time > e.at);
             stamp(e.a, e.b, x[e.auxiliary]);
-            extra.push_back(v(e.a) - v(e.b) - (after ? e.next : e.value));
+            extra.push_back(v(e.a) - v(e.b) - source_value(e, time, right));
             scales.push_back(1);
             break;
         }
@@ -211,9 +215,30 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
                 extra.push_back(v(e.a) - v(e.b) - (initial ? e.initial : previous(e.a) - previous(e.b)));
                 scales.push_back(1);
             } else {
-                extra.push_back(x[e.auxiliary] - e.c * (v(e.a) - v(e.b) - previous(e.a) + previous(e.b)) / dt);
-                scales.push_back(1e-3);
+                // Integral voltage form avoids C/dt amplification of roundoff for large DC-blocking caps.
+                extra.push_back(v(e.a) - v(e.b) - previous(e.a) + previous(e.b) - dt / e.c * x[e.auxiliary]);
+                // Preserve the usual current accuracy, with a voltage floor above double-precision noise.
+                scales.push_back(std::max(1e-6, dt / e.c * 1e-3));
             }
+            break;
+        }
+        case law::inductor: {
+            stamp(e.a, e.b, x[e.auxiliary]);
+            if (hold) {
+                extra.push_back(x[e.auxiliary] - (initial ? e.initial : old[e.auxiliary]));
+                scales.push_back(1e-3);
+            } else {
+                extra.push_back(v(e.a) - v(e.b) - e.l * (x[e.auxiliary] - old[e.auxiliary]) / dt);
+                scales.push_back(1);
+            }
+            break;
+        }
+        case law::transconductor:
+            stamp(e.a, e.b, -e.gm * (v(e.gate) - v(e.reference)));
+            break;
+        case law::diode: {
+            double voltage = v(e.a) - v(e.b);
+            stamp(e.a, e.b, std::max(0.0, voltage - e.threshold) / e.r + voltage / e.value);
             break;
         }
         case law::nmos:
@@ -231,7 +256,7 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
         case law::sim_controlled_resistor: {
             double level = std::clamp((v(e.gate) - v(e.reference) - e.low) / (e.high - e.low), 0.0, 1.0);
             double conductance = (e.falling ? 1 - level : level) / e.r;
-            stamp(e.a, e.b, conductance * (v(e.a) - v(e.b)));
+            stamp(e.a, e.buffered ? e.reference : e.b, conductance * (v(e.a) - v(e.b)));
             break;
         }
         }
@@ -239,10 +264,134 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
     return {std::move(f), std::move(scales)};
 }
 
+// Exact piecewise derivatives avoid finite-difference steps crossing narrow switch/diode boundaries.
+inline std::vector<std::vector<double>> simulation::jacobian(const std::vector<double>& x, double dt, bool hold) const {
+    std::vector<std::vector<double>> j(x.size(), std::vector<double>(x.size()));
+    auto v = [&](std::size_t node) { return node_voltage(x, node); };
+    auto row = [&](std::size_t equation, std::size_t node, double value) {
+        if (root(node) != 0)
+            j[equation][index_[root(node)]] += value;
+    };
+    auto derivative = [&](std::size_t a, std::size_t b, std::size_t control, double value) {
+        if (root(a) != 0)
+            row(index_[root(a)], control, value);
+        if (root(b) != 0)
+            row(index_[root(b)], control, -value);
+    };
+    auto pair = [&](std::size_t a, std::size_t b, std::size_t plus, std::size_t minus, double g) {
+        derivative(a, b, plus, g);
+        derivative(a, b, minus, -g);
+    };
+    auto branch_state = [&](const element& e) {
+        if (root(e.a) != 0)
+            j[index_[root(e.a)]][e.auxiliary] += 1;
+        if (root(e.b) != 0)
+            j[index_[root(e.b)]][e.auxiliary] -= 1;
+    };
+    for (const auto& e : elements) {
+        switch (e.kind) {
+        case law::resistor:
+            pair(e.a, e.b, e.a, e.b, 1 / e.r);
+            break;
+        case law::sim_voltage_source:
+            branch_state(e);
+            row(e.auxiliary, e.a, 1);
+            row(e.auxiliary, e.b, -1);
+            break;
+        case law::capacitor:
+            branch_state(e);
+            if (hold) {
+                row(e.auxiliary, e.a, 1);
+                row(e.auxiliary, e.b, -1);
+            } else {
+                j[e.auxiliary][e.auxiliary] = -dt / e.c;
+                row(e.auxiliary, e.a, 1);
+                row(e.auxiliary, e.b, -1);
+            }
+            break;
+        case law::inductor:
+            branch_state(e);
+            if (hold)
+                j[e.auxiliary][e.auxiliary] = 1;
+            else {
+                row(e.auxiliary, e.a, 1);
+                row(e.auxiliary, e.b, -1);
+                j[e.auxiliary][e.auxiliary] = -e.l / dt;
+            }
+            break;
+        case law::transconductor:
+            pair(e.a, e.b, e.gate, e.reference, -e.gm);
+            break;
+        case law::diode:
+            pair(e.a, e.b, e.a, e.b, 1 / e.value + (v(e.a) - v(e.b) > e.threshold ? 1 / e.r : 0));
+            break;
+        case law::sim_driver: {
+            auto rail = *digital[e.bit].value ? e.vdd : e.vss;
+            pair(e.a, rail, e.a, rail, 1 / e.r);
+            break;
+        }
+        case law::sim_controlled_resistor: {
+            double raw = (v(e.gate) - v(e.reference) - e.low) / (e.high - e.low);
+            double level = std::clamp(raw, 0.0, 1.0);
+            double g = (e.falling ? 1 - level : level) / e.r;
+            auto return_node = e.buffered ? e.reference : e.b;
+            pair(e.a, return_node, e.a, e.b, g);
+            if (raw > 0 && raw < 1) {
+                double slope = (e.falling ? -1 : 1) / (e.r * (e.high - e.low));
+                pair(e.a, return_node, e.gate, e.reference, slope * (v(e.a) - v(e.b)));
+            }
+            break;
+        }
+        case law::nmos:
+        case law::pmos: {
+            double polarity = e.kind == law::pmos ? -1 : 1;
+            double gate = polarity * v(e.gate), drain = polarity * v(e.a), source = polarity * v(e.b);
+            bool reverse = drain < source;
+            if (reverse)
+                std::swap(drain, source);
+            double overdrive = gate - source - e.threshold, ds = drain - source;
+            double gm = 0, gds = 0;
+            if (overdrive > 0) {
+                gm = e.beta * (ds < overdrive ? ds : overdrive);
+                gds = ds < overdrive ? e.beta * (overdrive - ds) : 0;
+            }
+            derivative(e.a, e.b, e.gate, reverse ? -gm : gm);
+            derivative(e.a, e.b, e.a, reverse ? gm + gds : gds);
+            derivative(e.a, e.b, e.b, reverse ? -gds : -gm - gds);
+            break;
+        }
+        }
+    }
+    return j;
+}
+
 inline std::vector<double> simulation::solve(std::vector<double> x, const std::vector<double>& old, double dt,
                                              double time, bool hold, bool initial, bool right) {
     if (x.empty())
         return x;
+    // Independent forcing is already known. Seed its exact voltages before Newton so a
+    // clock-controlled conductance is linearized at the new clock, not at an obsolete off state.
+    std::map<std::size_t, double> forcing{{0, 0}};
+    for (std::size_t pass = 0; pass <= elements.size(); ++pass) {
+        auto count = forcing.size();
+        for (const auto& e : elements) {
+            // Preserve the joint Newton update for ideal discontinuous source steps.
+            // Continuous PWL forcing can safely be seeded at its new value before switch linearization.
+            if (e.kind != law::sim_voltage_source || e.stepped)
+                continue;
+            auto a = root(e.a), b = root(e.b);
+            double value = source_value(e, time, right);
+            if (forcing.contains(b) && !forcing.contains(a))
+                forcing[a] = forcing.at(b) + value;
+            else if (forcing.contains(a) && !forcing.contains(b))
+                forcing[b] = forcing.at(a) - value;
+        }
+        if (forcing.size() == count)
+            break;
+    }
+    for (auto n : nodes_)
+        if (forcing.contains(n))
+            x[index_[n]] = forcing.at(n);
     auto norm = [](const auto& f, const auto& scales) {
         double n = 0;
         for (std::size_t i = 0; i < f.size(); ++i) {
@@ -256,14 +405,22 @@ inline std::vector<double> simulation::solve(std::vector<double> x, const std::v
         ++newton_iterations;
         auto [f, scales] = residual(x, old, dt, time, hold, initial, right);
         double before = norm(f, scales);
-        std::vector<std::vector<double>> jac(x.size(), std::vector<double>(x.size()));
-        for (std::size_t j = 0; j < x.size(); ++j) {
-            auto y = x;
-            double h = 1e-6 * std::max(1.0, std::abs(x[j]));
-            y[j] += h;
-            auto [shifted, unused] = residual(y, old, dt, time, hold, initial, right);
-            for (std::size_t i = 0; i < x.size(); ++i)
-                jac[i][j] = (shifted[i] - f[i]) / h / scales[i];
+        std::vector<std::vector<double>> jac;
+        if (analytic_jacobian) {
+            jac = jacobian(x, dt, hold);
+            for (std::size_t i = 0; i < jac.size(); ++i)
+                for (auto& value : jac[i])
+                    value /= scales[i];
+        } else {
+            jac.assign(x.size(), std::vector<double>(x.size()));
+            for (std::size_t j = 0; j < x.size(); ++j) {
+                auto y = x;
+                double h = 1e-6 * std::max(1.0, std::abs(x[j]));
+                y[j] += h;
+                auto [shifted, unused] = residual(y, old, dt, time, hold, initial, right);
+                for (std::size_t i = 0; i < x.size(); ++i)
+                    jac[i][j] = (shifted[i] - f[i]) / h / scales[i];
+            }
         }
         std::vector<double> rhs(f.size());
         for (std::size_t i = 0; i < f.size(); ++i)
@@ -385,6 +542,9 @@ inline void simulation::record(double time) {
 inline void simulation::run(duration stop, duration step) {
     positive(stop.value, "stop time");
     positive(step.value, "step time");
+    finite(minimum_step.value, "minimum step time");
+    if (minimum_step.value < 0)
+        throw diagnostic("E_VALUE", "minimum step time must be nonnegative");
     if (step.value > stop.value || stop.value / step.value > 100000)
         throw diagnostic("E_VALUE", "invalid step or more than 100000 regular steps");
     compile();
@@ -400,7 +560,7 @@ inline void simulation::run(duration stop, duration step) {
         for (auto& e : elements) {
             if (e.kind != law::sim_voltage_source && e.kind != law::capacitor)
                 continue;
-            double value = e.kind == law::capacitor ? e.initial : e.stepped && e.at == 0 ? e.next : e.value;
+            double value = e.kind == law::capacitor ? e.initial : source_value(e, 0);
             auto a = root(e.a), b = root(e.b);
             if (known.contains(b) && !known.contains(a))
                 known[a] = known[b] + value;
@@ -439,9 +599,13 @@ inline void simulation::run(duration stop, duration step) {
     std::vector<std::pair<double, int>> schedule{{0, 2}, {stop.value, 2}};
     for (std::size_t i = 1; i <= std::size_t(std::floor(stop.value / step.value)); ++i)
         schedule.emplace_back(i * step.value, 0);
-    for (auto& e : elements)
+    for (auto& e : elements) {
         if (e.stepped && e.at <= stop.value)
             schedule.emplace_back(e.at, 1);
+        for (const auto& point : e.waveform)
+            if (point.first <= stop.value)
+                schedule.emplace_back(point.first, 0);
+    }
     for (auto& input : inputs) {
         if (input.kind == digital_stimulus::step && input.at <= stop.value)
             schedule.emplace_back(input.at, 1);
@@ -465,8 +629,23 @@ inline void simulation::run(duration stop, duration step) {
     for (std::size_t i = 1; i < times.size(); ++i) {
         double time = times[i].first;
         auto previous = solution_;
+        std::vector<bit_value> previous_bits;
+        if (minimum_step.value > 0)
+            for (const auto& bit : digital)
+                previous_bits.push_back(bit.value);
         stimuli(time, false);
-        solution_ = settle(solution_, previous, time - previous_time, time, false, false, false);
+        try {
+            solution_ = settle(solution_, previous, time - previous_time, time, false, false, false);
+        } catch (const diagnostic& error) {
+            if (error.code != "E_NONCONVERGENCE" || minimum_step.value <= 0 ||
+                time - previous_time <= 2 * minimum_step.value || times.size() >= 200000)
+                throw;
+            for (std::size_t bit = 0; bit < previous_bits.size(); ++bit)
+                digital[bit].value = previous_bits[bit];
+            times.insert(times.begin() + i, {(previous_time + time) / 2, 0});
+            --i;
+            continue;
+        }
         auto held = solution_;
         stimuli(time, true);
         solution_ = settle(solution_, held, 0, time, true);
@@ -569,6 +748,12 @@ inline const char* law_name(law kind) {
         return "sim_driver";
     case law::sim_controlled_resistor:
         return "sim_controlled_resistor";
+    case law::inductor:
+        return "inductor";
+    case law::transconductor:
+        return "transconductor";
+    case law::diode:
+        return "diode";
     }
     return "unsupported";
 }
@@ -677,14 +862,20 @@ inline void simulation::write(const std::filesystem::path& destination) const {
         equations << "IC " << component.id << ": " << component.name << '\n';
     for (std::size_t i = 0; i < elements.size(); ++i) {
         auto& e = elements[i];
-        equations << "device " << i << ": " << law_name(e.kind) << " a=n" << root(e.a) << " b=n" << root(e.b)
-                  << " gate=n" << root(e.gate) << " Vdd=n" << root(e.vdd) << " Vss=n" << root(e.vss) << " bit=d"
-                  << e.bit << " R=" << e.r << " C=" << e.c << " beta=" << e.beta << " threshold=" << e.threshold
-                  << " initial=" << e.initial << " source=" << e.value << " step_at=" << e.at << " next=" << e.next
-                  << " stepped=" << e.stepped;
+        equations << "device " << i << ": " << (e.buffered ? "sim_buffered_track" : law_name(e.kind)) << " a=n"
+                  << root(e.a) << " b=n" << root(e.b) << " gate=n" << root(e.gate) << " Vdd=n" << root(e.vdd)
+                  << " Vss=n" << root(e.vss) << " bit=d" << e.bit << " R=" << e.r << " C=" << e.c << " beta=" << e.beta
+                  << " threshold=" << e.threshold << " initial=" << e.initial << " source=" << e.value
+                  << " step_at=" << e.at << " next=" << e.next << " stepped=" << e.stepped;
         if (e.kind == law::sim_controlled_resistor)
             equations << " control_reference=n" << root(e.reference) << " low=" << e.low << " high=" << e.high
                       << " response=" << (e.falling ? "falling" : "rising");
+        if (e.kind == law::inductor)
+            equations << " L=" << e.l << " initial_current=" << e.initial;
+        if (e.kind == law::transconductor)
+            equations << " gm=" << e.gm << " control_plus=n" << root(e.gate) << " control_minus=n" << root(e.reference);
+        for (const auto& point : e.waveform)
+            equations << " pwl=(" << point.first << ',' << point.second << ')';
         if (e.component != no_component)
             equations << " IC=" << e.component;
         equations << "; origin " << e.file << ':' << e.line << '\n';
@@ -704,7 +895,7 @@ inline void simulation::write(const std::filesystem::path& destination) const {
             branch(e.a, e.vdd, name + "_vdd");
             branch(e.a, e.vss, name + "_vss");
         } else
-            branch(e.a, e.b, name);
+            branch(e.a, e.buffered ? e.reference : e.b, name);
     }
     for (auto n : nodes_) {
         equations << "KCL n" << n << ": ";
@@ -714,6 +905,10 @@ inline void simulation::write(const std::filesystem::path& destination) const {
     }
     equations << "R: I(a->b)=(Va-Vb)/R\nC: I(a->b)=C*d(Va-Vb)/dt\n"
               << "sim_voltage_source: Va-Vb=waveform(t), I(a->b) is an auxiliary unknown\n"
+              << "L: Va-Vb=L*dI(a->b)/dt; initial state is branch current\n"
+              << "transconductor: I(a->b)=-gm*(Vcontrol_plus-Vcontrol_minus)\n"
+              << "diode: I(a->b)=max(Va-Vb-drop,0)/Ron+(Va-Vb)/Rleak\n"
+              << "sim_buffered_track: I(a->reference)=G(clock)*(Va-Vinput); input current=0\n"
               << "MOS: terminal-current square-law relation, with symmetric drain/source handling\n"
               << "sim_driver: I_vdd=bit*(Va-Vdd)/R; I_vss=(1-bit)*(Va-Vss)/R\n"
               << "sim_controlled_resistor: f=clip((Vcontrol-Vreference-low)/(high-low),0,1); "

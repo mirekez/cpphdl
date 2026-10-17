@@ -1,0 +1,20 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module sim_mux2(Vdd, Vss, A, B, SELECT, Y);
+    inout Vdd, Vss, A, B, SELECT, Y;
+    electrical Vdd, Vss, A, B, SELECT, Y;
+
+    analog begin
+        // device 0, IC sim_mux2, analog/basic/sim_clocked_storage.hpp:63
+        I(Y, Vss) <+ (1.0 - min(1.0, max(0.0, (V(SELECT, Vss) - 0.25) / 0.20000000000000001))) * V(Y, A) / 25.0; // sim_buffered_track
+        // device 1, IC sim_mux2, analog/basic/sim_clocked_storage.hpp:64
+        I(Y, Vss) <+ min(1.0, max(0.0, (V(SELECT, Vss) - 0.75) / 0.19999999999999996)) * V(Y, B) / 25.0; // sim_buffered_track
+        // device 2, IC sim_mux2, analog/basic/sim_clocked_storage.hpp:65
+        I(Y, Vss) <+ 2.0000000000000002e-15 * ddt(V(Y, Vss)); // Bench initial voltage = 0.0 V.
+        // device 3, IC sim_mux2, analog/basic/sim_clocked_storage.hpp:66
+        I(Y, Vss) <+ V(Y, Vss) / 1000000000.0;
+    end
+endmodule

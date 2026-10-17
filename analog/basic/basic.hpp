@@ -11,3 +11,7 @@
 #include "ldo.hpp"
 #include "pll.hpp"
 #include "agc.hpp"
+#include "gm_stage.hpp"
+#include "sim_clocked_storage.hpp"
+#include "bridge_rectifier.hpp"
+#include "sim_xor.hpp"

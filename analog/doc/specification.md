@@ -133,6 +133,8 @@ unprefixed aliases for the following simulation-only APIs:
 | Primitive | Simulation behavior supplied |
 |---|---|
 | `sim_voltage_source` | Ideal constant or stepped voltage stimulus with unrestricted drive |
+| `sim_buffered_track` | Ideal unloaded input buffer and finite clock-controlled output drive; storage must be explicit |
+| `sim_pwl_voltage_source` | Prescribed continuous piecewise-linear bench voltage waveform |
 | `sim_controlled_resistor` | Prescribed conductance transfer with ideal, unloaded control terminals |
 | `sim_driver` | Bit-controlled resistance to actual rails, without an output-stage circuit |
 | `sim_add`, `sim_invert` | Direct computation of managed bit values, without gate topology |
@@ -160,6 +162,10 @@ on the LHS. The core contracts are:
 | `nmos(A, Y)` | Source/low-rail connection | Gate A, drain Y; pull Y toward the target at high A |
 | `resistor(IN, R)` | Other end of the resistor | One end IN; conduct according to voltage difference |
 | `sim_controlled_resistor(IN, CONTROL, REF, R, low, high, response)` | Other path terminal | Bidirectional conductance controlled by CONTROL relative to REF |
+| `inductor(REF, L, initial_current)` | Other branch terminal | Store branch current; V = L dI/dt |
+| `transconductor(REF, PLUS, MINUS, gm)` | Output terminal | I(output -> REF) = -gm V(PLUS, MINUS) |
+| `diode(CATHODE, Ron, drop, Rleak)` | Anode | Piecewise-linear forward path and explicit reverse leakage |
+| `sim_buffered_track(IN, CLK, REF, R, low, high, response)` | Buffered output | I(output -> REF) = G(CLK) V(output, IN); zero input current |
 | `capacitor(Vss, C, initial)` | Charge-storage node | Other end Vss; retain differential voltage state |
 | `sim_voltage_source(Vss, V)` | Source positive terminal | Negative/reference terminal Vss |
 | `sim_driver(bit, Vdd, Vss, R)` | Driven output | Bit selects finite resistance to an actual rail |

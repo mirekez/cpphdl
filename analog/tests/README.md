@@ -72,7 +72,10 @@ influence example deliberately fails its output requirement; that expected failu
 is a passing regression outcome. An unrelated execution error cannot count as
 that expected failure.
 
-The core suite has 31 tests; Verilog-A coverage adds tests with the same `analog` label. The optional `run_regressions.py` helper
+The original core suite has 31 tests; Verilog-A coverage adds tests with the same
+`analog` label. [10G/tests](../10G/tests/README.md) adds SFP+ SFI SerDes/equalizer/CDR
+module and full-link tests in independent native and Verilog-A/SPICE flows, with
+separate absolute checks, cross-solver comparisons and timestep refinement. The optional `run_regressions.py` helper
 configures, builds and invokes this same CTest suite; CTest itself does not need it.
 
 Fixed-step numerical limits and selected-model assumptions remain in

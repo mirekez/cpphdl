@@ -57,15 +57,29 @@ public:
     }
 };
 
-enum class law { resistor, capacitor, sim_voltage_source, nmos, pmos, sim_driver, sim_controlled_resistor };
+enum class law {
+    resistor,
+    capacitor,
+    sim_voltage_source,
+    nmos,
+    pmos,
+    sim_driver,
+    sim_controlled_resistor,
+    inductor,
+    transconductor,
+    diode
+};
 enum class control_response { rising, falling };
 struct element {
     law kind;
     std::size_t a = 0, b = 0, gate = 0, reference = 0, vdd = 0, vss = 0, bit = 0;
+    double l = 0, gm = 0;
+    std::vector<std::pair<double, double>> waveform{}; // Continuous PWL stimulus, time in seconds and voltage in volts.
     double r = 1, c = 0, beta = .001, threshold = .35, initial = 0;
     double value = 0, next = 0, at = 0, low = .35, high = .85;
     bool stepped = false;
     bool falling = false;
+    bool buffered = false;
     std::size_t auxiliary = 0;
     std::string file{};
     unsigned line = 0;
@@ -164,6 +178,7 @@ class simulation {
                               bool hold = false, bool initial = false, bool right = true);
     std::vector<double> settle(std::vector<double> x, const std::vector<double>& old, double dt, double time,
                                bool hold = false, bool initial = false, bool right = true);
+    std::vector<std::vector<double>> jacobian(const std::vector<double>& x, double dt, bool hold) const;
     void combinational();
     void stimuli(double time, bool right);
     void record(double time);
@@ -187,6 +202,8 @@ public:
     std::vector<digital_stimulus> inputs;
     std::vector<sample> trace;
     std::size_t newton_iterations = 0, register_commits = 0;
+    bool analytic_jacobian = false;
+    duration minimum_step{0}; // Optional Newton-failure bisection; zero retains fixed-step failure behavior.
     simulation() : previous_(current_) {
         current_ = this;
     }
@@ -499,6 +516,64 @@ public:
     }
 };
 
+// Two-terminal flux storage. Its branch current is an independent MNA state.
+class inductor : public terminal_device {
+public:
+    inductor(const electrical& reference, inductance_value l, current initial = current(0),
+             std::source_location at = std::source_location::current()) {
+        terminal_.owner().check(reference, terminal_);
+        positive(l.value, "inductance");
+        finite(initial.value, "initial current");
+        element e{law::inductor};
+        e.a = terminal_.id();
+        e.b = reference.id();
+        e.l = l.value;
+        e.initial = initial.value;
+        terminal_.owner().add(e, at);
+    }
+};
+
+// Ideal four-terminal VCCS: positive differential input injects current into the returned node.
+// Supply power and input parasitics require explicit surrounding circuit models.
+class transconductor : public terminal_device {
+public:
+    transconductor(const electrical& reference, const electrical& plus, const electrical& minus, transconductance gm,
+                   std::source_location at = std::source_location::current()) {
+        auto& sim = terminal_.owner();
+        sim.check(reference, plus);
+        sim.check(minus, terminal_);
+        finite(gm.value, "transconductance");
+        element e{law::transconductor};
+        e.a = terminal_.id();
+        e.b = reference.id();
+        e.gate = plus.id();
+        e.reference = minus.id();
+        e.gm = gm.value;
+        sim.add(e, at);
+    }
+};
+
+// Passive piecewise-linear diode: forward resistance and explicit reverse leakage.
+class diode : public terminal_device {
+public:
+    diode(const electrical& cathode, resistance forward, voltage drop = voltage(0),
+          resistance leakage = resistance(1e9), std::source_location at = std::source_location::current()) {
+        terminal_.owner().check(cathode, terminal_);
+        positive(forward.value, "diode forward resistance");
+        positive(leakage.value, "diode leakage resistance");
+        finite(drop.value, "diode drop");
+        if (drop.value < 0)
+            throw diagnostic("E_VALUE", "negative diode drop");
+        element e{law::diode};
+        e.a = terminal_.id();
+        e.b = cathode.id();
+        e.r = forward.value;
+        e.value = leakage.value;
+        e.threshold = drop.value;
+        terminal_.owner().add(e, at);
+    }
+};
+
 // An active variable: its wire has charge-storage behavior as well as connectivity.
 class capacitance : public electrical {
 public:
@@ -544,6 +619,74 @@ public:
         e.at = when.value;
         e.next = after.value;
         terminal_.owner().add(e, at);
+    }
+};
+
+// A bench stimulus, never an implementation of a receiver or a feedback controller.
+class sim_pwl_voltage_source : public terminal_device {
+public:
+    sim_pwl_voltage_source(const electrical& reference, const std::vector<std::pair<double, double>>& points,
+                           std::source_location at = std::source_location::current()) {
+        terminal_.owner().check(reference, terminal_);
+        if (points.empty() || points.front().first != 0)
+            throw diagnostic("E_VALUE", "PWL needs an initial point at t=0");
+        double previous = -1;
+        for (const auto& [time, value] : points) {
+            finite(time, "PWL time");
+            finite(value, "PWL voltage");
+            if (time <= previous)
+                throw diagnostic("E_VALUE", "PWL times must strictly increase");
+            previous = time;
+        }
+        element e{law::sim_voltage_source};
+        e.a = terminal_.id();
+        e.b = reference.id();
+        e.value = points.front().second;
+        e.waveform = points;
+        terminal_.owner().add(e, at);
+    }
+};
+
+inline double source_value(const element& e, double time, bool right = true) {
+    if (e.waveform.empty())
+        return e.stepped && (right ? time >= e.at : time > e.at) ? e.next : e.value;
+    auto next = std::upper_bound(e.waveform.begin(), e.waveform.end(), time,
+                                 [](double t, const auto& point) { return t < point.first; });
+    if (next == e.waveform.begin())
+        return next->second;
+    auto previous = std::prev(next);
+    if (next == e.waveform.end())
+        return previous->second;
+    double fraction = (time - previous->first) / (next->first - previous->first);
+    return previous->second + fraction * (next->second - previous->second);
+}
+
+// Unilateral tracking switch: an ideal input buffer drives finite output conductance.
+// The output capacitor supplies hold state; input loading and supply current are outside this approximation.
+class sim_buffered_track : public terminal_device {
+public:
+    sim_buffered_track(const electrical& input, const electrical& clock, const electrical& reference, resistance drive,
+                       voltage low, voltage high, control_response response,
+                       std::source_location at = std::source_location::current()) {
+        auto& sim = terminal_.owner();
+        sim.check(input, clock);
+        sim.check(reference, terminal_);
+        positive(drive.value, "tracking resistance");
+        finite(low.value, "tracking low");
+        finite(high.value, "tracking high");
+        if (high.value <= low.value)
+            throw diagnostic("E_VALUE", "tracking thresholds must increase");
+        element e{law::sim_controlled_resistor};
+        e.a = terminal_.id();
+        e.b = input.id();
+        e.gate = clock.id();
+        e.reference = reference.id();
+        e.r = drive.value;
+        e.low = low.value;
+        e.high = high.value;
+        e.falling = response == control_response::falling;
+        e.buffered = true;
+        sim.add(e, at);
     }
 };
 

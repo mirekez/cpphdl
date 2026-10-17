@@ -2,6 +2,9 @@
   "stop_s": 4.0000000000000003e-07,
   "cpp_step_s": 1.0000000000000001e-09,
   "spice_max_step_s": 1.0000000000000001e-09,
+  "spice_charge_tolerance_C": 1e-14,
+  "spice_max_order": 2,
+  "spice_capacitance_threshold_F": 0.0,
   "driver_edge_s": 1.0000000000000002e-13,
   "initialization": "explicit capacitor/source voltages, SPICE UIC",
   "evidence": "selected-model trajectory comparison, not universal correctness proof"

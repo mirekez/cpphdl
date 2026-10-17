@@ -1,0 +1,17 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module gm_stage(Vdd, Vss, PLUS, MINUS, BIAS, OUT);
+    inout Vdd, Vss, PLUS, MINUS, BIAS, OUT;
+    electrical Vdd, Vss, PLUS, MINUS, BIAS, OUT;
+
+    analog begin
+        // device 0, IC gm_stage, analog/basic/gm_stage.hpp:18
+        I(BIAS, OUT) <+ V(BIAS, OUT) / 1000.0;
+        // device 1, IC gm_stage, analog/basic/gm_stage.hpp:19
+        I(OUT, BIAS) <+ (-0.01) * V(PLUS, MINUS);
+        // device 2, IC gm_stage, analog/basic/gm_stage.hpp:20
+        I(OUT, BIAS) <+ 1.0000000000000001e-15 * ddt(V(OUT, BIAS)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

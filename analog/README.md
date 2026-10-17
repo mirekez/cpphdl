@@ -4,6 +4,9 @@ This directory is the analog part of the C++HDL package. Include
 `<cpphdl_analog.h>` and use namespace `cpphdl::analog` (an alias of `::analog`).
 Link the CMake target `cpphdl::analog`.
 
+The [10GBASE-R / SFP+ SFI prototype](10G/README.md) includes a serializer,
+three-tap TX emphasis, CTLE, PLL CDR, DFE, receiver and two-flow regression tests.
+
 Checked-in Verilog-A models are in [basic/generated](basic/generated/README.md)
 and [examples/generated](examples/generated/README.md), with regeneration commands,
 complete simulation benches and explicit export limits for digital behavior.

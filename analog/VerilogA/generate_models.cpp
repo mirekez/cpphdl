@@ -71,6 +71,26 @@ int main(int argc, char** argv) {
         MODEL(error_integrator, "error_integrator", PORT(IN), PORT(REF), PORT(OUT));
         MODEL(agc, "agc", PORT(IN), PORT(OUT), PORT(BIAS), PORT(REF));
 
+        MODEL(gm_stage, "gm_stage", PORT(PLUS), PORT(MINUS), PORT(BIAS), PORT(OUT));
+        MODEL(limiting_amplifier, "limiting_amplifier", PORT(PLUS), PORT(MINUS), PORT(BIAS), PORT(OUT));
+        MODEL(bridge_rectifier, "bridge_rectifier", PORT(PLUS), PORT(MINUS), PORT(POS), PORT(NEG));
+        emit<sim_sample_hold>(
+            basic, "sim_sample_hold",
+            [](auto& c) { return std::vector<named_port>{PORT(Vdd), PORT(Vss), PORT(IN), PORT(CLK), PORT(OUT)}; },
+            true);
+        emit<sim_dff>(
+            basic, "sim_dff",
+            [](auto& c) { return std::vector<named_port>{PORT(Vdd), PORT(Vss), PORT(D), PORT(CLK), PORT(Q)}; }, true);
+        emit<sim_mux2>(
+            basic, "sim_mux2",
+            [](auto& c) {
+                return std::vector<named_port>{PORT(Vdd), PORT(Vss), PORT(A), PORT(B), PORT(SELECT), PORT(Y)};
+            },
+            true);
+        emit<sim_xor>(
+            basic, "sim_xor",
+            [](auto& c) { return std::vector<named_port>{PORT(Vdd), PORT(Vss), PORT(A), PORT(B), PORT(Y)}; }, true);
+
         auto example = [&](const std::string& name) { return root / "examples/generated" / name; };
         auto inverter_ports = [](auto& c) { return std::vector<named_port>{PORT(Vdd), PORT(Vss), PORT(A), PORT(Y)}; };
         emit<Inverter>(example("cmos_inverter"), "Inverter", inverter_ports);

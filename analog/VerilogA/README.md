@@ -7,7 +7,7 @@ The root command `cpphdl --verilog-a` converts a C++ class derived from
 The standalone `cpphdl-veriloga` command uses the same driver and requires no LLVM.
 
 The checked-in catalogs are [basic/generated](../basic/generated/README.md) and
-[examples/generated](../examples/generated/README.md): 21 basic modules, five
+[examples/generated](../examples/generated/README.md): 28 basic modules, five
 reusable example classes, 17 complete analog example benches and one explicitly
 bounded mixed-signal analog partition. From the package root:
 
@@ -19,7 +19,7 @@ ctest --test-dir analog/build -R 'analog.veriloga.generated' --output-on-failure
 The generator elaborates the original classes and testbenches; it does not maintain
 a second hand-written circuit description. The freshness test regenerates into a
 temporary directory and compares every model and bench input. With OpenVAF enabled,
-the compile test also compiles all 44 modules. Generated simulation results and OSDI
+the compile test also compiles all 51 catalog modules. Generated simulation results and OSDI
 binaries remain ignored. The pure digital pipeline and diagnostic suite have
 documented export limits instead of placeholder Verilog-A models.
 
@@ -242,3 +242,21 @@ Agreement validates the selected equations and trajectories within measured boun
 It cannot prove every topology, the physical accuracy of the square-law MOS model,
 or all C++ elaboration: both paths share the elaborated connectivity. BSIM is not
 substituted in these equivalence tests because that would change the device law.
+
+## 10G SFP+ experiments
+
+[10G/](../10G/README.md) adds 15 reusable modules and per-module/system electrical
+experiments. These use explicit simulation approximations for buffered storage and
+muxes. The API `render_simulation_model` records that choice; strict physical export
+continues to reject those `sim_` devices. The experiment generator uses the same
+elaborated IC topology as the native solver, then compiles and simulates the emitted
+Verilog-A independently. [10G test documentation](../10G/tests/README.md) lists the
+absolute checks, comparison tolerances and numerical settings.
+
+`transient::spice_capacitance_threshold` is an explicit experiment option: a
+positive threshold places capacitors at or above that value in the SPICE deck,
+omitting their duplicate Verilog-A contributions. Zero (the default) leaves all
+capacitors in Verilog-A. This preserves the linear law and initial charge while
+using ngspice's native capacitor implementation for numerically stiff mixed-scale
+experiments. The 10G integrated SFI link uses it for its two 100 nF DC blocks; its
+standalone SFI tests retain complete Verilog-A. Reusable exports are unaffected.

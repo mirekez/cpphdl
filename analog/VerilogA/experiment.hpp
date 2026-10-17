@@ -10,6 +10,15 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
     positive(analysis.stop.value, "experiment stop");
     positive(analysis.step.value, "experiment output step");
     positive(analysis.maximum_step.value, "experiment maximum SPICE step");
+    positive(analysis.charge_tolerance, "experiment charge tolerance");
+    finite(analysis.spice_capacitance_threshold, "SPICE capacitance threshold");
+    if (analysis.spice_capacitance_threshold < 0)
+        detail::fail("SPICE capacitance threshold must be nonnegative");
+    if (analysis.spice_order != 1 && analysis.spice_order != 2)
+        detail::fail("SPICE Gear order must be 1 or 2");
+    for (const auto& e : sim.elements)
+        if (e.kind == law::inductor && e.initial != 0)
+            detail::fail("experiment export currently supports zero initial inductor current only");
     auto nodes = detail::nodes(sim);
     if (!nodes.contains(0))
         detail::fail("experiment needs a reference-connected physical network");
@@ -20,7 +29,7 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
     std::vector<detail::node_port> ports;
     for (auto id : nodes)
         ports.push_back({"n" + std::to_string(id), id});
-    auto verilog = detail::module(sim, "AnalogExperiment", ports, true);
+    auto verilog = detail::module(sim, "AnalogExperiment", ports, true, false, analysis.spice_capacitance_threshold);
     auto n = [&](std::size_t id) { return sim.root(id) == 0 ? std::string("0") : "n" + std::to_string(sim.root(id)); };
     std::map<std::size_t, double> initial{{0, 0}};
     for (std::size_t pass = 0; pass <= sim.elements.size(); ++pass)
@@ -28,7 +37,7 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
             if (e.kind != law::capacitor && e.kind != law::sim_voltage_source)
                 continue;
             auto a = sim.root(e.a), b = sim.root(e.b);
-            double value = e.kind == law::capacitor ? e.initial : e.stepped && e.at == 0 ? e.next : e.value;
+            double value = e.kind == law::capacitor ? e.initial : source_value(e, 0);
             if (initial.contains(a) && initial.contains(b)) {
                 if (std::abs(initial.at(a) - initial.at(b) - value) > 1e-9)
                     detail::fail("inconsistent initial voltage constraints");
@@ -46,7 +55,7 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
                 if (e.kind != law::capacitor && e.kind != law::sim_voltage_source)
                     continue;
                 auto a = sim.root(e.a), b = sim.root(e.b);
-                double value = e.kind == law::capacitor ? e.initial : e.stepped && e.at == 0 ? e.next : e.value;
+                double value = e.kind == law::capacitor ? e.initial : source_value(e, 0);
                 if (initial.contains(a) && initial.contains(b)) {
                     if (std::abs(initial.at(a) - initial.at(b) - value) > 1e-9)
                         detail::fail("inconsistent initial voltage constraints");
@@ -71,10 +80,19 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
     deck << " CircuitModel\n";
     for (std::size_t i = 0; i < sim.elements.size(); ++i) {
         const auto& e = sim.elements[i];
+        if (e.kind == law::capacitor && analysis.spice_capacitance_threshold > 0 &&
+            e.c >= analysis.spice_capacitance_threshold)
+            deck << "Cdevice" << i << ' ' << n(e.a) << ' ' << n(e.b) << ' ' << detail::number(e.c)
+                 << " IC=" << detail::number(e.initial) << '\n';
         if (e.kind != law::sim_voltage_source)
             continue;
         deck << "Vsource" << i << ' ' << n(e.a) << ' ' << n(e.b);
-        if (!e.stepped || e.at == 0 || e.at >= analysis.stop.value)
+        if (!e.waveform.empty()) {
+            deck << " PWL(";
+            for (const auto& [time, value] : e.waveform)
+                deck << detail::number(time) << ' ' << detail::number(value) << ' ';
+            deck << ')';
+        } else if (!e.stepped || e.at == 0 || e.at >= analysis.stop.value)
             deck << " DC " << detail::number(e.stepped && e.at == 0 ? e.next : e.value);
         else
             // Duplicate time points represent the same ideal discontinuity as the C++ stimulus.
@@ -111,7 +129,9 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
     for (const auto& [id, value] : initial)
         if (id != 0)
             deck << ".ic V(" << n(id) << ")=" << detail::number(value) << '\n';
-    deck << ".options method=gear maxord=2 reltol=1e-5 abstol=1e-12 vntol=1e-8 trtol=7\n"
+    if (analysis.charge_tolerance != 1e-14)
+        deck << ".options chgtol=" << detail::number(analysis.charge_tolerance) << '\n';
+    deck << ".options method=gear maxord=" << analysis.spice_order << " reltol=1e-5 abstol=1e-12 vntol=1e-8 trtol=7\n"
          << ".control\npre_osdi design.osdi\nset noaskquit\nset wr_singlescale\nset wr_vecnames\n"
          << "set numdgt=17\ntran " << detail::number(analysis.step.value) << ' ' << detail::number(analysis.stop.value)
          << " 0 " << detail::number(analysis.maximum_step.value) << " uic\n";
@@ -149,6 +169,9 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
     conditions << "{\n  \"stop_s\": " << detail::number(analysis.stop.value)
                << ",\n  \"cpp_step_s\": " << detail::number(analysis.step.value)
                << ",\n  \"spice_max_step_s\": " << detail::number(analysis.maximum_step.value)
+               << ",\n  \"spice_charge_tolerance_C\": " << detail::number(analysis.charge_tolerance)
+               << ",\n  \"spice_max_order\": " << analysis.spice_order
+               << ",\n  \"spice_capacitance_threshold_F\": " << detail::number(analysis.spice_capacitance_threshold)
                << ",\n  \"driver_edge_s\": " << detail::number(edge)
                << ",\n  \"initialization\": \"explicit capacitor/source voltages, SPICE UIC\",\n"
                << "  \"evidence\": \"selected-model trajectory comparison, not universal correctness proof\"\n}\n";

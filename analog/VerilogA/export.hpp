@@ -15,6 +15,11 @@ struct transient {
     duration step;
     // ngspice integrates independently with smaller adaptive steps, then comparisons interpolate its output.
     duration maximum_step;
+    double charge_tolerance = 1e-14; // Coulombs; sub-fF storage needs a tighter value than SPICE's default.
+    unsigned spice_order = 2;
+    // Optional experiment-only placement of large linear capacitors in the SPICE deck.
+    // Reusable Verilog-A modules always retain their complete circuit laws.
+    double spice_capacitance_threshold = 0;
 };
 
 namespace detail {
@@ -53,12 +58,15 @@ inline std::string comment(std::string value) {
 inline std::vector<std::size_t> terminals(const element& e) {
     switch (e.kind) {
     case law::resistor:
+    case law::inductor:
+    case law::diode:
     case law::capacitor:
     case law::sim_voltage_source:
         return {e.a, e.b};
     case law::nmos:
     case law::pmos:
         return {e.a, e.b, e.gate};
+    case law::transconductor:
     case law::sim_controlled_resistor:
         return {e.a, e.b, e.gate, e.reference};
     case law::sim_driver:
@@ -121,7 +129,7 @@ struct node_port {
     std::size_t id;
 };
 inline std::string module(const simulation& sim, const std::string& name, const std::vector<node_port>& ports,
-                          bool experiment, bool partition = false) {
+                          bool experiment, bool partition = false, double spice_capacitance_threshold = 0) {
     validate(sim, experiment, partition);
     if (!identifier(name) || ports.empty())
         fail("module name must be a nonreserved identifier and its port list must be explicit");
@@ -198,6 +206,11 @@ inline std::string module(const simulation& sim, const std::string& name, const 
         const auto& e = sim.elements[index];
         if (experiment && e.kind == law::sim_voltage_source)
             continue; // Ideal bench voltage sources belong in the SPICE deck.
+        if (experiment && e.kind == law::capacitor && spice_capacitance_threshold > 0 &&
+            e.c >= spice_capacitance_threshold) {
+            out << "        // Capacitor device " << index << " is stamped once by the SPICE host deck.\n";
+            continue;
+        }
         out << "        // device " << index;
         if (e.component != no_component)
             out << ", IC " << comment(sim.components().at(e.component).name);
@@ -211,6 +224,17 @@ inline std::string module(const simulation& sim, const std::string& name, const 
             out << "        I" << ab << " <+ " << number(e.c) << " * ddt(V" << ab << ");"
                 << " // Bench initial voltage = " << number(e.initial) << " V.\n";
             break;
+        case law::inductor:
+            out << "        V" << ab << " <+ " << number(e.l) << " * ddt(I" << ab << ");"
+                << " // Initial branch current = " << number(e.initial) << " A.\n";
+            break;
+        case law::transconductor:
+            out << "        I" << ab << " <+ (" << number(-e.gm) << ") * V" << branch(e.gate, e.reference) << ";\n";
+            break;
+        case law::diode:
+            out << "        I" << ab << " <+ max(0.0, V" << ab << " - " << number(e.threshold) << ") / " << number(e.r)
+                << " + V" << ab << " / " << number(e.value) << ";\n";
+            break;
         case law::nmos:
         case law::pmos:
             out << "        I" << ab << " <+ cpphdl_channel(V" << branch(e.gate, e.b) << ", V" << ab << ", "
@@ -222,8 +246,9 @@ inline std::string module(const simulation& sim, const std::string& name, const 
                             number(e.high - e.low) + "))";
             if (e.falling)
                 fraction = "(1.0 - " + fraction + ")";
-            out << "        I" << ab << " <+ " << fraction << " * V" << ab << " / " << number(e.r)
-                << "; // sim_controlled_resistor\n";
+            out << "        I" << (e.buffered ? branch(e.a, e.reference) : ab) << " <+ " << fraction << " * V" << ab
+                << " / " << number(e.r)
+                << (e.buffered ? "; // sim_buffered_track\n" : "; // sim_controlled_resistor\n");
             break;
         }
         case law::sim_driver: {

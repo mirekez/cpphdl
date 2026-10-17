@@ -222,8 +222,9 @@ The fixed-step Newton/backward-Euler engine checks sampled trajectories. The ide
 supply examples run with 100 ns (amplifier) and 500 ns (regulator) steps. The supply
 impedance semantic test uses a 50 ns step to resolve coupled supply/bias startup;
 a 500 ns step fails Newton convergence for that experiment. Better initial voltage
-guesses do not replace step selection or establish trajectory accuracy. No adaptive
-step reduction is currently implemented. Passing a final voltage constraint does
+guesses do not replace step selection or establish trajectory accuracy. Optional convergence-driven step bisection is available through
+`simulation::minimum_step`; it retries a failed Newton step, with no local-error
+estimate. The default retains fixed steps and explicit convergence failure. Passing a final voltage constraint does
 not establish a startup bound or all-load stability.
 
 Separate parallel ideal capacitors currently produce redundant voltage constraints
@@ -262,3 +263,27 @@ The PLL uses explicit asymmetric ring charge; the AGC begins from documented
 biased capacitor states. These are declared experiment conditions, not proofs of
 cold startup. No class adds a regulator, oscillator or gain-control equation to the
 solver: every correction comes from the constituent MOS/resistor/capacitor relations.
+
+## Reusable stages for high-speed experiments
+
+The [10G SFP+ prototype](../10G/README.md) adds these basic IC definitions:
+
+| Class / header | Purpose and selected fidelity |
+|---|---|
+| `gm_stage`, `limiting_amplifier` / [gm_stage.hpp](gm_stage.hpp) | VCCS, output R/C and optional explicit piecewise-linear diode rail clamps |
+| `bridge_rectifier` / [bridge_rectifier.hpp](bridge_rectifier.hpp) | Four diode paths and an explicit load, including common-mode return |
+| `sim_sample_hold`, `sim_dff`, `sim_mux2` / [sim_clocked_storage.hpp](sim_clocked_storage.hpp) | Buffered finite-conductance tracking, explicit capacitor state and nonoverlapping control windows |
+| `sim_xor` / [sim_xor.hpp](sim_xor.hpp) | Finite-bandwidth inversion and a mux, used by the phase detector |
+
+`sim_buffered_track` supplies `I(output -> reference) = G(clock) * (Voutput - Vinput)`.
+The input draws zero current in this approximation. Output charge and finite drive
+are real state/equations; supply power, input capacitance, transistor noise and
+metastability require a more detailed replacement. Unlike a bilateral resistor,
+connecting its output does not feed current into the sensed input. Every such
+approximation is marked `sim_` in C++ and generated Verilog-A. The gm primitive is
+an ideal VCCS with explicit sign; it is not a transistor or a power model.
+
+The core also supports ideal inductors (branch-current state), finite PWL voltage
+stimuli, and the diode law `I = max(V - drop, 0) / Ron + V / Rleak`. All enter the
+shared MNA system. 10G tests check their independent analytic responses and compare
+analytic-Jacobian Newton solutions with finite-difference Newton solutions.

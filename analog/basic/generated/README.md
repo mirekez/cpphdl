@@ -8,6 +8,10 @@ The C++ classes remain the definitions to edit.
 
 | Verilog-A module | C++ definition | Purpose |
 |---|---|---|
+| [gm_stage.va](gm_stage.va), [limiting_amplifier.va](limiting_amplifier.va) | [gm_stage.hpp](../gm_stage.hpp) | Finite output impedance/bandwidth, with optional diode clamps |
+| [bridge_rectifier.va](bridge_rectifier.va) | [bridge_rectifier.hpp](../bridge_rectifier.hpp) | Four PWL diode paths and explicit load |
+| [sim_sample_hold.va](sim_sample_hold.va), [sim_dff.va](sim_dff.va), [sim_mux2.va](sim_mux2.va) | [sim_clocked_storage.hpp](../sim_clocked_storage.hpp) | Buffered-switch approximations with explicit storage charge |
+| [sim_xor.va](sim_xor.va) | [sim_xor.hpp](../sim_xor.hpp) | Inversion plus buffered mux approximation |
 | [cmos_channel.va](cmos_channel.va) | `cmos<channel_model>` in [inverter.hpp](../inverter.hpp) | Complementary MOS inverter |
 | [cmos_fast.va](cmos_fast.va) | `cmos<fast_model>` in [inverter.hpp](../inverter.hpp) | Explicit simulation approximation using controlled conductances |
 | [level_inverter.va](level_inverter.va) | [level_inverter.hpp](../level_inverter.hpp) | Explicit simulation approximation using controlled conductances |
@@ -24,8 +28,8 @@ The C++ classes remain the definitions to edit.
 | [lead_lag_filter.va](lead_lag_filter.va), [pll.va](pll.va) | [pll.hpp](../pll.hpp) | Passive loop filter and physical phase-locked loop |
 | [variable_gain_amplifier.va](variable_gain_amplifier.va), [mos_peak_detector.va](mos_peak_detector.va), [error_integrator.va](error_integrator.va), [agc.va](agc.va) | [agc.hpp](../agc.hpp) | Gain stage, detector, controller and composed AGC |
 
-MOS currents use the framework's square-law channel model, not BSIM. The two
-simulation approximations are marked in their headers; they retain their selected
+MOS currents use the framework's square-law channel model, not BSIM. Simulation
+approximations are marked in their headers; they retain their selected
 controlled-resistance laws. Parameters are elaborated SI constants, so changing a
 C++ parameter requires regenerating the module. Supply voltage and loading remain
 host connections and can influence every device.
