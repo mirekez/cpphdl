@@ -152,6 +152,12 @@ checks distinct clocked models against serial evaluation, both edges, reset,
 copied caches, static/dynamic assignment, simultaneous jobs, exception draining
 and concurrent callers under undefined-behavior sanitization.
 
+The [cross-design benchmark](native-graph-benchmarks.md) compares this outer
+scheduler with serial evaluation and inner graph threading across arithmetic,
+shared logic, mutable memories, pipelines, control and stalled bus traffic.
+It verifies every measured trace against independent scalar state equations
+and reports overhead regressions alongside speedups.
+
 The separate `memoizeNextWords` option (default false) places register next-word
 assembly in the memoized combinational schedule: unchanged scattered input
 bits reuse the assembled word. It requires `memoizeChunks`. This can help large
