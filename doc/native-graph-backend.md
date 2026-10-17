@@ -111,6 +111,47 @@ Workers and joins spin for at most 64 iterations before sleeping, rather than
 keeping spare cores busy for 4,096 iterations. This bounds dispatch overhead
 on hosts running other simulations or compilers; it does not change the graph
 schedule or its synchronization guarantees.
+
+For independent module instances, outer parallelism can avoid the repeated
+barriers and duplicated fan-in of splitting each instance into worker cones.
+`cpphdl_graph_batch.h` provides a persistent `graph_runtime::Batch` executor:
+
+```cpp
+auto workers = std::make_shared<cpphdl::graph_runtime::Threads>(6, 1);
+cpphdl::graph_runtime::Batch batch(6, workers);
+for (auto& model : models) {
+    model.__cpphdl_threads = workers;
+    model.__cpphdl_dispatch_policy = cpphdl::graph_runtime::DispatchPolicy::Serial;
+}
+// Snapshot each model's inputs before this boundary.
+batch.run(models.size(), [&](std::size_t i) { models[i].step(); });
+// All states and outputs are now published; connected host logic can run.
+```
+
+This example requires memoized multi-lane models exposing the dispatch-policy
+override. Each job owns a different model and runs its inner lanes serially.
+The batch can share their existing executor, avoiding additional worker threads.
+Its configured worker count must fit that executor. Do not dispatch another
+parallel evaluation onto the same executor from inside a batch job.
+
+Static scheduling divides the jobs into contiguous ranges. For uneven job
+costs, pass `Batch::Schedule::Dynamic` and an optional positive job grain.
+Each job runs exactly once, and every job finishes before the caller returns.
+If a job throws, the executor drains the batch and rethrows one captured
+exception; completed state updates are not rolled back. Concurrent callers
+sharing the executor serialize their batches while keeping model storage separate.
+
+The caller must establish independence: jobs cannot access each other's live
+state, output, mutable RAM or callbacks without synchronization. For connected
+RTL instances, snapshot inputs, evaluate independent siblings, join, and only
+then propagate outputs and perform the next required settle phase. Batching
+multiple clocks additionally requires independence across the complete interval;
+ordinary feedback or a shared DRAM controller generally prevents this. The
+executor never removes clocks or invents lookahead. `cpp_graph_native_batch`
+checks distinct clocked models against serial evaluation, both edges, reset,
+copied caches, static/dynamic assignment, simultaneous jobs, exception draining
+and concurrent callers under undefined-behavior sanitization.
+
 The separate `memoizeNextWords` option (default false) places register next-word
 assembly in the memoized combinational schedule: unchanged scattered input
 bits reuse the assembled word. It requires `memoizeChunks`. This can help large

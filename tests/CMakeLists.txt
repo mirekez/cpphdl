@@ -189,6 +189,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeWidePortChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_wide_ports PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_batch COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeBatchChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_batch PROPERTIES TIMEOUT 240)
     foreach(workload arithmetic ram)
         add_test(NAME cpp_graph_native_scaling_${workload} COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeScalingChecks.py"
