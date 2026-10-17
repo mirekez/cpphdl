@@ -94,6 +94,7 @@ These are implemented C++ calls on a `simulation` object:
 | `sim.assume_voltage(name, A, Vss, low, high)` | Check a sampled experiment envelope |
 | `sim.require_final_voltage(name, Y, Vss, low, high)` | Check the final achieved voltage |
 | `sim.require_final(name, Q, expected)` | Check a final managed bit value |
+| `sim.require_trace(name, predicate)` | Check measured behavior over the completed trajectory |
 | `sim.run(stop, step)` | Integrate the declared network and evaluate its checks |
 | `sim.write(directory)` | Write generated equations, traces and a report |
 
@@ -101,6 +102,14 @@ Declare observations and checks before `run()`. Requirements evaluate the chosen
 circuit and trajectory; they do not choose an implementation or force a node to
 meet its goal. Reports distinguish sampled pass, failure, missing evidence and
 violated assumptions. A passing sampled check does not prove all operating cases.
+
+`require_trace` takes a testbench callback receiving `const std::vector<sample>&`.
+Return `true` for a sampled pass, `false` for failure, or `std::nullopt` for missing
+evidence. Sample values follow observation order. The callback runs after integration;
+it adds no physical law or feedback. A violated global assumption suppresses it and
+marks its requirement out of contract. See the commented
+[LDO](../examples/ldo/main.cpp), [PLL](../examples/pll/main.cpp) and
+[AGC](../examples/agc/main.cpp) for settling, edge/phase and peak measurements.
 
 ## Simulation-only behavior and digital boundaries
 

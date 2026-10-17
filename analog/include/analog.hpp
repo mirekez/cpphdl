@@ -124,6 +124,12 @@ struct obligation {
     std::string status = "unverified";
 };
 
+struct trace_obligation {
+    std::string name;
+    std::function<std::optional<bool>(const std::vector<sample>&)> predicate;
+    std::string status = "unverified";
+};
+
 class simulation {
     friend class IC;
     inline static thread_local simulation* current_ = nullptr;
@@ -134,6 +140,7 @@ class simulation {
     std::vector<double> solution_;
     std::vector<observation> observations_;
     std::vector<obligation> obligations_;
+    std::vector<trace_obligation> trace_obligations_;
     std::vector<std::vector<std::optional<double>>> obligation_samples_;
     bool frozen_ = false;
     std::string status_ = "unverified";
@@ -284,6 +291,13 @@ public:
     static void bounds(double low, double high) {
         if (!std::isfinite(low) || !std::isfinite(high) || low > high)
             throw diagnostic("E_INFEASIBLE", "empty or nonfinite interval");
+    }
+    // Bench assertions inspect the completed trajectory; they add no circuit behavior.
+    void require_trace(std::string name, std::function<std::optional<bool>(const std::vector<sample>&)> predicate) {
+        editable();
+        if (!predicate)
+            throw diagnostic("E_VALUE", "trace requirement needs a predicate");
+        trace_obligations_.push_back({std::move(name), std::move(predicate)});
     }
     void run(duration stop, duration step);
     const std::string& status() const {

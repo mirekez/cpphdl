@@ -110,6 +110,7 @@ target is available in its build tree when `CPPHDL_BUILD_ANALOG=ON` (the default
 See [tests/README.md](tests/README.md) for both build modes and coverage.
 
 Reusable circuit definitions live in [basic/](basic/README.md), including the
+[LDO](basic/ldo.hpp), [PLL](basic/pll.hpp), [AGC](basic/agc.hpp),
 [op-amp](basic/opamp.hpp), [regulator](basic/regulator.hpp),
 [channel/level inverters](basic/inverter.hpp), divider,
 RC filter, differential pair and current mirror. Include `<basic/basic.hpp>`
@@ -124,6 +125,9 @@ or an individual schema header.
 | [digital](examples/digital_pipeline/README.md) | Nested classes with `SUM = sim_add(...)`, `Q = sim_store(...)` | First edge Q=4, R=0 |
 | [feedback](examples/opamp_feedback/README.md) | Transistor amplifier corrected by a loaded divider | About 0.994192 V |
 | [regulation](examples/regulator/README.md) | Regulator IC defined from PMOS, error amplifier and feedback | Tracks a 1.2 V reference with finite-gain error |
+| [LDO](examples/ldo/README.md) | PMOS pass device, feedback divider and error amplifier | Line/load recovery and headroom loss |
+| [PLL](examples/pll/README.md) | MOS XOR, passive filter and current-starved ring VCO | 12 kHz frequency and phase lock under output loading |
+| [AGC](examples/agc/README.md) | MOS attenuation, peak detector and capacitive error feedback | Peak recovery after threefold input changes; weak-input saturation |
 | [diagnostics](examples/diagnostics/README.md) | Invalid models and uncertain interpretation | Five expected checks |
 | [device types](examples/transistor_pair/README.md) | `pmos` and `nmos` as C++ variables | Same inverter trajectory |
 | [model types](examples/class_variants/README.md) | `cmos<fast_model>` / `cmos<channel_model>` | Same purpose, different dynamics |
@@ -139,7 +143,7 @@ basic transistor circuit schemas, bit operations/registers and explicit domain b
 One coupled engine assembles modified nodal equations, solves them by damped Newton,
 and integrates continuous state with backward Euler while coordinating digital events.
 
-The semantic test executable checks 40 independent component, physical and event expectations,
+The semantic test executable checks 41 independent component, physical and event expectations,
 with 12 additional native C++HDL interoperability checks. Coverage includes
 repeated purposes retaining all devices, active-variable equivalence,
 loading and shared supply interaction, finite-gain feedback, step refinement,

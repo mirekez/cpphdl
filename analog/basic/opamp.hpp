@@ -17,6 +17,8 @@ public:
     resistance output_shunt{100000};
     capacitance_value compensation{1e-8};
 
+    voltage initial_output{0};
+
     void _assign() override {
         input.PLUS = PLUS;
         input.MINUS = MINUS;
@@ -34,7 +36,7 @@ public:
         load.Vss = Vss;
         load.elaborate(); // Mirror left-branch current into the right/output branch.
 
-        OUT = capacitor(Vss, compensation); // Store output charge explicitly.
+        OUT = capacitor(Vss, compensation, initial_output); // Store output charge explicitly.
         Vss = resistor(OUT, output_shunt); // Finite shunt conductance bounds the unloaded gain.
     }
 };

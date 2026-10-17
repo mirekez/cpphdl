@@ -712,6 +712,17 @@ int main() {
                 sim.run(1_us, 100_ns);
             });
         });
+        test("Newton voltage limiting preserves large source steps", [] {
+            simulation sim;
+            electrical Vss, IN, OUT;
+            sim.reference(Vss);
+            IN = sim_voltage_source(Vss, 0_V, 1_us, 100_V);
+            OUT = resistor(IN, 1_kOhm);
+            Vss = resistor(OUT, 1_kOhm);
+            Vss = nmos(Vss, OUT); // Cutoff channel keeps this a transistor-network solver case.
+            sim.run(2_us, 1_us);
+            near(sim.voltage(OUT, Vss).value, 50);
+        });
         std::cout << passed << " C++ semantic checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -8,3 +8,6 @@
 #include "regulator.hpp"
 #include "resistor_divider.hpp"
 #include "rc_filter.hpp"
+#include "ldo.hpp"
+#include "pll.hpp"
+#include "agc.hpp"

@@ -351,7 +351,10 @@ root localization is not implemented.
 
 The dense solver uses finite-difference Jacobians, scaled partial pivoting and
 damped Newton. KCL/current rows scale by 1mA and voltage/state rows by 1V;
-normalized residual tolerance is 1e-8. A rank check is performed even at zero
+normalized residual tolerance is 1e-8. Before backtracking, the trial voltage
+change is bounded by one quarter of the current voltage scale (at least 1 V).
+This limits enormous updates from off channels with weak physical returns;
+it adds no conductance or state constraint. A rank check is performed even at zero
 residual. Limits: 60 Newton iterations, 24 line-search/boundary/event iterations,
 100000 regular steps and 100000 half-period events per clock. A singular or
 nonconvergent solve is not proof of physical infeasibility.
@@ -361,6 +364,15 @@ requirements check actual final values. Voltage comparisons allow 1e-8 V numeric
 tolerance, assumptions 1e-9 V; bit comparisons are exact. A violated global
 assumption marks quantitative requirements out of contract. Per-class conditional
 assume/guarantee inference is a future extension of this native prototype.
+
+`require_trace(name, predicate)` registers a completed-trajectory bench requirement.
+The callback receives `const std::vector<sample>&` in observation order and returns
+`std::optional<bool>`: true passes, false fails, and no value is unverified. It is
+evaluated after integration and ordinary requirements, only when global assumptions
+hold. Its status participates in the same aggregate result and report obligations.
+Declare it before `run()`; an empty predicate is E_VALUE and a late declaration is
+E_ELABORATION. It adds no network equations. Exceptions from a predicate propagate;
+they are not converted into successful checks.
 
 `sampled_pass`, `failed`, `unverified`, and `out_of_contract` are separate report
 statuses. A run without explicit requirements establishes no quantitative purpose

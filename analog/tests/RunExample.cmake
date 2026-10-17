@@ -1,6 +1,10 @@
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 file(REMOVE "${OUTPUT_DIR}/report.json")
-execute_process(COMMAND "${EXECUTABLE}" "${OUTPUT_DIR}"
+set(scenario_argument)
+if(DEFINED SCENARIO)
+  list(APPEND scenario_argument "${SCENARIO}")
+endif()
+execute_process(COMMAND "${EXECUTABLE}" "${OUTPUT_DIR}" ${scenario_argument}
   RESULT_VARIABLE actual_exit OUTPUT_VARIABLE output ERROR_VARIABLE error)
 if(NOT "${actual_exit}" STREQUAL "${EXPECTED_EXIT}")
   message(FATAL_ERROR "${EXECUTABLE}: expected exit ${EXPECTED_EXIT}, got ${actual_exit}\n${output}\n${error}")

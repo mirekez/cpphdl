@@ -42,12 +42,14 @@ only analog targets. No external CPU test repositories are needed for analog tes
 
 | CTest group | Coverage |
 |---|---|
-| `analog.semantics` | 40 checks: RC/step refinement, coupled feedback, transistor schemas, loads and shared supply, IC hierarchy/lifetime, active variables, diagnostics, known/unknown events and exact 64-bit arithmetic |
+| `analog.semantics` | 41 checks: RC/step refinement, coupled feedback, transistor schemas, loads and shared supply, IC hierarchy/lifetime, active variables, diagnostics, known/unknown events and exact 64-bit arithmetic |
 | `analog.cpphdl_interop` | 12 checks: both include orders, native/managed old-state barrier, separate clocks, exact 64-bit transfer, retained ownership, unknown inputs/clocks, duplicate/context/null/width errors and unregistered/unbound outputs |
 | `analog.digital_ports` | Digital-only C++17 build with existing lazy ports and native work/strobe state behavior |
+| `analog.trace_requirements` | Completed-trajectory assertions: pass/fail/unknown status, conditional guarantees, freeze/empty callbacks and measurement evidence |
+| `analog.feedback.*` | LDO dropout, loaded PLL, weak-input AGC, half-step runs and quantitative coarse/fine comparisons using CTest fixtures |
 | `analog.core_isolation` | Core-only loaded divider, IC naming and compile-time exclusion of native lazy ports and strobe methods; no native cache clock |
 | `analog.mixed_signal` | End-to-end RC sensing, native pipeline latency, loaded output, capacitor continuity and return sensing |
-| `analog.examples.*` | Ten individual circuit and behavioral experiments, including intentional diagnostics/failure outcomes; the native mixed example is `analog.mixed_signal` |
+| `analog.examples.*` | Thirteen individual circuit and behavioral experiments, including intentional diagnostics/failure outcomes; the native mixed example is `analog.mixed_signal` |
 | `analog.reject_wrong_units` | A capacitor value cannot be passed as resistance |
 | `analog.reject_wide_bridge` | A native bridge wider than 64 bits is rejected |
 | `analog.reject_static_ports` | Legacy static ports cannot instantiate analog schemas |
@@ -70,9 +72,23 @@ influence example deliberately fails its output requirement; that expected failu
 is a passing regression outcome. An unrelated execution error cannot count as
 that expected failure.
 
-There are 18 tests with label `analog`. The optional `run_regressions.py` helper
+There are 31 tests with label `analog`. The optional `run_regressions.py` helper
 configures, builds and invokes this same CTest suite; CTest itself does not need it.
 
 Fixed-step numerical limits and selected-model assumptions remain in
 [basic/README.md](../basic/README.md) and the
 [integration contract](../doc/cpphdl-integration.md).
+
+The feedback checks compare LDO settled voltages within 1 mV; PLL frequency within
+12 Hz and mean phase within 0.01 cycles; AGC positive peaks within 2 mV, detector
+means within 3 mV and control means within 50 mV. Each nominal/refined run must
+also pass its own operating-window requirements. CTest fixtures regenerate both
+traces when selecting a convergence test alone:
+
+```bash
+ctest --test-dir analog/build --output-on-failure -R 'analog.feedback.*convergence' -j 3
+```
+
+The expected-loss tests assert dropout or saturation explicitly. A generic solver
+error, missing edges, missing report, or unexpected unsuccessful requirement cannot
+count as successful stress behavior.

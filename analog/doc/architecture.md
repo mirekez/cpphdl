@@ -116,6 +116,9 @@ Newton. It checks rank even for a zero residual, diagnosing floating nets instea
 of treating their zero-valued initial guess as a uniquely determined solution.
 Independent sources and capacitor charges seed Newton iteration; resistor
 connections propagate tentative voltage guesses without imposing extra constraints.
+Trial voltage updates are limited before backtracking, scaled to the current
+voltage magnitude, to avoid enormous steps through cutoff channels with weak
+return paths. This changes the iteration, not the physical network.
 Numerical failure does not prove physical infeasibility. Dense cost is roughly
 cubic per Newton solve; this prototype explains and tests small circuits, not chips.
 
@@ -140,3 +143,12 @@ Hard real-time wall-clock execution needs its own timing and error contract.
 
 Formal assume/guarantee composition, all-envelope refinement, PLL/oscillator/memory
 libraries and technology synthesis are outside the implemented scope.
+
+## Completed-trajectory checks
+
+`simulation::require_trace` retains named testbench predicates until integration
+finishes. They inspect immutable sample rows and report pass, failure or missing
+evidence, subject to the same global assumption envelope as final-value checks.
+They do not participate in the physical residual or supply ideal control behavior.
+Feedback examples measure settling windows, interpolated edges/phase and positive
+peaks through this interface. CTest separately compares coarse and refined traces.

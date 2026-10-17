@@ -21,6 +21,11 @@ unit literals are in `analog::literals`.
 | [pmos_current_mirror.hpp](pmos_current_mirror.hpp), `pmos_current_mirror` | IN, OUT | A diode-connected PMOS establishes the gate voltage of a matched sourcing PMOS |
 | [opamp.hpp](opamp.hpp), `opamp` | PLUS, MINUS, OUT | Differential pair and mirror provide differential gain; explicit resistors and capacitor set bias and dynamics |
 | [non_inverting_amplifier.hpp](non_inverting_amplifier.hpp), `non_inverting_amplifier` | IN, OUT | An op-amp and divider intend a closed-loop gain of `1 + upper / lower` |
+| [ldo.hpp](ldo.hpp), `ldo` | REF, OUT | PMOS pass channel plus divider and transistor error amplifier request an output/reference ratio |
+| [cmos_logic.hpp](cmos_logic.hpp), `cmos_nand`, `cmos_xor` | A, B, Y | MOS gate networks with explicit output charge and weak return paths |
+| [ring_vco.hpp](ring_vco.hpp), `current_starved_inverter`, `ring_vco` | CONTROL, OUT (stage also A, Y) | Three charge-storing inverter stages form a voltage-controlled oscillator |
+| [pll.hpp](pll.hpp), `lead_lag_filter`, `pll` | IN/OUT or REF/OUT | Passive filter and transistor phase comparison correct physical oscillator timing |
+| [agc.hpp](agc.hpp), `agc` and its constituent classes | IN, OUT, BIAS, REF | MOS attenuation, amplifier, peak detector and error integrator correct positive output peaks |
 | [regulator.hpp](regulator.hpp), `regulator` | REF, OUT | A pass PMOS supplies the output; an op-amp corrects its gate using output/reference feedback |
 
 Pass ports directly to primitive/model calls: `pmos(A, Vdd)` or
@@ -120,7 +125,8 @@ KCL. The output shunt similarly gives finite gain without a hidden leakage term.
 | `tail_resistance` | 10 Ohm | Common-mode-dependent bias return |
 | `load.bias_return` | 1 GOhm | Defines the mirror's off-state gate voltage |
 | `output_shunt` | 100 kOhm | Explicit load to Vss, bounding unloaded gain |
-| `compensation` | 10 nF, initially 0 V relative to Vss | Explicit output charge storage and dynamics |
+| `compensation` | 10 nF | Explicit output charge storage and dynamics |
+| `initial_output` | 0 V relative to Vss | Initial voltage across the compensation capacitor |
 
 The large educational MOS strengths and small tail resistance produce substantial
 bias current: around 2.9 mA near 0.5 V common mode and 40 mA near 1.2 V common mode.
@@ -216,6 +222,12 @@ guesses do not replace step selection or establish trajectory accuracy. No adapt
 step reduction is currently implemented. Passing a final voltage constraint does
 not establish a startup bound or all-load stability.
 
+Separate parallel ideal capacitors currently produce redundant voltage constraints
+during initialization or charge-holding solves and can report E_SINGULAR even when
+their initial voltages agree. Represent identical-voltage parallel storage as one
+capacitor with summed capacitance, or model the actual series impedances. The PLL
+load experiment uses a resistive load and does not exercise this unsupported case.
+
 ## Verification and reproducible results
 
 From the `analog/` directory:
@@ -232,3 +244,17 @@ including amplifier bias and shunt currents. Commented sources remain under
 [examples/](../examples/). Running an example generates equations, CSV traces and
 reports in its requested output directory. CTest checks each example's exit code
 and report status, including deliberately unsuccessful physical requirements.
+
+## Feedback examples
+
+The [LDO](../examples/ldo/README.md), [PLL](../examples/pll/README.md) and
+[AGC](../examples/agc/README.md) document their complete hierarchies, physical
+relations, initial conditions, model parameters and measured operating limits.
+Their CTest scenarios include supply/load changes, oscillator loading, insufficient
+headroom and insufficient input amplitude. Coarse/fine trajectory comparisons check
+settled voltage, frequency/phase and positive peaks/detector/control respectively.
+
+The PLL uses explicit asymmetric ring charge; the AGC begins from documented
+biased capacitor states. These are declared experiment conditions, not proofs of
+cold startup. No class adds a regulator, oscillator or gain-control equation to the
+solver: every correction comes from the constituent MOS/resistor/capacitor relations.

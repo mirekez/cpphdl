@@ -273,7 +273,15 @@ inline std::vector<double> simulation::solve(std::vector<double> x, const std::v
         if (before <= 1e-8)
             return x;
         bool accepted = false;
-        double alpha = 1;
+        // Off channels can leave only a weak physical return and produce a huge Newton step.
+        // Limit the trial voltage change before backtracking; this changes no device equation.
+        double largest_voltage_step = 0, voltage_scale = 1;
+        for (std::size_t j = 0; j < nodes_.size(); ++j) {
+            largest_voltage_step = std::max(largest_voltage_step, std::abs(delta[j]));
+            voltage_scale = std::max(voltage_scale, std::abs(x[j]));
+        }
+        double trial_limit = .25 * voltage_scale;
+        double alpha = largest_voltage_step > trial_limit ? trial_limit / largest_voltage_step : 1;
         for (int attempt = 0; attempt < 24; ++attempt, alpha /= 2) {
             auto trial = x;
             for (std::size_t j = 0; j < x.size(); ++j)
@@ -292,7 +300,9 @@ inline std::vector<double> simulation::solve(std::vector<double> x, const std::v
             throw diagnostic("E_NONCONVERGENCE", detail.str());
         }
     }
-    throw diagnostic("E_NONCONVERGENCE", "Newton iteration limit");
+    std::ostringstream detail;
+    detail << "Newton iteration limit at t=" << time << " s, dt=" << dt << " s";
+    throw diagnostic("E_NONCONVERGENCE", detail.str());
 }
 
 inline void simulation::combinational() {
@@ -530,6 +540,16 @@ inline void simulation::run(duration stop, duration step) {
                 failed |= !pass;
             }
         }
+    for (auto& q : trace_obligations_) {
+        if (!valid) {
+            q.status = "out_of_contract";
+            continue;
+        }
+        auto pass = q.predicate(trace);
+        q.status = !pass ? "unverified" : *pass ? "sampled_pass" : "sampled_fail";
+        unknown |= !pass;
+        failed |= pass && !*pass;
+    }
     status_ = !valid ? "out_of_contract" : failed ? "failed" : unknown ? "unverified" : "sampled_pass";
 }
 
@@ -627,6 +647,13 @@ inline void simulation::write(const std::filesystem::path& destination) const {
             report << ", \"lower_V\": " << q.low << ", \"upper_V\": " << q.high
                    << ", \"final_V\": " << node_voltage(solution_, q.a) - node_voltage(solution_, q.b);
         report << '}';
+    }
+    for (std::size_t i = 0; i < trace_obligations_.size(); ++i) {
+        if (i || !obligations_.empty())
+            report << ',';
+        const auto& q = trace_obligations_[i];
+        report << "\n    {\"name\": " << json_string(q.name)
+               << ", \"kind\": \"trace\", \"assumption\": false, \"status\": " << json_string(q.status) << '}';
     }
     report << "\n  ],\n  \"components\": [";
     for (std::size_t i = 0; i < components_.size(); ++i) {
