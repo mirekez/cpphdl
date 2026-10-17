@@ -7,6 +7,12 @@ Link the CMake target `cpphdl::analog`.
 The [10GBASE-R / SFP+ SFI prototype](10G/README.md) includes a serializer,
 three-tap TX emphasis, CTLE, PLL CDR, DFE, receiver and two-flow regression tests.
 
+The [1000BASE-T PAM5 development model](1G/README.md) adds a coupled four-pair
+bidirectional link, adaptive sampled receiver and separate IHP device tests.
+
+The [IHP SG13G2 setup](pdk/README.md) prepares the public 130 nm BiCMOS PDK,
+local Python dependencies and ngspice compact models.
+
 Checked-in Verilog-A models are in [basic/generated](basic/generated/README.md)
 and [examples/generated](examples/generated/README.md), with regeneration commands,
 complete simulation benches and explicit export limits for digital behavior.

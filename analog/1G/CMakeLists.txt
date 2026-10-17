@@ -1,0 +1,18 @@
+add_executable(analog_1g_generate generate.cpp)
+target_link_libraries(analog_1g_generate PRIVATE cpphdl::analog)
+add_executable(analog_1g_bench tests/bench.cpp)
+target_link_libraries(analog_1g_bench PRIVATE cpphdl::analog)
+add_executable(analog_1g_process tests/process.cpp)
+target_link_libraries(analog_1g_process PRIVATE cpphdl::analog)
+add_custom_target(generate-1g-veriloga
+  COMMAND analog_1g_generate "${CPPHDL_ANALOG_PACKAGE_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}"
+  DEPENDS analog_1g_generate VERBATIM USES_TERMINAL)
+if(TARGET generate-veriloga)
+  add_dependencies(generate-veriloga generate-1g-veriloga)
+endif()
+if(BUILD_TESTING)
+  add_executable(analog_1g_algorithms tests/algorithms.cpp)
+  target_link_libraries(analog_1g_algorithms PRIVATE cpphdl::analog)
+  add_subdirectory(tests)
+  add_subdirectory(IHPSG13G2)
+endif()

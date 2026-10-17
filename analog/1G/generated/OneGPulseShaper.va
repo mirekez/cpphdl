@@ -1,0 +1,20 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGPulseShaper(Vdd, Vss, MAIN, HISTORY, VCM, OUT);
+    inout Vdd, Vss, MAIN, HISTORY, VCM, OUT;
+    electrical Vdd, Vss, MAIN, HISTORY, VCM, OUT;
+
+    analog begin
+        // device 0, IC OneGPulseShaper, analog/1G/transmitter.hpp:18
+        I(VCM, OUT) <+ V(VCM, OUT) / 1000.0;
+        // device 1, IC OneGPulseShaper, analog/1G/transmitter.hpp:19
+        I(OUT, VCM) <+ 2e-14 * ddt(V(OUT, VCM)); // Bench initial voltage = 0.0 V.
+        // device 2, IC OneGPulseShaper, analog/1G/transmitter.hpp:20
+        I(OUT, VCM) <+ (-0.00075000000000000002) * V(MAIN, VCM);
+        // device 3, IC OneGPulseShaper, analog/1G/transmitter.hpp:21
+        I(OUT, VCM) <+ (-0.00025000000000000001) * V(HISTORY, VCM);
+    end
+endmodule

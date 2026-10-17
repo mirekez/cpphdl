@@ -1,0 +1,34 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGReceiver(Vdd, Vss, P, N, LOCAL, VCM, OUT);
+    inout Vdd, Vss, P, N, LOCAL, VCM, OUT;
+    electrical Vdd, Vss, P, N, LOCAL, VCM, OUT;
+    electrical cpphdl_n17;
+    electrical cpphdl_n20;
+
+    analog begin
+        // device 0, IC IC1, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n17) <+ V(VCM, cpphdl_n17) / 1000.0;
+        // device 1, IC IC1, analog/1G/hybrid.hpp:21
+        I(cpphdl_n17, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n17, VCM)); // Bench initial voltage = 0.0 V.
+        // device 2, IC IC1, analog/1G/hybrid.hpp:22
+        I(cpphdl_n17, VCM) <+ (-0.001) * V(P, N);
+        // device 3, IC IC1, analog/1G/hybrid.hpp:23
+        I(cpphdl_n17, VCM) <+ (-0.00056521739130434778) * V(VCM, LOCAL);
+        // device 4, IC IC2, analog/1G/equalizer.hpp:18
+        I(cpphdl_n17, cpphdl_n20) <+ V(cpphdl_n17, cpphdl_n20) / 1000.0;
+        // device 5, IC IC2, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n20) <+ V(VCM, cpphdl_n20) / 1000.0;
+        // device 6, IC IC2, analog/1G/equalizer.hpp:20
+        I(cpphdl_n17, cpphdl_n20) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n17, cpphdl_n20)); // Bench initial voltage = 0.0 V.
+        // device 7, IC IC2, analog/1G/equalizer.hpp:21
+        I(VCM, OUT) <+ V(VCM, OUT) / 1000.0;
+        // device 8, IC IC2, analog/1G/equalizer.hpp:22
+        I(OUT, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUT, VCM)); // Bench initial voltage = 0.0 V.
+        // device 9, IC IC2, analog/1G/equalizer.hpp:23
+        I(OUT, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n20, VCM);
+    end
+endmodule

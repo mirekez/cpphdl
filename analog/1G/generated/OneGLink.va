@@ -1,0 +1,636 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGLink(Vdd, Vss, CLOCK, VREF, VCM, OUTA0, OUTB0, A0C0, B0C0, A0C1, B0C1, A0C2, B0C2, A0C3, B0C3, OUTA1, OUTB1, A1C0, B1C0, A1C1, B1C1, A1C2, B1C2, A1C3, B1C3, OUTA2, OUTB2, A2C0, B2C0, A2C1, B2C1, A2C2, B2C2, A2C3, B2C3, OUTA3, OUTB3, A3C0, B3C0, A3C1, B3C1, A3C2, B3C2, A3C3, B3C3);
+    inout Vdd, Vss, CLOCK, VREF, VCM, OUTA0, OUTB0, A0C0, B0C0, A0C1, B0C1, A0C2, B0C2, A0C3, B0C3, OUTA1, OUTB1, A1C0, B1C0, A1C1, B1C1, A1C2, B1C2, A1C3, B1C3, OUTA2, OUTB2, A2C0, B2C0, A2C1, B2C1, A2C2, B2C2, A2C3, B2C3, OUTA3, OUTB3, A3C0, B3C0, A3C1, B3C1, A3C2, B3C2, A3C3, B3C3;
+    electrical Vdd, Vss, CLOCK, VREF, VCM, OUTA0, OUTB0, A0C0, B0C0, A0C1, B0C1, A0C2, B0C2, A0C3, B0C3, OUTA1, OUTB1, A1C0, B1C0, A1C1, B1C1, A1C2, B1C2, A1C3, B1C3, OUTA2, OUTB2, A2C0, B2C0, A2C1, B2C1, A2C2, B2C2, A2C3, B2C3, OUTA3, OUTB3, A3C0, B3C0, A3C1, B3C1, A3C2, B3C2, A3C3, B3C3;
+    electrical cpphdl_n79;
+    electrical cpphdl_n84;
+    electrical cpphdl_n85;
+    electrical cpphdl_n127;
+    electrical cpphdl_n132;
+    electrical cpphdl_n133;
+    electrical cpphdl_n175;
+    electrical cpphdl_n180;
+    electrical cpphdl_n181;
+    electrical cpphdl_n223;
+    electrical cpphdl_n228;
+    electrical cpphdl_n229;
+    electrical cpphdl_n271;
+    electrical cpphdl_n276;
+    electrical cpphdl_n277;
+    electrical cpphdl_n319;
+    electrical cpphdl_n324;
+    electrical cpphdl_n325;
+    electrical cpphdl_n367;
+    electrical cpphdl_n372;
+    electrical cpphdl_n373;
+    electrical cpphdl_n415;
+    electrical cpphdl_n420;
+    electrical cpphdl_n421;
+    electrical cpphdl_n441;
+    electrical cpphdl_n446;
+    electrical cpphdl_n449;
+    electrical cpphdl_n461;
+    electrical cpphdl_n466;
+    electrical cpphdl_n469;
+    electrical cpphdl_n481;
+    electrical cpphdl_n486;
+    electrical cpphdl_n489;
+    electrical cpphdl_n501;
+    electrical cpphdl_n506;
+    electrical cpphdl_n509;
+    electrical cpphdl_n521;
+    electrical cpphdl_n526;
+    electrical cpphdl_n529;
+    electrical cpphdl_n541;
+    electrical cpphdl_n546;
+    electrical cpphdl_n549;
+    electrical cpphdl_n561;
+    electrical cpphdl_n566;
+    electrical cpphdl_n569;
+    electrical cpphdl_n581;
+    electrical cpphdl_n586;
+    electrical cpphdl_n589;
+    electrical cpphdl_n611;
+    electrical cpphdl_n612;
+    electrical cpphdl_n613;
+    electrical cpphdl_n614;
+    electrical cpphdl_n618;
+    electrical cpphdl_n619;
+    electrical cpphdl_n620;
+    electrical cpphdl_n621;
+    electrical cpphdl_n625;
+    electrical cpphdl_n626;
+    electrical cpphdl_n627;
+    electrical cpphdl_n628;
+    electrical cpphdl_n632;
+    electrical cpphdl_n633;
+    electrical cpphdl_n634;
+    electrical cpphdl_n635;
+
+    analog begin
+        // device 0, IC IC2, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n84) <+ V(VCM, cpphdl_n84) / 1000.0;
+        // device 1, IC IC2, analog/1G/pam5.hpp:19
+        I(cpphdl_n84, VCM) <+ 2e-14 * ddt(V(cpphdl_n84, VCM)); // Bench initial voltage = 0.0 V.
+        // device 2, IC IC2, analog/1G/pam5.hpp:21
+        I(cpphdl_n84, VCM) <+ (-0.00041666666666666669) * V(A0C0, VREF);
+        // device 3, IC IC2, analog/1G/pam5.hpp:21
+        I(cpphdl_n84, VCM) <+ (-0.00041666666666666669) * V(A0C1, VREF);
+        // device 4, IC IC2, analog/1G/pam5.hpp:21
+        I(cpphdl_n84, VCM) <+ (-0.00041666666666666669) * V(A0C2, VREF);
+        // device 5, IC IC2, analog/1G/pam5.hpp:21
+        I(cpphdl_n84, VCM) <+ (-0.00041666666666666669) * V(A0C3, VREF);
+        // device 6, IC IC4, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n79, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n79, cpphdl_n84) / 25.0; // sim_buffered_track
+        // device 7, IC IC4, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n79, Vss) <+ 1e-13 * ddt(V(cpphdl_n79, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 8, IC IC4, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n79, Vss) <+ V(cpphdl_n79, Vss) / 1000000000.0;
+        // device 9, IC IC5, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n85, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n85, cpphdl_n79) / 25.0; // sim_buffered_track
+        // device 10, IC IC5, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n85, Vss) <+ 1e-13 * ddt(V(cpphdl_n85, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 11, IC IC5, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n85, Vss) <+ V(cpphdl_n85, Vss) / 1000000000.0;
+        // device 12, IC IC6, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n441) <+ V(VCM, cpphdl_n441) / 1000.0;
+        // device 13, IC IC6, analog/1G/transmitter.hpp:19
+        I(cpphdl_n441, VCM) <+ 2e-14 * ddt(V(cpphdl_n441, VCM)); // Bench initial voltage = 0.0 V.
+        // device 14, IC IC6, analog/1G/transmitter.hpp:20
+        I(cpphdl_n441, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n84, VCM);
+        // device 15, IC IC6, analog/1G/transmitter.hpp:21
+        I(cpphdl_n441, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n85, VCM);
+        // device 16, IC IC7, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n611) <+ V(VCM, cpphdl_n611) / 50.0;
+        // device 17, IC IC7, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n612) <+ V(VCM, cpphdl_n612) / 50.0;
+        // device 18, IC IC7, analog/1G/transmitter.hpp:36
+        I(cpphdl_n611, VCM) <+ (-0.01) * V(cpphdl_n441, VCM);
+        // device 19, IC IC7, analog/1G/transmitter.hpp:37
+        I(cpphdl_n612, VCM) <+ (-0.01) * V(VCM, cpphdl_n441);
+        // device 20, IC IC30, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n276) <+ V(VCM, cpphdl_n276) / 1000.0;
+        // device 21, IC IC30, analog/1G/pam5.hpp:19
+        I(cpphdl_n276, VCM) <+ 2e-14 * ddt(V(cpphdl_n276, VCM)); // Bench initial voltage = 0.0 V.
+        // device 22, IC IC30, analog/1G/pam5.hpp:21
+        I(cpphdl_n276, VCM) <+ (-0.00041666666666666669) * V(B0C0, VREF);
+        // device 23, IC IC30, analog/1G/pam5.hpp:21
+        I(cpphdl_n276, VCM) <+ (-0.00041666666666666669) * V(B0C1, VREF);
+        // device 24, IC IC30, analog/1G/pam5.hpp:21
+        I(cpphdl_n276, VCM) <+ (-0.00041666666666666669) * V(B0C2, VREF);
+        // device 25, IC IC30, analog/1G/pam5.hpp:21
+        I(cpphdl_n276, VCM) <+ (-0.00041666666666666669) * V(B0C3, VREF);
+        // device 26, IC IC32, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n271, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n271, cpphdl_n276) / 25.0; // sim_buffered_track
+        // device 27, IC IC32, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n271, Vss) <+ 1e-13 * ddt(V(cpphdl_n271, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 28, IC IC32, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n271, Vss) <+ V(cpphdl_n271, Vss) / 1000000000.0;
+        // device 29, IC IC33, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n277, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n277, cpphdl_n271) / 25.0; // sim_buffered_track
+        // device 30, IC IC33, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n277, Vss) <+ 1e-13 * ddt(V(cpphdl_n277, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 31, IC IC33, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n277, Vss) <+ V(cpphdl_n277, Vss) / 1000000000.0;
+        // device 32, IC IC34, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n521) <+ V(VCM, cpphdl_n521) / 1000.0;
+        // device 33, IC IC34, analog/1G/transmitter.hpp:19
+        I(cpphdl_n521, VCM) <+ 2e-14 * ddt(V(cpphdl_n521, VCM)); // Bench initial voltage = 0.0 V.
+        // device 34, IC IC34, analog/1G/transmitter.hpp:20
+        I(cpphdl_n521, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n276, VCM);
+        // device 35, IC IC34, analog/1G/transmitter.hpp:21
+        I(cpphdl_n521, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n277, VCM);
+        // device 36, IC IC35, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n613) <+ V(VCM, cpphdl_n613) / 50.0;
+        // device 37, IC IC35, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n614) <+ V(VCM, cpphdl_n614) / 50.0;
+        // device 38, IC IC35, analog/1G/transmitter.hpp:36
+        I(cpphdl_n613, VCM) <+ (-0.01) * V(cpphdl_n521, VCM);
+        // device 39, IC IC35, analog/1G/transmitter.hpp:37
+        I(cpphdl_n614, VCM) <+ (-0.01) * V(VCM, cpphdl_n521);
+        // device 40, IC IC58, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n446) <+ V(VCM, cpphdl_n446) / 1000.0;
+        // device 41, IC IC58, analog/1G/hybrid.hpp:21
+        I(cpphdl_n446, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n446, VCM)); // Bench initial voltage = 0.0 V.
+        // device 42, IC IC58, analog/1G/hybrid.hpp:22
+        I(cpphdl_n446, VCM) <+ (-0.001) * V(cpphdl_n611, cpphdl_n612);
+        // device 43, IC IC58, analog/1G/hybrid.hpp:23
+        I(cpphdl_n446, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n441);
+        // device 44, IC IC59, analog/1G/equalizer.hpp:18
+        I(cpphdl_n446, cpphdl_n449) <+ V(cpphdl_n446, cpphdl_n449) / 1000.0;
+        // device 45, IC IC59, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n449) <+ V(VCM, cpphdl_n449) / 1000.0;
+        // device 46, IC IC59, analog/1G/equalizer.hpp:20
+        I(cpphdl_n446, cpphdl_n449) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n446, cpphdl_n449)); // Bench initial voltage = 0.0 V.
+        // device 47, IC IC59, analog/1G/equalizer.hpp:21
+        I(VCM, OUTA0) <+ V(VCM, OUTA0) / 1000.0;
+        // device 48, IC IC59, analog/1G/equalizer.hpp:22
+        I(OUTA0, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTA0, VCM)); // Bench initial voltage = 0.0 V.
+        // device 49, IC IC59, analog/1G/equalizer.hpp:23
+        I(OUTA0, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n449, VCM);
+        // device 50, IC IC70, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n526) <+ V(VCM, cpphdl_n526) / 1000.0;
+        // device 51, IC IC70, analog/1G/hybrid.hpp:21
+        I(cpphdl_n526, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n526, VCM)); // Bench initial voltage = 0.0 V.
+        // device 52, IC IC70, analog/1G/hybrid.hpp:22
+        I(cpphdl_n526, VCM) <+ (-0.001) * V(cpphdl_n613, cpphdl_n614);
+        // device 53, IC IC70, analog/1G/hybrid.hpp:23
+        I(cpphdl_n526, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n521);
+        // device 54, IC IC71, analog/1G/equalizer.hpp:18
+        I(cpphdl_n526, cpphdl_n529) <+ V(cpphdl_n526, cpphdl_n529) / 1000.0;
+        // device 55, IC IC71, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n529) <+ V(VCM, cpphdl_n529) / 1000.0;
+        // device 56, IC IC71, analog/1G/equalizer.hpp:20
+        I(cpphdl_n526, cpphdl_n529) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n526, cpphdl_n529)); // Bench initial voltage = 0.0 V.
+        // device 57, IC IC71, analog/1G/equalizer.hpp:21
+        I(VCM, OUTB0) <+ V(VCM, OUTB0) / 1000.0;
+        // device 58, IC IC71, analog/1G/equalizer.hpp:22
+        I(OUTB0, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTB0, VCM)); // Bench initial voltage = 0.0 V.
+        // device 59, IC IC71, analog/1G/equalizer.hpp:23
+        I(OUTB0, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n529, VCM);
+        // device 60, IC IC9, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n132) <+ V(VCM, cpphdl_n132) / 1000.0;
+        // device 61, IC IC9, analog/1G/pam5.hpp:19
+        I(cpphdl_n132, VCM) <+ 2e-14 * ddt(V(cpphdl_n132, VCM)); // Bench initial voltage = 0.0 V.
+        // device 62, IC IC9, analog/1G/pam5.hpp:21
+        I(cpphdl_n132, VCM) <+ (-0.00041666666666666669) * V(A1C0, VREF);
+        // device 63, IC IC9, analog/1G/pam5.hpp:21
+        I(cpphdl_n132, VCM) <+ (-0.00041666666666666669) * V(A1C1, VREF);
+        // device 64, IC IC9, analog/1G/pam5.hpp:21
+        I(cpphdl_n132, VCM) <+ (-0.00041666666666666669) * V(A1C2, VREF);
+        // device 65, IC IC9, analog/1G/pam5.hpp:21
+        I(cpphdl_n132, VCM) <+ (-0.00041666666666666669) * V(A1C3, VREF);
+        // device 66, IC IC11, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n127, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n127, cpphdl_n132) / 25.0; // sim_buffered_track
+        // device 67, IC IC11, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n127, Vss) <+ 1e-13 * ddt(V(cpphdl_n127, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 68, IC IC11, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n127, Vss) <+ V(cpphdl_n127, Vss) / 1000000000.0;
+        // device 69, IC IC12, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n133, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n133, cpphdl_n127) / 25.0; // sim_buffered_track
+        // device 70, IC IC12, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n133, Vss) <+ 1e-13 * ddt(V(cpphdl_n133, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 71, IC IC12, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n133, Vss) <+ V(cpphdl_n133, Vss) / 1000000000.0;
+        // device 72, IC IC13, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n461) <+ V(VCM, cpphdl_n461) / 1000.0;
+        // device 73, IC IC13, analog/1G/transmitter.hpp:19
+        I(cpphdl_n461, VCM) <+ 2e-14 * ddt(V(cpphdl_n461, VCM)); // Bench initial voltage = 0.0 V.
+        // device 74, IC IC13, analog/1G/transmitter.hpp:20
+        I(cpphdl_n461, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n132, VCM);
+        // device 75, IC IC13, analog/1G/transmitter.hpp:21
+        I(cpphdl_n461, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n133, VCM);
+        // device 76, IC IC14, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n618) <+ V(VCM, cpphdl_n618) / 50.0;
+        // device 77, IC IC14, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n619) <+ V(VCM, cpphdl_n619) / 50.0;
+        // device 78, IC IC14, analog/1G/transmitter.hpp:36
+        I(cpphdl_n618, VCM) <+ (-0.01) * V(cpphdl_n461, VCM);
+        // device 79, IC IC14, analog/1G/transmitter.hpp:37
+        I(cpphdl_n619, VCM) <+ (-0.01) * V(VCM, cpphdl_n461);
+        // device 80, IC IC37, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n324) <+ V(VCM, cpphdl_n324) / 1000.0;
+        // device 81, IC IC37, analog/1G/pam5.hpp:19
+        I(cpphdl_n324, VCM) <+ 2e-14 * ddt(V(cpphdl_n324, VCM)); // Bench initial voltage = 0.0 V.
+        // device 82, IC IC37, analog/1G/pam5.hpp:21
+        I(cpphdl_n324, VCM) <+ (-0.00041666666666666669) * V(B1C0, VREF);
+        // device 83, IC IC37, analog/1G/pam5.hpp:21
+        I(cpphdl_n324, VCM) <+ (-0.00041666666666666669) * V(B1C1, VREF);
+        // device 84, IC IC37, analog/1G/pam5.hpp:21
+        I(cpphdl_n324, VCM) <+ (-0.00041666666666666669) * V(B1C2, VREF);
+        // device 85, IC IC37, analog/1G/pam5.hpp:21
+        I(cpphdl_n324, VCM) <+ (-0.00041666666666666669) * V(B1C3, VREF);
+        // device 86, IC IC39, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n319, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n319, cpphdl_n324) / 25.0; // sim_buffered_track
+        // device 87, IC IC39, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n319, Vss) <+ 1e-13 * ddt(V(cpphdl_n319, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 88, IC IC39, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n319, Vss) <+ V(cpphdl_n319, Vss) / 1000000000.0;
+        // device 89, IC IC40, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n325, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n325, cpphdl_n319) / 25.0; // sim_buffered_track
+        // device 90, IC IC40, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n325, Vss) <+ 1e-13 * ddt(V(cpphdl_n325, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 91, IC IC40, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n325, Vss) <+ V(cpphdl_n325, Vss) / 1000000000.0;
+        // device 92, IC IC41, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n541) <+ V(VCM, cpphdl_n541) / 1000.0;
+        // device 93, IC IC41, analog/1G/transmitter.hpp:19
+        I(cpphdl_n541, VCM) <+ 2e-14 * ddt(V(cpphdl_n541, VCM)); // Bench initial voltage = 0.0 V.
+        // device 94, IC IC41, analog/1G/transmitter.hpp:20
+        I(cpphdl_n541, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n324, VCM);
+        // device 95, IC IC41, analog/1G/transmitter.hpp:21
+        I(cpphdl_n541, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n325, VCM);
+        // device 96, IC IC42, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n620) <+ V(VCM, cpphdl_n620) / 50.0;
+        // device 97, IC IC42, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n621) <+ V(VCM, cpphdl_n621) / 50.0;
+        // device 98, IC IC42, analog/1G/transmitter.hpp:36
+        I(cpphdl_n620, VCM) <+ (-0.01) * V(cpphdl_n541, VCM);
+        // device 99, IC IC42, analog/1G/transmitter.hpp:37
+        I(cpphdl_n621, VCM) <+ (-0.01) * V(VCM, cpphdl_n541);
+        // device 100, IC IC61, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n466) <+ V(VCM, cpphdl_n466) / 1000.0;
+        // device 101, IC IC61, analog/1G/hybrid.hpp:21
+        I(cpphdl_n466, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n466, VCM)); // Bench initial voltage = 0.0 V.
+        // device 102, IC IC61, analog/1G/hybrid.hpp:22
+        I(cpphdl_n466, VCM) <+ (-0.001) * V(cpphdl_n618, cpphdl_n619);
+        // device 103, IC IC61, analog/1G/hybrid.hpp:23
+        I(cpphdl_n466, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n461);
+        // device 104, IC IC62, analog/1G/equalizer.hpp:18
+        I(cpphdl_n466, cpphdl_n469) <+ V(cpphdl_n466, cpphdl_n469) / 1000.0;
+        // device 105, IC IC62, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n469) <+ V(VCM, cpphdl_n469) / 1000.0;
+        // device 106, IC IC62, analog/1G/equalizer.hpp:20
+        I(cpphdl_n466, cpphdl_n469) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n466, cpphdl_n469)); // Bench initial voltage = 0.0 V.
+        // device 107, IC IC62, analog/1G/equalizer.hpp:21
+        I(VCM, OUTA1) <+ V(VCM, OUTA1) / 1000.0;
+        // device 108, IC IC62, analog/1G/equalizer.hpp:22
+        I(OUTA1, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTA1, VCM)); // Bench initial voltage = 0.0 V.
+        // device 109, IC IC62, analog/1G/equalizer.hpp:23
+        I(OUTA1, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n469, VCM);
+        // device 110, IC IC73, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n546) <+ V(VCM, cpphdl_n546) / 1000.0;
+        // device 111, IC IC73, analog/1G/hybrid.hpp:21
+        I(cpphdl_n546, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n546, VCM)); // Bench initial voltage = 0.0 V.
+        // device 112, IC IC73, analog/1G/hybrid.hpp:22
+        I(cpphdl_n546, VCM) <+ (-0.001) * V(cpphdl_n620, cpphdl_n621);
+        // device 113, IC IC73, analog/1G/hybrid.hpp:23
+        I(cpphdl_n546, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n541);
+        // device 114, IC IC74, analog/1G/equalizer.hpp:18
+        I(cpphdl_n546, cpphdl_n549) <+ V(cpphdl_n546, cpphdl_n549) / 1000.0;
+        // device 115, IC IC74, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n549) <+ V(VCM, cpphdl_n549) / 1000.0;
+        // device 116, IC IC74, analog/1G/equalizer.hpp:20
+        I(cpphdl_n546, cpphdl_n549) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n546, cpphdl_n549)); // Bench initial voltage = 0.0 V.
+        // device 117, IC IC74, analog/1G/equalizer.hpp:21
+        I(VCM, OUTB1) <+ V(VCM, OUTB1) / 1000.0;
+        // device 118, IC IC74, analog/1G/equalizer.hpp:22
+        I(OUTB1, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTB1, VCM)); // Bench initial voltage = 0.0 V.
+        // device 119, IC IC74, analog/1G/equalizer.hpp:23
+        I(OUTB1, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n549, VCM);
+        // device 120, IC IC16, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n180) <+ V(VCM, cpphdl_n180) / 1000.0;
+        // device 121, IC IC16, analog/1G/pam5.hpp:19
+        I(cpphdl_n180, VCM) <+ 2e-14 * ddt(V(cpphdl_n180, VCM)); // Bench initial voltage = 0.0 V.
+        // device 122, IC IC16, analog/1G/pam5.hpp:21
+        I(cpphdl_n180, VCM) <+ (-0.00041666666666666669) * V(A2C0, VREF);
+        // device 123, IC IC16, analog/1G/pam5.hpp:21
+        I(cpphdl_n180, VCM) <+ (-0.00041666666666666669) * V(A2C1, VREF);
+        // device 124, IC IC16, analog/1G/pam5.hpp:21
+        I(cpphdl_n180, VCM) <+ (-0.00041666666666666669) * V(A2C2, VREF);
+        // device 125, IC IC16, analog/1G/pam5.hpp:21
+        I(cpphdl_n180, VCM) <+ (-0.00041666666666666669) * V(A2C3, VREF);
+        // device 126, IC IC18, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n175, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n175, cpphdl_n180) / 25.0; // sim_buffered_track
+        // device 127, IC IC18, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n175, Vss) <+ 1e-13 * ddt(V(cpphdl_n175, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 128, IC IC18, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n175, Vss) <+ V(cpphdl_n175, Vss) / 1000000000.0;
+        // device 129, IC IC19, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n181, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n181, cpphdl_n175) / 25.0; // sim_buffered_track
+        // device 130, IC IC19, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n181, Vss) <+ 1e-13 * ddt(V(cpphdl_n181, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 131, IC IC19, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n181, Vss) <+ V(cpphdl_n181, Vss) / 1000000000.0;
+        // device 132, IC IC20, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n481) <+ V(VCM, cpphdl_n481) / 1000.0;
+        // device 133, IC IC20, analog/1G/transmitter.hpp:19
+        I(cpphdl_n481, VCM) <+ 2e-14 * ddt(V(cpphdl_n481, VCM)); // Bench initial voltage = 0.0 V.
+        // device 134, IC IC20, analog/1G/transmitter.hpp:20
+        I(cpphdl_n481, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n180, VCM);
+        // device 135, IC IC20, analog/1G/transmitter.hpp:21
+        I(cpphdl_n481, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n181, VCM);
+        // device 136, IC IC21, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n625) <+ V(VCM, cpphdl_n625) / 50.0;
+        // device 137, IC IC21, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n626) <+ V(VCM, cpphdl_n626) / 50.0;
+        // device 138, IC IC21, analog/1G/transmitter.hpp:36
+        I(cpphdl_n625, VCM) <+ (-0.01) * V(cpphdl_n481, VCM);
+        // device 139, IC IC21, analog/1G/transmitter.hpp:37
+        I(cpphdl_n626, VCM) <+ (-0.01) * V(VCM, cpphdl_n481);
+        // device 140, IC IC44, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n372) <+ V(VCM, cpphdl_n372) / 1000.0;
+        // device 141, IC IC44, analog/1G/pam5.hpp:19
+        I(cpphdl_n372, VCM) <+ 2e-14 * ddt(V(cpphdl_n372, VCM)); // Bench initial voltage = 0.0 V.
+        // device 142, IC IC44, analog/1G/pam5.hpp:21
+        I(cpphdl_n372, VCM) <+ (-0.00041666666666666669) * V(B2C0, VREF);
+        // device 143, IC IC44, analog/1G/pam5.hpp:21
+        I(cpphdl_n372, VCM) <+ (-0.00041666666666666669) * V(B2C1, VREF);
+        // device 144, IC IC44, analog/1G/pam5.hpp:21
+        I(cpphdl_n372, VCM) <+ (-0.00041666666666666669) * V(B2C2, VREF);
+        // device 145, IC IC44, analog/1G/pam5.hpp:21
+        I(cpphdl_n372, VCM) <+ (-0.00041666666666666669) * V(B2C3, VREF);
+        // device 146, IC IC46, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n367, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n367, cpphdl_n372) / 25.0; // sim_buffered_track
+        // device 147, IC IC46, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n367, Vss) <+ 1e-13 * ddt(V(cpphdl_n367, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 148, IC IC46, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n367, Vss) <+ V(cpphdl_n367, Vss) / 1000000000.0;
+        // device 149, IC IC47, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n373, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n373, cpphdl_n367) / 25.0; // sim_buffered_track
+        // device 150, IC IC47, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n373, Vss) <+ 1e-13 * ddt(V(cpphdl_n373, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 151, IC IC47, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n373, Vss) <+ V(cpphdl_n373, Vss) / 1000000000.0;
+        // device 152, IC IC48, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n561) <+ V(VCM, cpphdl_n561) / 1000.0;
+        // device 153, IC IC48, analog/1G/transmitter.hpp:19
+        I(cpphdl_n561, VCM) <+ 2e-14 * ddt(V(cpphdl_n561, VCM)); // Bench initial voltage = 0.0 V.
+        // device 154, IC IC48, analog/1G/transmitter.hpp:20
+        I(cpphdl_n561, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n372, VCM);
+        // device 155, IC IC48, analog/1G/transmitter.hpp:21
+        I(cpphdl_n561, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n373, VCM);
+        // device 156, IC IC49, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n627) <+ V(VCM, cpphdl_n627) / 50.0;
+        // device 157, IC IC49, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n628) <+ V(VCM, cpphdl_n628) / 50.0;
+        // device 158, IC IC49, analog/1G/transmitter.hpp:36
+        I(cpphdl_n627, VCM) <+ (-0.01) * V(cpphdl_n561, VCM);
+        // device 159, IC IC49, analog/1G/transmitter.hpp:37
+        I(cpphdl_n628, VCM) <+ (-0.01) * V(VCM, cpphdl_n561);
+        // device 160, IC IC64, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n486) <+ V(VCM, cpphdl_n486) / 1000.0;
+        // device 161, IC IC64, analog/1G/hybrid.hpp:21
+        I(cpphdl_n486, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n486, VCM)); // Bench initial voltage = 0.0 V.
+        // device 162, IC IC64, analog/1G/hybrid.hpp:22
+        I(cpphdl_n486, VCM) <+ (-0.001) * V(cpphdl_n625, cpphdl_n626);
+        // device 163, IC IC64, analog/1G/hybrid.hpp:23
+        I(cpphdl_n486, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n481);
+        // device 164, IC IC65, analog/1G/equalizer.hpp:18
+        I(cpphdl_n486, cpphdl_n489) <+ V(cpphdl_n486, cpphdl_n489) / 1000.0;
+        // device 165, IC IC65, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n489) <+ V(VCM, cpphdl_n489) / 1000.0;
+        // device 166, IC IC65, analog/1G/equalizer.hpp:20
+        I(cpphdl_n486, cpphdl_n489) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n486, cpphdl_n489)); // Bench initial voltage = 0.0 V.
+        // device 167, IC IC65, analog/1G/equalizer.hpp:21
+        I(VCM, OUTA2) <+ V(VCM, OUTA2) / 1000.0;
+        // device 168, IC IC65, analog/1G/equalizer.hpp:22
+        I(OUTA2, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTA2, VCM)); // Bench initial voltage = 0.0 V.
+        // device 169, IC IC65, analog/1G/equalizer.hpp:23
+        I(OUTA2, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n489, VCM);
+        // device 170, IC IC76, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n566) <+ V(VCM, cpphdl_n566) / 1000.0;
+        // device 171, IC IC76, analog/1G/hybrid.hpp:21
+        I(cpphdl_n566, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n566, VCM)); // Bench initial voltage = 0.0 V.
+        // device 172, IC IC76, analog/1G/hybrid.hpp:22
+        I(cpphdl_n566, VCM) <+ (-0.001) * V(cpphdl_n627, cpphdl_n628);
+        // device 173, IC IC76, analog/1G/hybrid.hpp:23
+        I(cpphdl_n566, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n561);
+        // device 174, IC IC77, analog/1G/equalizer.hpp:18
+        I(cpphdl_n566, cpphdl_n569) <+ V(cpphdl_n566, cpphdl_n569) / 1000.0;
+        // device 175, IC IC77, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n569) <+ V(VCM, cpphdl_n569) / 1000.0;
+        // device 176, IC IC77, analog/1G/equalizer.hpp:20
+        I(cpphdl_n566, cpphdl_n569) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n566, cpphdl_n569)); // Bench initial voltage = 0.0 V.
+        // device 177, IC IC77, analog/1G/equalizer.hpp:21
+        I(VCM, OUTB2) <+ V(VCM, OUTB2) / 1000.0;
+        // device 178, IC IC77, analog/1G/equalizer.hpp:22
+        I(OUTB2, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTB2, VCM)); // Bench initial voltage = 0.0 V.
+        // device 179, IC IC77, analog/1G/equalizer.hpp:23
+        I(OUTB2, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n569, VCM);
+        // device 180, IC IC23, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n228) <+ V(VCM, cpphdl_n228) / 1000.0;
+        // device 181, IC IC23, analog/1G/pam5.hpp:19
+        I(cpphdl_n228, VCM) <+ 2e-14 * ddt(V(cpphdl_n228, VCM)); // Bench initial voltage = 0.0 V.
+        // device 182, IC IC23, analog/1G/pam5.hpp:21
+        I(cpphdl_n228, VCM) <+ (-0.00041666666666666669) * V(A3C0, VREF);
+        // device 183, IC IC23, analog/1G/pam5.hpp:21
+        I(cpphdl_n228, VCM) <+ (-0.00041666666666666669) * V(A3C1, VREF);
+        // device 184, IC IC23, analog/1G/pam5.hpp:21
+        I(cpphdl_n228, VCM) <+ (-0.00041666666666666669) * V(A3C2, VREF);
+        // device 185, IC IC23, analog/1G/pam5.hpp:21
+        I(cpphdl_n228, VCM) <+ (-0.00041666666666666669) * V(A3C3, VREF);
+        // device 186, IC IC25, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n223, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n223, cpphdl_n228) / 25.0; // sim_buffered_track
+        // device 187, IC IC25, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n223, Vss) <+ 1e-13 * ddt(V(cpphdl_n223, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 188, IC IC25, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n223, Vss) <+ V(cpphdl_n223, Vss) / 1000000000.0;
+        // device 189, IC IC26, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n229, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n229, cpphdl_n223) / 25.0; // sim_buffered_track
+        // device 190, IC IC26, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n229, Vss) <+ 1e-13 * ddt(V(cpphdl_n229, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 191, IC IC26, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n229, Vss) <+ V(cpphdl_n229, Vss) / 1000000000.0;
+        // device 192, IC IC27, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n501) <+ V(VCM, cpphdl_n501) / 1000.0;
+        // device 193, IC IC27, analog/1G/transmitter.hpp:19
+        I(cpphdl_n501, VCM) <+ 2e-14 * ddt(V(cpphdl_n501, VCM)); // Bench initial voltage = 0.0 V.
+        // device 194, IC IC27, analog/1G/transmitter.hpp:20
+        I(cpphdl_n501, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n228, VCM);
+        // device 195, IC IC27, analog/1G/transmitter.hpp:21
+        I(cpphdl_n501, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n229, VCM);
+        // device 196, IC IC28, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n632) <+ V(VCM, cpphdl_n632) / 50.0;
+        // device 197, IC IC28, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n633) <+ V(VCM, cpphdl_n633) / 50.0;
+        // device 198, IC IC28, analog/1G/transmitter.hpp:36
+        I(cpphdl_n632, VCM) <+ (-0.01) * V(cpphdl_n501, VCM);
+        // device 199, IC IC28, analog/1G/transmitter.hpp:37
+        I(cpphdl_n633, VCM) <+ (-0.01) * V(VCM, cpphdl_n501);
+        // device 200, IC IC51, analog/1G/pam5.hpp:18
+        I(VCM, cpphdl_n420) <+ V(VCM, cpphdl_n420) / 1000.0;
+        // device 201, IC IC51, analog/1G/pam5.hpp:19
+        I(cpphdl_n420, VCM) <+ 2e-14 * ddt(V(cpphdl_n420, VCM)); // Bench initial voltage = 0.0 V.
+        // device 202, IC IC51, analog/1G/pam5.hpp:21
+        I(cpphdl_n420, VCM) <+ (-0.00041666666666666669) * V(B3C0, VREF);
+        // device 203, IC IC51, analog/1G/pam5.hpp:21
+        I(cpphdl_n420, VCM) <+ (-0.00041666666666666669) * V(B3C1, VREF);
+        // device 204, IC IC51, analog/1G/pam5.hpp:21
+        I(cpphdl_n420, VCM) <+ (-0.00041666666666666669) * V(B3C2, VREF);
+        // device 205, IC IC51, analog/1G/pam5.hpp:21
+        I(cpphdl_n420, VCM) <+ (-0.00041666666666666669) * V(B3C3, VREF);
+        // device 206, IC IC53, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n415, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n415, cpphdl_n420) / 25.0; // sim_buffered_track
+        // device 207, IC IC53, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n415, Vss) <+ 1e-13 * ddt(V(cpphdl_n415, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 208, IC IC53, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n415, Vss) <+ V(cpphdl_n415, Vss) / 1000000000.0;
+        // device 209, IC IC54, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n421, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n421, cpphdl_n415) / 25.0; // sim_buffered_track
+        // device 210, IC IC54, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n421, Vss) <+ 1e-13 * ddt(V(cpphdl_n421, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 211, IC IC54, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n421, Vss) <+ V(cpphdl_n421, Vss) / 1000000000.0;
+        // device 212, IC IC55, analog/1G/transmitter.hpp:18
+        I(VCM, cpphdl_n581) <+ V(VCM, cpphdl_n581) / 1000.0;
+        // device 213, IC IC55, analog/1G/transmitter.hpp:19
+        I(cpphdl_n581, VCM) <+ 2e-14 * ddt(V(cpphdl_n581, VCM)); // Bench initial voltage = 0.0 V.
+        // device 214, IC IC55, analog/1G/transmitter.hpp:20
+        I(cpphdl_n581, VCM) <+ (-0.00075000000000000002) * V(cpphdl_n420, VCM);
+        // device 215, IC IC55, analog/1G/transmitter.hpp:21
+        I(cpphdl_n581, VCM) <+ (-0.00025000000000000001) * V(cpphdl_n421, VCM);
+        // device 216, IC IC56, analog/1G/transmitter.hpp:34
+        I(VCM, cpphdl_n634) <+ V(VCM, cpphdl_n634) / 50.0;
+        // device 217, IC IC56, analog/1G/transmitter.hpp:35
+        I(VCM, cpphdl_n635) <+ V(VCM, cpphdl_n635) / 50.0;
+        // device 218, IC IC56, analog/1G/transmitter.hpp:36
+        I(cpphdl_n634, VCM) <+ (-0.01) * V(cpphdl_n581, VCM);
+        // device 219, IC IC56, analog/1G/transmitter.hpp:37
+        I(cpphdl_n635, VCM) <+ (-0.01) * V(VCM, cpphdl_n581);
+        // device 220, IC IC67, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n506) <+ V(VCM, cpphdl_n506) / 1000.0;
+        // device 221, IC IC67, analog/1G/hybrid.hpp:21
+        I(cpphdl_n506, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n506, VCM)); // Bench initial voltage = 0.0 V.
+        // device 222, IC IC67, analog/1G/hybrid.hpp:22
+        I(cpphdl_n506, VCM) <+ (-0.001) * V(cpphdl_n632, cpphdl_n633);
+        // device 223, IC IC67, analog/1G/hybrid.hpp:23
+        I(cpphdl_n506, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n501);
+        // device 224, IC IC68, analog/1G/equalizer.hpp:18
+        I(cpphdl_n506, cpphdl_n509) <+ V(cpphdl_n506, cpphdl_n509) / 1000.0;
+        // device 225, IC IC68, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n509) <+ V(VCM, cpphdl_n509) / 1000.0;
+        // device 226, IC IC68, analog/1G/equalizer.hpp:20
+        I(cpphdl_n506, cpphdl_n509) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n506, cpphdl_n509)); // Bench initial voltage = 0.0 V.
+        // device 227, IC IC68, analog/1G/equalizer.hpp:21
+        I(VCM, OUTA3) <+ V(VCM, OUTA3) / 1000.0;
+        // device 228, IC IC68, analog/1G/equalizer.hpp:22
+        I(OUTA3, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTA3, VCM)); // Bench initial voltage = 0.0 V.
+        // device 229, IC IC68, analog/1G/equalizer.hpp:23
+        I(OUTA3, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n509, VCM);
+        // device 230, IC IC79, analog/1G/hybrid.hpp:20
+        I(VCM, cpphdl_n586) <+ V(VCM, cpphdl_n586) / 1000.0;
+        // device 231, IC IC79, analog/1G/hybrid.hpp:21
+        I(cpphdl_n586, VCM) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n586, VCM)); // Bench initial voltage = 0.0 V.
+        // device 232, IC IC79, analog/1G/hybrid.hpp:22
+        I(cpphdl_n586, VCM) <+ (-0.001) * V(cpphdl_n634, cpphdl_n635);
+        // device 233, IC IC79, analog/1G/hybrid.hpp:23
+        I(cpphdl_n586, VCM) <+ (-0.00056521739130434778) * V(VCM, cpphdl_n581);
+        // device 234, IC IC80, analog/1G/equalizer.hpp:18
+        I(cpphdl_n586, cpphdl_n589) <+ V(cpphdl_n586, cpphdl_n589) / 1000.0;
+        // device 235, IC IC80, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n589) <+ V(VCM, cpphdl_n589) / 1000.0;
+        // device 236, IC IC80, analog/1G/equalizer.hpp:20
+        I(cpphdl_n586, cpphdl_n589) <+ 9.9999999999999998e-13 * ddt(V(cpphdl_n586, cpphdl_n589)); // Bench initial voltage = 0.0 V.
+        // device 237, IC IC80, analog/1G/equalizer.hpp:21
+        I(VCM, OUTB3) <+ V(VCM, OUTB3) / 1000.0;
+        // device 238, IC IC80, analog/1G/equalizer.hpp:22
+        I(OUTB3, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTB3, VCM)); // Bench initial voltage = 0.0 V.
+        // device 239, IC IC80, analog/1G/equalizer.hpp:23
+        I(OUTB3, VCM) <+ (-0.0034500000000000004) * V(cpphdl_n589, VCM);
+        // device 240, IC IC82, analog/1G/channel.hpp:18
+        I(cpphdl_n611, cpphdl_n613) <+ V(cpphdl_n611, cpphdl_n613) / 15.0;
+        // device 241, IC IC82, analog/1G/channel.hpp:19
+        I(cpphdl_n612, cpphdl_n614) <+ V(cpphdl_n612, cpphdl_n614) / 15.0;
+        // device 242, IC IC82, analog/1G/channel.hpp:21
+        I(cpphdl_n611, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n611, VCM)); // Bench initial voltage = 0.0 V.
+        // device 243, IC IC82, analog/1G/channel.hpp:21
+        I(cpphdl_n612, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n612, VCM)); // Bench initial voltage = 0.0 V.
+        // device 244, IC IC82, analog/1G/channel.hpp:21
+        I(cpphdl_n613, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n613, VCM)); // Bench initial voltage = 0.0 V.
+        // device 245, IC IC82, analog/1G/channel.hpp:21
+        I(cpphdl_n614, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n614, VCM)); // Bench initial voltage = 0.0 V.
+        // device 246, IC IC81, analog/1G/channel.hpp:41
+        I(cpphdl_n618, cpphdl_n611) <+ V(cpphdl_n618, cpphdl_n611) / 5000.0;
+        // device 247, IC IC81, analog/1G/channel.hpp:42
+        I(cpphdl_n619, cpphdl_n612) <+ V(cpphdl_n619, cpphdl_n612) / 5000.0;
+        // device 248, IC IC81, analog/1G/channel.hpp:43
+        I(cpphdl_n620, cpphdl_n613) <+ V(cpphdl_n620, cpphdl_n613) / 5000.0;
+        // device 249, IC IC81, analog/1G/channel.hpp:44
+        I(cpphdl_n621, cpphdl_n614) <+ V(cpphdl_n621, cpphdl_n614) / 5000.0;
+        // device 250, IC IC83, analog/1G/channel.hpp:18
+        I(cpphdl_n618, cpphdl_n620) <+ V(cpphdl_n618, cpphdl_n620) / 15.0;
+        // device 251, IC IC83, analog/1G/channel.hpp:19
+        I(cpphdl_n619, cpphdl_n621) <+ V(cpphdl_n619, cpphdl_n621) / 15.0;
+        // device 252, IC IC83, analog/1G/channel.hpp:21
+        I(cpphdl_n618, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n618, VCM)); // Bench initial voltage = 0.0 V.
+        // device 253, IC IC83, analog/1G/channel.hpp:21
+        I(cpphdl_n619, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n619, VCM)); // Bench initial voltage = 0.0 V.
+        // device 254, IC IC83, analog/1G/channel.hpp:21
+        I(cpphdl_n620, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n620, VCM)); // Bench initial voltage = 0.0 V.
+        // device 255, IC IC83, analog/1G/channel.hpp:21
+        I(cpphdl_n621, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n621, VCM)); // Bench initial voltage = 0.0 V.
+        // device 256, IC IC81, analog/1G/channel.hpp:41
+        I(cpphdl_n625, cpphdl_n618) <+ V(cpphdl_n625, cpphdl_n618) / 5000.0;
+        // device 257, IC IC81, analog/1G/channel.hpp:42
+        I(cpphdl_n626, cpphdl_n619) <+ V(cpphdl_n626, cpphdl_n619) / 5000.0;
+        // device 258, IC IC81, analog/1G/channel.hpp:43
+        I(cpphdl_n627, cpphdl_n620) <+ V(cpphdl_n627, cpphdl_n620) / 5000.0;
+        // device 259, IC IC81, analog/1G/channel.hpp:44
+        I(cpphdl_n628, cpphdl_n621) <+ V(cpphdl_n628, cpphdl_n621) / 5000.0;
+        // device 260, IC IC84, analog/1G/channel.hpp:18
+        I(cpphdl_n625, cpphdl_n627) <+ V(cpphdl_n625, cpphdl_n627) / 15.0;
+        // device 261, IC IC84, analog/1G/channel.hpp:19
+        I(cpphdl_n626, cpphdl_n628) <+ V(cpphdl_n626, cpphdl_n628) / 15.0;
+        // device 262, IC IC84, analog/1G/channel.hpp:21
+        I(cpphdl_n625, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n625, VCM)); // Bench initial voltage = 0.0 V.
+        // device 263, IC IC84, analog/1G/channel.hpp:21
+        I(cpphdl_n626, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n626, VCM)); // Bench initial voltage = 0.0 V.
+        // device 264, IC IC84, analog/1G/channel.hpp:21
+        I(cpphdl_n627, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n627, VCM)); // Bench initial voltage = 0.0 V.
+        // device 265, IC IC84, analog/1G/channel.hpp:21
+        I(cpphdl_n628, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n628, VCM)); // Bench initial voltage = 0.0 V.
+        // device 266, IC IC81, analog/1G/channel.hpp:41
+        I(cpphdl_n632, cpphdl_n625) <+ V(cpphdl_n632, cpphdl_n625) / 5000.0;
+        // device 267, IC IC81, analog/1G/channel.hpp:42
+        I(cpphdl_n633, cpphdl_n626) <+ V(cpphdl_n633, cpphdl_n626) / 5000.0;
+        // device 268, IC IC81, analog/1G/channel.hpp:43
+        I(cpphdl_n634, cpphdl_n627) <+ V(cpphdl_n634, cpphdl_n627) / 5000.0;
+        // device 269, IC IC81, analog/1G/channel.hpp:44
+        I(cpphdl_n635, cpphdl_n628) <+ V(cpphdl_n635, cpphdl_n628) / 5000.0;
+        // device 270, IC IC85, analog/1G/channel.hpp:18
+        I(cpphdl_n632, cpphdl_n634) <+ V(cpphdl_n632, cpphdl_n634) / 15.0;
+        // device 271, IC IC85, analog/1G/channel.hpp:19
+        I(cpphdl_n633, cpphdl_n635) <+ V(cpphdl_n633, cpphdl_n635) / 15.0;
+        // device 272, IC IC85, analog/1G/channel.hpp:21
+        I(cpphdl_n632, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n632, VCM)); // Bench initial voltage = 0.0 V.
+        // device 273, IC IC85, analog/1G/channel.hpp:21
+        I(cpphdl_n633, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n633, VCM)); // Bench initial voltage = 0.0 V.
+        // device 274, IC IC85, analog/1G/channel.hpp:21
+        I(cpphdl_n634, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n634, VCM)); // Bench initial voltage = 0.0 V.
+        // device 275, IC IC85, analog/1G/channel.hpp:21
+        I(cpphdl_n635, VCM) <+ 4.9999999999999997e-12 * ddt(V(cpphdl_n635, VCM)); // Bench initial voltage = 0.0 V.
+        // device 276, IC IC81, analog/1G/channel.hpp:41
+        I(cpphdl_n611, cpphdl_n632) <+ V(cpphdl_n611, cpphdl_n632) / 5000.0;
+        // device 277, IC IC81, analog/1G/channel.hpp:42
+        I(cpphdl_n612, cpphdl_n633) <+ V(cpphdl_n612, cpphdl_n633) / 5000.0;
+        // device 278, IC IC81, analog/1G/channel.hpp:43
+        I(cpphdl_n613, cpphdl_n634) <+ V(cpphdl_n613, cpphdl_n634) / 5000.0;
+        // device 279, IC IC81, analog/1G/channel.hpp:44
+        I(cpphdl_n614, cpphdl_n635) <+ V(cpphdl_n614, cpphdl_n635) / 5000.0;
+    end
+endmodule
