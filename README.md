@@ -1,6 +1,6 @@
 # C++HDL
 
-C++HDL Hardware Description Language
+C++HDL is a Hardware Description Language for description of C++RTL models
 
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 

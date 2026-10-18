@@ -1136,12 +1136,15 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 }
                 return 0;
             };
-            const auto targetWidth = width(castTypeName(targetType));
-            if (targetType->isRecordType() && targetWidth
-                && call.sub[1].type == cpphdl::Expr::EXPR_CAST
-                && width(call.sub[1].value) >= targetWidth) {
-                auto operand = std::move(call.sub[1].sub[0]);
-                call.sub[1] = std::move(operand);
+            // Lowering a child port's width can request external constexpr
+            // packages. Do not lower a discarded type when there is no cast
+            // to remove (plain port copies and structural binding lambdas).
+            if (targetType->isRecordType() && call.sub[1].type == cpphdl::Expr::EXPR_CAST) {
+                const auto targetWidth = width(castTypeName(targetType));
+                if (targetWidth && width(call.sub[1].value) >= targetWidth) {
+                    auto operand = std::move(call.sub[1].sub[0]);
+                    call.sub[1] = std::move(operand);
+                }
             }
         }
         return call;
