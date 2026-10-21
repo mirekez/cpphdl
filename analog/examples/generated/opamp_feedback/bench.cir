@@ -1,0 +1,25 @@
+C++HDL Verilog-A independent transient experiment
+* Sources, initial charges and observations come from the same elaborated C++ bench.
+.model CircuitModel Example_opamp_feedback_nominal
+Ndesign 0 n19 n20 n23 n24 n26 n27 CircuitModel
+Vsource0 n24 0 DC 3.2999999999999998
+Vsource1 n19 0 DC 0.5
+.ic V(n19)=0.5
+.ic V(n24)=3.2999999999999998
+.ic V(n27)=0.0
+.options method=gear maxord=2 reltol=1e-5 abstol=1e-12 vntol=1e-8 trtol=7
+.control
+pre_osdi design.osdi
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+set numdgt=17
+tran 1.0000000000000001e-07 3.9999999999999996e-05 0 1.0000000000000001e-07 uic
+let observation0 = v(n27)
+let observation1 = v(n20)
+let observation2 = v(n23)
+let observation3 = v(n26)
+wrdata spice.dat observation0 observation1 observation2 observation3
+quit
+.endc
+.end

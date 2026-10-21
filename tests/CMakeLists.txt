@@ -29,6 +29,11 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     find_program(CONSTANTS_VERILATOR verilator)
     if(CONSTANTS_VERILATOR)
+        add_test(NAME templates_port_aliases COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/templates/PortAliasesChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/port-aliases")
+        set_tests_properties(templates_port_aliases PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
         add_test(NAME templates_namespace_constants COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/templates/NamespaceConstantsChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -1060,6 +1065,7 @@ add_test(
             "$<TARGET_FILE:cpphdl>"
             "${CMAKE_SOURCE_DIR}/include"
             "${CPPHDL_STDCXXEXP}"
+            "${CMAKE_CXX_COMPILER}"
 )
 set_tests_properties(optimizer_work_split PROPERTIES TIMEOUT 120)
 

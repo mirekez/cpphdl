@@ -1,0 +1,25 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGSymbolMemory(Vdd, Vss, IN, CLOCK, OUT);
+    inout Vdd, Vss, IN, CLOCK, OUT;
+    electrical Vdd, Vss, IN, CLOCK, OUT;
+    electrical cpphdl_n13;
+
+    analog begin
+        // device 0, IC IC1, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n13, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n13, IN) / 25.0; // sim_buffered_track
+        // device 1, IC IC1, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n13, Vss) <+ 1e-13 * ddt(V(cpphdl_n13, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 2, IC IC1, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n13, Vss) <+ V(cpphdl_n13, Vss) / 1000000000.0;
+        // device 3, IC IC2, analog/basic/sim_clocked_storage.hpp:19
+        I(OUT, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(OUT, cpphdl_n13) / 25.0; // sim_buffered_track
+        // device 4, IC IC2, analog/basic/sim_clocked_storage.hpp:20
+        I(OUT, Vss) <+ 1e-13 * ddt(V(OUT, Vss)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 5, IC IC2, analog/basic/sim_clocked_storage.hpp:21
+        I(OUT, Vss) <+ V(OUT, Vss) / 1000000000.0;
+    end
+endmodule

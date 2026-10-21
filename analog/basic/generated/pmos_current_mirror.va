@@ -1,0 +1,43 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module pmos_current_mirror(Vdd, Vss, IN, OUT);
+    inout Vdd, Vss, IN, OUT;
+    electrical Vdd, Vss, IN, OUT;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC pmos_current_mirror, analog/basic/pmos_current_mirror.hpp:14
+        I(IN, Vdd) <+ cpphdl_channel(V(IN, Vdd), V(IN, Vdd), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 1, IC pmos_current_mirror, analog/basic/pmos_current_mirror.hpp:15
+        I(OUT, Vdd) <+ cpphdl_channel(V(IN, Vdd), V(OUT, Vdd), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 2, IC pmos_current_mirror, analog/basic/pmos_current_mirror.hpp:16
+        I(IN, Vdd) <+ V(IN, Vdd) / 1000000000.0;
+    end
+endmodule

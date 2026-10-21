@@ -1136,12 +1136,15 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
                 }
                 return 0;
             };
-            const auto targetWidth = width(castTypeName(targetType));
-            if (targetType->isRecordType() && targetWidth
-                && call.sub[1].type == cpphdl::Expr::EXPR_CAST
-                && width(call.sub[1].value) >= targetWidth) {
-                auto operand = std::move(call.sub[1].sub[0]);
-                call.sub[1] = std::move(operand);
+            // Lowering a child port's width can request external constexpr
+            // packages. Do not lower a discarded type when there is no cast
+            // to remove (plain port copies and structural binding lambdas).
+            if (targetType->isRecordType() && call.sub[1].type == cpphdl::Expr::EXPR_CAST) {
+                const auto targetWidth = width(castTypeName(targetType));
+                if (targetWidth && width(call.sub[1].value) >= targetWidth) {
+                    auto operand = std::move(call.sub[1].sub[0]);
+                    call.sub[1] = std::move(operand);
+                }
             }
         }
         return call;
@@ -2290,6 +2293,22 @@ bool Helpers::genSpecializationTypeName(bool first, std::string& name, cpphdl::E
 
 bool Helpers::skipStdFunctionType(QualType& QT)
 {
+    // Keep the payload as written: desugaring port<logic<W>> first loses W
+    // inside the dependent port_traits<T>::type alias.
+    for (QualType candidate = QT; ;) {
+        if (const auto* alias = candidate->getAs<TemplateSpecializationType>()) {
+            const auto* declaration = alias->getTemplateName().getAsTemplateDecl();
+            if (declaration && declaration->getQualifiedNameAsString() == "cpphdl::port"
+                && alias->template_arguments().size() == 1
+                && alias->template_arguments()[0].getKind() == TemplateArgument::Type) {
+                QT = alias->template_arguments()[0].getAsType();
+                return true;
+            }
+        }
+        const QualType next = candidate.getSingleStepDesugaredType(*ctx);
+        if (next == candidate) break;
+        candidate = next;
+    }
     if (const auto *Record = QT->getAs<RecordType>()) {
         if (const auto *Spec = dyn_cast<ClassTemplateSpecializationDecl>(Record->getDecl())) {
             if (const TemplateDecl *TD = Spec->getSpecializedTemplate()) {

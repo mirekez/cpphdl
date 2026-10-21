@@ -176,6 +176,9 @@ static bool check_generated_sv()
     ok &= leaf.find("TypeTemplateArithmetic___convert_default_to_conv") == std::string::npos;
     ok &= parent.find("TypeTemplateModuleLeafTypeTemplateConv16") != std::string::npos;
     ok &= parent.find(") child (") != std::string::npos;
+    // A structural port copy must not import a package for the child module
+    // just because its width mentions that child's private VALUE_BITS.
+    ok &= parent.find("import TypeTemplateModuleLeaf") == std::string::npos;
     if (!ok) {
         std::print("\nERROR: type-template child module was not specialized correctly\n");
     }

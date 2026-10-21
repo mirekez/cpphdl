@@ -1,0 +1,16 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module level_inverter(Vdd, Vss, A, Y);
+    inout Vdd, Vss, A, Y;
+    electrical Vdd, Vss, A, Y;
+
+    analog begin
+        // device 0, IC level_inverter, analog/basic/level_inverter.hpp:16
+        I(Vdd, Y) <+ (1.0 - min(1.0, max(0.0, (V(A, Vss) - 0.34999999999999998) / 0.5))) * V(Vdd, Y) / 2000.0; // sim_controlled_resistor
+        // device 1, IC level_inverter, analog/basic/level_inverter.hpp:18
+        I(Y, Vss) <+ min(1.0, max(0.0, (V(A, Vss) - 0.34999999999999998) / 0.5)) * V(Y, Vss) / 2000.0; // sim_controlled_resistor
+    end
+endmodule

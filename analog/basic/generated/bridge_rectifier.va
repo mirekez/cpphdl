@@ -1,0 +1,23 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module bridge_rectifier(Vdd, Vss, PLUS, MINUS, POS, NEG);
+    inout Vdd, Vss, PLUS, MINUS, POS, NEG;
+    electrical Vdd, Vss, PLUS, MINUS, POS, NEG;
+
+    analog begin
+        // device 0, IC bridge_rectifier, analog/basic/bridge_rectifier.hpp:14
+        I(PLUS, POS) <+ max(0.0, V(PLUS, POS) - 0.0) / 10.0 + V(PLUS, POS) / 1000000000.0;
+        // device 1, IC bridge_rectifier, analog/basic/bridge_rectifier.hpp:15
+        I(MINUS, POS) <+ max(0.0, V(MINUS, POS) - 0.0) / 10.0 + V(MINUS, POS) / 1000000000.0;
+        // device 2, IC bridge_rectifier, analog/basic/bridge_rectifier.hpp:16
+        I(NEG, PLUS) <+ max(0.0, V(NEG, PLUS) - 0.0) / 10.0 + V(NEG, PLUS) / 1000000000.0;
+        // device 3, IC bridge_rectifier, analog/basic/bridge_rectifier.hpp:17
+        I(NEG, MINUS) <+ max(0.0, V(NEG, MINUS) - 0.0) / 10.0 + V(NEG, MINUS) / 1000000000.0;
+        // device 4, IC bridge_rectifier, analog/basic/bridge_rectifier.hpp:18
+        I(POS, NEG) <+ V(POS, NEG) / 10000.0;
+        // device 5, IC bridge_rectifier, analog/basic/bridge_rectifier.hpp:19
+        I(NEG, Vss) <+ V(NEG, Vss) / 1000000000.0;
+    end
+endmodule

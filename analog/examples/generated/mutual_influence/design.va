@@ -1,0 +1,54 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module Example_mutual_influence_nominal(n0, n1, n11, n12, n14, n15, cpphdl_bit0);
+    inout n0, n1, n11, n12, n14, n15, cpphdl_bit0;
+    electrical n0, n1, n11, n12, n14, n15, cpphdl_bit0;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 1, analog/examples/mutual_influence/main.cpp:8
+        I(n1, n12) <+ V(n1, n12) / 200.0;
+        // device 3, IC loaded, analog/basic/inverter.hpp:11
+        I(n11, n12) <+ cpphdl_channel(V(n14, n12), V(n11, n12), 0.001, 0.34999999999999998, -1.0);
+        // device 4, IC loaded, analog/basic/inverter.hpp:12
+        I(n11, n0) <+ cpphdl_channel(V(n14, n0), V(n11, n0), 0.001, 0.34999999999999998, 1.0);
+        // device 5, IC neighbor, analog/basic/inverter.hpp:11
+        I(n15, n12) <+ cpphdl_channel(V(n14, n12), V(n15, n12), 0.001, 0.34999999999999998, -1.0);
+        // device 6, IC neighbor, analog/basic/inverter.hpp:12
+        I(n15, n0) <+ cpphdl_channel(V(n14, n0), V(n15, n0), 0.001, 0.34999999999999998, 1.0);
+        // device 7, analog/examples/mutual_influence/main.cpp:23
+        I(n11, n0) <+ 9.9999999999999994e-12 * ddt(V(n11, n0)); // Bench initial voltage = 1.2 V.
+        // device 8, analog/examples/mutual_influence/main.cpp:24
+        I(n15, n0) <+ 9.9999999999999994e-12 * ddt(V(n15, n0)); // Bench initial voltage = 1.2 V.
+        // device 9, analog/examples/mutual_influence/main.cpp:27
+        I(n11, n0) <+ (1.0 - V(cpphdl_bit0)) * V(n11, n0) / 100.0; // sim_driver
+        I(n11, n12) <+ V(cpphdl_bit0) * V(n11, n12) / 100.0; // sim_driver
+    end
+endmodule

@@ -1,0 +1,36 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGPAM5Slicer(Vdd, Vss, IN, VCM, VLOGIC, C0, C1, C2, C3);
+    inout Vdd, Vss, IN, VCM, VLOGIC, C0, C1, C2, C3;
+    electrical Vdd, Vss, IN, VCM, VLOGIC, C0, C1, C2, C3;
+
+    analog begin
+        // device 0, IC OneGPAM5Slicer, analog/1G/pam5.hpp:45
+        I(VLOGIC, C0) <+ min(1.0, max(0.0, (V(IN, VCM) - -0.377) / 0.0040000000000000036)) * V(VLOGIC, C0) / 100.0; // sim_controlled_resistor
+        // device 1, IC OneGPAM5Slicer, analog/1G/pam5.hpp:47
+        I(C0, Vss) <+ (1.0 - min(1.0, max(0.0, (V(IN, VCM) - -0.377) / 0.0040000000000000036))) * V(C0, Vss) / 100.0; // sim_controlled_resistor
+        // device 2, IC OneGPAM5Slicer, analog/1G/pam5.hpp:48
+        I(C0, Vss) <+ 2e-14 * ddt(V(C0, Vss)); // Bench initial voltage = 1.2 V.
+        // device 3, IC OneGPAM5Slicer, analog/1G/pam5.hpp:45
+        I(VLOGIC, C1) <+ min(1.0, max(0.0, (V(IN, VCM) - -0.127) / 0.0040000000000000036)) * V(VLOGIC, C1) / 100.0; // sim_controlled_resistor
+        // device 4, IC OneGPAM5Slicer, analog/1G/pam5.hpp:47
+        I(C1, Vss) <+ (1.0 - min(1.0, max(0.0, (V(IN, VCM) - -0.127) / 0.0040000000000000036))) * V(C1, Vss) / 100.0; // sim_controlled_resistor
+        // device 5, IC OneGPAM5Slicer, analog/1G/pam5.hpp:48
+        I(C1, Vss) <+ 2e-14 * ddt(V(C1, Vss)); // Bench initial voltage = 1.2 V.
+        // device 6, IC OneGPAM5Slicer, analog/1G/pam5.hpp:45
+        I(VLOGIC, C2) <+ min(1.0, max(0.0, (V(IN, VCM) - 0.123) / 0.0040000000000000036)) * V(VLOGIC, C2) / 100.0; // sim_controlled_resistor
+        // device 7, IC OneGPAM5Slicer, analog/1G/pam5.hpp:47
+        I(C2, Vss) <+ (1.0 - min(1.0, max(0.0, (V(IN, VCM) - 0.123) / 0.0040000000000000036))) * V(C2, Vss) / 100.0; // sim_controlled_resistor
+        // device 8, IC OneGPAM5Slicer, analog/1G/pam5.hpp:48
+        I(C2, Vss) <+ 2e-14 * ddt(V(C2, Vss)); // Bench initial voltage = 0.0 V.
+        // device 9, IC OneGPAM5Slicer, analog/1G/pam5.hpp:45
+        I(VLOGIC, C3) <+ min(1.0, max(0.0, (V(IN, VCM) - 0.373) / 0.0040000000000000036)) * V(VLOGIC, C3) / 100.0; // sim_controlled_resistor
+        // device 10, IC OneGPAM5Slicer, analog/1G/pam5.hpp:47
+        I(C3, Vss) <+ (1.0 - min(1.0, max(0.0, (V(IN, VCM) - 0.373) / 0.0040000000000000036))) * V(C3, Vss) / 100.0; // sim_controlled_resistor
+        // device 11, IC OneGPAM5Slicer, analog/1G/pam5.hpp:48
+        I(C3, Vss) <+ 2e-14 * ddt(V(C3, Vss)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

@@ -1,0 +1,70 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module TenGHoggeDetector(Vdd, Vss, DATA, CLOCK, ERROR, REFERENCE);
+    inout Vdd, Vss, DATA, CLOCK, ERROR, REFERENCE;
+    electrical Vdd, Vss, DATA, CLOCK, ERROR, REFERENCE;
+    electrical cpphdl_n19;
+    electrical cpphdl_n34;
+    electrical cpphdl_n51;
+    electrical cpphdl_n67;
+    electrical cpphdl_n68;
+    electrical cpphdl_n69;
+
+    analog begin
+        // device 0, IC IC2, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n19, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n19, DATA) / 25.0; // sim_buffered_track
+        // device 1, IC IC2, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n19, Vss) <+ 5e-15 * ddt(V(cpphdl_n19, Vss)); // Bench initial voltage = 0.0 V.
+        // device 2, IC IC2, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n19, Vss) <+ V(cpphdl_n19, Vss) / 1000000000.0;
+        // device 3, IC IC3, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n67, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n67, cpphdl_n19) / 25.0; // sim_buffered_track
+        // device 4, IC IC3, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n67, Vss) <+ 5e-15 * ddt(V(cpphdl_n67, Vss)); // Bench initial voltage = 0.0 V.
+        // device 5, IC IC3, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n67, Vss) <+ V(cpphdl_n67, Vss) / 1000000000.0;
+        // device 6, IC IC5, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n34, Vss) <+ min(1.0, max(0.0, (V(CLOCK, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n34, cpphdl_n67) / 25.0; // sim_buffered_track
+        // device 7, IC IC5, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n34, Vss) <+ 5e-15 * ddt(V(cpphdl_n34, Vss)); // Bench initial voltage = 0.0 V.
+        // device 8, IC IC5, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n34, Vss) <+ V(cpphdl_n34, Vss) / 1000000000.0;
+        // device 9, IC IC6, analog/basic/sim_clocked_storage.hpp:19
+        I(cpphdl_n69, Vss) <+ (1.0 - min(1.0, max(0.0, (V(CLOCK, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n69, cpphdl_n34) / 25.0; // sim_buffered_track
+        // device 10, IC IC6, analog/basic/sim_clocked_storage.hpp:20
+        I(cpphdl_n69, Vss) <+ 5e-15 * ddt(V(cpphdl_n69, Vss)); // Bench initial voltage = 0.0 V.
+        // device 11, IC IC6, analog/basic/sim_clocked_storage.hpp:21
+        I(cpphdl_n69, Vss) <+ V(cpphdl_n69, Vss) / 1000000000.0;
+        // device 12, IC IC8, analog/basic/gm_stage.hpp:18
+        I(Vdd, cpphdl_n51) <+ V(Vdd, cpphdl_n51) / 50.0;
+        // device 13, IC IC8, analog/basic/gm_stage.hpp:19
+        I(cpphdl_n51, Vdd) <+ (-0.02) * V(Vss, DATA);
+        // device 14, IC IC8, analog/basic/gm_stage.hpp:20
+        I(cpphdl_n51, Vdd) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n51, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 15, IC IC9, analog/basic/sim_clocked_storage.hpp:63
+        I(ERROR, Vss) <+ (1.0 - min(1.0, max(0.0, (V(cpphdl_n67, Vss) - 0.25) / 0.20000000000000001))) * V(ERROR, DATA) / 25.0; // sim_buffered_track
+        // device 16, IC IC9, analog/basic/sim_clocked_storage.hpp:64
+        I(ERROR, Vss) <+ min(1.0, max(0.0, (V(cpphdl_n67, Vss) - 0.75) / 0.19999999999999996)) * V(ERROR, cpphdl_n51) / 25.0; // sim_buffered_track
+        // device 17, IC IC9, analog/basic/sim_clocked_storage.hpp:65
+        I(ERROR, Vss) <+ 2.0000000000000002e-15 * ddt(V(ERROR, Vss)); // Bench initial voltage = 0.0 V.
+        // device 18, IC IC9, analog/basic/sim_clocked_storage.hpp:66
+        I(ERROR, Vss) <+ V(ERROR, Vss) / 1000000000.0;
+        // device 19, IC IC11, analog/basic/gm_stage.hpp:18
+        I(Vdd, cpphdl_n68) <+ V(Vdd, cpphdl_n68) / 50.0;
+        // device 20, IC IC11, analog/basic/gm_stage.hpp:19
+        I(cpphdl_n68, Vdd) <+ (-0.02) * V(Vss, cpphdl_n67);
+        // device 21, IC IC11, analog/basic/gm_stage.hpp:20
+        I(cpphdl_n68, Vdd) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n68, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 22, IC IC12, analog/basic/sim_clocked_storage.hpp:63
+        I(REFERENCE, Vss) <+ (1.0 - min(1.0, max(0.0, (V(cpphdl_n69, Vss) - 0.25) / 0.20000000000000001))) * V(REFERENCE, cpphdl_n67) / 25.0; // sim_buffered_track
+        // device 23, IC IC12, analog/basic/sim_clocked_storage.hpp:64
+        I(REFERENCE, Vss) <+ min(1.0, max(0.0, (V(cpphdl_n69, Vss) - 0.75) / 0.19999999999999996)) * V(REFERENCE, cpphdl_n68) / 25.0; // sim_buffered_track
+        // device 24, IC IC12, analog/basic/sim_clocked_storage.hpp:65
+        I(REFERENCE, Vss) <+ 2.0000000000000002e-15 * ddt(V(REFERENCE, Vss)); // Bench initial voltage = 0.0 V.
+        // device 25, IC IC12, analog/basic/sim_clocked_storage.hpp:66
+        I(REFERENCE, Vss) <+ V(REFERENCE, Vss) / 1000000000.0;
+    end
+endmodule

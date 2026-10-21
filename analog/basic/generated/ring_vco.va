@@ -1,0 +1,72 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module ring_vco(Vdd, Vss, CONTROL, OUT);
+    inout Vdd, Vss, CONTROL, OUT;
+    electrical Vdd, Vss, CONTROL, OUT;
+    electrical cpphdl_n10;
+    electrical cpphdl_n13;
+    electrical cpphdl_n16;
+    electrical cpphdl_n19;
+    electrical cpphdl_n22;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC IC1, analog/basic/ring_vco.hpp:18
+        I(cpphdl_n13, Vdd) <+ cpphdl_channel(V(OUT, Vdd), V(cpphdl_n13, Vdd), 0.001, 0.34999999999999998, -1.0);
+        // device 1, IC IC1, analog/basic/ring_vco.hpp:19
+        I(cpphdl_n13, cpphdl_n10) <+ cpphdl_channel(V(OUT, cpphdl_n10), V(cpphdl_n13, cpphdl_n10), 0.001, 0.34999999999999998, 1.0);
+        // device 2, IC IC1, analog/basic/ring_vco.hpp:20
+        I(cpphdl_n10, Vss) <+ cpphdl_channel(V(CONTROL, Vss), V(cpphdl_n10, Vss), 0.001, 0.34999999999999998, 1.0);
+        // device 3, IC IC1, analog/basic/ring_vco.hpp:21
+        I(cpphdl_n10, Vss) <+ V(cpphdl_n10, Vss) / 1000000000.0;
+        // device 4, IC IC1, analog/basic/ring_vco.hpp:22
+        I(cpphdl_n13, Vss) <+ 1.0000000000000001e-09 * ddt(V(cpphdl_n13, Vss)); // Bench initial voltage = 0.0 V.
+        // device 5, IC IC2, analog/basic/ring_vco.hpp:18
+        I(cpphdl_n19, Vdd) <+ cpphdl_channel(V(cpphdl_n13, Vdd), V(cpphdl_n19, Vdd), 0.001, 0.34999999999999998, -1.0);
+        // device 6, IC IC2, analog/basic/ring_vco.hpp:19
+        I(cpphdl_n19, cpphdl_n16) <+ cpphdl_channel(V(cpphdl_n13, cpphdl_n16), V(cpphdl_n19, cpphdl_n16), 0.001, 0.34999999999999998, 1.0);
+        // device 7, IC IC2, analog/basic/ring_vco.hpp:20
+        I(cpphdl_n16, Vss) <+ cpphdl_channel(V(CONTROL, Vss), V(cpphdl_n16, Vss), 0.001, 0.34999999999999998, 1.0);
+        // device 8, IC IC2, analog/basic/ring_vco.hpp:21
+        I(cpphdl_n16, Vss) <+ V(cpphdl_n16, Vss) / 1000000000.0;
+        // device 9, IC IC2, analog/basic/ring_vco.hpp:22
+        I(cpphdl_n19, Vss) <+ 1.0000000000000001e-09 * ddt(V(cpphdl_n19, Vss)); // Bench initial voltage = 0.0 V.
+        // device 10, IC IC3, analog/basic/ring_vco.hpp:18
+        I(OUT, Vdd) <+ cpphdl_channel(V(cpphdl_n19, Vdd), V(OUT, Vdd), 0.001, 0.34999999999999998, -1.0);
+        // device 11, IC IC3, analog/basic/ring_vco.hpp:19
+        I(OUT, cpphdl_n22) <+ cpphdl_channel(V(cpphdl_n19, cpphdl_n22), V(OUT, cpphdl_n22), 0.001, 0.34999999999999998, 1.0);
+        // device 12, IC IC3, analog/basic/ring_vco.hpp:20
+        I(cpphdl_n22, Vss) <+ cpphdl_channel(V(CONTROL, Vss), V(cpphdl_n22, Vss), 0.001, 0.34999999999999998, 1.0);
+        // device 13, IC IC3, analog/basic/ring_vco.hpp:21
+        I(cpphdl_n22, Vss) <+ V(cpphdl_n22, Vss) / 1000000000.0;
+        // device 14, IC IC3, analog/basic/ring_vco.hpp:22
+        I(OUT, Vss) <+ 1.0000000000000001e-09 * ddt(V(OUT, Vss)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

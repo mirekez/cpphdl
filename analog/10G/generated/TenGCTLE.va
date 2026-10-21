@@ -1,0 +1,38 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module TenGCTLE(Vdd, Vss, P, N, VCM, OUTP, OUTN);
+    inout Vdd, Vss, P, N, VCM, OUTP, OUTN;
+    electrical Vdd, Vss, P, N, VCM, OUTP, OUTN;
+    electrical cpphdl_n12;
+    electrical cpphdl_n18;
+
+    analog begin
+        // device 0, IC TenGCTLE, analog/10G/ctle.hpp:20
+        I(P, cpphdl_n12) <+ V(P, cpphdl_n12) / 200.0;
+        // device 1, IC TenGCTLE, analog/10G/ctle.hpp:21
+        I(N, cpphdl_n18) <+ V(N, cpphdl_n18) / 200.0;
+        // device 2, IC TenGCTLE, analog/10G/ctle.hpp:22
+        I(cpphdl_n12, VCM) <+ V(cpphdl_n12, VCM) / 50.0;
+        // device 3, IC TenGCTLE, analog/10G/ctle.hpp:23
+        I(cpphdl_n18, VCM) <+ V(cpphdl_n18, VCM) / 50.0;
+        // device 4, IC TenGCTLE, analog/10G/ctle.hpp:24
+        I(P, cpphdl_n12) <+ 4.0000000000000001e-13 * ddt(V(P, cpphdl_n12)); // Bench initial voltage = 0.0 V.
+        // device 5, IC TenGCTLE, analog/10G/ctle.hpp:25
+        I(N, cpphdl_n18) <+ 4.0000000000000001e-13 * ddt(V(N, cpphdl_n18)); // Bench initial voltage = 0.0 V.
+        // device 6, IC IC1, analog/basic/gm_stage.hpp:18
+        I(VCM, OUTP) <+ V(VCM, OUTP) / 50.0;
+        // device 7, IC IC1, analog/basic/gm_stage.hpp:19
+        I(OUTP, VCM) <+ (-0.080000000000000002) * V(cpphdl_n12, VCM);
+        // device 8, IC IC1, analog/basic/gm_stage.hpp:20
+        I(OUTP, VCM) <+ 5e-15 * ddt(V(OUTP, VCM)); // Bench initial voltage = 0.0 V.
+        // device 9, IC IC2, analog/basic/gm_stage.hpp:18
+        I(VCM, OUTN) <+ V(VCM, OUTN) / 50.0;
+        // device 10, IC IC2, analog/basic/gm_stage.hpp:19
+        I(OUTN, VCM) <+ (-0.080000000000000002) * V(cpphdl_n18, VCM);
+        // device 11, IC IC2, analog/basic/gm_stage.hpp:20
+        I(OUTN, VCM) <+ 5e-15 * ddt(V(OUTN, VCM)); // Bench initial voltage = 0.0 V.
+    end
+endmodule
