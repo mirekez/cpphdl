@@ -789,6 +789,17 @@ if(CPPHDL_LOCAL_CONDA_PREFIX)
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
 endif()
 
+if(Python3_Interpreter_FOUND AND CPPHDL_TEMPLATE_VERILATOR)
+    foreach(kind inline file script)
+        add_test(NAME format_unused_replacement_${kind} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/format/UnusedReplacementChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_TEMPLATE_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/unused-replacement" --kind ${kind})
+        set_tests_properties(format_unused_replacement_${kind} PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
+    endforeach()
+endif()
+
 foreach(replacement_case standalone concrete partial expressions named parent)
     add_test(NAME format_replacement_defaults_${replacement_case}
         COMMAND ${CMAKE_COMMAND}
