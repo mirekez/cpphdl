@@ -56,6 +56,7 @@ struct cpphdl_exception
 #include "cpphdl_memory.h"
 #include "cpphdl_module.h"
 #include "cpphdl_port.h"
+#include "cpphdl_port_traits.h"
 
 #ifdef VERILATOR
 // Some Verilator installations still expect user code to provide this
@@ -648,7 +649,6 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 
 #ifndef CPPHDL_STATIC  // static version is faster but not used now
 
-#define _PORT(A...)  cpphdl::function_ref<A>
 #define _ASSIGN(a...)  [&]() { return a; }  // any expression (uses std::function, captures all object's pointers in a call chain, using heap)
 #define _ASSIGN_REG(a...)  [&]() { return &a; }  // (faster) register or comb() returning ref to lvalue (uses function_ref, captures only one ref, dont use heap)
 #define _ASSIGN_COMB(a...)  _ASSIGN_REG(a)  // all comb functions return reference to lvalue in cpphdl, but keep called when being accessed
@@ -687,7 +687,6 @@ constexpr void sv_assign_field(array<N, T, PACKED>& dst, const V& value)
 
 #else  // legacy CPPHDL_STATIC - requires all methods to be static - 2 times faster but does not support arrays of modules -> not supported now
 
-#define _PORT(A...) inline static cpphdl::function_ref<A>
 #define _ASSIGN(a...) +[]() { static auto tmp = a; tmp = a; return &tmp; }  // expression
 #define _ASSIGN_REG(a...)  +[]() { return &a; }  // variable
 #define _ASSIGN_COMB(a...)  _ASSIGN_REG(a)

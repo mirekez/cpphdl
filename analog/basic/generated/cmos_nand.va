@@ -1,0 +1,52 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module cmos_nand(Vdd, Vss, A, B, Y);
+    inout Vdd, Vss, A, B, Y;
+    electrical Vdd, Vss, A, B, Y;
+    electrical cpphdl_n6;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC cmos_nand, analog/basic/cmos_logic.hpp:15
+        I(Y, Vss) <+ 1.0000000000000001e-09 * ddt(V(Y, Vss)); // Bench initial voltage = 0.0 V.
+        // device 1, IC cmos_nand, analog/basic/cmos_logic.hpp:16
+        I(Y, Vdd) <+ cpphdl_channel(V(A, Vdd), V(Y, Vdd), 0.002, 0.34999999999999998, -1.0);
+        // device 2, IC cmos_nand, analog/basic/cmos_logic.hpp:17
+        I(Y, Vdd) <+ cpphdl_channel(V(B, Vdd), V(Y, Vdd), 0.002, 0.34999999999999998, -1.0);
+        // device 3, IC cmos_nand, analog/basic/cmos_logic.hpp:18
+        I(Y, cpphdl_n6) <+ cpphdl_channel(V(A, cpphdl_n6), V(Y, cpphdl_n6), 0.002, 0.34999999999999998, 1.0);
+        // device 4, IC cmos_nand, analog/basic/cmos_logic.hpp:19
+        I(cpphdl_n6, Vss) <+ cpphdl_channel(V(B, Vss), V(cpphdl_n6, Vss), 0.002, 0.34999999999999998, 1.0);
+        // device 5, IC cmos_nand, analog/basic/cmos_logic.hpp:20
+        I(Y, Vss) <+ V(Y, Vss) / 1000000000.0;
+        // device 6, IC cmos_nand, analog/basic/cmos_logic.hpp:21
+        I(cpphdl_n6, Vss) <+ V(cpphdl_n6, Vss) / 1000000000.0;
+    end
+endmodule

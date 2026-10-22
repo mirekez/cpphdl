@@ -11,17 +11,18 @@ LOG="$OUTPUT_DIR/rocket64-mmul.log"
 
 if [ ! -x "$SIM" ]; then
   echo "error: missing Rocket simulator: $SIM" >&2
-  echo "run $PRODUCT_ROOT/.build_rocket64_native.sh first" >&2
+  echo "run $PRODUCT_ROOT/.build_rocket64_verilator.sh first" >&2
   exit 1
 fi
 if [ ! -s "$ELF" ]; then
   echo "error: missing RV64 test executable: $ELF" >&2
-  echo "run $PRODUCT_ROOT/.build_rocket64_native.sh first" >&2
+  echo "run $PRODUCT_ROOT/.build_rocket64_verilator.sh first" >&2
   exit 1
 fi
 
 # shellcheck disable=SC1091
 source "$PRODUCT_ROOT/.build_chipyard.sh"
+require_clean_enough_checkout
 source_chipyard_env
 
 mkdir -p "$OUTPUT_DIR"
@@ -31,7 +32,7 @@ export -f run_host_simulator
 wall_timeout="${RV64_TIMEOUT:-600s}"
 max_cycles="${RV64_MAX_CYCLES:-100000000}"
 
-step "Run native SystemVerilog/Verilator Rocket RV64 matrix test"
+step "Run SystemVerilog/Verilator Rocket RV64 matrix test"
 printf 'Wall timeout: %s; simulation cycle limit: %s\n' \
   "$wall_timeout" "$max_cycles"
 
@@ -53,11 +54,11 @@ if [ "$sim_status" -ne 0 ]; then
 fi
 
 if ! grep -q '^ROCKET RV64 MMUL TEST PASSED:' "$LOG"; then
-  echo "error: Rocket simulation did not report the native RV64 PASS signature" >&2
+  echo "error: Verilator Rocket simulation did not report the RV64 PASS signature" >&2
   tail -40 "$LOG" >&2
   exit 1
 fi
 
-step "Native SystemVerilog/Verilator Rocket test PASS"
+step "SystemVerilog/Verilator Rocket test PASS"
 grep -E '^RV64 matrix|^ROCKET RV64 MMUL TEST PASSED:' "$LOG"
 printf 'Log: %s\n' "$LOG"

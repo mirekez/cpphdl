@@ -1,6 +1,6 @@
 # C++HDL
 
-C++HDL Hardware Description Language
+C++HDL is a Hardware Description Language for description of C++RTL models
 
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
@@ -41,6 +41,29 @@ ctest
 # be sure you provided RISCV_HOME=<> path to riscv-gnu-toolchain build if you want to run Tribe CPU tests
 # you need also to run .load_sail_riscv_sim.sh and .load_spike.sh in tribe_cpu/tests/ if you want to run CPU tests
 ```
+
+## Analog and mixed-signal schemas
+
+The [analog framework](analog/README.md) describes IC intentions with shared
+physical connections, device models and constraints. [basic schemas](analog/basic/README.md)
+include transistor amplifiers, inverters and regulators. The
+[mixed example](examples/mixed_signal/main.cpp) combines native C++HDL registers with
+analog sensing, loading and charge storage. Include `<cpphdl_analog.h>` and link
+`cpphdl::analog`; the shared `_PORT` selector preserves each domain's port meaning.
+
+Run the native regression suite without building LLVM or RTL tools:
+
+```bash
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build analog/build -j 4
+ctest --test-dir analog/build --output-on-failure -L analog
+```
+
+The package build includes analog by default (`CPPHDL_BUILD_ANALOG=ON`). Its
+`check-analog` target builds and runs the same regressions through CTest. See
+[analog/tests](analog/tests/README.md) for coverage and build options.
+Analog IC classes also export through `cpphdl --verilog-a`; see
+[Verilog-A conversion and independent ngspice comparisons](analog/VerilogA/README.md).
 
 ## author
 

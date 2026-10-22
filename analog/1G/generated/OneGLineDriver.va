@@ -1,0 +1,20 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGLineDriver(Vdd, Vss, IN, VCM, P, N);
+    inout Vdd, Vss, IN, VCM, P, N;
+    electrical Vdd, Vss, IN, VCM, P, N;
+
+    analog begin
+        // device 0, IC OneGLineDriver, analog/1G/transmitter.hpp:34
+        I(VCM, P) <+ V(VCM, P) / 50.0;
+        // device 1, IC OneGLineDriver, analog/1G/transmitter.hpp:35
+        I(VCM, N) <+ V(VCM, N) / 50.0;
+        // device 2, IC OneGLineDriver, analog/1G/transmitter.hpp:36
+        I(P, VCM) <+ (-0.01) * V(IN, VCM);
+        // device 3, IC OneGLineDriver, analog/1G/transmitter.hpp:37
+        I(N, VCM) <+ (-0.01) * V(VCM, IN);
+    end
+endmodule

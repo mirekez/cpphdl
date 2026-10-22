@@ -7,15 +7,37 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from version_fixture import configure_product, commit
 
 ROOT = Path(__file__).resolve().parents[1]
 class Backends(unittest.TestCase):
+    def test_verilator_entry_points(self):
+        for name in ('.build_rocket64_verilator.sh', '.run_rocket64_verilator.sh'):
+            with self.subTest(script=name):
+                script = ROOT / name
+                self.assertTrue(script.is_file())
+                self.assertTrue(os.access(script, os.X_OK))
+                result = subprocess.run(['bash', '-n', str(script)],
+                                        text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_verilator_missing_simulator_names_build_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / '.run_rocket64_verilator.sh'
+            shutil.copy2(ROOT / script.name, script)
+            result = subprocess.run([str(script)], text=True, capture_output=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('.build_rocket64_verilator.sh first', result.stderr)
+
     def test_run_config_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             shutil.copy2(ROOT / '.run_rocket64_cpphdl.sh', base / 'run.sh')
             elf = base / 'matrix.elf'
             elf.write_text('fixture')
+            (base / 'chipyard').mkdir()
+            (base / 'chipyard/build.sbt').write_text('fixture\n')
+            configure_product(base, base / 'chipyard')
             for backend, subdir, target in [
                 ('plain', 'plain', 'cpphdl-rocket64-sim'),
                 ('optimize-combs', '', 'cpphdl-rocket64-optimized-sim'),
@@ -56,6 +78,7 @@ class Backends(unittest.TestCase):
                              'print(json.dumps([os.environ["CPPHDL_BACKEND"], '
                              'os.environ["CPPHDL_OPT_LEVEL"], sys.argv[1:]]))\n')
             build.chmod(0o755)
+            configure_product(product, checkout)
             for suffix, backend in [('', 'plain'), ('-optimize-combs', 'optimize-combs'), ('-native-graph', 'native-graph')]:
                 with self.subTest(backend=backend):
                     env = {**os.environ, 'CPPHDL_TOOL': '/missing' if backend == 'plain' else '/bin/true',
@@ -65,6 +88,15 @@ class Backends(unittest.TestCase):
                                             env=env, text=True, capture_output=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(json.loads(result.stdout), [backend, '-O2', ['test.elf']])
+            (checkout / 'drift').write_text('changed revision\n')
+            commit(checkout)
+            for suffix in ('', '-optimize-combs', '-native-graph'):
+                result = subprocess.run([str(product / ('.build_rocket64_cpphdl' + suffix + '.sh'))],
+                                        env={**os.environ, 'CPPHDL_TOOL': '/bin/true'},
+                                        text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('required', result.stderr)
+                self.assertNotIn('["', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()

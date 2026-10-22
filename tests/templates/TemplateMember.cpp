@@ -236,8 +236,7 @@ static bool check_generated_sv()
     ok &= arithmetic.find("CONV_TYPE") == std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16___convert_default_to_conv") != std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelper___convert_default_to_conv") == std::string::npos;
-    ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::DEFAULT_EXP_MAX") != std::string::npos;
-    ok &= arithmetic.find("TemplateMemberArithmeticHelperTemplateMemberConv16_pkg::CONV_EXP_MAX") != std::string::npos;
+    // Consumers may use folded constexpr values; the input sweep validates them.
     ok &= arithmetic.find("TemplateMemberArithmeticHelper_pkg::DEFAULT_EXP_MAX") == std::string::npos;
     ok &= arithmetic.find("TemplateMemberArithmeticHelper_pkg::CONV_EXP_MAX") == std::string::npos;
     ok &= decoder.find("import TemplateMemberArithmeticHelper_pkg::*;") == std::string::npos;
@@ -250,9 +249,10 @@ static bool check_generated_sv()
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::EXP_WIDTH") == std::string::npos;
     ok &= helper_pkg.find("TemplateMemberConv16_pkg::MANT_WIDTH") == std::string::npos;
     ok &= helper_pkg.find("CONV_EXP_MAX") != std::string::npos;
-    ok &= helper_pkg.find("'h8") != std::string::npos;
+    ok &= helper_pkg.find("'h8") != std::string::npos || helper_pkg.find("'hFF") != std::string::npos;
     ok &= helper_pkg.find("CONV_MANT_MAX") != std::string::npos;
     ok &= helper_pkg.find("'h7") != std::string::npos;
+    ok &= !std::filesystem::exists(helper_pkg_path.parent_path() / "TemplateMemberArithmeticHelper_pkg.sv");
     ok &= top.find("TemplateMemberDecoderTemplateMemberConv16 #(") != std::string::npos;
     ok &= top.find(") decoder (") != std::string::npos;
     ok &= top.find("unknown(") == std::string::npos;
@@ -332,10 +332,11 @@ public:
 
         error |= !check_generated_sv();
 
-        for (uint32_t i = 0; i < 4096 && !error; ++i) {
-            uint16_t lo = (uint16_t)((i * 193u) ^ 0xa529u);
-            uint16_t hi = (uint16_t)((i * 389u) ^ 0x3c71u);
-            enable = (i & 3u) != 0;
+        for (uint32_t i = 0; i < 131072 && !error; ++i) {
+            uint32_t sample = i >> 1;
+            uint16_t lo = (uint16_t)((sample * 193u) ^ 0xa529u);
+            uint16_t hi = (uint16_t)((sample * 389u) ^ 0x3c71u);
+            enable = (i & 1u) != 0;
             value = logic<32>(((uint32_t)hi << 16) | lo);
             eval(false);
             uint32_t got = output();

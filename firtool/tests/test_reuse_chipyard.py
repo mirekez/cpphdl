@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from version_fixture import configure_product, commit
 
 SCRIPT = Path(__file__).resolve().parents[1] / '.build_chipyard.sh'
 
@@ -21,6 +22,7 @@ class ReuseChipyardTest(unittest.TestCase):
         self.source = self.base / 'existing chipyard'
         (self.source / 'sims/verilator').mkdir(parents=True)
         (self.source / 'build.sbt').write_text('local changes\n')
+        configure_product(self.product, self.source)
         prefix = self.source / '.conda-env/riscv-tools'
         for name in ('lib/libfesvr.a', 'bin/riscv64-unknown-elf-gcc'):
             path = prefix / name
@@ -51,7 +53,7 @@ class ReuseChipyardTest(unittest.TestCase):
         self.assertEqual((self.source / 'build.sbt').read_text(), 'local changes\n')
         self.assertEqual(len(self.log.read_text().splitlines()), 4)
 
-    def test_sourcing_keeps_native_helpers_without_building(self):
+    def test_sourcing_keeps_verilator_helpers_without_building(self):
         result = subprocess.run(
             ['bash', '-c', 'source "$1"; declare -F build_simulator', '_',
              str(self.product / SCRIPT.name)], env=self.env, capture_output=True, text=True)
@@ -85,6 +87,17 @@ class ReuseChipyardTest(unittest.TestCase):
         link.symlink_to(other)
         self.assertNotEqual(self.run_bootstrap().returncode, 0)
         self.assertEqual(link.resolve(), other)
+        self.assertFalse(self.log.exists())
+
+    def test_wrong_revision_is_rejected_without_checkout_or_build(self):
+        (self.source / 'new-file').write_text('new revision\n')
+        revision = commit(self.source)
+        self.env['ALLOW_UNPINNED_CHIPYARD'] = '1'
+        result = self.run_bootstrap()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('required', result.stderr)
+        self.assertEqual(subprocess.check_output(['git', '-C', str(self.source), 'rev-parse', 'HEAD'],
+                                                text=True).strip(), revision)
         self.assertFalse(self.log.exists())
 
 

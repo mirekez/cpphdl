@@ -1,0 +1,25 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGCTLE(Vdd, Vss, IN, VCM, OUT);
+    inout Vdd, Vss, IN, VCM, OUT;
+    electrical Vdd, Vss, IN, VCM, OUT;
+    electrical cpphdl_n6;
+
+    analog begin
+        // device 0, IC OneGCTLE, analog/1G/equalizer.hpp:18
+        I(IN, cpphdl_n6) <+ V(IN, cpphdl_n6) / 1000.0;
+        // device 1, IC OneGCTLE, analog/1G/equalizer.hpp:19
+        I(VCM, cpphdl_n6) <+ V(VCM, cpphdl_n6) / 1000.0;
+        // device 2, IC OneGCTLE, analog/1G/equalizer.hpp:20
+        I(IN, cpphdl_n6) <+ 9.9999999999999998e-13 * ddt(V(IN, cpphdl_n6)); // Bench initial voltage = 0.0 V.
+        // device 3, IC OneGCTLE, analog/1G/equalizer.hpp:21
+        I(VCM, OUT) <+ V(VCM, OUT) / 1000.0;
+        // device 4, IC OneGCTLE, analog/1G/equalizer.hpp:22
+        I(OUT, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUT, VCM)); // Bench initial voltage = 0.0 V.
+        // device 5, IC OneGCTLE, analog/1G/equalizer.hpp:23
+        I(OUT, VCM) <+ (-0.0023) * V(cpphdl_n6, VCM);
+    end
+endmodule

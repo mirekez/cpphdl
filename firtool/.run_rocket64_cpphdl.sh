@@ -3,6 +3,7 @@ set -euo pipefail
 
 product_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 chipyard_root="$product_root/chipyard"
+python3 "$product_root/check_versions.py" "$chipyard_root" --quiet
 backend=${1:-plain}
 config=${CPPHDL_CONFIG:-RocketConfig}
 case "$backend" in

@@ -35,12 +35,13 @@ OpenMPLoop loopPlan(ASTContext& ctx, const ForStmt* loop) {
     if (!var->getType()->isIntegerType() || ctx.getTypeSize(var->getType()) > 32)
         unsupported("induction variables must be integers of at most 32 bits");
     int64_t start = constant(ctx, var->getInit());
-    auto* cond = dyn_cast_or_null<BinaryOperator>(loop->getCond()->IgnoreParenImpCasts());
+    auto* cond = loop->getCond() ? dyn_cast<BinaryOperator>(loop->getCond()->IgnoreParenImpCasts()) : nullptr;
     if (!cond || variable(cond->getLHS()) != var ||
         (cond->getOpcode() != BO_LT && cond->getOpcode() != BO_LE &&
          cond->getOpcode() != BO_GT && cond->getOpcode() != BO_GE))
         unsupported("expected induction-variable <, <=, > or >= constant");
     int64_t bound = constant(ctx, cond->getRHS()), step = 0;
+    if (!loop->getInc()) unsupported("unsupported loop stride");
     auto* inc = strip(loop->getInc());
     if (auto* unary = dyn_cast<UnaryOperator>(inc)) {
         if (variable(unary->getSubExpr()) != var || !unary->isIncrementDecrementOp())
@@ -325,6 +326,8 @@ OpenMPLoop planStaticLoop(ASTContext& ctx,const ForStmt* loop) { return loopPlan
 std::optional<int64_t> staticInteger(ASTContext& ctx,const Expr* input,const StaticIntegers& values) {
     if (!input) return {};
     auto* expr=input->IgnoreParens();
+    // A known result does not make evaluating the expression optional.
+    if (expr->HasSideEffects(ctx)) return {};
     if (auto* ref=dyn_cast<DeclRefExpr>(expr)) {
         if(auto* var=dyn_cast<VarDecl>(ref->getDecl())) {auto found=values.find(var);if(found!=values.end()) return found->second;}
     }
@@ -341,6 +344,9 @@ std::optional<int64_t> staticInteger(ASTContext& ctx,const Expr* input,const Sta
             if(expr->getType()->isSignedIntegerType() && (raw&(uint64_t(1)<<(width-1)))) raw|=~mask;
             return int64_t(raw);
         }
+        // StaticIntegers cannot represent an unsigned value above INT64_MAX.
+        // Leave its comparison/arithmetic to normal typed lowering.
+        if (expr->getType()->isUnsignedIntegerType() && value < 0) return {};
         return value;
     };
     if(auto* cast=dyn_cast<CastExpr>(expr)) {auto v=staticInteger(ctx,cast->getSubExpr(),values);return v?normalize(*v):v;}

@@ -1,0 +1,23 @@
+C++HDL Verilog-A independent transient experiment
+* Sources, initial charges and observations come from the same elaborated C++ bench.
+.model CircuitModel Example_cmos_inverter_nominal
+Ndesign 0 n6 n8 n9 CircuitModel
+Vsource0 n6 0 DC 1.2
+Vsource1 n8 0 PWL(0 0.0 1.9999999999999999e-06 0.0 1.9999999999999999e-06 1.2 3.9999999999999998e-06 1.2)
+.ic V(n6)=1.2
+.ic V(n8)=0.0
+.ic V(n9)=0.0
+.options method=gear maxord=2 reltol=1e-5 abstol=1e-12 vntol=1e-8 trtol=7
+.control
+pre_osdi design.osdi
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+set numdgt=17
+tran 1e-08 3.9999999999999998e-06 0 1e-08 uic
+let observation0 = v(n8)
+let observation1 = v(n9)
+wrdata spice.dat observation0 observation1
+quit
+.endc
+.end

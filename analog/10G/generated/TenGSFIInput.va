@@ -1,0 +1,26 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module TenGSFIInput(Vdd, Vss, P, N, VCM, OUTP, OUTN);
+    inout Vdd, Vss, P, N, VCM, OUTP, OUTN;
+    electrical Vdd, Vss, P, N, VCM, OUTP, OUTN;
+    electrical cpphdl_n8;
+    electrical cpphdl_n9;
+
+    analog begin
+        // device 0, IC TenGSFIInput, analog/10G/sfi_input.hpp:19
+        I(P, cpphdl_n8) <+ V(P, cpphdl_n8) / 0.10000000000000001;
+        // device 1, IC TenGSFIInput, analog/10G/sfi_input.hpp:20
+        I(N, cpphdl_n9) <+ V(N, cpphdl_n9) / 0.10000000000000001;
+        // device 2, IC TenGSFIInput, analog/10G/sfi_input.hpp:21
+        I(OUTP, cpphdl_n8) <+ 9.9999999999999995e-08 * ddt(V(OUTP, cpphdl_n8)); // Bench initial voltage = 0.0 V.
+        // device 3, IC TenGSFIInput, analog/10G/sfi_input.hpp:22
+        I(OUTN, cpphdl_n9) <+ 9.9999999999999995e-08 * ddt(V(OUTN, cpphdl_n9)); // Bench initial voltage = 0.0 V.
+        // device 4, IC TenGSFIInput, analog/10G/sfi_input.hpp:23
+        I(VCM, OUTP) <+ V(VCM, OUTP) / 50.0;
+        // device 5, IC TenGSFIInput, analog/10G/sfi_input.hpp:24
+        I(VCM, OUTN) <+ V(VCM, OUTN) / 50.0;
+    end
+endmodule

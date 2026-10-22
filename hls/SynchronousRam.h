@@ -28,9 +28,8 @@ public:
     _PORT(Data) data_in;_PORT(Data) data_out;
 private:
     cpphdl::memory<cpphdl::u32,WORDS,DEPTH> words;
-    cpphdl::reg<Data> data;
+    cpphdl::reg<Data> data{};
 public:
-    SynchronousRam(){data.clr();}
     void _assign(){data_out=_ASSIGN_REG(data);}
     void _work(bool reset) {
         if(!reset) {

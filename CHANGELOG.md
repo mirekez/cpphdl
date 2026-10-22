@@ -1,3 +1,11 @@
+# 1.5
+
+ - HLS kit appeared in hls/
+ - synthesis kit appeared in synth/ with retiming
+ - native graph high speed simulation mode
+ - multi-thread native graph mode
+ - hdlcpp SV to C++ converter in development...
+
 # 1.4
 
  - improved Tribe CPU and L1/L2 cache timing, memory primitives, and FPGA timing-analysis support

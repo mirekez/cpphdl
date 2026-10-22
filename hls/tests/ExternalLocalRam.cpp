@@ -31,6 +31,7 @@ struct ExternalLocalRamMethods {
             local[0] = uint8_t(value ^ 0xffu);
             return uint64_t(prefix) + suffix + local[0] + local[LOCAL_RAM_BYTES - 1];
         }
+        if (operation == 5) return cpphdl::hls::external_memory<uint64_t>(value)[0];
         uint8_t temporary[LOCAL_RAM_BYTES]{};
         temporary[LOCAL_RAM_BYTES - 1] = local[index];
         return uint64_t(temporary[0]) + temporary[LOCAL_RAM_BYTES - 1];

@@ -1,0 +1,15 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module LowPass(Vdd, Vss, IN, OUT);
+    inout Vdd, Vss, IN, OUT;
+    electrical Vdd, Vss, IN, OUT;
+
+    analog begin
+        // device 0, analog/examples/rc_filter/main.cpp:3
+        I(OUT, Vss) <+ 1.0000000000000001e-09 * ddt(V(OUT, Vss)); // Bench initial voltage = 0.0 V.
+        // device 1, IC LowPass, analog/examples/rc_filter/main.cpp:9
+        I(IN, OUT) <+ V(IN, OUT) / 1000.0;
+    end
+endmodule

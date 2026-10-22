@@ -1,0 +1,79 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGBiasedLineDriver(Vdd, Vss, P, N, GP0, GN0, GP1, GN1, GP2, GN2, GP3, GN3);
+    inout Vdd, Vss, P, N, GP0, GN0, GP1, GN1, GP2, GN2, GP3, GN3;
+    electrical Vdd, Vss, P, N, GP0, GN0, GP1, GN1, GP2, GN2, GP3, GN3;
+    electrical cpphdl_n11;
+    electrical cpphdl_n12;
+    electrical cpphdl_n13;
+    electrical cpphdl_n14;
+    electrical cpphdl_n20;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC IC1, analog/1G/IHPSG13G2/biased_driver.hpp:14
+        I(Vdd, cpphdl_n20) <+ V(Vdd, cpphdl_n20) / 1480.0;
+        // device 1, IC IC1, analog/1G/IHPSG13G2/biased_driver.hpp:15
+        I(cpphdl_n20, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n20, Vss), 0.014268727705112965, 0.34999999999999998, 1.0);
+        // device 2, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:55
+        I(Vdd, P) <+ V(Vdd, P) / 50.0;
+        // device 3, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:56
+        I(Vdd, N) <+ V(Vdd, N) / 50.0;
+        // device 4, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:57
+        I(P, Vdd) <+ 4.9999999999999999e-13 * ddt(V(P, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 5, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:58
+        I(N, Vdd) <+ 4.9999999999999999e-13 * ddt(V(N, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 6, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n11) <+ cpphdl_channel(V(GP0, cpphdl_n11), V(P, cpphdl_n11), 0.02, 0.69999999999999996, 1.0);
+        // device 7, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n11) <+ cpphdl_channel(V(GN0, cpphdl_n11), V(N, cpphdl_n11), 0.02, 0.69999999999999996, 1.0);
+        // device 8, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n11, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n11, Vss), 0.042806183115338889, 0.34999999999999998, 1.0);
+        // device 9, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n12) <+ cpphdl_channel(V(GP1, cpphdl_n12), V(P, cpphdl_n12), 0.02, 0.69999999999999996, 1.0);
+        // device 10, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n12) <+ cpphdl_channel(V(GN1, cpphdl_n12), V(N, cpphdl_n12), 0.02, 0.69999999999999996, 1.0);
+        // device 11, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n12, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n12, Vss), 0.042806183115338889, 0.34999999999999998, 1.0);
+        // device 12, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n13) <+ cpphdl_channel(V(GP2, cpphdl_n13), V(P, cpphdl_n13), 0.02, 0.69999999999999996, 1.0);
+        // device 13, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n13) <+ cpphdl_channel(V(GN2, cpphdl_n13), V(N, cpphdl_n13), 0.02, 0.69999999999999996, 1.0);
+        // device 14, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n13, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n13, Vss), 0.042806183115338889, 0.34999999999999998, 1.0);
+        // device 15, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n14) <+ cpphdl_channel(V(GP3, cpphdl_n14), V(P, cpphdl_n14), 0.02, 0.69999999999999996, 1.0);
+        // device 16, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n14) <+ cpphdl_channel(V(GN3, cpphdl_n14), V(N, cpphdl_n14), 0.02, 0.69999999999999996, 1.0);
+        // device 17, IC OneGBiasedLineDriver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n14, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n14, Vss), 0.042806183115338889, 0.34999999999999998, 1.0);
+    end
+endmodule

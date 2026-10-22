@@ -1,0 +1,18 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module lead_lag_filter(Vdd, Vss, IN, OUT);
+    inout Vdd, Vss, IN, OUT;
+    electrical Vdd, Vss, IN, OUT;
+    electrical cpphdl_n5;
+
+    analog begin
+        // device 0, IC lead_lag_filter, analog/basic/pll.hpp:16
+        I(IN, OUT) <+ V(IN, OUT) / 10000.0;
+        // device 1, IC lead_lag_filter, analog/basic/pll.hpp:17
+        I(OUT, cpphdl_n5) <+ 9.9999999999999995e-08 * ddt(V(OUT, cpphdl_n5)); // Bench initial voltage = 0.59999999999999998 V.
+        // device 2, IC lead_lag_filter, analog/basic/pll.hpp:18
+        I(cpphdl_n5, Vss) <+ V(cpphdl_n5, Vss) / 470.0;
+    end
+endmodule

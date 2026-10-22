@@ -31,7 +31,7 @@ class names, parameter order, ports, clocks and tests:
 | --- | --- |
 | `FpAdd.h` | Registered significand sum; combinational alignment/normalization |
 | `FpConverter.h` | FP format types and optional registered conversion |
-| `FpSqrt.h` | Combinational restoring square root block |
+| `FpSqrt.h` | Combinational square root with an unrolled integer core |
 | `FpTanh.h` | Approximate tanh block |
 
 FpAdd/FpSqrt/FpTanh also have aliases in `cpphdl::hls::math`. FpConverter retains

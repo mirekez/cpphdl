@@ -1,0 +1,27 @@
+C++HDL Verilog-A independent transient experiment
+* Sources, initial charges and observations come from the same elaborated C++ bench.
+.model CircuitModel Example_regulator_nominal
+Ndesign 0 n21 n22 n25 n26 n28 n29 CircuitModel
+Vsource0 n26 0 PWL(0 3.2999999999999998 0.00025000000000000001 3.2999999999999998 0.00025000000000000001 2.5 0.00050000000000000001 2.5)
+Vsource1 n22 0 DC 1.2
+.ic V(n21)=0.0
+.ic V(n22)=1.2
+.ic V(n26)=3.2999999999999998
+.ic V(n29)=0.0
+.options method=gear maxord=2 reltol=1e-5 abstol=1e-12 vntol=1e-8 trtol=7
+.control
+pre_osdi design.osdi
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+set numdgt=17
+tran 5.0000000000000008e-07 0.00050000000000000001 0 5.0000000000000008e-07 uic
+let observation0 = v(n26)
+let observation1 = v(n22)
+let observation2 = v(n21)
+let observation3 = v(n29)
+let observation4 = v(n25)
+wrdata spice.dat observation0 observation1 observation2 observation3 observation4
+quit
+.endc
+.end

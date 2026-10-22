@@ -1,0 +1,32 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module TenGChannel(Vdd, Vss, P, N, VCM, OUTP, OUTN);
+    inout Vdd, Vss, P, N, VCM, OUTP, OUTN;
+    electrical Vdd, Vss, P, N, VCM, OUTP, OUTN;
+    electrical cpphdl_n8;
+    electrical cpphdl_n9;
+
+    analog begin
+        // device 0, IC TenGChannel, analog/10G/channel.hpp:18
+        I(P, cpphdl_n8) <+ V(P, cpphdl_n8) / 15.0;
+        // device 1, IC TenGChannel, analog/10G/channel.hpp:19
+        I(N, cpphdl_n9) <+ V(N, cpphdl_n9) / 15.0;
+        // device 2, IC TenGChannel, analog/10G/channel.hpp:20
+        I(cpphdl_n8, OUTP) <+ V(cpphdl_n8, OUTP) / 15.0;
+        // device 3, IC TenGChannel, analog/10G/channel.hpp:21
+        I(cpphdl_n9, OUTN) <+ V(cpphdl_n9, OUTN) / 15.0;
+        // device 4, IC TenGChannel, analog/10G/channel.hpp:22
+        I(cpphdl_n8, VCM) <+ 2.0000000000000001e-13 * ddt(V(cpphdl_n8, VCM)); // Bench initial voltage = 0.0 V.
+        // device 5, IC TenGChannel, analog/10G/channel.hpp:23
+        I(cpphdl_n9, VCM) <+ 2.0000000000000001e-13 * ddt(V(cpphdl_n9, VCM)); // Bench initial voltage = 0.0 V.
+        // device 6, IC TenGChannel, analog/10G/channel.hpp:24
+        I(OUTP, VCM) <+ 2.0000000000000001e-13 * ddt(V(OUTP, VCM)); // Bench initial voltage = 0.0 V.
+        // device 7, IC TenGChannel, analog/10G/channel.hpp:25
+        I(OUTN, VCM) <+ 2.0000000000000001e-13 * ddt(V(OUTN, VCM)); // Bench initial voltage = 0.0 V.
+        // device 8, IC TenGChannel, analog/10G/channel.hpp:26
+        I(OUTP, OUTN) <+ V(OUTP, OUTN) / 100.0;
+    end
+endmodule

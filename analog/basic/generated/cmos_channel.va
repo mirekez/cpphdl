@@ -1,0 +1,41 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module cmos_channel(Vdd, Vss, A, Y);
+    inout Vdd, Vss, A, Y;
+    electrical Vdd, Vss, A, Y;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC cmos_channel, analog/basic/inverter.hpp:11
+        I(Y, Vdd) <+ cpphdl_channel(V(A, Vdd), V(Y, Vdd), 0.001, 0.34999999999999998, -1.0);
+        // device 1, IC cmos_channel, analog/basic/inverter.hpp:12
+        I(Y, Vss) <+ cpphdl_channel(V(A, Vss), V(Y, Vss), 0.001, 0.34999999999999998, 1.0);
+    end
+endmodule

@@ -1,0 +1,24 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGCablePair(Vdd, Vss, AP, AN, BP, BN, VCM);
+    inout Vdd, Vss, AP, AN, BP, BN, VCM;
+    electrical Vdd, Vss, AP, AN, BP, BN, VCM;
+
+    analog begin
+        // device 0, IC OneGCablePair, analog/1G/channel.hpp:18
+        I(AP, BP) <+ V(AP, BP) / 15.0;
+        // device 1, IC OneGCablePair, analog/1G/channel.hpp:19
+        I(AN, BN) <+ V(AN, BN) / 15.0;
+        // device 2, IC OneGCablePair, analog/1G/channel.hpp:21
+        I(AP, VCM) <+ 4.9999999999999997e-12 * ddt(V(AP, VCM)); // Bench initial voltage = 0.0 V.
+        // device 3, IC OneGCablePair, analog/1G/channel.hpp:21
+        I(AN, VCM) <+ 4.9999999999999997e-12 * ddt(V(AN, VCM)); // Bench initial voltage = 0.0 V.
+        // device 4, IC OneGCablePair, analog/1G/channel.hpp:21
+        I(BP, VCM) <+ 4.9999999999999997e-12 * ddt(V(BP, VCM)); // Bench initial voltage = 0.0 V.
+        // device 5, IC OneGCablePair, analog/1G/channel.hpp:21
+        I(BN, VCM) <+ 4.9999999999999997e-12 * ddt(V(BN, VCM)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

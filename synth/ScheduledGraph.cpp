@@ -111,6 +111,14 @@ class Exporter {
     }
     Value bankLoad(const std::vector<Value>& banks, Value address, unsigned count) {
         Value result;
+        if (auto known = number(g.resolved(address))) {
+            for (unsigned byte = 0; byte < count; ++byte) {
+                auto addr = (*known + byte) & mask(d.addressBits);
+                auto v = slice(banks[addr % 8], (addr / 8) * 8, 8);
+                result.insert(result.end(), v.begin(), v.end());
+            }
+            return result;
+        }
         unsigned indexBits = 0; while ((uint64_t(1) << indexBits) < d.memoryBytes / 8) ++indexBits;
         for (unsigned byte = 0; byte < count; ++byte) {
             auto addr = g.binary("add", resize(address, d.addressBits), constant(byte, d.addressBits), d.addressBits);
@@ -124,6 +132,18 @@ class Exporter {
         return result;
     }
     Value bankWrite(Value bank, Value address, Value data, Value fault, unsigned lane, unsigned bytes, Value size = {}) {
+        if (auto known = number(g.resolved(address))) {
+            for (unsigned byte = 0; byte < bytes; ++byte) {
+                auto addr = (*known + byte) & mask(d.addressBits);
+                if (addr % 8 != lane || addr >= d.memoryBytes) continue;
+                auto enable = inv(fault);
+                if (!size.empty()) enable = both(enable, g.binary("lt", constant(byte, 32), resize(size, 32), 1));
+                auto row = (addr / 8) * 8;
+                auto v = g.mux(enable, slice(data, byte * 8, 8), slice(bank, row, 8));
+                std::copy(v.begin(), v.end(), bank.begin() + row);
+            }
+            return bank;
+        }
         unsigned indexBits = 0; while ((uint64_t(1) << indexBits) < d.memoryBytes / 8) ++indexBits;
         for (unsigned byte = 0; byte < bytes; ++byte) {
             auto addr = g.binary("add", resize(address, d.addressBits), constant(byte, d.addressBits), d.addressBits);

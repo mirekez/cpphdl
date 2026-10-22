@@ -29,6 +29,11 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     find_program(CONSTANTS_VERILATOR verilator)
     if(CONSTANTS_VERILATOR)
+        add_test(NAME templates_port_aliases COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/templates/PortAliasesChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/port-aliases")
+        set_tests_properties(templates_port_aliases PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
         add_test(NAME templates_namespace_constants COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/templates/NamespaceConstantsChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -161,9 +166,31 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME firtool_rocket_backends COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_rocket_backends.py")
     set_tests_properties(firtool_rocket_backends PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_versions COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_versions.py")
+    set_tests_properties(firtool_versions PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_reuse_chipyard COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_reuse_chipyard.py")
+    set_tests_properties(firtool_reuse_chipyard PROPERTIES TIMEOUT 30)
+    add_test(NAME firtool_build_all COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_build_all.py")
+    set_tests_properties(firtool_build_all PROPERTIES TIMEOUT 30)
     add_test(NAME firtool_emitter_support COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../firtool/tests/test_emitter.py" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(firtool_emitter_support PROPERTIES TIMEOUT 180)
+    find_program(FIRTOOL_CPPHDL NAMES firtool-cpphdl
+        HINTS "${CMAKE_SOURCE_DIR}/firtool/chipyard/tools/firtool-cpphdl/build")
+    if(FIRTOOL_CPPHDL)
+        foreach(case external_parameters wide_multiply)
+            set(firtool_args --firtool "${FIRTOOL_CPPHDL}" --cxx "${CMAKE_CXX_COMPILER}")
+            if(case STREQUAL "wide_multiply")
+                list(APPEND firtool_args --cpphdl "$<TARGET_FILE:cpphdl>")
+            endif()
+            add_test(NAME firtool_${case} COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/firtool/tests/test_${case}.py" ${firtool_args})
+            set_tests_properties(firtool_${case} PROPERTIES TIMEOUT 180 LABELS "firtool;rtl")
+        endforeach()
+    endif()
     add_test(NAME cpp_graph_wide_shift COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideShiftChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
@@ -222,6 +249,13 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativePortsChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_ports PROPERTIES TIMEOUT 120)
+    foreach(case NativeAssertions NativeControlLocals NativeFloat NativeMemoryGetters NativeRecords PortCopy)
+        add_test(NAME cpp_graph_${case} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeCases.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --case ${case} --work "${CMAKE_CURRENT_BINARY_DIR}/native-${case}")
+        set_tests_properties(cpp_graph_${case} PROPERTIES TIMEOUT 300)
+    endforeach()
     add_test(NAME cpp_graph_native_host_overlap COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeHostOverlapChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
@@ -519,6 +553,7 @@ set(template_hierarchy_tests
     structs/UnionParamAccess.cpp
     templates/TemplateArrayDimension.cpp
     templates/TemplateBaseAliasPackage.cpp
+    templates/TemplateMember.cpp
     templates/TemplateTypeWidth.cpp
     templates/TemplateInheritedBaseArray.cpp)
 
@@ -614,6 +649,8 @@ foreach(src ${TEST_SOURCES})
         set(template_top ${name})
         if(rel_path STREQUAL "code/TypeTemplateModule.cpp")
             set(template_top TypeTemplateModuleParent)
+        elseif(rel_path STREQUAL "templates/TemplateMember.cpp")
+            set(template_top TemplateMemberTop)
         elseif(rel_path STREQUAL "structs/UnionParamAccess.cpp")
             set(template_top UnionParamAccessUnionParamBF16E8)
         endif()
@@ -676,6 +713,25 @@ endif()
 
 find_program(CPPHDL_TEMPLATE_VERILATOR NAMES verilator HINTS "${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
 find_program(CPPHDL_REPLACEMENT_MAKE NAMES gmake make)
+if(Python3_Interpreter_FOUND)
+    foreach(alias_flow cpp verilator)
+        if(alias_flow STREQUAL "verilator" AND NOT CPPHDL_TEMPLATE_VERILATOR)
+            continue()
+        endif()
+        add_test(NAME templates_ResolvedTypeAliases_${alias_flow}
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/templates/ResolvedTypeAliasesChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+                --verilator "${CPPHDL_TEMPLATE_VERILATOR}" --flow "${alias_flow}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/resolved_type_aliases")
+        set_tests_properties(templates_ResolvedTypeAliases_${alias_flow} PROPERTIES
+            TIMEOUT 300 ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        if(CPPHDL_LOCAL_CONDA_PREFIX)
+            set_tests_properties(templates_ResolvedTypeAliases_${alias_flow} PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin")
+        endif()
+    endforeach()
+endif()
 add_test(NAME code_NativeLambdaHarness
     COMMAND ${CMAKE_COMMAND}
         -DCPPHDL=$<TARGET_FILE:cpphdl>
@@ -698,6 +754,17 @@ set_tests_properties(templates_DependentBitVectorAliases PROPERTIES TIMEOUT 120)
 if(CPPHDL_LOCAL_CONDA_PREFIX)
     set_tests_properties(templates_DependentBitVectorAliases PROPERTIES
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CPPHDL_LOCAL_CONDA_PREFIX}/bin;CONDA_PREFIX=set:${CPPHDL_LOCAL_CONDA_PREFIX}")
+endif()
+
+if(Python3_Interpreter_FOUND AND CPPHDL_TEMPLATE_VERILATOR)
+    foreach(kind inline file script)
+        add_test(NAME format_unused_replacement_${kind} COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/format/UnusedReplacementChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CPPHDL_TEMPLATE_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/unused-replacement" --kind ${kind})
+        set_tests_properties(format_unused_replacement_${kind} PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
+    endforeach()
 endif()
 
 foreach(replacement_case standalone concrete partial expressions named parent)
@@ -986,6 +1053,7 @@ add_test(
             "$<TARGET_FILE:cpphdl>"
             "${CMAKE_SOURCE_DIR}/include"
             "${CPPHDL_STDCXXEXP}"
+            "${CMAKE_CXX_COMPILER}"
 )
 set_tests_properties(optimizer_work_split PROPERTIES TIMEOUT 120)
 

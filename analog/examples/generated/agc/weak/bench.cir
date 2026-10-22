@@ -1,0 +1,39 @@
+C++HDL Verilog-A independent transient experiment
+* Sources, initial charges and observations come from the same elaborated C++ bench.
+.model CircuitModel Example_agc_weak
+Ndesign 0 n5 n6 n7 n8 n26 n34 n45 n46 n49 n52 n56 n60 n73 n74 n77 n78 n80 n81 bit0 CircuitModel
+Vsource0 n78 0 DC 3.2999999999999998
+Vsource1 n34 0 DC 1.2
+Vsource2 n73 0 DC 1.0
+Vsource3 n5 n34 PWL(0 0.0050000000000000001 0.080000000000000002 0.0050000000000000001 0.080000000000000002 0.014999999999999999 0.23999999999999999 0.014999999999999999)
+Vsource4 n6 n5 PWL(0 0.0 0.16 0.0 0.16 -0.01 0.23999999999999999 -0.01)
+Vsource5 n7 n34 PWL(0 -0.0050000000000000001 0.080000000000000002 -0.0050000000000000001 0.080000000000000002 -0.014999999999999999 0.23999999999999999 -0.014999999999999999)
+Vsource6 n8 n7 PWL(0 0.0 0.16 0.0 0.16 0.01 0.23999999999999999 0.01)
+Vbit0 bit0 0 PULSE(0 1 4.9999999999999996e-05 5.0000000000000003e-10 5.0000000000000003e-10 4.9999499999999995e-05 9.9999999999999991e-05)
+.ic V(n5)=1.2049999999999998
+.ic V(n6)=1.2049999999999998
+.ic V(n7)=1.1950000000000001
+.ic V(n8)=1.1950000000000001
+.ic V(n34)=1.2
+.ic V(n56)=1.2
+.ic V(n60)=0.80000000000000004
+.ic V(n73)=1.0
+.ic V(n74)=1.0
+.ic V(n78)=3.2999999999999998
+.ic V(n81)=2.0
+.options method=gear maxord=2 reltol=1e-5 abstol=1e-12 vntol=1e-8 trtol=7
+.control
+pre_osdi design.osdi
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+set numdgt=17
+tran 4.9999999999999996e-06 0.23999999999999999 0 4.9999999999999996e-06 uic
+let observation0 = v(n26)
+let observation1 = v(n56)
+let observation2 = v(n81)
+let observation3 = v(n60)
+wrdata spice.dat observation0 observation1 observation2 observation3
+quit
+.endc
+.end

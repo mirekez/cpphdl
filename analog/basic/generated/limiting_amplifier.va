@@ -1,0 +1,21 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module limiting_amplifier(Vdd, Vss, PLUS, MINUS, BIAS, OUT);
+    inout Vdd, Vss, PLUS, MINUS, BIAS, OUT;
+    electrical Vdd, Vss, PLUS, MINUS, BIAS, OUT;
+
+    analog begin
+        // device 0, IC limiting_amplifier, analog/basic/gm_stage.hpp:18
+        I(BIAS, OUT) <+ V(BIAS, OUT) / 1000.0;
+        // device 1, IC limiting_amplifier, analog/basic/gm_stage.hpp:19
+        I(OUT, BIAS) <+ (-0.01) * V(PLUS, MINUS);
+        // device 2, IC limiting_amplifier, analog/basic/gm_stage.hpp:20
+        I(OUT, BIAS) <+ 1.0000000000000001e-15 * ddt(V(OUT, BIAS)); // Bench initial voltage = 0.0 V.
+        // device 3, IC limiting_amplifier, analog/basic/gm_stage.hpp:30
+        I(OUT, Vdd) <+ max(0.0, V(OUT, Vdd) - 0.0) / 1.0 + V(OUT, Vdd) / 1000000000.0;
+        // device 4, IC limiting_amplifier, analog/basic/gm_stage.hpp:31
+        I(Vss, OUT) <+ max(0.0, V(Vss, OUT) - 0.0) / 1.0 + V(Vss, OUT) / 1000000000.0;
+    end
+endmodule

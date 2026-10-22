@@ -1,0 +1,20 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGHybrid(Vdd, Vss, P, N, LOCAL, VCM, OUT);
+    inout Vdd, Vss, P, N, LOCAL, VCM, OUT;
+    electrical Vdd, Vss, P, N, LOCAL, VCM, OUT;
+
+    analog begin
+        // device 0, IC OneGHybrid, analog/1G/hybrid.hpp:20
+        I(VCM, OUT) <+ V(VCM, OUT) / 1000.0;
+        // device 1, IC OneGHybrid, analog/1G/hybrid.hpp:21
+        I(OUT, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUT, VCM)); // Bench initial voltage = 0.0 V.
+        // device 2, IC OneGHybrid, analog/1G/hybrid.hpp:22
+        I(OUT, VCM) <+ (-0.001) * V(P, N);
+        // device 3, IC OneGHybrid, analog/1G/hybrid.hpp:23
+        I(OUT, VCM) <+ (-0.00056521739130434778) * V(VCM, LOCAL);
+    end
+endmodule

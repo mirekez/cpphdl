@@ -1,0 +1,85 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module TenGLockMonitor(Vdd, Vss, ERROR, REFERENCE, VCM, LOCK);
+    inout Vdd, Vss, ERROR, REFERENCE, VCM, LOCK;
+    electrical Vdd, Vss, ERROR, REFERENCE, VCM, LOCK;
+    electrical cpphdl_n14;
+    electrical cpphdl_n16;
+    electrical cpphdl_n17;
+    electrical cpphdl_n21;
+    electrical cpphdl_n26;
+    electrical cpphdl_n27;
+    electrical cpphdl_n33;
+    electrical cpphdl_n34;
+    electrical cpphdl_n35;
+
+    analog begin
+        // device 0, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:22
+        I(Vss, cpphdl_n14) <+ V(Vss, cpphdl_n14) / 1000.0;
+        // device 1, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:23
+        I(cpphdl_n14, Vss) <+ (-0.001) * V(ERROR, REFERENCE);
+        // device 2, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:24
+        I(cpphdl_n14, Vss) <+ 7.757575757575757e-13 * ddt(V(cpphdl_n14, Vss)); // Bench initial voltage = 0.0 V.
+        // device 3, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:25
+        I(REFERENCE, cpphdl_n26) <+ V(REFERENCE, cpphdl_n26) / 1000.0;
+        // device 4, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:26
+        I(cpphdl_n26, Vss) <+ 3.8787878787878785e-13 * ddt(V(cpphdl_n26, Vss)); // Bench initial voltage = 0.0 V.
+        // device 5, IC IC1, analog/basic/bridge_rectifier.hpp:14
+        I(cpphdl_n14, cpphdl_n16) <+ max(0.0, V(cpphdl_n14, cpphdl_n16) - 0.0) / 10.0 + V(cpphdl_n14, cpphdl_n16) / 1000000000.0;
+        // device 6, IC IC1, analog/basic/bridge_rectifier.hpp:15
+        I(Vss, cpphdl_n16) <+ max(0.0, V(Vss, cpphdl_n16) - 0.0) / 10.0 + V(Vss, cpphdl_n16) / 1000000000.0;
+        // device 7, IC IC1, analog/basic/bridge_rectifier.hpp:16
+        I(cpphdl_n17, cpphdl_n14) <+ max(0.0, V(cpphdl_n17, cpphdl_n14) - 0.0) / 10.0 + V(cpphdl_n17, cpphdl_n14) / 1000000000.0;
+        // device 8, IC IC1, analog/basic/bridge_rectifier.hpp:17
+        I(cpphdl_n17, Vss) <+ max(0.0, V(cpphdl_n17, Vss) - 0.0) / 10.0 + V(cpphdl_n17, Vss) / 1000000000.0;
+        // device 9, IC IC1, analog/basic/bridge_rectifier.hpp:18
+        I(cpphdl_n16, cpphdl_n17) <+ V(cpphdl_n16, cpphdl_n17) / 10000.0;
+        // device 10, IC IC1, analog/basic/bridge_rectifier.hpp:19
+        I(cpphdl_n17, Vss) <+ V(cpphdl_n17, Vss) / 1000000000.0;
+        // device 11, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:32
+        I(Vss, cpphdl_n21) <+ V(Vss, cpphdl_n21) / 1000.0;
+        // device 12, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:33
+        I(cpphdl_n21, Vss) <+ (-0.001) * V(cpphdl_n16, cpphdl_n17);
+        // device 13, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:34
+        I(cpphdl_n21, Vss) <+ 3.8787878787878785e-13 * ddt(V(cpphdl_n21, Vss)); // Bench initial voltage = 0.0 V.
+        // device 14, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:35
+        I(VCM, cpphdl_n27) <+ V(VCM, cpphdl_n27) / 100000.0;
+        // device 15, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:36
+        I(cpphdl_n27, Vss) <+ V(cpphdl_n27, Vss) / 10000.0;
+        // device 16, IC IC2, analog/basic/gm_stage.hpp:18
+        I(VCM, cpphdl_n33) <+ V(VCM, cpphdl_n33) / 1000.0;
+        // device 17, IC IC2, analog/basic/gm_stage.hpp:19
+        I(cpphdl_n33, VCM) <+ (-0.10000000000000001) * V(cpphdl_n27, cpphdl_n21);
+        // device 18, IC IC2, analog/basic/gm_stage.hpp:20
+        I(cpphdl_n33, VCM) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n33, VCM)); // Bench initial voltage = 0.0 V.
+        // device 19, IC IC2, analog/basic/gm_stage.hpp:30
+        I(cpphdl_n33, Vdd) <+ max(0.0, V(cpphdl_n33, Vdd) - 0.0) / 0.10000000000000001 + V(cpphdl_n33, Vdd) / 1000000000.0;
+        // device 20, IC IC2, analog/basic/gm_stage.hpp:31
+        I(Vss, cpphdl_n33) <+ max(0.0, V(Vss, cpphdl_n33) - 0.0) / 0.10000000000000001 + V(Vss, cpphdl_n33) / 1000000000.0;
+        // device 21, IC IC3, analog/basic/gm_stage.hpp:18
+        I(VCM, cpphdl_n34) <+ V(VCM, cpphdl_n34) / 1000.0;
+        // device 22, IC IC3, analog/basic/gm_stage.hpp:19
+        I(cpphdl_n34, VCM) <+ (-0.10000000000000001) * V(cpphdl_n26, cpphdl_n27);
+        // device 23, IC IC3, analog/basic/gm_stage.hpp:20
+        I(cpphdl_n34, VCM) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n34, VCM)); // Bench initial voltage = 0.0 V.
+        // device 24, IC IC3, analog/basic/gm_stage.hpp:30
+        I(cpphdl_n34, Vdd) <+ max(0.0, V(cpphdl_n34, Vdd) - 0.0) / 0.10000000000000001 + V(cpphdl_n34, Vdd) / 1000000000.0;
+        // device 25, IC IC3, analog/basic/gm_stage.hpp:31
+        I(Vss, cpphdl_n34) <+ max(0.0, V(Vss, cpphdl_n34) - 0.0) / 0.10000000000000001 + V(Vss, cpphdl_n34) / 1000000000.0;
+        // device 26, IC IC4, analog/basic/sim_clocked_storage.hpp:63
+        I(cpphdl_n35, Vss) <+ (1.0 - min(1.0, max(0.0, (V(cpphdl_n34, Vss) - 0.25) / 0.20000000000000001))) * V(cpphdl_n35, Vss) / 25.0; // sim_buffered_track
+        // device 27, IC IC4, analog/basic/sim_clocked_storage.hpp:64
+        I(cpphdl_n35, Vss) <+ min(1.0, max(0.0, (V(cpphdl_n34, Vss) - 0.75) / 0.19999999999999996)) * V(cpphdl_n35, cpphdl_n33) / 25.0; // sim_buffered_track
+        // device 28, IC IC4, analog/basic/sim_clocked_storage.hpp:65
+        I(cpphdl_n35, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n35, Vss)); // Bench initial voltage = 0.0 V.
+        // device 29, IC IC4, analog/basic/sim_clocked_storage.hpp:66
+        I(cpphdl_n35, Vss) <+ V(cpphdl_n35, Vss) / 1000000000.0;
+        // device 30, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:56
+        I(cpphdl_n35, LOCK) <+ V(cpphdl_n35, LOCK) / 1000.0;
+        // device 31, IC TenGLockMonitor, analog/10G/lock_monitor.hpp:57
+        I(LOCK, Vss) <+ 3.8787878787878785e-13 * ddt(V(LOCK, Vss)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

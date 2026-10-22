@@ -1,0 +1,32 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module TenGTxEmphasis(Vdd, Vss, PRE, MAIN, POST, VCM, P, N);
+    inout Vdd, Vss, PRE, MAIN, POST, VCM, P, N;
+    electrical Vdd, Vss, PRE, MAIN, POST, VCM, P, N;
+
+    analog begin
+        // device 0, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:29
+        I(VCM, P) <+ V(VCM, P) / 50.0;
+        // device 1, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:30
+        I(VCM, N) <+ V(VCM, N) / 50.0;
+        // device 2, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:34
+        I(P, VCM) <+ (0.0013333333333333335) * V(PRE, VCM);
+        // device 3, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:35
+        I(N, VCM) <+ (-0.0013333333333333335) * V(PRE, VCM);
+        // device 4, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:34
+        I(P, VCM) <+ (-0.010666666666666668) * V(MAIN, VCM);
+        // device 5, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:35
+        I(N, VCM) <+ (0.010666666666666668) * V(MAIN, VCM);
+        // device 6, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:34
+        I(P, VCM) <+ (0.0013333333333333335) * V(POST, VCM);
+        // device 7, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:35
+        I(N, VCM) <+ (-0.0013333333333333335) * V(POST, VCM);
+        // device 8, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:37
+        I(P, VCM) <+ 2.0000000000000002e-15 * ddt(V(P, VCM)); // Bench initial voltage = 0.0 V.
+        // device 9, IC TenGTxEmphasis, analog/10G/tx_emphasis.hpp:38
+        I(N, VCM) <+ 2.0000000000000002e-15 * ddt(V(N, VCM)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

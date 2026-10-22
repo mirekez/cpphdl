@@ -3,31 +3,42 @@
 #include "cpphdl.h"
 class BankedRamTop:public cpphdl::Module {
     // (* ram_style = "block" *)
-    cpphdl::memory<cpphdl::u32,1,256> words[2];
+    cpphdl::memory<cpphdl::u32,1,256> words[1][2];
     cpphdl::reg<cpphdl::array<2,cpphdl::u32>> data;
     cpphdl::reg<cpphdl::u32> context;
     cpphdl::reg<cpphdl::u1> valid;
 public:
     _PORT(bool) write_in;_PORT(bool) read_in;
     _PORT(uint32_t) write_address_in;_PORT(uint32_t) read_address_in;
-    _PORT(cpphdl::array<2,cpphdl::u32>) data_in;_PORT(cpphdl::array<2,cpphdl::u32>) data_out;
+    _PORT(cpphdl::array<2,cpphdl::u32>) write_data_in;_PORT(cpphdl::array<2,cpphdl::u32>) data_out;
     _PORT(bool) valid_out;_PORT(uint32_t) tag_out;
     void _assign(){data_out=_ASSIGN_REG(data);valid_out=_ASSIGN(bool(valid));tag_out=_ASSIGN(uint32_t(context));}
     void _work(bool clear_state) {
         if(clear_state){valid.clr();context.clr();data.clr();return;}
         valid._next=read_in();
         for(uint32_t bank=0;bank<2;++bank) {
-            if(write_in())words[bank][write_address_in()]=uint32_t(data_in()[bank]);
-            if(read_in())data._next[bank]=uint32_t(words[bank][read_address_in()]);
+            if(write_in())words[0][bank][write_address_in()]=uint32_t(write_data_in()[bank]);
+            if(read_in())data._next[bank]=uint32_t(words[0][bank][read_address_in()]);
         }
         if(read_in())context._next=read_address_in();
     }
-    void _strobe(){for(uint32_t bank=0;bank<2;++bank)words[bank].apply();data.strobe();context.strobe();valid.strobe();}
+    void _strobe(){for(uint32_t bank=0;bank<2;++bank)words[0][bank].apply();data.strobe();context.strobe();valid.strobe();}
 };
 #ifndef SYNTHESIS
 #include <cstdio>
 #ifdef VERILATOR
 #include "VBankedRamTop.h"
+#ifdef SYNTH_GATES
+#define reset work_reset
+#define write_in write
+#define read_in read
+#define write_address_in write_address
+#define read_address_in read_address
+#define write_data_in write_data
+#define data_out data
+#define valid_out valid
+#define tag_out tag
+#endif
 #endif
 long _system_clock=0;
 int main() {
@@ -38,11 +49,11 @@ int main() {
 #endif
     bool wr=false,rd=false;uint32_t wa=0,ra=0;cpphdl::array<2,cpphdl::u32> input;
 #ifndef VERILATOR
-    dut.write_in=_ASSIGN(wr);dut.read_in=_ASSIGN(rd);dut.write_address_in=_ASSIGN(wa);dut.read_address_in=_ASSIGN(ra);dut.data_in=_ASSIGN(input);dut._assign();
+    dut.write_in=_ASSIGN(wr);dut.read_in=_ASSIGN(rd);dut.write_address_in=_ASSIGN(wa);dut.read_address_in=_ASSIGN(ra);dut.write_data_in=_ASSIGN(input);dut._assign();
 #endif
     auto step=[&](bool reset) {
 #ifdef VERILATOR
-        dut.clk=0;dut.reset=reset;dut.write_in=wr;dut.read_in=rd;dut.write_address_in=wa;dut.read_address_in=ra;dut.data_in=uint64_t(uint32_t(input[0]))|(uint64_t(uint32_t(input[1]))<<32);dut.eval();dut.clk=1;dut.eval();dut.clk=0;dut.eval();
+        dut.clk=0;dut.reset=reset;dut.write_in=wr;dut.read_in=rd;dut.write_address_in=wa;dut.read_address_in=ra;dut.write_data_in=uint64_t(uint32_t(input[0]))|(uint64_t(uint32_t(input[1]))<<32);dut.eval();dut.clk=1;dut.eval();dut.clk=0;dut.eval();
 #else
         dut._work(reset);dut._strobe();
 #endif

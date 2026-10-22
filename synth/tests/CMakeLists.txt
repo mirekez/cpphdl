@@ -42,8 +42,18 @@ target_include_directories(synth_schedule_checks PRIVATE .. ../../include)
 target_compile_definitions(synth_schedule_checks PRIVATE CPPHDL_GRAPH_CORE_ONLY)
 target_compile_features(synth_schedule_checks PRIVATE cxx_std_17)
 add_test(NAME synth_schedule_checks COMMAND synth_schedule_checks)
+add_executable(synth_compact_verilog_checks CompactVerilog.cpp ../Mapping.cpp ../Verilog.cpp)
+target_include_directories(synth_compact_verilog_checks PRIVATE .. ../../include)
+target_compile_definitions(synth_compact_verilog_checks PRIVATE CPPHDL_GRAPH_CORE_ONLY)
+target_compile_features(synth_compact_verilog_checks PRIVATE cxx_std_17)
 
 if(CPPHDL_SYNTH_VERILATOR)
+    add_test(NAME synth_compact_verilog COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/CompactVerilog.py"
+        --generator "$<TARGET_FILE:synth_compact_verilog_checks>"
+        --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_SYNTH_VERILATOR}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/compact_verilog")
+    set_tests_properties(synth_compact_verilog PROPERTIES TIMEOUT 180)
     foreach(storage registers ram)
       set(storage_args)
       if(storage STREQUAL "ram")

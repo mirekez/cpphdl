@@ -1652,7 +1652,10 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       item.packedWidth = packedLogicWidth(item.type);
       item.indexedStorage = indexedStorageType(field->getType(), context);
       const auto *fieldRecord = field->getType()->getAsCXXRecordDecl();
-      if (item.type.find("cpphdl::function_ref<") != std::string::npos) {
+      const auto* fieldSpecialization =
+          clang::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(fieldRecord);
+      if (fieldSpecialization && fieldSpecialization->getSpecializedTemplate()
+              ->getQualifiedNameAsString() == "cpphdl::function_ref") {
         item.kind = FieldKind::Port;
         if (field->hasInClassInitializer()) {
           item.initializer =

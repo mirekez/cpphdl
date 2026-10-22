@@ -99,6 +99,16 @@ module ExternalPointerChecks;
     repeat(30) begin @(negedge clk); if(response_valid_out) $fatal(1,"stale external response after local RAM reset"); end
     command(0,0,0,64'h6688aacc);
     if(reads!=4 || writes!=1) $fatal(1,"unexpected external traffic after reset %d/%d",reads,writes);
+    command(5,0,4097,0,3);
+    if(reads!=4 || writes!=1) $fatal(1,"misaligned local/external request reached controller");
+    restart(); command(5,0,8192,0,5);
+    if(reads!=5 || writes!=1) $fatal(1,"external error response was not consumed once");
+    restart();
+    @(negedge clk); operation_in=4; index_in=0; command_valid_in=1;
+    do @(posedge clk); while(!command_ready_out);
+    @(negedge clk); command_valid_in=0;
+    repeat(2) @(negedge clk);
+    restart(); command(0,0,0,64'h6688aacc);
     $display("PASS: external pointers + local storage, counted clears, padding/tail guards, stalls and reset");
 `else
     restart();

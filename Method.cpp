@@ -310,7 +310,6 @@ bool Method::print(std::ofstream& out)
             out << localDeclInitializer(stmt);
             continue;
         }
-//        out << stmt.debug() << "\n";
         auto s = stmt.str();
         if (!s.empty() && s.back() != '\n') {
             s += ";\n";

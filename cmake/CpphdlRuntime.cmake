@@ -1,0 +1,7 @@
+if(NOT TARGET cpphdl_runtime)
+  get_filename_component(CPPHDL_RUNTIME_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+  add_library(cpphdl_runtime INTERFACE)
+  add_library(cpphdl::runtime ALIAS cpphdl_runtime)
+  target_include_directories(cpphdl_runtime INTERFACE "${CPPHDL_RUNTIME_ROOT}/include")
+  target_compile_features(cpphdl_runtime INTERFACE cxx_std_17)
+endif()

@@ -1,0 +1,25 @@
+// ANALOG PARTITION ONLY: no digital computation, sensing or register state is included.
+// Supply omitted bench sources at the named ports. cpphdl_bit<ID> controls use 0/1 V relative to ground.
+// Each bit port must be driven by the host digital controller; an unconnected bit port is invalid.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module MixedReceiverAnalog(Vdd, Vss, VIN, IN, Y, cpphdl_bit4);
+    inout Vdd, Vss, VIN, IN, Y, cpphdl_bit4;
+    electrical Vdd, Vss, VIN, IN, Y, cpphdl_bit4;
+
+    analog begin
+        // device 2, analog/examples/mixed_signal/main.cpp:65
+        I(IN, Vss) <+ 1e-10 * ddt(V(IN, Vss)); // Bench initial voltage = 0.0 V.
+        // device 3, analog/examples/mixed_signal/main.cpp:66
+        I(VIN, IN) <+ V(VIN, IN) / 1000.0;
+        // device 4, IC receiver, analog/examples/mixed_signal/main.cpp:47
+        I(Y, Vss) <+ (1.0 - V(cpphdl_bit4)) * V(Y, Vss) / 100.0; // sim_driver
+        I(Y, Vdd) <+ V(cpphdl_bit4) * V(Y, Vdd) / 100.0; // sim_driver
+        // device 5, IC receiver, analog/examples/mixed_signal/main.cpp:48
+        I(Y, Vss) <+ 1.0000000000000001e-09 * ddt(V(Y, Vss)); // Bench initial voltage = 0.0 V.
+        // device 6, analog/examples/mixed_signal/main.cpp:77
+        I(Y, Vss) <+ V(Y, Vss) / 10000.0;
+    end
+endmodule

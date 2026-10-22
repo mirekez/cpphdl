@@ -1,0 +1,59 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module Example_opamp_feedback_nominal(n0, n19, n20, n23, n24, n26, n27);
+    inout n0, n19, n20, n23, n24, n26, n27;
+    electrical n0, n19, n20, n23, n24, n26, n27;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 2, IC IC4, analog/basic/resistor_divider.hpp:15
+        I(n27, n20) <+ V(n27, n20) / 10000.0;
+        // device 3, IC IC4, analog/basic/resistor_divider.hpp:16
+        I(n20, n0) <+ V(n20, n0) / 10000.0;
+        // device 4, IC IC2, analog/basic/nmos_differential_pair.hpp:16
+        I(n26, n23) <+ cpphdl_channel(V(n19, n23), V(n26, n23), 0.20000000000000001, 0.34999999999999998, 1.0);
+        // device 5, IC IC2, analog/basic/nmos_differential_pair.hpp:17
+        I(n27, n23) <+ cpphdl_channel(V(n20, n23), V(n27, n23), 0.20000000000000001, 0.34999999999999998, 1.0);
+        // device 6, IC IC1, analog/basic/opamp.hpp:31
+        I(n23, n0) <+ V(n23, n0) / 10.0;
+        // device 7, IC IC3, analog/basic/pmos_current_mirror.hpp:14
+        I(n26, n24) <+ cpphdl_channel(V(n26, n24), V(n26, n24), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 8, IC IC3, analog/basic/pmos_current_mirror.hpp:15
+        I(n27, n24) <+ cpphdl_channel(V(n26, n24), V(n27, n24), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 9, IC IC3, analog/basic/pmos_current_mirror.hpp:16
+        I(n26, n24) <+ V(n26, n24) / 1000000000.0;
+        // device 10, IC IC1, analog/basic/opamp.hpp:39
+        I(n27, n0) <+ 1e-08 * ddt(V(n27, n0)); // Bench initial voltage = 0.0 V.
+        // device 11, IC IC1, analog/basic/opamp.hpp:40
+        I(n27, n0) <+ V(n27, n0) / 100000.0;
+        // device 12, analog/examples/opamp_feedback/main.cpp:17
+        I(n27, n0) <+ V(n27, n0) / 100000.0;
+    end
+endmodule

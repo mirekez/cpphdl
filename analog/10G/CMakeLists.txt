@@ -1,0 +1,15 @@
+add_executable(analog_10g_generate generate.cpp)
+target_link_libraries(analog_10g_generate PRIVATE cpphdl::analog)
+add_custom_target(generate-10g-veriloga
+  COMMAND analog_10g_generate "${CPPHDL_ANALOG_PACKAGE_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}"
+  DEPENDS analog_10g_generate VERBATIM USES_TERMINAL)
+if(TARGET generate-veriloga)
+  add_dependencies(generate-veriloga generate-10g-veriloga)
+endif()
+add_executable(analog_10g_bench tests/bench.cpp)
+target_link_libraries(analog_10g_bench PRIVATE cpphdl::analog)
+if(BUILD_TESTING)
+  add_executable(analog_10g_solver tests/solver.cpp)
+  target_link_libraries(analog_10g_solver PRIVATE cpphdl::analog)
+  add_subdirectory(tests)
+endif()

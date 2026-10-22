@@ -1,0 +1,92 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGFourPairCable(Vdd, Vss, VCM, AP0, AN0, BP0, BN0, AP1, AN1, BP1, BN1, AP2, AN2, BP2, BN2, AP3, AN3, BP3, BN3);
+    inout Vdd, Vss, VCM, AP0, AN0, BP0, BN0, AP1, AN1, BP1, BN1, AP2, AN2, BP2, BN2, AP3, AN3, BP3, BN3;
+    electrical Vdd, Vss, VCM, AP0, AN0, BP0, BN0, AP1, AN1, BP1, BN1, AP2, AN2, BP2, BN2, AP3, AN3, BP3, BN3;
+
+    analog begin
+        // device 0, IC IC1, analog/1G/channel.hpp:18
+        I(AP0, BP0) <+ V(AP0, BP0) / 15.0;
+        // device 1, IC IC1, analog/1G/channel.hpp:19
+        I(AN0, BN0) <+ V(AN0, BN0) / 15.0;
+        // device 2, IC IC1, analog/1G/channel.hpp:21
+        I(AP0, VCM) <+ 4.9999999999999997e-12 * ddt(V(AP0, VCM)); // Bench initial voltage = 0.0 V.
+        // device 3, IC IC1, analog/1G/channel.hpp:21
+        I(AN0, VCM) <+ 4.9999999999999997e-12 * ddt(V(AN0, VCM)); // Bench initial voltage = 0.0 V.
+        // device 4, IC IC1, analog/1G/channel.hpp:21
+        I(BP0, VCM) <+ 4.9999999999999997e-12 * ddt(V(BP0, VCM)); // Bench initial voltage = 0.0 V.
+        // device 5, IC IC1, analog/1G/channel.hpp:21
+        I(BN0, VCM) <+ 4.9999999999999997e-12 * ddt(V(BN0, VCM)); // Bench initial voltage = 0.0 V.
+        // device 6, IC OneGFourPairCable, analog/1G/channel.hpp:41
+        I(AP1, AP0) <+ V(AP1, AP0) / 5000.0;
+        // device 7, IC OneGFourPairCable, analog/1G/channel.hpp:42
+        I(AN1, AN0) <+ V(AN1, AN0) / 5000.0;
+        // device 8, IC OneGFourPairCable, analog/1G/channel.hpp:43
+        I(BP1, BP0) <+ V(BP1, BP0) / 5000.0;
+        // device 9, IC OneGFourPairCable, analog/1G/channel.hpp:44
+        I(BN1, BN0) <+ V(BN1, BN0) / 5000.0;
+        // device 10, IC IC2, analog/1G/channel.hpp:18
+        I(AP1, BP1) <+ V(AP1, BP1) / 15.0;
+        // device 11, IC IC2, analog/1G/channel.hpp:19
+        I(AN1, BN1) <+ V(AN1, BN1) / 15.0;
+        // device 12, IC IC2, analog/1G/channel.hpp:21
+        I(AP1, VCM) <+ 4.9999999999999997e-12 * ddt(V(AP1, VCM)); // Bench initial voltage = 0.0 V.
+        // device 13, IC IC2, analog/1G/channel.hpp:21
+        I(AN1, VCM) <+ 4.9999999999999997e-12 * ddt(V(AN1, VCM)); // Bench initial voltage = 0.0 V.
+        // device 14, IC IC2, analog/1G/channel.hpp:21
+        I(BP1, VCM) <+ 4.9999999999999997e-12 * ddt(V(BP1, VCM)); // Bench initial voltage = 0.0 V.
+        // device 15, IC IC2, analog/1G/channel.hpp:21
+        I(BN1, VCM) <+ 4.9999999999999997e-12 * ddt(V(BN1, VCM)); // Bench initial voltage = 0.0 V.
+        // device 16, IC OneGFourPairCable, analog/1G/channel.hpp:41
+        I(AP2, AP1) <+ V(AP2, AP1) / 5000.0;
+        // device 17, IC OneGFourPairCable, analog/1G/channel.hpp:42
+        I(AN2, AN1) <+ V(AN2, AN1) / 5000.0;
+        // device 18, IC OneGFourPairCable, analog/1G/channel.hpp:43
+        I(BP2, BP1) <+ V(BP2, BP1) / 5000.0;
+        // device 19, IC OneGFourPairCable, analog/1G/channel.hpp:44
+        I(BN2, BN1) <+ V(BN2, BN1) / 5000.0;
+        // device 20, IC IC3, analog/1G/channel.hpp:18
+        I(AP2, BP2) <+ V(AP2, BP2) / 15.0;
+        // device 21, IC IC3, analog/1G/channel.hpp:19
+        I(AN2, BN2) <+ V(AN2, BN2) / 15.0;
+        // device 22, IC IC3, analog/1G/channel.hpp:21
+        I(AP2, VCM) <+ 4.9999999999999997e-12 * ddt(V(AP2, VCM)); // Bench initial voltage = 0.0 V.
+        // device 23, IC IC3, analog/1G/channel.hpp:21
+        I(AN2, VCM) <+ 4.9999999999999997e-12 * ddt(V(AN2, VCM)); // Bench initial voltage = 0.0 V.
+        // device 24, IC IC3, analog/1G/channel.hpp:21
+        I(BP2, VCM) <+ 4.9999999999999997e-12 * ddt(V(BP2, VCM)); // Bench initial voltage = 0.0 V.
+        // device 25, IC IC3, analog/1G/channel.hpp:21
+        I(BN2, VCM) <+ 4.9999999999999997e-12 * ddt(V(BN2, VCM)); // Bench initial voltage = 0.0 V.
+        // device 26, IC OneGFourPairCable, analog/1G/channel.hpp:41
+        I(AP3, AP2) <+ V(AP3, AP2) / 5000.0;
+        // device 27, IC OneGFourPairCable, analog/1G/channel.hpp:42
+        I(AN3, AN2) <+ V(AN3, AN2) / 5000.0;
+        // device 28, IC OneGFourPairCable, analog/1G/channel.hpp:43
+        I(BP3, BP2) <+ V(BP3, BP2) / 5000.0;
+        // device 29, IC OneGFourPairCable, analog/1G/channel.hpp:44
+        I(BN3, BN2) <+ V(BN3, BN2) / 5000.0;
+        // device 30, IC IC4, analog/1G/channel.hpp:18
+        I(AP3, BP3) <+ V(AP3, BP3) / 15.0;
+        // device 31, IC IC4, analog/1G/channel.hpp:19
+        I(AN3, BN3) <+ V(AN3, BN3) / 15.0;
+        // device 32, IC IC4, analog/1G/channel.hpp:21
+        I(AP3, VCM) <+ 4.9999999999999997e-12 * ddt(V(AP3, VCM)); // Bench initial voltage = 0.0 V.
+        // device 33, IC IC4, analog/1G/channel.hpp:21
+        I(AN3, VCM) <+ 4.9999999999999997e-12 * ddt(V(AN3, VCM)); // Bench initial voltage = 0.0 V.
+        // device 34, IC IC4, analog/1G/channel.hpp:21
+        I(BP3, VCM) <+ 4.9999999999999997e-12 * ddt(V(BP3, VCM)); // Bench initial voltage = 0.0 V.
+        // device 35, IC IC4, analog/1G/channel.hpp:21
+        I(BN3, VCM) <+ 4.9999999999999997e-12 * ddt(V(BN3, VCM)); // Bench initial voltage = 0.0 V.
+        // device 36, IC OneGFourPairCable, analog/1G/channel.hpp:41
+        I(AP0, AP3) <+ V(AP0, AP3) / 5000.0;
+        // device 37, IC OneGFourPairCable, analog/1G/channel.hpp:42
+        I(AN0, AN3) <+ V(AN0, AN3) / 5000.0;
+        // device 38, IC OneGFourPairCable, analog/1G/channel.hpp:43
+        I(BP0, BP3) <+ V(BP0, BP3) / 5000.0;
+        // device 39, IC OneGFourPairCable, analog/1G/channel.hpp:44
+        I(BN0, BN3) <+ V(BN0, BN3) / 5000.0;
+    end
+endmodule

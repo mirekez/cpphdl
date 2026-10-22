@@ -1,3 +1,4 @@
+#include "VerilogA.h"
 #include "clang/AST/AST.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -937,7 +938,7 @@ bool structHasAnonymousAggregateWrapper(const std::string& typeName)
 
 static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& hlp)
 {
-    if (!RD || !RD->hasDefinition() || RD->isLambda()) {
+    if (!RD || !RD->hasDefinition() || RD->isLambda() || RD->isDependentContext()) {
         return false;
     }
     if ((RD->getQualifiedNameAsString().find("cpphdl::") == 0
@@ -1210,6 +1211,9 @@ void putField(QualType fieldType, std::string fieldName, const Expr* initializer
         DEBUG_AST1(" *pointer*");
     }
 
+    if (QT->isDependentType()) {
+        hlp.skipStdFunctionType(QT);
+    }
     QT = QT.getDesugaredType(*hlp.ctx);
 //!!!    QT = QT.getCanonicalType();
 //    auto T = QT.getUnqualifiedType();
@@ -2239,11 +2243,21 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             if (!numeric || instantiated) {
                 continue;
             }
+            // Replacements need concrete values for placeholder substitution,
+            // unlike ordinary SV parameters that may be left without defaults.
+            // Do not emit or run an unused replacement with missing arguments.
+            if (hasCpphdlReplacementAnnotation(record)
+                && std::any_of(parameters->begin(), parameters->end(), [](const NamedDecl* parameter) {
+                    return !cast<NonTypeTemplateParmDecl>(parameter)->hasDefaultArgument();
+                })) {
+                continue;
+            }
             // Dependent user-class members and bases need C++ specialization
             // to resolve their types and methods. Do not replace that path
             // with an incomplete symbolic module.
             Helpers hlp(context);
             std::function<bool(QualType)> selfContained = [&](QualType type) {
+                hlp.skipStdFunctionType(type);
                 type = type.getNonReferenceType().getDesugaredType(*context);
                 if (const auto* array = context->getAsArrayType(type)) {
                     return selfContained(array->getElementType());
@@ -2415,6 +2429,11 @@ Clocks:
   need _work_<name>(bool reset) and _strobe_<name>() for every declared clock.
   Negative edges use paired _work_neg_<name>() / _strobe_neg_<name>() methods.
   Frequencies validate the design; the testbench must schedule clock edges.
+
+Analog conversion:
+  --verilog-a SOURCE --top TYPE --ports MEMBERS [options]
+                                Elaborate an analog::IC class to Verilog-A;
+                                use --verilog-a --help for options.
 
 Experimental gate synthesis:
   --synth [options]             Synthesize C++HDL to generic gate-level Verilog;
@@ -2603,6 +2622,14 @@ tooling::CommandLineArguments adjustCppInputKind(
 
 int main(int argc, const char **argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--verilog-a") {
+#ifdef CPPHDL_HAS_ANALOG_VERILOGA
+        return cpphdl::verilog_a::run(argc, argv);
+#else
+        llvm::errs() << "Verilog-A export requires CPPHDL_BUILD_ANALOG=ON\n";
+        return 2;
+#endif
+    }
     if (argc > 1 && (std::string_view(argv[1]) == "--lower-cpp-graph" ||
                      std::string_view(argv[1]) == "--lower-scheduled-graph" ||
                      std::string_view(argv[1]) == "--lower-synthesis-graph")) {

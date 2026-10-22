@@ -1,0 +1,90 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module Example_agc_nominal(n0, n5, n6, n7, n8, n26, n34, n45, n46, n49, n52, n56, n60, n73, n74, n77, n78, n80, n81, cpphdl_bit0);
+    inout n0, n5, n6, n7, n8, n26, n34, n45, n46, n49, n52, n56, n60, n73, n74, n77, n78, n80, n81, cpphdl_bit0;
+    electrical n0, n5, n6, n7, n8, n26, n34, n45, n46, n49, n52, n56, n60, n73, n74, n77, n78, n80, n81, cpphdl_bit0;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 7, analog/examples/agc/main.cpp:28
+        I(n26, n8) <+ (1.0 - V(cpphdl_bit0)) * V(n26, n8) / 100.0; // sim_driver
+        I(n26, n6) <+ V(cpphdl_bit0) * V(n26, n6) / 100.0; // sim_driver
+        // device 8, IC IC1, analog/basic/agc.hpp:18
+        I(n26, n45) <+ cpphdl_channel(V(n81, n45), V(n26, n45), 0.00040000000000000002, 0.34999999999999998, 1.0);
+        // device 9, IC IC1, analog/basic/agc.hpp:19
+        I(n45, n34) <+ V(n45, n34) / 10000.0;
+        // device 10, IC IC2, analog/basic/resistor_divider.hpp:15
+        I(n56, n46) <+ V(n56, n46) / 30000.0;
+        // device 11, IC IC2, analog/basic/resistor_divider.hpp:16
+        I(n46, n34) <+ V(n46, n34) / 10000.0;
+        // device 12, IC IC4, analog/basic/nmos_differential_pair.hpp:16
+        I(n52, n49) <+ cpphdl_channel(V(n45, n49), V(n52, n49), 0.20000000000000001, 0.34999999999999998, 1.0);
+        // device 13, IC IC4, analog/basic/nmos_differential_pair.hpp:17
+        I(n56, n49) <+ cpphdl_channel(V(n46, n49), V(n56, n49), 0.20000000000000001, 0.34999999999999998, 1.0);
+        // device 14, IC IC3, analog/basic/opamp.hpp:31
+        I(n49, n0) <+ V(n49, n0) / 10.0;
+        // device 15, IC IC5, analog/basic/pmos_current_mirror.hpp:14
+        I(n52, n78) <+ cpphdl_channel(V(n52, n78), V(n52, n78), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 16, IC IC5, analog/basic/pmos_current_mirror.hpp:15
+        I(n56, n78) <+ cpphdl_channel(V(n52, n78), V(n56, n78), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 17, IC IC5, analog/basic/pmos_current_mirror.hpp:16
+        I(n52, n78) <+ V(n52, n78) / 1000000000.0;
+        // device 18, IC IC3, analog/basic/opamp.hpp:39
+        I(n56, n0) <+ 1e-08 * ddt(V(n56, n0)); // Bench initial voltage = 1.2 V.
+        // device 19, IC IC3, analog/basic/opamp.hpp:40
+        I(n56, n0) <+ V(n56, n0) / 100000.0;
+        // device 20, IC IC6, analog/basic/agc.hpp:44
+        I(n56, n60) <+ cpphdl_channel(V(n56, n60), V(n56, n60), 0.02, 0.34999999999999998, 1.0);
+        // device 21, IC IC6, analog/basic/agc.hpp:45
+        I(n60, n0) <+ 1e-08 * ddt(V(n60, n0)); // Bench initial voltage = 0.80000000000000004 V.
+        // device 22, IC IC6, analog/basic/agc.hpp:46
+        I(n60, n0) <+ V(n60, n0) / 500000.0;
+        // device 23, IC IC7, analog/basic/agc.hpp:62
+        I(n60, n74) <+ V(n60, n74) / 1000000.0;
+        // device 24, IC IC7, analog/basic/agc.hpp:63
+        I(n74, n81) <+ 1.0000000000000001e-09 * ddt(V(n74, n81)); // Bench initial voltage = -1.0 V.
+        // device 25, IC IC9, analog/basic/nmos_differential_pair.hpp:16
+        I(n80, n77) <+ cpphdl_channel(V(n73, n77), V(n80, n77), 0.20000000000000001, 0.34999999999999998, 1.0);
+        // device 26, IC IC9, analog/basic/nmos_differential_pair.hpp:17
+        I(n81, n77) <+ cpphdl_channel(V(n74, n77), V(n81, n77), 0.20000000000000001, 0.34999999999999998, 1.0);
+        // device 27, IC IC8, analog/basic/opamp.hpp:31
+        I(n77, n0) <+ V(n77, n0) / 10.0;
+        // device 28, IC IC10, analog/basic/pmos_current_mirror.hpp:14
+        I(n80, n78) <+ cpphdl_channel(V(n80, n78), V(n80, n78), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 29, IC IC10, analog/basic/pmos_current_mirror.hpp:15
+        I(n81, n78) <+ cpphdl_channel(V(n80, n78), V(n81, n78), 0.20000000000000001, 0.34999999999999998, -1.0);
+        // device 30, IC IC10, analog/basic/pmos_current_mirror.hpp:16
+        I(n80, n78) <+ V(n80, n78) / 1000000000.0;
+        // device 31, IC IC8, analog/basic/opamp.hpp:39
+        I(n81, n0) <+ 1e-08 * ddt(V(n81, n0)); // Bench initial voltage = 2.0 V.
+        // device 32, IC IC8, analog/basic/opamp.hpp:40
+        I(n81, n0) <+ V(n81, n0) / 100000.0;
+    end
+endmodule
