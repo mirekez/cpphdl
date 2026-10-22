@@ -374,7 +374,9 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     find_program(CPPHDL_NETLIST_VERILATOR verilator)
     if(CPPHDL_NETLIST_VERILATOR)
-        if(TARGET hdlcpp)
+        # The hdlcpp subdirectory is added after tests/. Its target exists at
+        # generation time, but not yet while this list is being configured.
+        if(CPPHDL_BUILD_HDLCPP)
             add_test(NAME graph_guarded_feedback COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/graph/GuardedFeedbackChecks.py"
                 --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
