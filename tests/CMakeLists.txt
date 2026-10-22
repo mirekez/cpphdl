@@ -230,6 +230,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeThreadsDriverChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_thread_driver PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_host_threads COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeHostThreadsChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-host-threads")
+    set_tests_properties(cpp_graph_native_host_threads PROPERTIES TIMEOUT 300)
     add_test(NAME cpp_graph_native_ports COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativePortsChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
@@ -289,6 +293,36 @@ if(Python3_Interpreter_FOUND)
             --cpphdl "$<TARGET_FILE:cpphdl>"
             --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph-memory")
         set_tests_properties(cpp_graph_memory_scaling PROPERTIES TIMEOUT 180
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_packed_proxy_read COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/PackedProxyReadChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/packed-proxy-read")
+        set_tests_properties(cpp_graph_packed_proxy_read PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_final_pruning COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/FinalPruningChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/final-pruning")
+        set_tests_properties(cpp_graph_final_pruning PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_split_compilation COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSplitChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-split")
+        set_tests_properties(cpp_graph_split_compilation PROPERTIES TIMEOUT 900
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME native_graph_phase_liveness COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativePhaseChecks.py"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-phase")
+        set_tests_properties(native_graph_phase_liveness PROPERTIES TIMEOUT 600
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME native_graph_word_slice COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeWordSliceChecks.py"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-word-slice")
+        set_tests_properties(native_graph_word_slice PROPERTIES TIMEOUT 300
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(CPPHDL_BUILD_HDLCPP)
@@ -350,6 +384,33 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     find_program(CPPHDL_NETLIST_VERILATOR verilator)
     if(CPPHDL_NETLIST_VERILATOR)
+        # The hdlcpp subdirectory is added after tests/. Its target exists at
+        # generation time, but not yet while this list is being configured.
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME graph_guarded_feedback COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/graph/GuardedFeedbackChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/guarded-feedback")
+            set_tests_properties(graph_guarded_feedback PROPERTIES TIMEOUT 480
+                ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+            add_test(NAME graph_undriven_variable COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/graph/UndrivenVariableChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/undriven-variable")
+            set_tests_properties(graph_undriven_variable PROPERTIES TIMEOUT 480
+                ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+            foreach(fixture SymbolicArithmetic ProjectionCarrier ConstPackedRom BlockingHold ExhaustiveSwitch DynamicStructIndex NarrowArithmeticCast TypedefRam IndexedWord)
+                add_test(NAME hdlcpp_${fixture} COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/${fixture}Checks.py"
+                    --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                    --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                    --work "${CMAKE_CURRENT_BINARY_DIR}/${fixture}")
+                set_tests_properties(hdlcpp_${fixture} PROPERTIES TIMEOUT 480
+                    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+            endforeach()
+        endif()
         add_test(NAME wide_slice_matrix_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceMatrixChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"

@@ -160,17 +160,50 @@
             if (auto literal = integralStringLiteral(expr); !literal.empty()) {
                 return literal;
             }
-            if (!isNumber(width) || std::stoul(width) > 64) {
-                if (expr.kind == SyntaxKind::ParenthesizedExpression) {
-                    return "(" + emitTypedExpr(*expr.as<ParenthesizedExpressionSyntax>().expression, type) + ")";
-                }
+            if (expr.kind == SyntaxKind::ParenthesizedExpression) {
+                return "(" + emitTypedExpr(*expr.as<ParenthesizedExpressionSyntax>().expression, type) + ")";
+            }
+            if (expr.kind == SyntaxKind::ConditionalExpression) {
+                // SV supplies one contextual bit-vector type even when the two
+                // concatenations have different C++ cat template arguments.
+                return emitConditionalAsType(expr.as<ConditionalExpressionSyntax>(), "logic<" + width + ">");
+            }
+            auto expressionWidth = foldWidth(exprWidth(expr));
+            if (!isNumber(width) || std::stoul(width) > 64 ||
+                (!expressionWidth.empty() && (!isNumber(expressionWidth) || std::stoul(expressionWidth) > 64))) {
                 if (BinaryExpressionSyntax::isKind(expr.kind)) {
                     auto& binary = expr.as<BinaryExpressionSyntax>();
                     const auto op = tok(binary.operatorToken);
                     if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
                         op == "&" || op == "|" || op == "^") {
-                        return "(logic<" + width + ">(" + emitTypedExpr(*binary.left, type) + ") " +
-                            op + " logic<" + width + ">(" + emitTypedExpr(*binary.right, type) + "))";
+                        // Division/remainder require the operand/context maximum
+                        // before narrowing: logic<2>(4) would zero a cache divisor.
+                        // Add, multiply and bitwise operations commute with final
+                        // truncation, so keep their existing destination-width form.
+                        auto operationWidth = width;
+                        if (op == "/" || op == "%") {
+                            for (const auto& operandWidth : {
+                                 foldWidth(exprWidth(*binary.left)), foldWidth(exprWidth(*binary.right))}) {
+                                if (operandWidth.empty() || operationWidth == operandWidth) {
+                                    continue;
+                                }
+                                if (isNumber(operationWidth) && isNumber(operandWidth)) {
+                                    operationWidth = std::to_string(std::max(
+                                        std::stoul(operationWidth), std::stoul(operandWidth)));
+                                }
+                                else {
+                                    // Spell each dependent width once: a duplicated ternary
+                                    // grows exponentially through nested arithmetic trees.
+                                    operationWidth = "std::max<uint64_t>((" + operationWidth +
+                                        "), (" + operandWidth + "))";
+                                }
+                            }
+                        }
+                        auto operationType = "logic<" + operationWidth + ">";
+                        return "logic<" + width + ">(" + arithmeticOperand(
+                            operationType + "(" + emitTypedExpr(*binary.left, operationType) + ")", operationWidth) + " " +
+                            op + " " + arithmeticOperand(
+                            operationType + "(" + emitTypedExpr(*binary.right, operationType) + ")", operationWidth) + ")";
                     }
                 }
             }
@@ -579,6 +612,17 @@
         }
         auto value = emitted.empty() ? emitExpr(expr) : emitted;
         return "logic<" + width + ">(" + value + ")";
+    }
+
+    std::string arithmeticOperand(const std::string& value, const std::string& width)
+    {
+        if (isNumber(width)) {
+            return std::stoul(width) <= 64 ? "uint64_t(" + value + ")" : value;
+        }
+        // A dependent width need not be wide. Select native arithmetic after
+        // template substitution, retaining SV operand/result wrapping and keeping
+        // package-constant expressions constexpr without logic<64> overloads.
+        return "std::conditional_t<((" + width + ") <= 64), uint64_t, logic<" + width + ">>(" + value + ")";
     }
 
     std::string bitwiseExprWidth(const ExpressionSyntax& expr)
@@ -1068,6 +1112,18 @@
                 return width.empty() ? it->second : width;
             }
         }
+        if (expr.kind == SyntaxKind::IdentifierName) {
+            auto localType = lookupLocalType(simple);
+            if (!localType.empty()) {
+                auto width = foldWidth(resolvedTypeWidth(unwrapRegType(localType)));
+                if (!width.empty()) {
+                    return width;
+                }
+            }
+            if (loopVars.count(simple)) {
+                return "32";
+            }
+        }
         for (const auto& [prefix, defaultWidth] : configuredTextMap("HDLCPP_ENUM_WIDTH_PREFIXES")) {
             if (simple.rfind(prefix, 0) == 0) {
                 auto name = simple.substr(prefix.size());
@@ -1102,10 +1158,10 @@
             }
             return foldWidth(replaceKeywordMemberAccess(exprText(target)));
         };
-        // An invocation can contain sized casts in its argument list. Those casts describe
-        // argument widths, not the function result, so only inspect the whole expression as
-        // a textual cast when the syntax node itself is not a function invocation.
-        if (expr.kind != SyntaxKind::InvocationExpression) {
+        // Only a cast node supplies a width target. A binary expression ending
+        // in W'(value), or a call containing it, must not turn its preceding
+        // value expression (possibly a runtime slice) into a template width.
+        if (expr.kind == SyntaxKind::CastExpression) {
             if (auto castWidth = sizedCastWidthFromText(simple); !castWidth.empty()) {
                 return castWidth;
             }
@@ -1486,7 +1542,7 @@
             bool allConst = true;
             std::vector<std::string> widths;
             for (auto e : expr.as<ConcatenationExpressionSyntax>().expressions) {
-                auto rawWidth = exprWidth(*e);
+                auto rawWidth = bitwiseExprWidth(*e);
                 auto w = foldWidth(rawWidth);
                 if (w.empty() && !rawWidth.empty()) {
                     w = rawWidth;
@@ -1998,7 +2054,7 @@
             });
         };
         for (auto e : c.expressions) {
-            auto rawWidth = exprWidth(*e);
+            auto rawWidth = bitwiseExprWidth(*e);
             auto width = foldWidth(rawWidth);
             if (width.empty() && !rawWidth.empty()) {
                 width = rawWidth;

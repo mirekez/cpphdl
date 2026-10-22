@@ -75,6 +75,9 @@ struct ModuleGen {
     std::vector<std::string> imports;
     std::vector<std::pair<std::string, std::string>> vars;
     std::map<std::string, std::string> varInitializers;
+    std::set<std::string> constantVarNames;
+    std::set<std::string> scalarOrPackedVarNames;
+    std::set<std::string> initialAssignedVars;
     std::vector<std::pair<std::string, std::string>> constants;
     std::vector<std::string> members;
     std::vector<std::string> memberTypes;
@@ -96,6 +99,7 @@ struct ModuleGen {
     // storage, _next seeding, and strobe commits in the generated C++HDL model.
     std::set<std::string> nonblockingAssignedVars;
     std::set<std::string> partialSeqAssignedVars;
+    std::set<std::string> nonRamArrayUses;
     std::set<std::string> assignDrivenVars;
     std::set<std::string> partialAssignDrivenVars;
     std::set<std::string> bridgeAssignVars;
@@ -2848,8 +2852,20 @@ static std::string updateCpphdlArraySyntax(std::string text)
         }
         const bool firstIsType = cpphdlArrayType(args[0]);
         const bool secondIsType = cpphdlArrayType(args[1]);
+        // A dependent type such as Req can look like an extent identifier.
+        // Prefer a definite numeric/expression extent so repeated processing
+        // cannot flip array<2,Req> back to the obsolete type-first spelling.
+        auto definiteExtent = [](const std::string& argument) {
+            auto value = trim(argument);
+            return !value.empty() && !cpphdlArrayType(value) &&
+                (std::isdigit(static_cast<unsigned char>(value.front())) ||
+                 value.find_first_of("+-*/%&|?()") != std::string::npos);
+        };
+        const bool firstIsExtent = definiteExtent(args[0]);
+        const bool secondIsExtent = definiteExtent(args[1]);
         const bool alreadyCurrentOrder = firstIsType != secondIsType
             ? secondIsType
+            : firstIsExtent != secondIsExtent ? firstIsExtent
             : cpphdlArrayExtent(args[0]) && !cpphdlArrayExtent(args[1]);
         std::string replacement = alreadyCurrentOrder
             ? "array<" + args[0] + "," + args[1]

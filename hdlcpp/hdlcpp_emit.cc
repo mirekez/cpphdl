@@ -1007,8 +1007,8 @@
             if (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") {
                 auto width = foldWidth(exprWidth(expr));
                 if (!width.empty() && (!isNumber(width) || std::stoul(width) > 64)) {
-                    return "(" + logicValueExpr(*b.left, width) + " " + op + " " +
-                        logicValueExpr(*b.right, width, rhs) + ")";
+                    return "logic<" + width + ">(" + arithmeticOperand(logicValueExpr(*b.left, width), width) +
+                        " " + op + " " + arithmeticOperand(logicValueExpr(*b.right, width, rhs), width) + ")";
                 }
                 return emitNumericExpr(*b.left) + " " + op + " " + emitNumericExpr(*b.right, rhs);
             }
@@ -2664,7 +2664,7 @@
         auto stem = input.stem().string();
         std::ofstream h("generated/" + stem + ".h");
 
-        h << "#pragma once\n\n#include \"cpphdl.h\"\n#include <array>\n#include <tuple>\n#include <print>\n#include <type_traits>\n#include <utility>\n\n"
+        h << "#pragma once\n\n#include \"cpphdl.h\"\n#include <algorithm>\n#include <array>\n#include <tuple>\n#include <print>\n#include <type_traits>\n#include <utility>\n\n"
              "#ifndef HDLCPP_RANGE_WIDTH_DEFINED\n"
              "#define HDLCPP_RANGE_WIDTH_DEFINED\n"
              "consteval uint64_t __hdlcpp_range_width(int32_t first, int32_t last) {\n"
@@ -4995,6 +4995,13 @@
 				                                    if (eq == std::string::npos) {
 				                                        continue;
 				                                    }
+				                                    // A sibling's child getter is not the producer of
+				                                    // this aggregate. Only whole-return assignments
+				                                    // prove that projection can bypass the adapter.
+				                                    const auto lhs = trim(line.substr(0, eq));
+				                                    if (lhs != method.returnName && lhs != method.returnBase) {
+				                                        continue;
+				                                    }
 				                                    auto rhs = trim(line.substr(eq + 1));
 				                                    if (!rhs.empty() && rhs.back() == ';') {
 				                                        rhs.pop_back();
@@ -6598,7 +6605,10 @@
                         replaceAll(emittedType, trim(spec.substr(0, sep)), trim(spec.substr(sep + 2)));
                     }
                 }
-                if (isAssignDrivenVar(m, v.second)) {
+                if (m.constantVarNames.count(v.second)) {
+                    h << "    const " << postProcessCppLine(emittedType) << " " << v.second;
+                }
+                else if (isAssignDrivenVar(m, v.second)) {
                     emittedType = unwrapRegType(emittedType);
                     h << "    cpphdl::function_ref<" << postProcessCppLine(emittedType) << "> " << v.second;
                 }
@@ -6821,6 +6831,24 @@
                 emitGuardClose(h, guards, "        ");
             }
             {
+                // Clocked blocking assignments retain storage even when a constant
+                // disables every actual write. Make the hold explicit in ordinary
+                // C++, so graph lowering does not mistake it for an undriven net.
+                std::set<std::string> seededBlocking;
+                for (const auto& [name, portName] : m.outputPortCppNames) {
+                    if (m.seqAssignedVars.count(name) && !m.nonblockingAssignedVars.count(name)) {
+                        auto storage = outputStorageName(m, name);
+                        if (!storage.empty() && seededBlocking.insert(storage).second)
+                            h << "        " << storage << " = " << storage << ";\n";
+                    }
+                }
+                for (const auto& [type, name] : m.vars) {
+                    if (m.seqAssignedVars.count(name) && !m.nonblockingAssignedVars.count(name) &&
+                        !m.constantVarNames.count(name) && type.rfind("reg<", 0) != 0 &&
+                        !scheduledMemoryType(type) && !resolvedTypeWidth(type).empty() &&
+                        seededBlocking.insert(name).second)
+                        h << "        " << name << " = " << name << ";\n";
+                }
                 std::set<std::string> seededNext;
                 for (auto& p : m.outputPortCppNames) {
                     if (!m.nonblockingAssignedVars.count(p.first)) {
@@ -6938,6 +6966,19 @@
 	            for (auto& import : m.imports) {
 	                h << "        using namespace " << import << ";\n";
 	            }
+            // Disabled generate branches can leave a declared SV signal without
+            // any driver. Make its two-state zero explicit, without filling holes
+            // in partially driven signals or bypassing graph driver validation.
+            for (const auto& [type, name] : m.vars) {
+                if (!m.isInterface && !m.constantVarNames.count(name) &&
+                    (type.rfind("logic<", 0) == 0 || m.scalarOrPackedVarNames.count(name)) && type.rfind("reg<", 0) != 0 &&
+                    !scheduledMemoryType(type) && !resolvedTypeWidth(type).empty() && !m.combAssignedVars.count(name) &&
+                    !m.seqAssignedVars.count(name) && !m.assignDrivenVars.count(name) &&
+                    !m.runtimeAssignDrivenVars.count(name) && !m.varInitializers.count(name) &&
+                    !m.initialAssignedVars.count(name))
+                    h << "        " << name << " = " << postProcessCppLine(type) <<
+                        (type.rfind("logic<", 0) == 0 ? "(0)" : "{}") << ";\n";
+            }
                     if (auto code = configuredTextMap("HDLCPP_ASSIGN_PREFIX_CODE"); code.count(m.name)) {
                         std::stringstream ss(code[m.name]);
                         std::string codeLine;
@@ -11598,33 +11639,9 @@
                 }
             }
 
-            // Representation adapters commonly read one child aggregate into a
-            // local before copying its elements to the return storage. Preserve
-            // projection through that adapter only when its child source is unique.
-            std::string uniqueProjection;
-            for (const auto& line : method.body) {
-                auto eq = hdlcpp::topLevelAssignPos(line);
-                if (eq == std::string::npos) {
-                    continue;
-                }
-                auto rhs = trim(line.substr(eq + 1));
-                if (!rhs.empty() && rhs.back() == ';') {
-                    rhs.pop_back();
-                    rhs = trim(std::move(rhs));
-                }
-                rhs += callIndices;
-                auto projected = projectedChildOutputPortCall(mod, rhs, demandedField);
-                if (projected.empty()) {
-                    continue;
-                }
-                if (!uniqueProjection.empty() && uniqueProjection != projected) {
-                    return {};
-                }
-                uniqueProjection = std::move(projected);
-            }
-            if (!uniqueProjection.empty()) {
-                return uniqueProjection;
-            }
+            // No whole-return producer was proven above. Project the completed
+            // adapter instead; uniqueness among arbitrary RHS getters does not
+            // establish dataflow (one can feed a scalar sibling or a selector).
         }
         return {};
     }

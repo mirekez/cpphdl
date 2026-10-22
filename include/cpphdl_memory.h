@@ -36,10 +36,12 @@ struct memory_row: public array<SIZE, T>
         return *this;
     }
 
-    template<size_t SIZE1>
-    memory_row& operator=(const array<SIZE1, T>& other)
+    template<size_t SIZE1, bool PACKED>
+    memory_row& operator=(const array<SIZE1, T, PACKED>& other)
     {
-        array<SIZE, T>::operator=(other);
+        for (size_t index = 0; index < SIZE; ++index) {
+            this->data[index] = index < SIZE1 ? T(other[index]) : T{};
+        }
         changes->push_back(*this);
         return *this;
     }

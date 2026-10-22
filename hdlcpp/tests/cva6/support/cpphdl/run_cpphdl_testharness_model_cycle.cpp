@@ -13,10 +13,10 @@ void cpphdl_model_set_rtc(bool value)
 
 void cpphdl_model_strobe()
 {
-    cpphdlModel->dut->_strobe();
+    cpphdl_optimized_root_strobe(*cpphdlModel->dut);
 }
 
 void cpphdl_model_work(bool reset)
 {
-    cpphdlModel->dut->_work(reset);
+    cpphdl_optimized_root_work(*cpphdlModel->dut, reset);
 }

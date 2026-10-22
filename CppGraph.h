@@ -21,6 +21,7 @@
 #include <exception>
 #include <chrono>
 #include <cstdlib>
+#include <numeric>
 
 namespace cpphdl::cpp_graph {
 using namespace clang;
@@ -28,6 +29,7 @@ using namespace cpphdl::graph;
 using clang::Expr;
 inline bool scheduledExport = false;
 inline bool synthesisExport = false;
+inline bool finalNativeGraph = false;
 
 // This frontend consumes the ordinary C++ model, not the original RTL. Keep
 // logical bit layout separate from C++ object layout: padding, proxy objects
@@ -39,6 +41,8 @@ class Lowering {
         std::string key;
         QualType type;
         Value offset = constant(0, 64);
+        unsigned offsetStride = 1;
+        unsigned offsetResidue = 0;
         unsigned extent = 0;
         unsigned selectedWidth = 0;
         Value rangeMask, rangeLow;
@@ -59,6 +63,8 @@ class Lowering {
     std::map<std::string, Value> originals, results;
     std::map<std::string, std::shared_ptr<Closure>> bindings;
     std::set<std::string> structuralConstants;
+    std::map<std::string, Value> constantFields;
+    std::set<std::string> activeConstantInitializers;
     std::map<std::string, Item> interfaceBindings;
     std::set<std::string> activeInterfaceReads;
     std::map<std::string, Value> registers;
@@ -168,29 +174,56 @@ class Lowering {
         throw std::runtime_error(message + location);
     }
     QualType clean(QualType type) { return type.getNonReferenceType().getUnqualifiedType().getCanonicalType(); }
+    std::string declarationName(const NamedDecl* declaration) {
+        // Builtin recognition needs declaration identity, not printed NTTP
+        // values. Printing CVA6's nested configuration objects is enormous.
+        std::string result = declaration->getNameAsString();
+        for (auto scope = declaration->getDeclContext(); scope && !scope->isTranslationUnit(); scope = scope->getParent())
+            if (auto named = dyn_cast<NamedDecl>(scope); named && !named->getName().empty())
+                result = named->getNameAsString() + "::" + result;
+        return result;
+    }
     const ClassTemplateSpecializationDecl* specialization(QualType type) {
         return dyn_cast_or_null<ClassTemplateSpecializationDecl>(clean(type)->getAsCXXRecordDecl());
     }
     std::string templateName(QualType type) {
         auto record = specialization(type);
-        return record ? record->getSpecializedTemplate()->getQualifiedNameAsString() : "";
+        return record ? declarationName(record->getSpecializedTemplate()) : "";
     }
     bool module(QualType type) {
         if (type.isNull()) return false;
         auto record = clean(type)->getAsCXXRecordDecl();
         if (!record || !record->hasDefinition()) return false;
         record = record->getDefinition();
-        if (record->getQualifiedNameAsString() == "cpphdl::Module") return true;
+        if (declarationName(record) == "cpphdl::Module") return true;
         for (const auto& base : record->bases()) if (module(base.getType())) return true;
         return false;
     }
     bool port(QualType type) { return templateName(type) == "cpphdl::function_ref"; }
+    bool packedProxy(QualType type) { return !type.isNull() && templateName(type) == "cpphdl::detail::array_packed_ref"; }
+    bool diagnosticString(QualType type) {
+        if (type.isNull()) return false;
+        auto name = templateName(type);
+        if (name != "std::basic_string" && name != "std::__cxx11::basic_string") return false;
+        const auto& arguments = specialization(type)->getTemplateArgs();
+        if (arguments.size() != 3 || arguments[0].getKind() != TemplateArgument::Type ||
+            clean(arguments[0].getAsType()) != context.CharTy) return false;
+        for (unsigned index = 1; index < 3; ++index) {
+            if (arguments[index].getKind() != TemplateArgument::Type) return false;
+            auto policy = arguments[index].getAsType();
+            if (templateName(policy) != (index == 1 ? "std::char_traits" : "std::allocator")) return false;
+            const auto& parameters = specialization(policy)->getTemplateArgs();
+            if (parameters.size() != 1 || parameters[0].getKind() != TemplateArgument::Type ||
+                clean(parameters[0].getAsType()) != context.CharTy) return false;
+        }
+        return true;
+    }
     bool interface(QualType type) {
         if (type.isNull()) return false;
         auto record = clean(type)->getAsCXXRecordDecl();
         if (!record || !record->hasDefinition()) return false;
         record = record->getDefinition();
-        if (record->getQualifiedNameAsString() == "cpphdl::Interface") return true;
+        if (declarationName(record) == "cpphdl::Interface") return true;
         for (const auto& base : record->bases()) if (interface(base.getType())) return true;
         return false;
     }
@@ -207,7 +240,7 @@ class Lowering {
             {"cpphdl::u1", 8}, {"cpphdl::u8", 8}, {"cpphdl::u16", 16},
             {"cpphdl::u32", 32}, {"cpphdl::u64", 64}, {"cpphdl::i8", 8},
             {"cpphdl::i16", 16}, {"cpphdl::i32", 32}, {"cpphdl::i64", 64}};
-        auto found = wrappers.find(record->getQualifiedNameAsString());
+        auto found = wrappers.find(declarationName(record));
         return found == wrappers.end() ? std::optional<unsigned>{} : found->second;
     }
     QualType payload(QualType type) {
@@ -215,6 +248,14 @@ class Lowering {
         if (name == "cpphdl::function_ref" || name == "cpphdl::reg")
             return specialization(type)->getTemplateArgs()[0].getAsType();
         return clean(type);
+    }
+    bool constantHardwareType(QualType type) {
+        if (clean(type)->isIntegerType() || clean(type)->isEnumeralType() || integerWrapperWidth(type).has_value()) return true;
+        auto name = templateName(type);
+        if (name == "cpphdl::logic") return true;
+        if (name == "cpphdl::array" || name == "std::array")
+            return constantHardwareType(specialization(type)->getTemplateArgs()[name == "cpphdl::array" ? 1 : 0].getAsType());
+        return false;
     }
     bool containsHierarchy(QualType type) {
         if (type.isNull()) return false;
@@ -368,6 +409,11 @@ class Lowering {
         auto spec = specialization(type);
         unsigned result = 0;
         if (name == "cpphdl::logic" || name == "cpphdl::logic_bits") result = spec->getTemplateArgs()[0].getAsIntegral().getLimitedValue();
+        else if (name == "cpphdl::detail::array_packed_ref") {
+            // A proxy is the selected element value, not its pointer-bearing
+            // C++ object layout or the width of the enclosing packed bank.
+            result = spec->getTemplateArgs()[2].getAsIntegral().getLimitedValue();
+        }
         else if (name == "cpphdl::cat") {
             for (const auto& argument : spec->getTemplateArgs()[0].pack_elements()) result += argument.getAsIntegral().getLimitedValue();
         }
@@ -415,7 +461,10 @@ class Lowering {
         auto element = spec->getTemplateArgs()[0].getAsType();
         auto count = spec->getTemplateArgs()[1].getAsIntegral().getLimitedValue();
         auto bits = width(element);
-        if ((templateName(element) != "cpphdl::logic" && !integerWrapperWidth(element)) || context.getTypeSize(element) != bits)
+        // A scalar row has no inter-element padding to traverse. Its high C++
+        // padding bits are not HDL state; multi-element rows still need exact strides.
+        if ((templateName(element) != "cpphdl::logic" && !integerWrapperWidth(element)) ||
+            (count != 1 && context.getTypeSize(element) != bits))
             fail("C++ memory requires unpadded logic elements");
         if (!count || count > 1048576 / bits) fail("unsupported C++ memory row width");
         return count * bits;
@@ -598,6 +647,7 @@ class Lowering {
         return originals.at(item.key);
     }
     Value read(Item item) {
+        if (diagnosticString(item.type)) fail("observable C++ string unsupported: " + item.key);
         if (activeProcess >= 0 && !item.key.starts_with("$") && item.key.ends_with("._next")) {
             auto key = item.key.substr(0, item.key.size() - 6);
             nextReaders[key].insert(activeProcess);
@@ -631,10 +681,43 @@ class Lowering {
         }
         unsigned count = item.selectedWidth ? item.selectedWidth : width(item.type);
         if (auto offset = number(graph.resolved(item.offset))) return slice(source, *offset, count);
-        Value result(count, 0);
-        for (unsigned offset = 0; offset + count <= source.size(); offset += count)
-            result = graph.mux(graph.binary("eq", item.offset, constant(offset, 64), 1), slice(source, offset, count), result);
-        return result;
+        // hdlcpp keeps indexing as a packed access. Do not explode it into a
+        // comparison and mux for every possible bit position: native words
+        // shift directly, and wider values use the existing barrel lowering.
+        auto valid = selectionValid(item, source.size(), count);
+        return graph.mux(valid, indexedRead(source, item.offset, count), Value(count, 0));
+    }
+    Value indexedRead(const Value& source, const Value& offset, unsigned count) {
+        // A wide native read is a word gather, not a barrel-shifter circuit.
+        // Keep the source block intact until emission; RTL/scheduled export
+        // retains the ordinary graph operations for its existing gate mapper.
+        if (finalNativeGraph && source.size() > 64 && count <= 64)
+            return graph.add("word_slice", count, source, offset);
+        return graph.binary("shr", source, offset, count);
+    }
+    Value selectionValid(const Item& item, unsigned extent, unsigned count) {
+        if (count > extent) return {0};
+        auto valid = graph.binary("lt", item.offset, constant(extent - count + 1, 64), 1);
+        // Nested array/field accesses retain their reachable-offset lattice,
+        // including overflowed offsets; invalid full slices still read zero.
+        if (item.offsetStride > 1)
+            valid = graph.binary("and", valid,
+                graph.binary("eq", graph.binary("mod", item.offset, constant(item.offsetStride, 64), 64),
+                             constant(item.offsetResidue, 64), 1), 1);
+        return valid;
+    }
+    void addOffset(Item& item, const Value& amount, unsigned dynamicStride = 1) {
+        auto base = number(graph.resolved(item.offset));
+        if (auto fixed = number(graph.resolved(amount))) {
+            if (!base) item.offsetResidue = (item.offsetResidue + *fixed) % item.offsetStride;
+        } else {
+            // Array element stride and field width are independent. Preserve
+            // reachable offsets through nested indexing and member selection;
+            // stepping by the selected width silently loses unaligned fields.
+            item.offsetStride = base ? dynamicStride : std::gcd(item.offsetStride, dynamicStride);
+            item.offsetResidue = (base ? *base : item.offsetResidue) % item.offsetStride;
+        }
+        item.offset = graph.binary("add", item.offset, amount, 64);
     }
     uint64_t integer(Item item) {
         auto known = number(graph.resolved(read(item)));
@@ -818,10 +901,30 @@ class Lowering {
             std::copy(incoming.begin(), incoming.end(), previous.begin() + *offset);
         } else {
             for (const auto& net : netWrites) if (net.key == target.key) fail("dynamic destination in concurrent C++ net");
-            for (unsigned start = 0; start + incoming.size() <= previous.size(); start += incoming.size()) {
-                auto replacement = graph.mux(graph.binary("eq", target.offset, constant(start, 64), 1), incoming, slice(previous, start, incoming.size()));
-                std::copy(replacement.begin(), replacement.end(), previous.begin() + start);
+            if (previous.size() > 64 && target.offsetStride > 1) {
+                // Sparse bank/field writes already have one mux per reachable
+                // lane. A whole-bank shifted mask would inflate their work.
+                for (unsigned start = target.offsetResidue; start + incoming.size() <= previous.size(); start += target.offsetStride) {
+                    auto replacement = graph.mux(graph.binary("eq", target.offset, constant(start, 64), 1), incoming, slice(previous, start, incoming.size()));
+                    std::copy(replacement.begin(), replacement.end(), previous.begin() + start);
+                }
+                cells.set(target.key, std::move(previous));
+                return;
             }
+            auto extent = previous.size();
+            auto valid = selectionValid(target, extent, incoming.size());
+            auto shifted = [&](Value bits) {
+                bits = resize(bits, extent);
+                return extent > 64 ? wideShiftLeft(std::move(bits), target.offset)
+                                   : graph.binary("shl", bits, target.offset, extent);
+            };
+            // Preserve one masked insertion instead of per-destination-bit
+            // muxes. The full-slice guard makes invalid writes a no-op and
+            // keeps ordered overlapping writes in their existing SSA order.
+            auto mask = shifted(Value(incoming.size(), 1));
+            auto replacement = graph.binary("or", graph.binary("and", previous, graph.unary("not", mask), extent),
+                                            shifted(incoming), extent);
+            previous = graph.mux(valid, replacement, previous);
         }
         cells.set(target.key, std::move(previous));
     }
@@ -871,6 +974,25 @@ class Lowering {
                     fail("initialized C++ register unsupported");
             }
             if (templateName(result.type) == "cpphdl::memory" && member->hasInClassInitializer()) fail("initialized C++ memory unsupported");
+            if (result.type.isConstQualified() && constantHardwareType(result.type) && member->hasInClassInitializer()) {
+                if (!constantFields.count(result.key)) {
+                    if (!activeConstantInitializers.insert(result.key).second)
+                        fail("cyclic C++ constant initializer: " + result.key);
+                    if (!member->getInClassInitializer() &&
+                        sema.BuildCXXDefaultInitExpr(member->getLocation(), const_cast<FieldDecl*>(member)).isInvalid())
+                        fail("cannot instantiate C++ constant initializer: " + result.key);
+                    auto saved = object; object = base;
+                    auto bits = graph.resolved(read(cast(expr(member->getInClassInitializer()), result.type)));
+                    object = saved;
+                    if (std::any_of(bits.begin(), bits.end(), [](Bit bit) { return bit > 1; }))
+                        fail("nonconstant C++ constant initializer: " + result.key);
+                    // Only immutable hardware values become constants. Mutable
+                    // initializers are not implicit reset or complete-write proofs.
+                    constantFields[result.key] = std::move(bits);
+                    activeConstantInitializers.erase(result.key);
+                }
+                return value(constantFields.at(result.key), result.type);
+            }
             if (port(result.type) && !bindings.count(result.key) && !interfaceBindings.count(result.key) && member->hasInClassInitializer()) {
                 if (!member->getInClassInitializer() &&
                     sema.BuildCXXDefaultInitExpr(member->getLocation(), const_cast<FieldDecl*>(member)).isInvalid())
@@ -897,7 +1019,7 @@ class Lowering {
         auto offset = packedOffset(payload(base.type), member);
         if (base.key.empty()) return value(slice(read(base), offset, fieldWidth(member)), member->getType());
         if (!base.extent) base.extent = width(base.type);
-        base.offset = graph.binary("add", base.offset, constant(offset, 64), 64);
+        addOffset(base, constant(offset, 64));
         base.type = member->getType();
         base.selectedWidth = member->isBitField() ? fieldWidth(member) : 0;
         return base;
@@ -937,13 +1059,12 @@ class Lowering {
         if (base.key.empty()) {
             auto source = read(base);
             if (auto known = number(graph.resolved(offset))) return value(slice(source, *known, elementWidth), elementType);
-            Value result(elementWidth, 0);
-            for (unsigned index = 0; index < count; ++index)
-                result = graph.mux(graph.binary("eq", read(indexValue), constant(index, read(indexValue).size()), 1), slice(source, index * elementWidth, elementWidth), result);
-            return value(result, elementType);
+            auto valid = graph.binary("lt", read(indexValue), constant(count, 64), 1);
+            auto selected = indexedRead(source, offset, elementWidth);
+            return value(graph.mux(valid, selected, Value(elementWidth, 0)), elementType);
         }
         if (!base.extent) base.extent = count * elementWidth;
-        base.offset = graph.binary("add", base.offset, offset, 64);
+        addOffset(base, offset, elementWidth);
         base.type = elementType;
         return base;
     }
@@ -980,7 +1101,7 @@ class Lowering {
         for (unsigned index = 0; index < arguments.size(); ++index) {
             auto parameter = function->getParamDecl(index);
             auto type = parameter->getType();
-            if (type->isReferenceType() || type->isPointerType() || arguments[index].closure) locals[parameter] = arguments[index];
+            if (!packedProxy(type) && (type->isReferenceType() || type->isPointerType() || arguments[index].closure)) locals[parameter] = arguments[index];
             else {
                 Item local; local.key = "$local" + std::to_string(++serial); local.type = type;
                 describeLocal(local.key, parameter);
@@ -1381,6 +1502,8 @@ class Lowering {
                 return result;
             }
             auto result = expr(construct->getArg(0));
+            if (packedProxy(construct->getType()) && construct->getNumArgs() != 1)
+                fail("explicit packed-array proxy construction unsupported", construct);
             if (result.closure) return result;
             if (port(construct->getType()) && port(result.type)) return result;
             return cast(result, construct->getType());
@@ -1485,6 +1608,9 @@ class Lowering {
         auto function = call->getDirectCallee();
         if (!function) fail("indirect C++ call", call);
         std::string name = function->getNameAsString();
+        if (auto method = dyn_cast<CXXMethodDecl>(function);
+            method && diagnosticString(context.getRecordType(method->getParent())))
+            fail("observable C++ string operation unsupported", call);
         // Evaluate constexpr hardware-value factories using Clang, including
         // initializer-list helpers. Their STL implementation is not hardware.
         if (function->isConstexpr() && !isa<CXXMethodDecl>(function) &&
@@ -1542,6 +1668,9 @@ class Lowering {
             if (!start && call->getNumArgs()) primitiveOperation = primitive(call->getArg(0)->getType());
             if (op == OO_Subscript && primitiveOperation) return index(receiver, expr(call->getArg(start)), call->getType());
             if (op == OO_Equal && (primitiveOperation || function->isDefaulted())) {
+                // Stored/by-value proxies snapshot reads, but writes also update
+                // their original parent. Do not silently write just the snapshot.
+                if (packedProxy(receiver.type)) fail("captured packed-array proxy mutation unsupported", call);
                 auto source = expr(call->getArg(start));
                 if (templateName(receiver.type) == "cpphdl::reg" &&
                     templateName(function->getParamDecl(0)->getType()) != "cpphdl::reg")
@@ -1577,7 +1706,7 @@ class Lowering {
         if (isa<CXXConversionDecl>(function)) return cast(receiver, call->getType());
         std::vector<Item> arguments;
         for (unsigned index = start; index < call->getNumArgs(); ++index) arguments.push_back(expr(call->getArg(index)));
-        auto qualified = function->getQualifiedNameAsString();
+        auto qualified = declarationName(function);
         if (!synthesisExport && function->isExternC() && name == "memcpy" && arguments.size() == 3) {
             auto bytes = integer(arguments[2]);
             if (arguments[0].key.empty() || !bytes || bytes > width(arguments[0].type)/8 || bytes > width(arguments[1].type)/8)
@@ -1777,7 +1906,7 @@ class Lowering {
             if (receiver.key.empty()) return value(slice(read(receiver), low, high - low + 1), call->getType());
             initial(receiver);
             if (!receiver.extent) receiver.extent = width(receiver.type);
-            receiver.offset = graph.binary("add", receiver.offset, constant(low, 64), 64);
+            addOffset(receiver, constant(low, 64));
             receiver.selectedWidth = high - low + 1;
             receiver.type = call->getType();
             return receiver;
@@ -1850,7 +1979,7 @@ class Lowering {
             auto offset = (*parameters)[0].getAsIntegral().getLimitedValue();
             auto target = arguments.at(0);
             if (!target.extent) target.extent = width(target.type);
-            target.offset = graph.binary("add", target.offset, constant(offset, 64), 64);
+            addOffset(target, constant(offset, 64));
             target.type = arguments.at(1).type;
             write(target, arguments.at(1)); return {};
         }
@@ -2081,7 +2210,7 @@ class Lowering {
     }
     bool instanceLabelField(const Expr* expression) {
         auto member = dyn_cast<MemberExpr>(expression->IgnoreParenImpCasts());
-        return member && member->getMemberDecl()->getQualifiedNameAsString() == "cpphdl::Module::__inst_name"
+        return member && declarationName(member->getMemberDecl()) == "cpphdl::Module::__inst_name"
             && !member->getBase()->HasSideEffects(context);
     }
     bool instanceLabelValue(const Expr* expression) {
@@ -2133,6 +2262,17 @@ class Lowering {
         // _LAZY_COMB's timestamp is a runtime cache, not retained hardware.
         // Only its exact clock-guard/update shape is removed here.
         if (memoStatement(body)) return {};
+        // hdlcpp removes diagnostic I/O, leaving literal stores to trace-only
+        // strings. Discard only standalone stores; every observable string
+        // read or operation remains an error, never a fabricated value.
+        if (auto expression = dyn_cast<Expr>(body))
+            if (auto assignment = dyn_cast<CXXOperatorCallExpr>(expression->IgnoreImplicit());
+                assignment && assignment->getOperator() == OO_Equal && assignment->getNumArgs() == 2 &&
+                diagnosticString(assignment->getArg(0)->getType()) &&
+                isa<StringLiteral>(assignment->getArg(1)->IgnoreParenImpCasts())) {
+                expr(assignment->getArg(0));
+                return {};
+            }
         // Instance labels are framework diagnostics, never hardware storage.
         // Reject arbitrary RHS calls rather than discard their side effects.
         if (auto expression = dyn_cast<Expr>(body))
@@ -2220,12 +2360,32 @@ class Lowering {
             struct Part { const Stmt* body; Value match; bool label = false, fallback = false; };
             std::vector<Part> parts;
             Value matched{0};
+            auto selectorBits = graph.resolved(selector.bits);
+            uint64_t fixedMask = 0, fixedValue = 0;
+            unsigned variableBits = 0;
+            if (selectorBits.size() <= 64) {
+                for (unsigned index = 0; index < selectorBits.size(); ++index) {
+                    if (selectorBits[index] < 2) {
+                        fixedMask |= uint64_t(1) << index;
+                        fixedValue |= selectorBits[index] << index;
+                    } else ++variableBits;
+                }
+            }
+            const bool boundedDomain = selectorBits.size() <= 64 && variableBits <= 12;
+            std::set<uint64_t> coveredValues;
             for (auto child : compound->body()) {
                 while (auto label = dyn_cast<SwitchCase>(child)) {
                     Value condition{0}; bool fallback = isa<DefaultStmt>(label);
                     if (auto item = dyn_cast<CaseStmt>(label)) {
                         if (item->getRHS()) fail("C++ case ranges unsupported", item);
-                        condition = read(binary("==", selector, expr(item->getLHS()), context.BoolTy));
+                        auto labelValue = expr(item->getLHS());
+                        condition = read(binary("==", selector, labelValue, context.BoolTy));
+                        if (boundedDomain) {
+                            auto labelBits = graph.resolved(read(cast(labelValue, selected.type)));
+                            if (auto labelNumber = number(labelBits);
+                                labelNumber && (*labelNumber & fixedMask) == fixedValue)
+                                coveredValues.insert(*labelNumber);
+                        }
                         matched = either(matched, condition);
                     }
                     parts.push_back({nullptr, condition, true, fallback});
@@ -2233,11 +2393,17 @@ class Lowering {
                 }
                 parts.push_back({child, {}});
             }
+            // A masked or narrow selector can be exhaustive even after C++
+            // integral promotion. Prove coverage of its bounded bit domain;
+            // do not turn an empty default into an invented zero assignment.
+            const bool exhaustive = boundedDomain && coveredValues.size() == (size_t(1) << variableBits);
+            if (exhaustive) matched = {1};
             // Lower each possible entry from the same environment. Sequential
             // guarded writes retain an unreachable old-value dependency even
             // when every entry writes (including default). Use the default's
-            // environment as the merge fallback instead; absent a default,
-            // keep the real no-match path and its undriven diagnostics.
+            // environment as the merge fallback instead. Proven exhaustive
+            // labels can supply that fallback too; otherwise keep the real
+            // no-match path and its undriven diagnostics.
             auto before = cells;
             auto fallbackCells = before;
             std::vector<std::pair<Value, Environment>> alternatives;
@@ -2263,6 +2429,10 @@ class Lowering {
                 } else {
                     alternatives.emplace_back(match, cells);
                 }
+            }
+            if (exhaustive && !alternatives.empty()) {
+                fallbackCells = alternatives.back().second;
+                alternatives.pop_back();
             }
             cells = fallbackCells;
             for (const auto& [match, branchCells] : alternatives) {
@@ -2482,6 +2652,19 @@ public:
         for (auto& [name, item] : outputs) graph.ports.push_back({name, read(item), false});
         auto reset = graph.wire(1, scheduledExport ? "reset" : "work_reset", "input");
         graph.ports.push_back({scheduledExport ? "reset" : "work_reset", reset, true});
+        auto emitCompletedGraph = [&] {
+            if (finalNativeGraph) {
+                // Only a fully bound executable root can discard unused state.
+                // Keep clocks, callbacks and memory effects observable, and
+                // leave partition/synthesis graphs available for later consumers.
+                graph.validateClocks();
+                const auto removed = graph.pruneUnusedState();
+                if (reportProgress)
+                    llvm::errs() << "C++ graph final native pruning: removed_state_groups=" << removed
+                                 << " retained_state_groups=" << graph.states.size() << '\n';
+            }
+            graph.writeCpp(output);
+        };
         if (!graph.clocks.empty()) {
             for (const auto* name : {"_work", "_strobe"}) if (auto legacy = method(rootObject.type, name)) {
                 instantiate(legacy);
@@ -2489,7 +2672,7 @@ public:
                 if (!body || !body->body_empty()) fail("named clocks cannot ignore root " + std::string(name));
             }
             runClocks(rootObject, reset);
-            graph.writeCpp(output);
+            emitCompletedGraph();
             return;
         }
         progress("work");
@@ -2517,7 +2700,7 @@ public:
         graph.clockContract = ClockContract::RisingEdgeStep;
         for (const auto& [instance, pins] : scheduledPorts)
             if (!scheduledWork.count(instance) || !scheduledStrobe.count(instance)) fail("missing scheduled Clocked work/strobe: " + instance);
-        graph.writeCpp(output);
+        emitCompletedGraph();
     }
 };
 
@@ -2581,8 +2764,9 @@ public:
 inline int run(int argc, const char** argv, std::vector<std::string> includes) {
     scheduledExport = argc > 1 && std::string_view(argv[1]) == "--lower-scheduled-graph";
     synthesisExport = argc > 1 && std::string_view(argv[1]) == "--lower-synthesis-graph";
+    finalNativeGraph = false;
     if (argc < 6) {
-        llvm::errs() << "usage: cpphdl --lower-cpp-graph source.cc graph.cc root_variable [--clock NAME HZ ...] -- compiler flags\n";
+        llvm::errs() << "usage: cpphdl --lower-cpp-graph source.cc graph.cc root_variable [--final-native] [--clock NAME HZ ...] -- compiler flags\n";
         return 2;
     }
     if (!std::filesystem::is_regular_file(argv[2]) || std::filesystem::exists(argv[3])) {
@@ -2593,6 +2777,13 @@ inline int run(int argc, const char** argv, std::vector<std::string> includes) {
     std::vector<Clock> clocks;
     try {
         while (index < argc && std::string_view(argv[index]) != "--") {
+            if (std::string_view(argv[index]) == "--final-native") {
+                if (scheduledExport || synthesisExport)
+                    throw std::runtime_error("--final-native requires an ordinary C++ native root");
+                finalNativeGraph = true;
+                ++index;
+                continue;
+            }
             if (std::string_view(argv[index]) != "--clock" || index + 2 >= argc)
                 throw std::runtime_error("expected --clock NAME HZ or --");
             std::string frequency = argv[index + 2];

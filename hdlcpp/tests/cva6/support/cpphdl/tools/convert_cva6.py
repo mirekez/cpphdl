@@ -157,6 +157,16 @@ def generated_header_for_source(src: Path) -> Path:
     return OUT / "generated" / rel.parent / f"{src.stem}.h"
 
 
+def sources_needing_emission(files):
+    generator_time = HDLCPP.stat().st_mtime_ns
+    result = []
+    for source in files:
+        header = generated_header_for_source(source)
+        if not header.exists() or header.stat().st_mtime_ns < max(generator_time, source.stat().st_mtime_ns):
+            result.append(source)
+    return result
+
+
 module_type_declaration_re = re.compile(
     r"^ {4}(\S.*\S)\s+"
     r"[A-Za-z_][A-Za-z0-9_]*\s*(?:\[[^;\n]*\])?\s*(?:;|=)",
@@ -1791,6 +1801,7 @@ def main():
                     if module.strip():
                         module_owner[module.strip()] = src
         demanded_sources = [module_owner[name] for name in discovered_modules if name in module_owner]
+        demanded_sources.extend(sources_needing_emission(all_conversion_files))
         conversion_files = expand_sources_with_dependents(
             demanded_sources, all_conversion_files, work_root
         )
@@ -2119,6 +2130,8 @@ def main():
     for src in ordered_for_include:
         rel = rel_source(src)
         header = Path("generated") / rel.parent / f"{src.stem}.h"
+        if not (OUT / header).is_file() and not any(failed == src for failed, reason in failures):
+            failures.append((src, "missing generated header: " + str(header)))
         includes.append(f'#include "{header.as_posix()}"')
     # ordered_for_include has already been refined from these same generated headers.
     rvfi_include = '#include "generated/rvfi_types.h"'

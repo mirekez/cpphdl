@@ -304,7 +304,7 @@ void cpphdl_model_trace_irq(uint64_t cycle)
                  static_cast<unsigned long long>(static_cast<uint64_t>(cpphdl::pack_value<64>(dirWay1.wdata_in()))),
                  static_cast<unsigned long long>(static_cast<uint64_t>(cpphdl::pack_value<64>(dirWay1.rdata_out()))),
                  static_cast<unsigned long long>(static_cast<uint64_t>(cpphdl::pack_value<64>(dirWay1.i_sram.mem[0]))),
-                 static_cast<unsigned long long>(static_cast<uint64_t>(cpphdl::pack_value<64>(dirWay1.i_sram.mem._next[0]))),
+                 static_cast<unsigned long long>(static_cast<uint64_t>(cpphdl::pack_value<64>(dirWay1.i_sram.mem.pending(0)[0]))),
                  static_cast<unsigned>(static_cast<bool>(dataWord1.cs_in())),
                  static_cast<unsigned>(static_cast<bool>(dataWord1.we_in())),
                  static_cast<unsigned long long>(static_cast<uint64_t>(dataWord1.addr_in())),
