@@ -468,7 +468,14 @@ public:
     template<class Redirect> void simplifyNode(Node& node, Redirect redirect) {
         node.left = resolved(std::move(node.left)); node.right = resolved(std::move(node.right));
         node.select = resolved(std::move(node.select));
-        if (node.hostEffect() || node.validation() || node.op.compare(0, 3, "fp_") == 0 || node.op == "memory_read" || node.op == "blackbox") return;
+        if (node.op == "word_slice") {
+            if (auto start = number(node.right); start && node.width <= node.left.size())
+                for (unsigned offset = 0; offset < node.width; ++offset)
+                    redirect(offset, *start <= node.left.size() - node.width ? node.left[*start + offset] : Bit(0));
+            return;
+        }
+        if (node.hostEffect() || node.validation() || node.op.compare(0, 3, "fp_") == 0 ||
+            node.op == "memory_read" || node.op == "blackbox") return;
         if (node.op == "mux" || node.op == "and" || node.op == "or" || node.op == "xor") {
             for (unsigned offset = 0; offset < node.width; ++offset) {
                 auto left = node.left[offset], right = node.right[offset];

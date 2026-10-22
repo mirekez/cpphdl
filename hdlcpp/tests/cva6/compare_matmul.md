@@ -787,3 +787,137 @@ scheduling, host overlap/rollback/copy tests, and all 37 CVA6 harness unit tests
 Small tests pass before the full model is rebuilt. The early lane-cloning
 ordering mistake is caught and fixed by the new parallel phase fixture; it is
 not retained as an alternative scheduler or a model-specific workaround.
+
+### Single-thread word-block preservation (2026-10-14)
+
+Checkpoint commit `1f25a28` saves the preceding conversion, RAM, phase-liveness
+and regression work. Build outputs, traces, dependency checkouts and unrelated
+CVA6 checkout modifications are not committed.
+
+New profiling targets the **unchanged one-thread checkpoint executable**.
+Three SIGPROF intervals (997/1499/2503 microseconds), interleaved uninstrumented
+controls, produce 12,929 samples with no drops. Commit/output assembly takes
+9.97% of process CPU samples. Two CSR-heavy chunks account for 5.24% and 5.04%;
+their node mix is primarily equality tests and 1-/64-bit muxes, not multiply.
+Mixed-chunk scope counts are not treated as exact per-module CPU attribution.
+An initial sampler launch fails because preloading `taskset` starts a timer
+before `exec` resets signal dispositions; applying the preload only to the
+target via `taskset ... env LD_PRELOAD=...` fixes the profiling setup. Sampled
+timings are excluded from the performance comparisons.
+
+The source explains the expensive operations: hdlcpp already emits packed
+indexing as `[]` and `.bits()`. `CppGraph.h` expands dynamic reads into one
+equality/mux per possible bit offset and dynamic writes into per-destination
+updates. A 128-entry/two-bit bank produces a 128-entry linear mux chain. This
+is the wrong abstraction for native simulation even though it is a valid
+circuit representation. No handwritten CSR, memory or arithmetic replacement
+is introduced, and the ordinary hdlcpp conversion remains unchanged.
+
+Two automatically lowered alternatives are tested:
+
+1. Replace enumerated reads with shifts and every dynamic write with a shifted
+   mask. The isolated 64-/128-bit tests improve 3.97x/3.46x, with identical
+   checksums over 2,000,000 samples. However, whole-bank mask/shifter expansion
+   grows CVA6 to 55,923 nodes and hurts its actual simulation. **Rejected**.
+2. Preserve wide reads as native `word_slice` blocks, rather than circuit barrel
+   shifters. Emission materializes a source-word view and extracts a cross-word slice;
+   constant offsets fold to wiring. Native single-word reads remain shifts.
+   Dense writes remain masked insertions, but sparse wide bank/field writes
+   use their existing per-reachable-lane updates. **Retained**.
+
+The retained final-native representation has **95 word-read blocks**, 36,823
+source / 36,697 scheduled nodes and the unchanged 928 state groups. All 47 RAM
+descriptors, including both large backing memories, are byte-identical to the
+checkpoint's `memories.tsv`. Multiplication and other existing native word math
+remain unchanged; profiling does not justify replacing them with LUTs. Normal
+scheduled/RTL extraction still uses its existing circuit operations.
+
+Five new CPU-2-pinned, order-rotated trials compare all three native executables
+on the same 32x32 ELF:
+
+| Variant | Median work time | Five-trial range | Versus current checkpoint |
+| --- | ---: | ---: | ---: |
+| Current checkpoint, freshly rerun | 5.192482413 s | 5.152–5.225 s | reference |
+| Expanded shifts/masks everywhere | 6.794634822 s | 6.698–6.823 s | 30.86% slower; rejected |
+| **Preserved word blocks + sparse writes** | **4.601718739 s** | **4.494–4.738 s** | **11.38% less time; retained** |
+
+This uses the freshly rerun checkpoint, not its historical 6.929 s median under
+different host conditions. The retained change meets the requested 10% benefit
+threshold on full CVA6, not just on the isolated small example. The separate
+three-trial paired comparison gives 4.643184257 s native versus 7.751342606 s
+for the unchanged original Verilator harness (1.67x faster). Its original
+tracing configuration is unchanged; compilation/loading are excluded.
+The tiny ELF also matches all 21,285 integer commits and 46,264 total cycles:
+0.545218681 s native versus 0.740553210 s Verilator in three alternating trials.
+
+All **297,074 integer RVFI commits**, checksum `0xd687fdc5`, and **396,778 total /
+396,768 work cycles** match. Both experimental binaries pass this full comparison;
+the expanded-mask variant is rejected solely for its poor measured speed.
+The retained binary SHA256 is
+`82f1248b4c5af1a99638d244e3aa5880be46eccf3e0c1cbed0a8814b4fd80fea`.
+Re-lowering the retained ordinary C++ and compiling the complete model takes
+249.106 s and peaks at 3,255,480,320 bytes process-tree RSS, under the existing
+RAM/disk guards. No full SystemVerilog regeneration is needed for this cpphdl
+lowering-only change.
+
+Validation includes 24 sanitized/oracle indexed-word runs, nested packed and
+unpacked struct indexing/partial-write oracles, the complete ordinary C++ graph
+suite, four native word-slice modes (including split and parallel), split RAM
+and DPI regressions, all 15 phase-liveness configurations and 37 harness unit
+tests. References, complete comparisons, profiles and build commands remain
+under `/tmp/cva6-wide-blocks.NNw2Ga`; bulky artifacts are verified, archived and
+cleaned after the experiments.
+
+### Latest cpphdl full-model rerun (2026-10-21)
+
+Rebuilt cpphdl from `246a59f424d9708fa30851faf43a602ee4e0d07d` plus the
+existing, uncommitted word-block changes described above. A frozen source
+snapshot prevents concurrent development from mixing compiler generations.
+The verified ordinary hdlcpp C++ conversion is restored from the preceding
+reference archive (3,036 files checked against SHA256); SystemVerilog conversion
+is not regenerated. The entire C++ testharness is freshly lowered with the new
+cpphdl executable, then compiled with Clang 21.1.3, `-O2 -g0`, one native graph
+lane, chunk size 512 and split limit 64. No model-specific replacement is used.
+
+Five alternating timed trials per executable and workload are pinned to CPU 2.
+Times below are the harness's simulation-work wall times, excluding compilation,
+ELF loading and initialization. Validation precedes timing and compares integer
+RVFI commits in order; native graph edge accounting must independently agree.
+
+| Workload | Total / work cycles, both | Original Verilator median | Native graph median | Original/native ratio |
+| --- | ---: | ---: | ---: | ---: |
+| 32x32 matmul, 32,768 MACs | 396,778 / 396,768 | 7.847597149 s | 4.446169710 s | 1.765x |
+| Original small matmul | 46,264 / 46,254 | 0.777260520 s | 0.510045201 s | 1.524x |
+
+The large workload matches checksum `0xd687fdc5` and all **297,074 integer
+commits**; the small workload matches all **21,285 integer commits**. Both pass
+their guest self-check in validation and every timed trial. Reset is 10 cycles
+in each run. Large-workload five-trial ranges are 7.708–8.091 s for Verilator and
+4.373–4.485 s for native graph. Whole-process medians, including startup, are
+8.173887048 s and 4.650861289 s respectively.
+
+**Harness caveat:** the original Verilator executable is unchanged, including
+its architectural trace formatting/file output. Native commit logging is enabled
+for validation only, not timing. These are equivalent guest executions, but not
+identical host tracing workloads; the ratios compare the original harness to
+the native run flow, not trace-free simulator engines.
+
+Fresh lowering reproduces the preceding graph SHA256
+`ea088384d950aeb8083f99e2638708222ad073847e426e9c0a04a767966e2567`:
+36,823 source nodes, 36,697 scheduled nodes, 928 state groups and 47 RAMs.
+The newly compiled executable also reproduces the preceding native binary
+SHA256 `82f1248b4c5af1a99638d244e3aa5880be46eccf3e0c1cbed0a8814b4fd80fea`.
+Thus the changed timings versus October 14 are **not a new code-generation
+improvement**: the measured executable is byte-identical.
+
+All 37 harness tests, four sanitized native word-slice configurations and 24
+indexed-word oracle/sanitizer runs pass with the frozen current sources/tool.
+The guarded full-model build peaks at 3,213,369,344 bytes process-tree RSS.
+Its elapsed time includes an intentional pause for another job's RAM use and
+is not presented as compiler throughput.
+
+Commands, source and binary hashes, every timing sample, complete validation
+traces and generated-code references are retained under
+`/tmp/cva6-latest.da21JP`. Bulky files are archived and verified before cleanup;
+the native executable and compact JSON comparison reports remain directly
+available there.

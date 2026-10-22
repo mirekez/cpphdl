@@ -681,10 +681,30 @@ class Lowering {
         }
         unsigned count = item.selectedWidth ? item.selectedWidth : width(item.type);
         if (auto offset = number(graph.resolved(item.offset))) return slice(source, *offset, count);
-        Value result(count, 0);
-        for (unsigned offset = item.offsetResidue; offset + count <= source.size(); offset += item.offsetStride)
-            result = graph.mux(graph.binary("eq", item.offset, constant(offset, 64), 1), slice(source, offset, count), result);
-        return result;
+        // hdlcpp keeps indexing as a packed access. Do not explode it into a
+        // comparison and mux for every possible bit position: native words
+        // shift directly, and wider values use the existing barrel lowering.
+        auto valid = selectionValid(item, source.size(), count);
+        return graph.mux(valid, indexedRead(source, item.offset, count), Value(count, 0));
+    }
+    Value indexedRead(const Value& source, const Value& offset, unsigned count) {
+        // A wide native read is a word gather, not a barrel-shifter circuit.
+        // Keep the source block intact until emission; RTL/scheduled export
+        // retains the ordinary graph operations for its existing gate mapper.
+        if (finalNativeGraph && source.size() > 64 && count <= 64)
+            return graph.add("word_slice", count, source, offset);
+        return graph.binary("shr", source, offset, count);
+    }
+    Value selectionValid(const Item& item, unsigned extent, unsigned count) {
+        if (count > extent) return {0};
+        auto valid = graph.binary("lt", item.offset, constant(extent - count + 1, 64), 1);
+        // Nested array/field accesses retain their reachable-offset lattice,
+        // including overflowed offsets; invalid full slices still read zero.
+        if (item.offsetStride > 1)
+            valid = graph.binary("and", valid,
+                graph.binary("eq", graph.binary("mod", item.offset, constant(item.offsetStride, 64), 64),
+                             constant(item.offsetResidue, 64), 1), 1);
+        return valid;
     }
     void addOffset(Item& item, const Value& amount, unsigned dynamicStride = 1) {
         auto base = number(graph.resolved(item.offset));
@@ -881,10 +901,30 @@ class Lowering {
             std::copy(incoming.begin(), incoming.end(), previous.begin() + *offset);
         } else {
             for (const auto& net : netWrites) if (net.key == target.key) fail("dynamic destination in concurrent C++ net");
-            for (unsigned start = target.offsetResidue; start + incoming.size() <= previous.size(); start += target.offsetStride) {
-                auto replacement = graph.mux(graph.binary("eq", target.offset, constant(start, 64), 1), incoming, slice(previous, start, incoming.size()));
-                std::copy(replacement.begin(), replacement.end(), previous.begin() + start);
+            if (previous.size() > 64 && target.offsetStride > 1) {
+                // Sparse bank/field writes already have one mux per reachable
+                // lane. A whole-bank shifted mask would inflate their work.
+                for (unsigned start = target.offsetResidue; start + incoming.size() <= previous.size(); start += target.offsetStride) {
+                    auto replacement = graph.mux(graph.binary("eq", target.offset, constant(start, 64), 1), incoming, slice(previous, start, incoming.size()));
+                    std::copy(replacement.begin(), replacement.end(), previous.begin() + start);
+                }
+                cells.set(target.key, std::move(previous));
+                return;
             }
+            auto extent = previous.size();
+            auto valid = selectionValid(target, extent, incoming.size());
+            auto shifted = [&](Value bits) {
+                bits = resize(bits, extent);
+                return extent > 64 ? wideShiftLeft(std::move(bits), target.offset)
+                                   : graph.binary("shl", bits, target.offset, extent);
+            };
+            // Preserve one masked insertion instead of per-destination-bit
+            // muxes. The full-slice guard makes invalid writes a no-op and
+            // keeps ordered overlapping writes in their existing SSA order.
+            auto mask = shifted(Value(incoming.size(), 1));
+            auto replacement = graph.binary("or", graph.binary("and", previous, graph.unary("not", mask), extent),
+                                            shifted(incoming), extent);
+            previous = graph.mux(valid, replacement, previous);
         }
         cells.set(target.key, std::move(previous));
     }
@@ -1019,10 +1059,9 @@ class Lowering {
         if (base.key.empty()) {
             auto source = read(base);
             if (auto known = number(graph.resolved(offset))) return value(slice(source, *known, elementWidth), elementType);
-            Value result(elementWidth, 0);
-            for (unsigned index = 0; index < count; ++index)
-                result = graph.mux(graph.binary("eq", read(indexValue), constant(index, read(indexValue).size()), 1), slice(source, index * elementWidth, elementWidth), result);
-            return value(result, elementType);
+            auto valid = graph.binary("lt", read(indexValue), constant(count, 64), 1);
+            auto selected = indexedRead(source, offset, elementWidth);
+            return value(graph.mux(valid, selected, Value(elementWidth, 0)), elementType);
         }
         if (!base.extent) base.extent = count * elementWidth;
         addOffset(base, offset, elementWidth);

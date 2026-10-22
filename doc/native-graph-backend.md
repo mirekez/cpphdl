@@ -113,6 +113,21 @@ or combinational cycles. `native_graph_phase_liveness` checks both state-only
 and combinational-output models, mixed chunks, read/write validation, and
 unchanged work-only scratch slots during settling.
 
+Native C++ lowering also preserves dynamic indexing as word operations rather
+than enumerating an equality/mux for every possible bit offset. Single-word
+reads use native shifts; wide reads of up to 64 bits retain a `word_slice`
+block until native emission, which materializes a source-word view and extracts
+from one or two words. Fixed
+offsets fold back to wiring. Dense bit writes use a guarded shifted mask;
+sparse wide bank/field writes retain per-reachable-lane updates instead of
+building an expensive whole-bank mask. Full-slice bounds and nested field
+stride/residue rules remain intact. The final-native graph uses this block;
+scheduled/RTL extraction keeps the existing circuit operations. hdlcpp's
+ordinary `[]`/`.bits()` output remains authoritative, with no new conversion
+flag or handwritten module replacement. The indexed-word and native-word-slice
+tests cover odd widths, invalid offsets, cross-word reads and split/parallel
+emission.
+
 Ordinary hdlcpp output includes `__cpphdl_net_STORAGE` metadata for methods
 consisting solely of concurrent continuous assignments. This leaves their
 existing C++ bodies and ABI unchanged. It distinguishes declarative net

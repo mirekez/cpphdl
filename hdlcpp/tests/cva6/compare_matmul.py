@@ -85,6 +85,7 @@ def main():
     parser.add_argument('--trials', type=int, default=3)
     parser.add_argument('--timeout', type=float, default=600)
     parser.add_argument('--cpu', type=int)
+    parser.add_argument('--cpphdl-cpus', help='taskset CPU list for the candidate, e.g. 2,3,4,5')
     args = parser.parse_args()
     if args.max_cycles <= 10 or args.trials < 1 or args.timeout <= 0:
         parser.error('use more than 10 cycles, positive trials and a positive timeout')
@@ -108,7 +109,8 @@ def main():
     def run(variant, cycles, label):
         directory = output / (label + '-' + variant)
         directory.mkdir(exist_ok=True)
-        command = ([] if args.cpu is None else ['taskset', '-c', str(args.cpu)])
+        affinity = args.cpphdl_cpus if variant == 'cpphdl' and args.cpphdl_cpus else args.cpu
+        command = ([] if affinity is None else ['taskset', '-c', str(affinity)])
         command += simulation_command(binaries[variant], variant, elf, cycles)
         started = time.perf_counter()
         run_environment = dict(environment)

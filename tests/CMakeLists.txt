@@ -220,6 +220,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeThreadsDriverChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_thread_driver PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_host_threads COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeHostThreadsChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-host-threads")
+    set_tests_properties(cpp_graph_native_host_threads PROPERTIES TIMEOUT 300)
     add_test(NAME cpp_graph_native_ports COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativePortsChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
@@ -304,6 +308,12 @@ if(Python3_Interpreter_FOUND)
             --work "${CMAKE_CURRENT_BINARY_DIR}/native-phase")
         set_tests_properties(native_graph_phase_liveness PROPERTIES TIMEOUT 600
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME native_graph_word_slice COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeWordSliceChecks.py"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-word-slice")
+        set_tests_properties(native_graph_word_slice PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(CPPHDL_BUILD_HDLCPP)
         add_test(NAME hdlcpp_wide_select_graph COMMAND "${Python3_EXECUTABLE}"
@@ -379,7 +389,7 @@ if(Python3_Interpreter_FOUND)
                 --work "${CMAKE_CURRENT_BINARY_DIR}/undriven-variable")
             set_tests_properties(graph_undriven_variable PROPERTIES TIMEOUT 480
                 ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-            foreach(fixture SymbolicArithmetic ProjectionCarrier ConstPackedRom BlockingHold ExhaustiveSwitch DynamicStructIndex NarrowArithmeticCast TypedefRam)
+            foreach(fixture SymbolicArithmetic ProjectionCarrier ConstPackedRom BlockingHold ExhaustiveSwitch DynamicStructIndex NarrowArithmeticCast TypedefRam IndexedWord)
                 add_test(NAME hdlcpp_${fixture} COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/${fixture}Checks.py"
                     --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"

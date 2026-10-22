@@ -100,7 +100,6 @@ int main(int argc,char**argv) {
 ''')
     out = work/'host-effect'
     run([args.cpphdl, '--native-graph', '--optimize-threads=2', '--cxx', args.cxx,
-         '--output', out, host], success=False)
-    assert not (out/'model.h').exists()
-    assert 'explicit host boundaries' in (out/'lower.log').read_text()
-    print('native thread driver: options, deterministic outputs, exception recovery and host-boundary rejection PASS')
+         '--output', out, host])
+    assert (out/'model.h').is_file()
+    print('native thread driver: options, deterministic outputs, exception recovery and caller-owned host effects PASS')

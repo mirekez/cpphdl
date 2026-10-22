@@ -89,6 +89,15 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     for (auto& write : graph.memoryWrites) {
         writeRoots.push_back(roots.size()); roots.push_back({{&write.address, &write.data, &write.enabled}});
     }
+    std::vector<Value> hostValues;
+    hostValues.reserve(std::count_if(order.begin(), order.end(),
+        [&](size_t node) { return graph.nodes[node].hostEffect(); }));
+    std::vector<size_t> hostRoots;
+    for (auto index : order) if (graph.nodes[index].hostEffect()) {
+        hostValues.push_back({(index + 1) * 64 + 2});
+        hostRoots.push_back(roots.size());
+        roots.push_back({{&hostValues.back()}});
+    }
     std::vector<size_t> validationRoots;
     for (auto& node : graph.nodes) if (node.validation()) {
         validationRoots.push_back(roots.size()); roots.push_back({{&node.left}});
@@ -122,6 +131,16 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     std::vector<uint64_t> load(lanes);
     std::set<size_t> callerRoots;
     callerRoots.insert(validationRoots.begin(), validationRoots.end());
+    callerRoots.insert(hostRoots.begin(), hostRoots.end());
+    // Foreign calls execute exactly once on the caller, including unused
+    // results. Pin their consumers too: duplicating a host-dependent cone
+    // would repeat the call or race its output buffers. Independent pure
+    // cones can still run in workers against the same committed snapshot.
+    if (!hostRoots.empty())
+        for (size_t root = 0; root < roots.size(); ++root)
+            if (std::any_of(roots[root].cone.begin(), roots[root].cone.end(),
+                            [&](size_t node) { return graph.nodes[node].hostEffect(); }))
+                callerRoots.insert(root);
     if (hostOverlap) {
         for (auto root : portRoots) if (root != size_t(-1)) callerRoots.insert(root);
         callerRoots.insert(accessRoots.begin(), accessRoots.end());
@@ -216,9 +235,6 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         if (threads > 1 && !chunkSize) chunkSize = 512;
         validateClocks();
         const bool hostEffects = std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.hostEffect(); });
-        if (threads > 1)
-            for (const auto& node : nodes) if (node.hostEffect())
-                throw std::runtime_error("parallel native evaluation requires explicit host boundaries");
         if (clockContract == ClockContract::NamedEdges) {
             for (const auto& node : nodes) if (node.hostEffect())
                 throw std::runtime_error("multiclock host effects are not implemented");
@@ -324,6 +340,14 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             output << "extern \"C\" int debug_tick(unsigned char*, unsigned char, int*, int*, int*, unsigned char, unsigned char*, int, int);\n";
         output << "#include <array>\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <stdexcept>\n#include <vector>\n"
                   "namespace cpphdl_native {\nstruct Model {\n";
+        if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "word_slice"; }))
+            output << "template<std::size_t Words> static uint64_t __cpphdl_slice(const std::array<uint64_t,Words>& words, "
+                      "uint64_t offset, unsigned width, uint64_t extent) {\n"
+                      "if(offset > extent - width) return 0;\n"
+                      "const auto word = offset / 64;\nconst auto shift = unsigned(offset % 64);\n"
+                      "auto value = words[word] >> shift;\n"
+                      "if(shift && word + 1 < Words) value |= words[word + 1] << (64 - shift);\n"
+                      "return width == 64 ? value : value & ((1ull << width) - 1);\n}\n";
         for (size_t i = 0; i < clocks.size(); ++i)
             output << "bool " << clocks[i].name << " = false;\nbool __cpphdl_previous_clock_" << i << " = false;\n";
         // Memory depth belongs to runtime storage, never to the bit graph or
@@ -492,6 +516,18 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         };
         auto emitNode = [&](size_t index) {
             const auto& node = nodes[index];
+            if (node.op == "word_slice") {
+                if (!node.width || node.width > 64 || node.left.size() < node.width ||
+                    node.right.empty() || node.right.size() > 64 || !node.select.empty())
+                    throw std::runtime_error("invalid native word slice");
+                output << "const std::array<uint64_t," << (node.left.size() + 63) / 64 << "> slice" << index << " = {";
+                for (unsigned offset = 0; offset < node.left.size(); offset += 64)
+                    output << (offset ? "," : "")
+                           << assembly(slice(node.left, offset, std::min<size_t>(64, node.left.size() - offset)));
+                output << "};\n" << declaration(index) << valueName(index) << " = __cpphdl_slice(slice" << index
+                       << ',' << assembly(node.right) << ',' << node.width << ',' << node.left.size() << ");\n";
+                return;
+            }
             if (node.op == "memory_read") {
                 auto memory = number(node.right), word = number(node.select);
                 if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||

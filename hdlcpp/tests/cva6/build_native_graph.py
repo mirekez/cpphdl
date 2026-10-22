@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import shlex
 import subprocess
@@ -18,6 +19,7 @@ def main():
     parser.add_argument('--riscv', type=Path, required=True)
     parser.add_argument('--chunk-size', type=int, default=512)
     parser.add_argument('--split-chunks', type=int, default=64)
+    parser.add_argument('--threads', type=int, default=1)
     parser.add_argument('--resume-graph', action='store_true',
                         help='verify an existing frontend checkpoint, then re-emit and compile its native code')
     args = parser.parse_args()
@@ -32,6 +34,8 @@ def main():
         parser.error('use a positive chunk size for bounded full-design compilation')
     if args.split_chunks < 1:
         parser.error('use a positive translation-unit chunk limit for full-design compilation')
+    if args.threads < 1:
+        parser.error('use a positive native thread count')
     ordinary = args.ordinary.resolve(strict=True)
     if not (ordinary / 'all_generated.h').is_file():
         parser.error('ordinary conversion is incomplete: all_generated.h missing')
@@ -68,6 +72,8 @@ def main():
         checkpoint = json.loads((graph / 'manifest.json').read_text())
         if checkpoint['status'] != 'complete':
             raise RuntimeError('frontend checkpoint did not complete')
+        if checkpoint['optimize_threads'] != args.threads:
+            raise RuntimeError('resume checkpoint has a different native thread count')
         dependency_text = (graph / 'dependencies.d').read_text().replace('\\\n', '')
         dependencies = [Path(path) if Path(path).is_absolute() else graph / path
                         for path in shlex.split(dependency_text.split(':', 1)[1])]
@@ -81,7 +87,7 @@ def main():
         run([args.cxx, '-std=c++23', '-O1', '-I' + str(repo / 'include'), emitter,
              '-o', graph / 'lower-split'], 'build-split-emitter')
         reference = graph / 'verified-model.h'
-        run([graph / 'lower-split', graph / 'model.graph', reference, args.chunk_size, '1',
+        run([graph / 'lower-split', graph / 'model.graph', reference, args.chunk_size, args.threads,
              graph / 'verified-memories.tsv', '0'], 'verify-graph-checkpoint')
         if digest(reference) != reference_hash:
             raise RuntimeError('serialized graph does not reproduce the recorded native model')
@@ -90,7 +96,7 @@ def main():
             if checkpoint['artifacts'].get(part.name) != digest(part):
                 raise RuntimeError(f'native part is not an unchanged checkpoint artifact: {part}')
             part.unlink()
-        run([graph / 'lower-split', graph / 'model.graph', graph / 'model.h', args.chunk_size, '1',
+        run([graph / 'lower-split', graph / 'model.graph', graph / 'model.h', args.chunk_size, args.threads,
              graph / 'memories.tsv', args.split_chunks], 'emit-split-model')
         checkpoint['resumed_graph_sha256'] = digest(graph / 'model.graph')
         checkpoint['frontend_model_sha256'] = reference_hash
@@ -104,11 +110,15 @@ def main():
         (graph / 'manifest.json').write_text(json.dumps(checkpoint, indent=2) + '\n')
     else:
         run([args.cpphdl.resolve(), '--native-graph', '--top', 'elaboration_root',
-         '--chunk-size=' + str(args.chunk_size), '--optimize-threads=1', '--cxx', args.cxx,
+         '--chunk-size=' + str(args.chunk_size), '--optimize-threads=' + str(args.threads), '--cxx', args.cxx,
          '--split-chunks=' + str(args.split_chunks),
          '--frontend-flag=-DSYNTHESIS', '--frontend-flag=-I' + str(ordinary),
          '--frontend-flag=-I' + str(args.riscv.resolve() / 'include'),
          '--output', graph, seed], 'native-graph')
+    thread_count = re.search(r'__cpphdl_thread_count = (\d+);', (graph / 'model.h').read_text())
+    host_lanes = int(thread_count.group(1)) if thread_count else 1
+    if host_lanes != args.threads:
+        raise RuntimeError(f'expected {args.threads} native lanes, emitted {host_lanes}; refusing a mislabeled comparison')
     memories = []
     for line in (output / 'graph/memories.tsv').read_text().splitlines():
         index, width, depth, name = line.split('\t', 3)
@@ -125,7 +135,7 @@ def main():
          '-o', output / 'run'], 'build-runner')
     if any(digest(path) != input_hashes[str(path)] for path in input_paths):
         raise RuntimeError('build inputs changed during compilation; refusing mixed-generation measurements')
-    manifest = dict(backend='cva6-ordinary-cpp-native-graph', host_lanes=1, chunk_size=args.chunk_size,
+    manifest = dict(backend='cva6-ordinary-cpp-native-graph', host_lanes=host_lanes, chunk_size=args.chunk_size,
                     split_chunks=args.split_chunks,
                     commands=commands, sram=memories[0],
                     inputs=input_hashes,
