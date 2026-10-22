@@ -2243,6 +2243,15 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             if (!numeric || instantiated) {
                 continue;
             }
+            // Replacements need concrete values for placeholder substitution,
+            // unlike ordinary SV parameters that may be left without defaults.
+            // Do not emit or run an unused replacement with missing arguments.
+            if (hasCpphdlReplacementAnnotation(record)
+                && std::any_of(parameters->begin(), parameters->end(), [](const NamedDecl* parameter) {
+                    return !cast<NonTypeTemplateParmDecl>(parameter)->hasDefaultArgument();
+                })) {
+                continue;
+            }
             // Dependent user-class members and bases need C++ specialization
             // to resolve their types and methods. Do not replace that path
             // with an incomplete symbolic module.
