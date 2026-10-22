@@ -15,6 +15,28 @@ spec.loader.exec_module(checks)
 
 
 class Evidence(unittest.TestCase):
+    def test_zero_exit_partial_run_cannot_omit_a_rule_table(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            rules = root / "rules/rule_decks/feol"
+            rules.mkdir(parents=True)
+            report = root / "part_full.lyrdb"
+            for index in range(37):
+                table = f"table{index}"
+                (rules / f"5_{index}_{table}.drc").write_text("rule inventory fixture")
+                if index != 17:
+                    (root / f"part_{table}.log").write_text(
+                        f"KLayout DRC run for tables '{table}' completed in 1 seconds\n")
+            with self.assertRaisesRegex(ValueError, "table did not complete: table17"):
+                checks.check_drc_completion(report, root / "rules")
+            (root / "part_table17.log").write_text("KLayout DRC run for tables 'table17' completed in 1 seconds\n")
+            (root / "part_sg13g2_maximal.log").write_text("Starting maximum ruleSet\n")
+            with self.assertRaisesRegex(ValueError, "maximum DRC rules did not complete"):
+                checks.check_drc_completion(report, root / "rules")
+            (root / "part_sg13g2_maximal.log").write_text("KLayout DRC run for maximum ruleSet completed\n")
+            (root / "part_density.log").write_text("KLayout DRC run for density table completed\n")
+            self.assertEqual(checks.check_drc_completion(report, root / "rules")["main_tables"], 37)
+
     def test_drc_refuses_missing_malformed_and_violations(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "report.lyrdb"

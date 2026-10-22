@@ -11,7 +11,8 @@ The [recorded validation](validation.md) reports the passing core implementation
 1000BASE-T copper repeater.** Complete physical PHYs and chip integration remain
 open. New hardware clock alignment, partial PCS datapaths, MOS-biased drivers and
 a real IHP padframe are described in [chip assembly and verification](chip.md).
-The padframe does not yet pass transistor LVS. `--target chip` reports missing blocks and exits with
+The common-ground padframe passes full DRC and deep transistor LVS as a separate
+component; complete PHY integration remains open. `--target chip` reports missing blocks and exits with
 status 2. The earlier [`1G/`](../../1G/README.md) PAM5 models include sampled
 simulation algorithms and ideal sources that cannot become physical cells
 automatically. See [requirements and remaining work](requirements.md).

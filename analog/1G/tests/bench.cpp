@@ -2,16 +2,84 @@
 #include "../mapping.hpp"
 #include "../IHPSG13G2/current_steering_driver.hpp"
 #include "../IHPSG13G2/biased_driver.hpp"
+#include "../pcs_transmit.hpp"
+#include "../passive_hybrid.hpp"
+#include <basic/nmos_resistor_amplifier.hpp>
+#include <basic/strongarm_comparator.hpp>
+#include <basic/mos_track_hold.hpp>
+#include <basic/mos_r2r_dac.hpp>
 #include <VerilogA/experiment.hpp>
 #include <iostream>
 #include <numbers>
 
 using namespace analog;
 using namespace analog::one_g;
+long _system_clock = -1;
 
 namespace {
 using points = std::vector<std::pair<double, double>>;
 using symbols = std::vector<quartet>;
+struct pcs_stimulus {
+    symbols levels;
+    std::vector<unsigned> gmii;
+};
+
+pcs_stimulus frame_pattern(unsigned count, unsigned seed, bool master, unsigned start) {
+    PCSTransmitter transmitter;
+    unsigned data = 0;
+    bool enable = false, load = false;
+    transmitter.data_in = _ASSIGN(data);
+    transmitter.enable_in = _ASSIGN(enable);
+    transmitter.error_in = _ASSIGN(false);
+    transmitter.master_in = _ASSIGN(master);
+    transmitter.link_in = _ASSIGN(true);
+    transmitter.local_receiver_ok_in = _ASSIGN(true);
+    transmitter.mode_in = _ASSIGN(2);
+    transmitter.seed_load_in = _ASSIGN(load);
+    transmitter.seed_in = _ASSIGN(seed);
+    transmitter._assign();
+    ++_system_clock;
+    transmitter._work(true);
+    transmitter._strobe();
+    load = true;
+    ++_system_clock;
+    transmitter._work(false);
+    transmitter._strobe();
+    load = false;
+    std::vector<unsigned> frame(72, 0x55);
+    frame[7] = 0xD5;
+    unsigned crc = 0xFFFFFFFF;
+    for (unsigned i = 8; i < 68; ++i) {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        frame[i] = seed & 255;
+        crc ^= frame[i];
+        for (unsigned bit = 0; bit < 8; ++bit)
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+    }
+    for (unsigned byte = 0; byte < 4; ++byte)
+        frame[68 + byte] = ((~crc) >> (8 * byte)) & 255;
+    pcs_stimulus result;
+    unsigned previous_word = 0;
+    for (unsigned index = 0; index < count; ++index) {
+        enable = index >= start && index < start + frame.size();
+        data = enable ? frame[index - start] : 0;
+        ++_system_clock;
+        transmitter._work(false);
+        transmitter._strobe();
+        unsigned packed = unsigned(transmitter.symbols_out());
+        if (transmitter.fault_out())
+            throw std::runtime_error("PCS stimulus generated an invalid symbol");
+        quartet value{};
+        for (unsigned lane = 0; lane < pairs; ++lane)
+            value[lane] = int((packed >> (3 * lane)) & 7) - 2;
+        result.levels.push_back(value);
+        result.gmii.push_back(previous_word);
+        previous_word = enable ? 256 | data : 0;
+    }
+    return result;
+}
 symbols pattern(unsigned count, unsigned seed) {
     symbols result(count);
     for (unsigned i = 0; i < count; ++i) {
@@ -68,9 +136,16 @@ int main(int argc, char** argv) {
         if (refinement != 1 && refinement != 2)
             throw std::runtime_error("refinement must be 1 or 2");
         bool system = name.starts_with("link") || name == "pair_link";
-        unsigned count = name == "link_loaded" ? 512 : system ? 256 : 64;
-        unsigned training = name == "link_loaded" ? 416 : 160;
+        unsigned count = name.starts_with("r2r_dac") ? 256 : name.starts_with("strongarm") ? 16 : name == "link_pcs" ? 768 : name == "link_loaded" ? 512 : system ? 256 : 64;
+        unsigned training = name == "link_loaded" || name == "link_pcs" ? 416 : 160;
         auto a = pattern(count + 3, 0x13579b), b = pattern(count + 3, 0xa91e37);
+        std::optional<pcs_stimulus> pcs_a, pcs_b;
+        if (name == "link_pcs") {
+            pcs_a = frame_pattern(count + 3, 0x13579b, true, 608);
+            pcs_b = frame_pattern(count + 3, 0xa91e37, false, 608);
+            a = pcs_a->levels;
+            b = pcs_b->levels;
+        }
         simulation sim;
         sim.analytic_jacobian = true;
         sim.minimum_step = duration(ui / 65536);
@@ -98,7 +173,87 @@ int main(int argc, char** argv) {
             tx.VREF = vref;
             tx.VCM = vcm;
         };
-        if (name == "dac" || name == "dac_loaded") {
+        if (name == "r2r_dac" || name == "r2r_dac_loaded") {
+            mos_r2r_dac dac;
+            for (unsigned bit = 0; bit < 8; ++bit)
+                signal(dac.BIT_N[bit], [bit](unsigned i) { return ((i * 73) & (1 << bit)) ? 0 : supply; }, supply);
+            bind(dac, vdd, vss);
+            if (name.ends_with("loaded"))
+                dac.OUT = resistor(vss, resistance(20000));
+            sim.observe("OUT_ABS", dac.OUT, vss);
+        } else if (name == "mos_track_hold" || name == "mos_track_hold_loaded") {
+            mos_track_hold sampler;
+            electrical command;
+            points wave{{0, common_mode}};
+            for (unsigned i = 0; i < count + 2; ++i) {
+                wave.emplace_back((i + .15) * ui, wave.back().second);
+                wave.emplace_back((i + .19) * ui, common_mode + .25 * a[i][0]);
+                wave.emplace_back((i + .65) * ui, wave.back().second);
+                wave.emplace_back((i + .69) * ui, common_mode + .5 * b[i][0]);
+            }
+            command = sim_pwl_voltage_source(vss, wave);
+            sampler.IN = resistor(command, resistance(50));
+            auto gate = clock_wave(count + 2);
+            for (auto& point : gate)
+                point.second *= supply / logic_supply;
+            sampler.CLOCK = sim_pwl_voltage_source(vss, gate);
+            bind(sampler, vdd, vss);
+            if (name.ends_with("loaded"))
+                sampler.OUT = resistor(vss, resistance(200000));
+            sim.observe("OUT_ABS", sampler.OUT, vss);
+            sim.observe("IN_ABS", sampler.IN, vss);
+            sim.observe("SOURCE", command, vss);
+        } else if (name == "strongarm" || name == "strongarm_loaded") {
+            strongarm_comparator comparator;
+            const std::array<double, 6> amplitudes{.001, .0025, .005, .01, .04, .08};
+            auto difference = [&](unsigned i) { return amplitudes[i % amplitudes.size()] * ((i / 6) % 2 ? -1 : 1); };
+            signal(comparator.PLUS, [&](unsigned i) { return common_mode + difference(i) / 2; });
+            signal(comparator.MINUS, [&](unsigned i) { return common_mode - difference(i) / 2; });
+            auto wave = clock_wave(count + 2, .45);
+            for (auto& point : wave)
+                point.second *= supply / logic_supply;
+            comparator.CLOCK = sim_pwl_voltage_source(vss, wave);
+            bind(comparator, vdd, vss);
+            if (name.ends_with("loaded")) {
+                comparator.OUTP = capacitor(vss, capacitance_value(.15e-12));
+                comparator.OUTN = capacitor(vss, capacitance_value(.15e-12));
+            }
+            sim.observe("P_ABS", comparator.OUTP, vss);
+            sim.observe("N_ABS", comparator.OUTN, vss);
+            sim.observe("INPUT", comparator.PLUS, comparator.MINUS);
+            sim.observe("LEFT", comparator.LEFT, vss);
+            sim.observe("RIGHT", comparator.RIGHT, vss);
+        } else if (name == "passive_hybrid" || name == "passive_hybrid_loaded") {
+            passive_hybrid bridge;
+            electrical command_p, command_n, local_p, local_n;
+            signal(command_p, [&](unsigned i) { return common_mode + .25 * a[i][0]; });
+            signal(command_n, [&](unsigned i) { return common_mode - .25 * a[i][0]; });
+            signal(local_p, [&](unsigned i) { return common_mode + .25 * b[i][0]; });
+            signal(local_n, [&](unsigned i) { return common_mode - .25 * b[i][0]; });
+            bridge.P = resistor(command_p, resistance(50));
+            bridge.N = resistor(command_n, resistance(50));
+            bridge.LOCAL_P = resistor(local_p, resistance(50));
+            bridge.LOCAL_N = resistor(local_n, resistance(50));
+            bridge.VCM = vcm;
+            bind(bridge, vdd, vss);
+            if (name.ends_with("loaded"))
+                bridge.OUTP = resistor(bridge.OUTN, resistance(2000));
+            sim.observe("DIFF", bridge.OUTP, bridge.OUTN);
+            sim.observe("LINE", bridge.P, bridge.N);
+            sim.observe("P_ABS", bridge.OUTP, vss);
+            sim.observe("N_ABS", bridge.OUTN, vss);
+        } else if (name == "mos_amplifier" || name == "mos_amplifier_loaded") {
+            nmos_resistor_amplifier amplifier;
+            signal(amplifier.PLUS, [&](unsigned i) { return common_mode + .02 * a[i][0]; });
+            signal(amplifier.MINUS, [&](unsigned i) { return common_mode - .02 * a[i][0]; });
+            bind(amplifier, vdd, vss);
+            if (name.ends_with("loaded"))
+                amplifier.OUTP = resistor(amplifier.OUTN, resistance(2000));
+            sim.observe("DIFF", amplifier.OUTP, amplifier.OUTN);
+            sim.observe("P_ABS", amplifier.OUTP, vss);
+            sim.observe("N_ABS", amplifier.OUTN, vss);
+            sim.observe("TAIL", amplifier.TAIL, vss);
+        } else if (name == "dac" || name == "dac_loaded") {
             pam5_dac dac;
             codes(dac.CODE, a, 0);
             dac.VREF = vref;
@@ -268,7 +423,7 @@ int main(int argc, char** argv) {
             sim.observe("LINEA0", block.tx_a.P, block.tx_a.N);
             sim.observe("LINEB0", block.tx_b.P, block.tx_b.N);
         } else if (name.starts_with("link")) {
-            link block;
+            analog::one_g::link block;
             for (unsigned lane = 0; lane < pairs; ++lane) {
                 codes(block.A[lane], a, lane);
                 codes(block.B[lane], b, lane);
@@ -302,8 +457,16 @@ int main(int argc, char** argv) {
         } else {
             throw std::runtime_error("unknown 1G bench: " + name);
         }
-        double stop = count * ui, step = ui / (128 * refinement);
+        // Regeneration is much faster than a symbol. A symbol-rate timestep can
+        // numerically stabilize the latch's unstable symmetric equilibrium.
+        double stop = count * ui, step = ui / ((name.starts_with("r2r_dac") ? 384 : name.starts_with("strongarm") ? 3072 : 128) * refinement);
         std::filesystem::create_directories(out);
+        if (pcs_a) {
+            std::ofstream gmii(out / "gmii.csv");
+            gmii << "symbol,a,b\n";
+            for (unsigned i = 0; i < count; ++i)
+                gmii << i << ',' << pcs_a->gmii[i] << ',' << pcs_b->gmii[i] << '\n';
+        }
         // Stamp charges in the SPICE host to avoid flattened OSDI ddt conditioning failures.
         // Each capacitor retains the same terminals, value and initial voltage.
         verilog_a::write_experiment(sim, out, {duration(stop), duration(step), duration(step / 2), 1e-16, 2, 1e-18});

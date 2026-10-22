@@ -1,4 +1,5 @@
 #include "Module.h"
+#include <functional>
 #include "Project.h"
 #include "Method.h"
 #include "Field.h"
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <map>
 #include <unordered_set>
 
 using namespace cpphdl;
@@ -895,6 +897,159 @@ bool Module::print(std::ofstream& out)
     return true;
 }
 
+namespace {
+
+// Native lifecycle calls select a child's actual clock source. This matters
+// when a legacy one-clock component is nested in a secondary clock domain.
+bool childClockConnections(Module& module, const Field& member,
+    std::map<std::string, std::string>& connections)
+{
+    const auto clocks = generatedClockNames();
+    for (const auto& clock : clocks)
+        connections[clock] = clock;
+    std::map<std::string, std::string> selected;
+    bool valid = true;
+
+    auto clockMethod = [&](const std::string& name, std::string& clock, bool& negative) {
+        negative = name == "_work_neg" || name.rfind("_work_neg_", 0) == 0;
+        if (name == "_work" || name == "_work_neg") {
+            clock = clocks.front();
+            return true;
+        }
+        const std::string prefix = negative ? "_work_neg_" : "_work_";
+        if (name.rfind(prefix, 0) != 0)
+            return false;
+        clock = name.substr(prefix.size());
+        return std::find(clocks.begin(), clocks.end(), clock) != clocks.end();
+    };
+
+    for (const auto& clock : clocks) {
+        const bool legacy = clock == clocks.front()
+            && !findMethod(module, "_work_" + clock);
+        for (bool negative : {false, true}) {
+            const std::string root = legacy ? (negative ? "_work_neg" : "_work")
+                : (negative ? "_work_neg_" : "_work_") + clock;
+            std::unordered_set<std::string> visited;
+            std::function<void(const std::string&)> visit = [&](const std::string& name) {
+                if (!visited.insert(name).second)
+                    return;
+                const Method* method = findMethod(module, name);
+                if (!method)
+                    return;
+                for (auto statement : method->statements) {
+                    statement.traverseIf([&](Expr& expression) {
+                        if (expression.type != Expr::EXPR_MEMBERCALL
+                            && expression.type != Expr::EXPR_CALL)
+                            return false;
+                        const bool local = expression.type == Expr::EXPR_CALL
+                            || (!expression.sub.empty() &&
+                                (expression.sub[0].type == Expr::EXPR_NONE
+                                 || expression.sub[0].value == "_this"));
+                        if (local) {
+                            visit(expression.value);
+                            return false;
+                        }
+                        if (expression.sub.empty()
+                            || expressionRootName(expression.sub[0]) != member.name)
+                            return false;
+                        std::string childClock;
+                        bool childNegative;
+                        if (!clockMethod(expression.value, childClock, childNegative))
+                            return false;
+                        const std::string source = (negative != childNegative ? "~" : "") + clock;
+                        const auto old = selected.find(childClock);
+                        if (old != selected.end() && old->second != source) {
+                            std::cerr << "ERROR: conflicting child clock sources: " << module.name
+                                      << "::" << member.name << "::" << childClock << "\n";
+                            valid = false;
+                        }
+                        selected[childClock] = source;
+                        connections[childClock] = source;
+                        return false;
+                    });
+                }
+            };
+            visit(root);
+        }
+    }
+    return valid;
+}
+
+// A child's clock block replaces its native lifecycle call. Preserve the reset
+// argument at that boundary instead of silently wiring every child to reset.
+bool childResetConnection(Module& module, const Field& member, std::string& connection)
+{
+    connection = "reset";
+    bool found = false, valid = true;
+    for (auto& method : module.methods) {
+        if (method.name != "_work" && method.name.rfind("_work_", 0) != 0)
+            continue;
+        std::unordered_set<std::string> locals;
+        for (const auto& local : method.temps)
+            locals.insert(local.name);
+        for (auto& statement : method.statements) {
+            statement.traverseIf([&](Expr& part) {
+                if (part.type == Expr::EXPR_DECL)
+                    locals.insert(part.value);
+                return false;
+            });
+        }
+        for (auto& statement : method.statements) {
+            statement.traverseIf([&](Expr& expression) {
+                if (expression.type != Expr::EXPR_MEMBERCALL || expression.sub.size() != 2
+                    || (expression.value != "_work" && expression.value.rfind("_work_", 0) != 0))
+                    return false;
+                Expr receiver = expression.sub[0];
+                std::vector<Expr> indices;
+                while (receiver.type == Expr::EXPR_INDEX && receiver.sub.size() == 2) {
+                    indices.insert(indices.begin(), receiver.sub[1]);
+                    Expr base = receiver.sub[0];
+                    receiver = std::move(base);
+                }
+                if (receiver.str() != member.name)
+                    return false;
+                Expr argument = expression.sub[1];
+                std::map<std::string, std::string> substitutions;
+                if (indices.size() == member.array.size()) {
+                    auto generated = memberArrayIndices(indices.size());
+                    for (size_t i = 0; i < indices.size(); ++i) {
+                        if (indices[i].type == Expr::EXPR_VAR)
+                            substitutions[indices[i].value] = generated[i];
+                    }
+                }
+                if (method.arguments.size() == 1)
+                    substitutions[method.arguments[0].name] = "reset";
+                argument.traverseIf([&](Expr& part) {
+                    part.indent = 0;
+                    if (part.type == Expr::EXPR_VAR) {
+                        const auto substitution = substitutions.find(part.value);
+                        if (substitution != substitutions.end()) {
+                            part.value = substitution->second;
+                        } else if (locals.count(part.value)) {
+                            std::cerr << "ERROR: child reset depends on a process-local variable: "
+                                      << module.name << "::" << member.name << "\n";
+                            valid = false;
+                        }
+                    }
+                    return false;
+                });
+                const auto text = argument.str();
+                if (found && connection != text) {
+                    std::cerr << "ERROR: conflicting child reset arguments: " << module.name
+                              << "::" << member.name << "\n";
+                    valid = false;
+                }
+                connection = text;
+                found = true;
+                return false;
+            });
+        }
+    }
+    return valid;
+}
+
+}
+
 bool Module::printMembers(std::ofstream& out)
 {
     currModule = this;
@@ -914,6 +1069,12 @@ bool Module::printMembers(std::ofstream& out)
 
     // printWires for members
     for (auto& member : members) {
+        std::string childReset;
+        if (!childResetConnection(*this, member, childReset))
+            return false;
+        std::map<std::string, std::string> childClocks;
+        if (!childClockConnections(*this, member, childClocks))
+            return false;
         member.indent = 1;
         if (member.array.size()) {  // array of members
             Module* mod = currProject->findModule(member.expr.str());
@@ -960,12 +1121,12 @@ bool Module::printMembers(std::ofstream& out)
             out << " " << member.name << " (" << "\n";
             const auto clockNames = generatedClockNames();
             out << std::string(8 + member.array.size() * 4, ' ') << "."
-                << clockNames.front() << "(" << clockNames.front() << ")\n";
+                << clockNames.front() << "(" << childClocks[clockNames.front()] << ")\n";
             for (size_t i = 1; i < clockNames.size(); ++i) {
                 out << std::string(4 + member.array.size() * 4, ' ') << ",           ."
-                    << clockNames[i] << "(" << clockNames[i] << ")\n";
+                    << clockNames[i] << "(" << childClocks[clockNames[i]] << ")\n";
             }
-            out << std::string(4 + member.array.size() * 4, ' ') << ",           .reset(reset)\n" ;
+            out << std::string(4 + member.array.size() * 4, ' ') << ",           .reset(" << childReset << ")\n";
             for (auto& port : mod->ports) {
                 out << std::string(4 + member.array.size() * 4, ' ') << ",           ." << port.name
                     << "(" << member.name << "__" << port.name << svIndex(indices) << ")" << "\n";  // cant be reg or memory
@@ -1015,11 +1176,11 @@ bool Module::printMembers(std::ofstream& out)
             }
             out << " " << member.name << " (" << "\n";
             const auto clockNames = generatedClockNames();
-            out << "        ." << clockNames.front() << "(" << clockNames.front() << ")\n";
+            out << "        ." << clockNames.front() << "(" << childClocks[clockNames.front()] << ")\n";
             for (size_t i = 1; i < clockNames.size(); ++i) {
-                out << ",       ." << clockNames[i] << "(" << clockNames[i] << ")\n";
+                out << ",       ." << clockNames[i] << "(" << childClocks[clockNames[i]] << ")\n";
             }
-            out << ",       .reset(reset)\n" ;
+            out << ",       .reset(" << childReset << ")\n";
             for (auto& port : mod->ports) {
                 out << ",       ." << port.name << "(" << member.name << "__" << port.name << ")" << "\n";  // cant be reg or memory
             }

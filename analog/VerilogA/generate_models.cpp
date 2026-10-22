@@ -1,5 +1,10 @@
 #include <VerilogA/export.hpp>
 #include <basic/basic.hpp>
+#include <basic/level_down.hpp>
+#include <basic/nmos_source_follower.hpp>
+#include <basic/differential_source_follower.hpp>
+#include <basic/buffered_nand_latch.hpp>
+#include <basic/cascode_opamp.hpp>
 
 // Reuse the example IC definitions verbatim, without running their testbenches.
 #define main inverter_example_main
@@ -54,7 +59,32 @@ int main(int argc, char** argv) {
         MODEL(nmos_differential_pair, "nmos_differential_pair", PORT(PLUS), PORT(MINUS), PORT(LEFT), PORT(RIGHT),
               PORT(TAIL));
         MODEL(pmos_current_mirror, "pmos_current_mirror", PORT(IN), PORT(OUT));
+        MODEL(nmos_resistor_amplifier, "nmos_resistor_amplifier", PORT(PLUS), PORT(MINUS), PORT(OUTP), PORT(OUTN));
+        MODEL(strongarm_comparator, "strongarm_comparator", PORT(PLUS), PORT(MINUS), PORT(CLOCK), PORT(OUTP), PORT(OUTN));
+        MODEL(mos_track_hold, "mos_track_hold", PORT(IN), PORT(CLOCK), PORT(OUT));
+        MODEL(level_shifter, "level_shifter", PORT(Vlogic), PORT(A), PORT(Y), PORT(Y_N));
+        MODEL(level_down, "level_down", PORT(A), PORT(Y));
+        MODEL(nmos_source_follower, "nmos_source_follower", PORT(IN), PORT(OUT));
+        MODEL(differential_source_follower, "differential_source_follower", PORT(PLUS), PORT(MINUS), PORT(OUTP), PORT(OUTN));
+        MODEL(level_shift_bias, "level_shift_bias", PORT(Vlogic), PORT(BIAS));
+        MODEL(cascoded_level_shifter, "cascoded_level_shifter", PORT(Vlogic), PORT(BIAS), PORT(A), PORT(Y), PORT(Y_N));
+        MODEL(nand_latch, "nand_latch", PORT(SET_N), PORT(RESET_N), PORT(Q), PORT(Q_N));
+        MODEL(cleared_nand_latch, "cleared_nand_latch", PORT(SET_N), PORT(RESET_N), PORT(CLEAR), PORT(Q), PORT(Q_N));
+        MODEL(buffered_nand_latch, "buffered_nand_latch", PORT(SET_N), PORT(RESET_N), PORT(CLEAR), PORT(Q), PORT(Q_N));
+        MODEL(cmos_d_latch, "cmos_d_latch", PORT(D), PORT(ENABLE), PORT(CLEAR), PORT(Q), PORT(Q_N));
+        MODEL(cmos_dff, "cmos_dff", PORT(D), PORT(CLOCK), PORT(CLEAR), PORT(Q), PORT(Q_N));
+        MODEL(cmos_divide2, "cmos_divide2", PORT(CLOCK), PORT(CLEAR), PORT(Q), PORT(Q_N));
+        MODEL(cmos_phase_frequency_detector, "cmos_phase_frequency_detector", PORT(REF), PORT(FEEDBACK),
+              PORT(CLEAR), PORT(UP), PORT(UP_N), PORT(DOWN), PORT(DOWN_N));
+        emit<mos_r2r_dac>(basic, "mos_r2r_dac", [](auto& c) {
+            std::vector<named_port> ports{PORT(Vdd), PORT(Vss), PORT(OUT)};
+            for (unsigned bit = 0; bit < 8; ++bit)
+                ports.push_back({"BIT_N" + std::to_string(bit), c.BIT_N[bit]});
+            return ports;
+        });
         MODEL(opamp, "opamp", PORT(PLUS), PORT(MINUS), PORT(OUT));
+        MODEL(cascode_opamp, "cascode_opamp", PORT(PLUS), PORT(MINUS), PORT(OUT),
+              PORT(BIAS_N), PORT(BIAS_P), PORT(TAIL_BIAS));
         MODEL(non_inverting_amplifier, "non_inverting_amplifier", PORT(IN), PORT(OUT));
         MODEL(regulator, "regulator", PORT(REF), PORT(OUT));
         MODEL(resistor_divider, "resistor_divider", PORT(TOP), PORT(BOTTOM), PORT(TAP));

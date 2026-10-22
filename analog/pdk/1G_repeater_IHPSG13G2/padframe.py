@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 import re
 import klayout.db as db
+from sealring import append_sealring
+from io_lvs import elaborate
+from decoupling import append_decoupling
 
 SOURCE = Path(__file__).resolve().parent
 RAILS = ("vdd", "vss", "iovdd", "iovss")
@@ -47,19 +50,28 @@ def pad_plan():
             "north": analog("b"), "west": supply[4:]}
 
 
-def assemble(pdk, work):
+def assemble(pdk, work, common_ground=False, core_size=640):
+    if isinstance(core_size, bool) or not isinstance(core_size, int) or core_size < 640:
+        raise ValueError('core opening must be an integer number of micrometers, at least 640')
     work.mkdir(parents=True, exist_ok=True)
     lib = pdk / "ihp-sg13g2/libs.ref/sg13g2_io"
     lef = (lib / "lef/sg13g2_io.lef").read_text()
     cdl = (lib / "cdl/sg13g2_io.cdl").read_text()
+    lvs_library, substrate_cells, lvs_adapter = elaborate(cdl)
+    (work / "io_klayout.cdl").write_text(lvs_library)
     layout = db.Layout()
     layout.read(str(lib / "gds/sg13g2_io.gds"))
     top = layout.create_cell("RepeaterPadframe")
     scale = 1 / layout.dbu
-    ring = 1000
+    ring = core_size + 360
     inset = 140
     placements = []
-    external = list(RAILS)
+    mdi_paths = []
+    supply_nets = dict(zip(RAILS, RAILS))
+    if common_ground:
+        supply_nets['iovss'] = 'vss'
+    external = list(dict.fromkeys(supply_nets.values()))
+    ground_straps = []
     schematic = []
     rail_regions = {rail: {layer: db.Region() for layer in LAYERS.values()} for rail in RAILS}
     footprints = []
@@ -73,8 +85,13 @@ def assemble(pdk, work):
         top.insert(db.CellInstArray(cell.cell_index(), transform))
         footprint = cell.bbox().transformed(transform)
         # Use the LEF abutment box, since GDS label extents may exceed its boundary.
-        width = 180 if cell_name == "sg13g2_Corner" else 80
-        boundary = db.Box(0, 0, round(width * scale), round(180 * scale)).transformed(transform)
+        macro = re.search(r'^MACRO ' + re.escape(cell_name) + r'\s*$(.*?)^END ' + re.escape(cell_name) + r'\s*$',
+                          lef, re.M | re.S)
+        size = re.search(r'\bSIZE ([\d.]+) BY ([\d.]+)\s*;', macro[1]) if macro else None
+        if size is None or float(size[2]) != 180:
+            raise ValueError('unsupported I/O abutment dimensions: ' + cell_name)
+        width, height = map(float, size.groups())
+        boundary = db.Box(0, 0, round(width * scale), round(height * scale)).transformed(transform)
         footprints.append(db.Region(boundary))
         pins = re.search(r"^\.SUBCKT " + re.escape(cell_name) + r" ([^\n]+)", cdl, re.M)
         if pins is None:
@@ -82,7 +99,8 @@ def assemble(pdk, work):
         pin_order = pins[1].split()
         if set(pin_order) != set(nets):
             raise ValueError("schematic pin mismatch " + name)
-        schematic.append("X" + name + " " + " ".join(nets[pin] for pin in pin_order) + " " + cell_name)
+        body = " substrate" if cell_name in substrate_cells else ""
+        schematic.append("X" + name + " " + " ".join(nets[pin] for pin in pin_order) + body + " " + cell_name)
         for pin, net in nets.items():
             shapes = pin_shapes(lef, cell_name, pin)
             # Label one conductive shape on each signal terminal. Abutted supply
@@ -102,21 +120,62 @@ def assemble(pdk, work):
                                nets=nets))
 
     for index, (angle, x, y) in enumerate(((0, 0, 0), (1, ring, 0), (2, ring, ring), (3, 0, ring))):
-        place(f"corner{index}", "sg13g2_Corner", angle, inset + x, inset + y, dict(zip(RAILS, RAILS)))
+        place(f"corner{index}", "sg13g2_Corner", angle, inset + x, inset + y, dict(supply_nets))
+        if common_ground:
+            transform = db.Trans(angle, False, round((inset + x) * scale), round((inset + y) * scale))
+            # The corner's right-edge Metal3 ports are IOVSS y=126..134
+            # and VSS y=140..158 um. Join them without crossing VDD/IOVDD.
+            strap = db.Box(*[round(value * scale) for value in (178.5, 130, 179.5, 149)]).transformed(transform)
+            top.shapes(layout.layer(LAYERS['Metal3'], 0)).insert(strap)
+            for rail in ('vss', 'iovss'):
+                if (rail_regions[rail][LAYERS['Metal3']] & db.Region(strap)).is_empty():
+                    raise ValueError('common-ground strap does not reach ' + rail)
+                rail_regions[rail][LAYERS['Metal3']].insert(strap)
+            ground_straps.append(dict(corner=index, layer='Metal3',
+                bbox_um=[value / scale for value in (strap.left, strap.bottom, strap.right, strap.top)]))
     for side, pads in pad_plan().items():
+        if len(pads) != 8:
+            raise ValueError('padframe has a gap in its required eight-pad side plan')
+        gap, remainder = divmod(core_size - 640, 9)
+        along = 180
+        fillers = ((50, 'sg13g2_Filler10000'), (20, 'sg13g2_Filler4000'),
+                   (10, 'sg13g2_Filler2000'), (5, 'sg13g2_Filler1000'),
+                   (2, 'sg13g2_Filler400'), (1, 'sg13g2_Filler200'))
+        filler_index = 0
+        def position(distance):
+            angle, x, y = {'south': (0, distance, 0), 'east': (1, ring, distance),
+                           'north': (2, ring - distance, ring), 'west': (3, 0, ring - distance)}[side]
+            return angle, inset + x, inset + y
+        def fill_gap(length):
+            nonlocal along, filler_index
+            for width, cell in fillers:
+                while length >= width:
+                    place(f'{side}_filler{filler_index}', cell, *position(along), dict(supply_nets))
+                    along += width
+                    length -= width
+                    filler_index += 1
+            if length:
+                raise ValueError('I/O filler widths cannot cover the requested gap')
         for index, pad in enumerate(pads):
-            along = 180 + 80 * index
-            angle, x, y = {"south": (0, along, 0), "east": (1, ring, along),
-                           "north": (2, ring - along, ring), "west": (3, 0, ring - along)}[side]
-            nets = dict(zip(RAILS, RAILS))
+            fill_gap(gap + int(index < remainder))
+            nets = dict(supply_nets)
             if pad["cell"] == "sg13g2_IOPadAnalog":
                 nets.update(pad=pad["name"], padres=pad["name"] + "_core")
                 external.extend((nets["pad"], nets["padres"]))
+                # The high-current transmitter uses the primary pad net.
+                # padres is behind the secondary-protection resistor and is
+                # a separate receive/sense path, not a TX output connection.
+                mdi_paths.append(dict(name=pad['name'], transmit_pin='pad', transmit_net=nets['pad'],
+                                      receive_pin='padres', receive_net=nets['padres']))
             elif pad["cell"] in ("sg13g2_IOPadIn", "sg13g2_IOPadOut4mA"):
                 terminal = "p2c" if pad["cell"] == "sg13g2_IOPadIn" else "c2p"
                 nets.update(pad=pad["name"], **{terminal: pad["name"] + "_core"})
                 external.extend((nets["pad"], nets[terminal]))
-            place(pad["name"], pad["cell"], angle, inset + x, inset + y, nets)
+            place(pad["name"], pad["cell"], *position(along), nets)
+            along += 80
+        fill_gap(gap + int(8 < remainder))
+        if along != ring - 180:
+            raise ValueError('padframe side did not reach the next corner')
     occupied = db.Region()
     for footprint in footprints:
         if not (occupied & footprint).is_empty():
@@ -149,25 +208,41 @@ def assemble(pdk, work):
         for second in RAILS:
             if first >= second:
                 continue
+            if supply_nets[first] == supply_nets[second]:
+                continue
             for layer in LAYERS.values():
                 if not (rail_regions[first][layer] & rail_regions[second][layer]).is_empty():
                     raise ValueError(f"supply short {first}/{second}")
+    seal = append_sealring(layout, top, pdk, ring + 2 * inset)
+    decoupling, decoupling_schematic = append_decoupling(layout, top, pdk, core_size)
     final = db.Layout()
     final.dbu = layout.dbu
     final.create_cell(top.name).copy_tree(top)
     gds = work / "repeater_padframe.gds"
-    final.write(str(gds))
+    options = db.SaveLayoutOptions()
+    options.write_context_info = False
+    final.write(str(gds), options)
     (work / "padframe.cdl").write_text("* Real IHP padframe/ESD schematic; core terminals remain exposed.\n"
-        + ".SUBCKT RepeaterPadframe " + " ".join(external) + "\n" + "\n".join(schematic) + "\n.ENDS\n")
-    (work / "lvs.cir").write_text(f'.include "{lib / "cdl/sg13g2_io.cdl"}"\n.include "{work / "padframe.cdl"}"\n')
+        + decoupling_schematic + ".SUBCKT RepeaterPadframe " + " ".join(external) + "\n"
+        + "\n".join(schematic) + "\nXcore_decap vdd vss RepeaterCoreDecoupling\n.ENDS\n")
+    stdcell_cdl = pdk / "ihp-sg13g2/libs.ref/sg13g2_stdcell/cdl/sg13g2_stdcell.cdl"
+    (work / "lvs.cir").write_text(f'.include "{work / "io_klayout.cdl"}"\n'
+                                 f'.include "{stdcell_cdl}"\n.include "{work / "padframe.cdl"}"\n')
     report = dict(status="padframe_assembled", top=top.name, full_1000base_t_chip=False,
-                  ring_um=ring, die_um=ring + 2 * inset, seal_ring_present=False,
+                  ring_um=ring, die_um=ring + 2 * inset, seal_ring_present=True, sealring=seal, lvs_adapter=lvs_adapter,
+                  core_opening_um=core_size,
+                  core_bbox_um=[inset + 180, inset + 180, inset + ring - 180, inset + ring - 180],
+                  decoupling=decoupling,
+                  common_ground=common_ground, ground_straps=ground_straps,
+                  mdi_paths=mdi_paths,
                   cells=dict(Counter(item["cell"] for item in placements)), placements=placements,
                   ports=external, abutment_rail_components=rail_checks,
                   esd="PDK analog/input/output clamps and supply RC clamps; HBM/CDM qualification not performed",
                   gds_sha256=hashlib.sha256(gds.read_bytes()).hexdigest(),
                   source_sha256={str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in
-                                 (lib / "gds/sg13g2_io.gds", lib / "lef/sg13g2_io.lef", lib / "cdl/sg13g2_io.cdl")})
+                                 (lib / "gds/sg13g2_io.gds", lib / "lef/sg13g2_io.lef", lib / "cdl/sg13g2_io.cdl",
+                                  SOURCE / "padframe.py", SOURCE / "sealring.py", SOURCE / "io_lvs.py", SOURCE / "decoupling.py",
+                                  pdk / "ihp-sg13g2/libs.tech/klayout/python/sg13g2_pycell_lib/ihp/sealring_code.py")})
     (work / "interface.json").write_text(json.dumps(external, indent=2) + "\n")
     (work / "padframe.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
@@ -177,5 +252,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdk", type=Path, default=SOURCE.parent / "IHPSG13G2")
     parser.add_argument("--work", type=Path, default=SOURCE / "results/padframe")
+    parser.add_argument('--core-size', type=int, default=640,
+                        help='square core opening in whole micrometers; real I/O fillers close the enlarged ring')
+    parser.add_argument("--common-ground", action="store_true",
+                        help="join VSS and IOVSS with explicit Metal3 straps at all four corners")
     args = parser.parse_args()
-    print(json.dumps(assemble(args.pdk.resolve(), args.work.resolve()), indent=2))
+    print(json.dumps(assemble(args.pdk.resolve(), args.work.resolve(), args.common_ground, args.core_size), indent=2))

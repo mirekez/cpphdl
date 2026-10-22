@@ -120,6 +120,34 @@ inline void simulation::compile() {
     for (auto& e : elements)
         if (e.kind == law::sim_voltage_source || e.kind == law::capacitor || e.kind == law::inductor)
             e.auxiliary = unknowns_++;
+    // Capacitor initial voltages in a closed loop are dependent constraints.
+    // Keep a spanning forest after the mandatory ideal voltage sources. The
+    // remaining capacitor multipliers receive a zero-current gauge during
+    // startup/hold only; their full C*dV/dt laws remain in every time step.
+    std::vector<std::size_t> constraint_parent(parents_.size());
+    for (std::size_t i = 0; i < constraint_parent.size(); ++i)
+        constraint_parent[i] = i;
+    auto find_constraint = [&](std::size_t node) {
+        while (constraint_parent[node] != node) {
+            constraint_parent[node] = constraint_parent[constraint_parent[node]];
+            node = constraint_parent[node];
+        }
+        return node;
+    };
+    auto join_constraint = [&](std::size_t a, std::size_t b) {
+        a = find_constraint(root(a));
+        b = find_constraint(root(b));
+        if (a == b)
+            return false;
+        constraint_parent[a] = b;
+        return true;
+    };
+    for (const auto& e : elements)
+        if (e.kind == law::sim_voltage_source)
+            join_constraint(e.a, e.b);
+    for (auto& e : elements)
+        if (e.kind == law::capacitor)
+            e.hold_basis = join_constraint(e.a, e.b);
     auto needs = [&](std::size_t n) {
         if (!digital.at(n).writer)
             throw diagnostic("E_UNDERCONSTRAINED", "a read bit signal has no assigning purpose or stimulus");
@@ -182,6 +210,7 @@ inline void simulation::compile() {
             ordered.push_back(op);
     operations = std::move(ordered);
     obligation_samples_.resize(obligations_.size());
+    assumption_pass_.assign(obligations_.size(), true);
     frozen_ = true;
 }
 
@@ -212,8 +241,9 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
         case law::capacitor: {
             stamp(e.a, e.b, x[e.auxiliary]);
             if (hold) {
-                extra.push_back(v(e.a) - v(e.b) - (initial ? e.initial : previous(e.a) - previous(e.b)));
-                scales.push_back(1);
+                extra.push_back(e.hold_basis ? v(e.a) - v(e.b) - (initial ? e.initial : previous(e.a) - previous(e.b))
+                                             : x[e.auxiliary]);
+                scales.push_back(e.hold_basis ? 1 : 1e-3);
             } else {
                 // Integral voltage form avoids C/dt amplification of roundoff for large DC-blocking caps.
                 extra.push_back(v(e.a) - v(e.b) - previous(e.a) + previous(e.b) - dt / e.c * x[e.auxiliary]);
@@ -267,10 +297,16 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
 // Exact piecewise derivatives avoid finite-difference steps crossing narrow switch/diode boundaries.
 inline std::vector<std::vector<double>> simulation::jacobian(const std::vector<double>& x, double dt, bool hold) const {
     std::vector<std::vector<double>> j(x.size(), std::vector<double>(x.size()));
+    stamp_jacobian(x, dt, hold, [&](std::size_t row, std::size_t column, double value) { j[row][column] += value; });
+    return j;
+}
+
+inline void simulation::stamp_jacobian(const std::vector<double>& x, double dt, bool hold,
+    const std::function<void(std::size_t, std::size_t, double)>& add) const {
     auto v = [&](std::size_t node) { return node_voltage(x, node); };
     auto row = [&](std::size_t equation, std::size_t node, double value) {
         if (root(node) != 0)
-            j[equation][index_[root(node)]] += value;
+            add(equation, index_[root(node)], value);
     };
     auto derivative = [&](std::size_t a, std::size_t b, std::size_t control, double value) {
         if (root(a) != 0)
@@ -284,9 +320,9 @@ inline std::vector<std::vector<double>> simulation::jacobian(const std::vector<d
     };
     auto branch_state = [&](const element& e) {
         if (root(e.a) != 0)
-            j[index_[root(e.a)]][e.auxiliary] += 1;
+            add(index_[root(e.a)], e.auxiliary, 1);
         if (root(e.b) != 0)
-            j[index_[root(e.b)]][e.auxiliary] -= 1;
+            add(index_[root(e.b)], e.auxiliary, -1);
     };
     for (const auto& e : elements) {
         switch (e.kind) {
@@ -301,10 +337,14 @@ inline std::vector<std::vector<double>> simulation::jacobian(const std::vector<d
         case law::capacitor:
             branch_state(e);
             if (hold) {
-                row(e.auxiliary, e.a, 1);
-                row(e.auxiliary, e.b, -1);
+                if (e.hold_basis) {
+                    row(e.auxiliary, e.a, 1);
+                    row(e.auxiliary, e.b, -1);
+                } else {
+                    add(e.auxiliary, e.auxiliary, 1);
+                }
             } else {
-                j[e.auxiliary][e.auxiliary] = -dt / e.c;
+                add(e.auxiliary, e.auxiliary, -dt / e.c);
                 row(e.auxiliary, e.a, 1);
                 row(e.auxiliary, e.b, -1);
             }
@@ -312,11 +352,11 @@ inline std::vector<std::vector<double>> simulation::jacobian(const std::vector<d
         case law::inductor:
             branch_state(e);
             if (hold)
-                j[e.auxiliary][e.auxiliary] = 1;
+                add(e.auxiliary, e.auxiliary, 1);
             else {
                 row(e.auxiliary, e.a, 1);
                 row(e.auxiliary, e.b, -1);
-                j[e.auxiliary][e.auxiliary] = -e.l / dt;
+                add(e.auxiliary, e.auxiliary, -e.l / dt);
             }
             break;
         case law::transconductor:
@@ -362,7 +402,6 @@ inline std::vector<std::vector<double>> simulation::jacobian(const std::vector<d
         }
         }
     }
-    return j;
 }
 
 inline std::vector<double> simulation::solve(std::vector<double> x, const std::vector<double>& old, double dt,
@@ -406,28 +445,45 @@ inline std::vector<double> simulation::solve(std::vector<double> x, const std::v
         auto [f, scales] = residual(x, old, dt, time, hold, initial, right);
         double before = norm(f, scales);
         std::vector<std::vector<double>> jac;
-        if (analytic_jacobian) {
+        std::vector<matrix_entry> entries;
+        if (linear_backend && analytic_jacobian) {
+            stamp_jacobian(x, dt, hold, [&](std::size_t row, std::size_t column, double value) {
+                if (value != 0)
+                    entries.push_back({row, column, value / scales[row]});
+            });
+        } else if (analytic_jacobian) {
             jac = jacobian(x, dt, hold);
             for (std::size_t i = 0; i < jac.size(); ++i)
                 for (auto& value : jac[i])
                     value /= scales[i];
         } else {
-            jac.assign(x.size(), std::vector<double>(x.size()));
+            if (!linear_backend)
+                jac.assign(x.size(), std::vector<double>(x.size()));
             for (std::size_t j = 0; j < x.size(); ++j) {
                 auto y = x;
                 double h = 1e-6 * std::max(1.0, std::abs(x[j]));
                 y[j] += h;
                 auto [shifted, unused] = residual(y, old, dt, time, hold, initial, right);
-                for (std::size_t i = 0; i < x.size(); ++i)
-                    jac[i][j] = (shifted[i] - f[i]) / h / scales[i];
+                for (std::size_t i = 0; i < x.size(); ++i) {
+                    const double value = (shifted[i] - f[i]) / h / scales[i];
+                    if (linear_backend) {
+                        if (value != 0)
+                            entries.push_back({i, j, value});
+                    } else {
+                        jac[i][j] = value;
+                    }
+                }
             }
         }
         std::vector<double> rhs(f.size());
         for (std::size_t i = 0; i < f.size(); ++i)
             rhs[i] = -f[i] / scales[i];
-        auto delta = linear_solve(std::move(jac),
-                                  std::move(rhs)); // Rank check even when all residuals are zero.
-        if (before <= 1e-8)
+        // Every backend must check rank even when the nonlinear residual is zero.
+        auto delta = linear_backend ? linear_backend(x.size(), entries, rhs)
+                                    : linear_solve(std::move(jac), std::move(rhs));
+        if (delta.size() != x.size() || std::any_of(delta.begin(), delta.end(), [](double v) { return !std::isfinite(v); }))
+            throw diagnostic("E_LINEAR_SOLVER", "linear backend returned an incomplete or nonfinite solution");
+        if (before <= newton_residual_tolerance)
             return x;
         bool accepted = false;
         // Off channels can leave only a weak physical return and produce a huge Newton step.
@@ -445,7 +501,7 @@ inline std::vector<double> simulation::solve(std::vector<double> x, const std::v
                 trial[j] += alpha * delta[j];
             auto [ff, ss] = residual(trial, old, dt, time, hold, initial, right);
             double after = norm(ff, ss);
-            if (std::isfinite(after) && (after < before || after <= 1e-8)) {
+            if (std::isfinite(after) && (after < before || after <= newton_residual_tolerance)) {
                 x = std::move(trial);
                 accepted = true;
                 break;
@@ -492,7 +548,8 @@ inline void simulation::stimuli(double time, bool right) {
             digital[input.out].value = (right ? time >= input.at : time > input.at) ? input.after : input.before;
         else {
             double q = time / (input.period / 2), near = std::round(q);
-            auto index = std::abs(q - near) < 1e-10 ? static_cast<long long>(near) - (right ? 0 : 1)
+            const double tolerance = std::max(1e-10, 16 * std::numeric_limits<double>::epsilon() * std::abs(q));
+            auto index = std::abs(q - near) < tolerance ? static_cast<long long>(near) - (right ? 0 : 1)
                                                     : static_cast<long long>(std::floor(q));
             digital[input.out].value = std::max(index, 0LL) % 2;
         }
@@ -501,15 +558,38 @@ inline void simulation::stimuli(double time, bool right) {
 }
 inline std::vector<double> simulation::settle(std::vector<double> x, const std::vector<double>& old, double dt,
                                               double time, bool hold, bool initial, bool right) {
+    // Every hybrid iteration uses the same entry state in a hysteresis band.
+    // A trial analog/digital iteration must not latch an intermediate excursion.
+    // Rejected integration steps restore these bits with the existing rollback.
+    std::vector<bit_value> retained_senses;
+    for (const auto& op : operations)
+        if (op.kind == digital_law::sim_sense && op.retain_in_band)
+            retained_senses.push_back(digital[op.out].value);
     for (int i = 0; i < 24; ++i) {
         std::vector<bit_value> before;
         for (auto& b : digital)
             before.push_back(b.value);
         x = solve(std::move(x), old, dt, time, hold, initial, right);
+        if (hold) {
+            // A dependent constraint must still hold. Never silently discard
+            // contradictory initial charge or choose a charge-sharing result
+            // from declaration order when an ideal source jumps.
+            for (const auto& e : elements)
+                if (e.kind == law::capacitor && !e.hold_basis) {
+                    double actual = node_voltage(x, e.a) - node_voltage(x, e.b);
+                    double expected = initial ? e.initial : node_voltage(old, e.a) - node_voltage(old, e.b);
+                    if (std::abs(actual - expected) > 1e-7 * std::max({1., std::abs(actual), std::abs(expected)}))
+                        throw diagnostic(initial ? "E_INITIAL_CHARGE" : "E_CHARGE_DISCONTINUITY",
+                            initial ? "inconsistent capacitor initial voltages in a constrained loop"
+                                    : "ideal voltage jump conflicts with held capacitor charge; use a finite source edge");
+                }
+        }
+        std::size_t retained_index = 0;
         for (auto& op : operations)
             if (op.kind == digital_law::sim_sense) {
                 double v = node_voltage(x, op.input) - node_voltage(x, op.reference);
-                digital[op.out].value = v <= op.low ? bit_value(0) : v >= op.high ? bit_value(1) : std::nullopt;
+                const bit_value in_band = op.retain_in_band ? retained_senses[retained_index++] : std::nullopt;
+                digital[op.out].value = v <= op.low ? bit_value(0) : v >= op.high ? bit_value(1) : in_band;
             }
         combinational();
         bool changed = false;
@@ -533,99 +613,157 @@ inline void simulation::record(double time) {
     trace.push_back(std::move(row));
     for (std::size_t i = 0; i < obligations_.size(); ++i) {
         auto& q = obligations_[i];
-        obligation_samples_[i].push_back(
+        obligation_samples_[i] =
             q.digital ? digital[q.a].value ? std::optional<double>(double(*digital[q.a].value)) : std::nullopt
-                      : std::optional<double>(node_voltage(solution_, q.a) - node_voltage(solution_, q.b)));
+                      : std::optional<double>(node_voltage(solution_, q.a) - node_voltage(solution_, q.b));
+        const auto value = obligation_samples_[i];
+        if (q.assumption)
+            assumption_pass_[i] = assumption_pass_[i] && value && *value >= q.low - 1e-9 && *value <= q.high + 1e-9;
     }
+    accepted_time_ = time;
 }
 
-inline void simulation::run(duration stop, duration step) {
+inline void validate_transient_span(double start, duration stop, duration step, duration minimum_step) {
     positive(stop.value, "stop time");
     positive(step.value, "step time");
     finite(minimum_step.value, "minimum step time");
     if (minimum_step.value < 0)
         throw diagnostic("E_VALUE", "minimum step time must be nonnegative");
-    if (step.value > stop.value || stop.value / step.value > 100000)
+    const double span = stop.value - start;
+    if (span <= 0 || step.value > span || span / step.value > 100000.000000001)
         throw diagnostic("E_VALUE", "invalid step or more than 100000 regular steps");
-    compile();
-    // Reset all native next-state values before committing any native register.
-    for (auto& process : clocked_)
-        process.work(true);
-    for (auto& process : clocked_)
-        process.commit();
-    // Seed independent sources/initial charges before nonlinear device iteration.
-    solution_.assign(unknowns_, 0);
-    std::map<std::size_t, double> known{{0, 0}};
-    for (std::size_t pass = 0; pass <= elements.size(); ++pass)
-        for (auto& e : elements) {
-            if (e.kind != law::sim_voltage_source && e.kind != law::capacitor)
-                continue;
-            double value = e.kind == law::capacitor ? e.initial : source_value(e, 0);
-            auto a = root(e.a), b = root(e.b);
-            if (known.contains(b) && !known.contains(a))
-                known[a] = known[b] + value;
-            else if (known.contains(a) && !known.contains(b))
-                known[b] = known[a] - value;
-        }
-    // Start resistively supplied nodes near their neighbors' known voltages.
-    // These are Newton guesses only: no source/charge initialization is overwritten.
-    auto guess = known;
-    for (std::size_t pass = 0; pass <= elements.size(); ++pass)
-        for (const auto& e : elements) {
-            if (e.kind != law::resistor)
-                continue;
-            auto a = root(e.a), b = root(e.b);
-            if (guess.contains(a) && !guess.contains(b))
-                guess[b] = guess[a];
-            else if (guess.contains(b) && !guess.contains(a))
-                guess[a] = guess[b];
-        }
-    for (auto n : nodes_)
-        if (guess.contains(n))
-            solution_[index_[n]] = guess[n];
-    stimuli(0, true);
-    auto initial = solution_;
-    solution_ = settle(solution_, initial, 0, 0, true, true);
-    std::vector<bit_value> previous_clocks(digital.size());
-    for (auto& op : operations)
-        if (op.kind == digital_law::sim_store)
-            previous_clocks[op.clock] = digital[op.clock].value;
-    for (const auto& process : clocked_) {
-        if (!digital[process.clock].value)
-            throw diagnostic("E_UNKNOWN_CPPHDL", "native module requires a known clock level");
-        previous_clocks[process.clock] = digital[process.clock].value;
+    if (!std::isfinite(stop.value / step.value) || stop.value / step.value > 9007199254740991. ||
+        (start > 0 && start + step.value <= start))
+        throw diagnostic("E_VALUE", "absolute time grid exceeds representable resolution");
+}
+
+inline void simulation::run(duration stop, duration step) {
+    if (transient_started_)
+        throw diagnostic("E_ELABORATION", "a transient already started; use advance_to to preserve its state");
+    validate_transient_span(0, stop, step, minimum_step);
+    try {
+        integrate(stop, step, false);
+    } catch (...) {
+        transient_failed_ = transient_started_;
+        status_ = "unverified";
+        throw;
     }
-    record(0);
-    std::vector<std::pair<double, int>> schedule{{0, 2}, {stop.value, 2}};
-    for (std::size_t i = 1; i <= std::size_t(std::floor(stop.value / step.value)); ++i)
-        schedule.emplace_back(i * step.value, 0);
+}
+
+inline void simulation::advance_to(duration stop, duration step) {
+    if (!transient_started_ || transient_failed_)
+        throw diagnostic("E_TRANSIENT_STATE", "continuation needs a successfully initialized, healthy transient");
+    validate_transient_span(accepted_time_, stop, step, minimum_step);
+    try {
+        integrate(stop, step, true);
+    } catch (...) {
+        transient_failed_ = true;
+        status_ = "unverified";
+        throw;
+    }
+}
+
+inline void simulation::integrate(duration stop, duration step, bool continuation) {
+    const double start = continuation ? accepted_time_ : 0;
+    status_ = "unverified";
+    for (auto& obligation : obligations_)
+        obligation.status = "unverified";
+    for (auto& obligation : trace_obligations_)
+        obligation.status = "unverified";
+    if (!continuation) {
+        compile();
+        transient_started_ = true;
+        // Reset all native next-state values before committing any native register.
+        for (auto& process : clocked_)
+            process.work(true);
+        for (auto& process : clocked_)
+            process.commit();
+        // Seed independent sources/initial charges before nonlinear device iteration.
+        solution_.assign(unknowns_, 0);
+        std::map<std::size_t, double> known{{0, 0}};
+        for (std::size_t pass = 0; pass <= elements.size(); ++pass)
+            for (auto& e : elements) {
+                if (e.kind != law::sim_voltage_source && e.kind != law::capacitor)
+                    continue;
+                double value = e.kind == law::capacitor ? e.initial : source_value(e, 0);
+                auto a = root(e.a), b = root(e.b);
+                if (known.contains(b) && !known.contains(a))
+                    known[a] = known[b] + value;
+                else if (known.contains(a) && !known.contains(b))
+                    known[b] = known[a] - value;
+            }
+        // Start resistively supplied nodes near their neighbors' known voltages.
+        // These are Newton guesses only: no source/charge initialization is overwritten.
+        auto guess = known;
+        for (std::size_t pass = 0; pass <= elements.size(); ++pass)
+            for (const auto& e : elements) {
+                if (e.kind != law::resistor)
+                    continue;
+                auto a = root(e.a), b = root(e.b);
+                if (guess.contains(a) && !guess.contains(b))
+                    guess[b] = guess[a];
+                else if (guess.contains(b) && !guess.contains(a))
+                    guess[a] = guess[b];
+            }
+        for (auto n : nodes_)
+            if (guess.contains(n))
+                solution_[index_[n]] = guess[n];
+        stimuli(0, true);
+        auto initial = solution_;
+        solution_ = settle(solution_, initial, 0, 0, true, true);
+        previous_clocks_.assign(digital.size(), std::nullopt);
+        for (auto& op : operations)
+            if (op.kind == digital_law::sim_store)
+                previous_clocks_[op.clock] = digital[op.clock].value;
+        for (const auto& process : clocked_) {
+            if (!digital[process.clock].value)
+                throw diagnostic("E_UNKNOWN_CPPHDL", "native module requires a known clock level");
+            previous_clocks_[process.clock] = digital[process.clock].value;
+        }
+        record(0);
+    }
+    auto& previous_clocks = previous_clocks_;
+    std::vector<std::pair<double, int>> schedule{{start, 2}, {stop.value, 2}};
+    for (std::size_t i = std::size_t(std::floor(start / step.value)) + 1;
+         i <= std::size_t(std::floor(stop.value / step.value)); ++i) {
+        const double time = i * step.value;
+        if (time > start && time <= stop.value)
+            schedule.emplace_back(time, 0);
+    }
     for (auto& e : elements) {
-        if (e.stepped && e.at <= stop.value)
+        if (e.stepped && e.at > start && e.at <= stop.value)
             schedule.emplace_back(e.at, 1);
         for (const auto& point : e.waveform)
-            if (point.first <= stop.value)
+            if (point.first > start && point.first <= stop.value)
                 schedule.emplace_back(point.first, 0);
     }
     for (auto& input : inputs) {
-        if (input.kind == digital_stimulus::step && input.at <= stop.value)
+        if (input.kind == digital_stimulus::step && input.at > start && input.at <= stop.value)
             schedule.emplace_back(input.at, 1);
         if (input.kind == digital_stimulus::clock) {
             double count = stop.value / (input.period / 2);
-            if (count > 100000)
+            const double first = std::floor(start / (input.period / 2)) + 1;
+            if (!std::isfinite(count) || count > 9007199254740991. || count - first + 1 > 100000.000000001)
                 throw diagnostic("E_VALUE", "too many clock events");
-            for (std::size_t i = 1; i <= std::size_t(count); ++i)
-                schedule.emplace_back(i * input.period / 2, 1);
+            for (std::size_t i = std::size_t(first); i <= std::size_t(std::floor(count)); ++i) {
+                const double time = i * input.period / 2;
+                if (time > start && time <= stop.value)
+                    schedule.emplace_back(time, 1);
+            }
         }
     }
     std::sort(schedule.begin(), schedule.end());
     std::vector<std::pair<double, int>> times;
     for (auto item : schedule) {
-        if (times.empty() || std::abs(item.first - times.back().first) > std::max(stop.value, 1e-15) * 1e-12)
+        const double tolerance = std::max(stop.value, 1e-15) * 8 * std::numeric_limits<double>::epsilon();
+        if (times.empty() || std::abs(item.first - times.back().first) > tolerance)
             times.push_back(item);
         else if (item.second > times.back().second)
             times.back() = item;
     }
-    double previous_time = 0;
+    if (times.size() > 200000)
+        throw diagnostic("E_VALUE", "more than 200000 distinct transient events in one integration window");
+    double previous_time = start;
     for (std::size_t i = 1; i < times.size(); ++i) {
         double time = times[i].first;
         auto previous = solution_;
@@ -637,7 +775,10 @@ inline void simulation::run(duration stop, duration step) {
         try {
             solution_ = settle(solution_, previous, time - previous_time, time, false, false, false);
         } catch (const diagnostic& error) {
-            if (error.code != "E_NONCONVERGENCE" || minimum_step.value <= 0 ||
+            // A numerically inaccurate Newton direction is a rejected step,
+            // not an accepted circuit state. Opt-in subdivision may retry it
+            // at a smaller dt; structural rank/input failures remain fatal.
+            if ((error.code != "E_NONCONVERGENCE" && error.code != "E_LINEAR_ACCURACY") || minimum_step.value <= 0 ||
                 time - previous_time <= 2 * minimum_step.value || times.size() >= 200000)
                 throw;
             for (std::size_t bit = 0; bit < previous_bits.size(); ++bit)
@@ -697,16 +838,14 @@ inline void simulation::run(duration stop, duration step) {
     for (std::size_t i = 0; i < obligations_.size(); ++i)
         if (obligations_[i].assumption) {
             auto& q = obligations_[i];
-            bool pass = true;
-            for (auto v : obligation_samples_[i])
-                pass &= v && *v >= q.low - 1e-9 && *v <= q.high + 1e-9;
+            const bool pass = assumption_pass_[i];
             q.status = pass ? "sampled_pass" : "violated";
             valid &= pass;
         }
     for (std::size_t i = 0; i < obligations_.size(); ++i)
         if (!obligations_[i].assumption) {
             auto& q = obligations_[i];
-            auto value = obligation_samples_[i].back();
+            auto value = obligation_samples_[i];
             if (!valid)
                 q.status = "out_of_contract";
             else if (!value) {
@@ -931,7 +1070,8 @@ inline void simulation::write(const std::filesystem::path& destination) const {
             equations << "sim_store(d" << op.a << ", rising d" << op.clock << ", initial=" << op.initial << ")";
             break;
         case digital_law::sim_sense:
-            equations << "sim_sense(V(n" << root(op.input) << ")-V(n" << root(op.reference) << "),low=" << op.low
+            equations << (op.retain_in_band ? "sim_schmitt_sense(V(n" : "sim_sense(V(n")
+                      << root(op.input) << ")-V(n" << root(op.reference) << "),low=" << op.low
                       << ",high=" << op.high << ")";
             break;
         case digital_law::sim_registered_output:

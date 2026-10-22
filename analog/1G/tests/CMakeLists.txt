@@ -2,35 +2,525 @@ if(NOT Python3_Interpreter_FOUND)
   message(FATAL_ERROR "1G independent checks require Python3")
 endif()
 find_program(ONE_G_VERILATOR verilator)
-set(CPPHDL_1G_CONVERTER "${CPPHDL_ANALOG_PACKAGE_ROOT}/build/cpphdl" CACHE FILEPATH "C++HDL hardware converter")
+function(add_one_g_analog_interface interface)
+  set(interface_flows cpp)
+  if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+    list(APPEND interface_flows veriloga)
+  endif()
+  foreach(flow IN LISTS interface_flows)
+    add_test(NAME analog.1g.${interface}.${flow} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/${interface}.py" --flow "${flow}"
+      --bench "$<TARGET_FILE:analog_1g_${interface}>" --cxx "${CMAKE_CXX_COMPILER}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/results/${interface}/${flow}"
+      --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+    set_tests_properties(analog.1g.${interface}.${flow} PROPERTIES
+      LABELS "analog;1g;interface;${flow}" TIMEOUT 3600 FIXTURES_SETUP "one_g_${interface}_${flow}")
+  endforeach()
+  if("veriloga" IN_LIST interface_flows)
+    add_test(NAME analog.1g.${interface}.compare COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/${interface}.py" --flow compare
+      --work "${CMAKE_CURRENT_BINARY_DIR}/results/${interface}")
+    set_tests_properties(analog.1g.${interface}.compare PROPERTIES
+      LABELS "analog;1g;interface;veriloga" TIMEOUT 120
+      FIXTURES_REQUIRED "one_g_${interface}_cpp;one_g_${interface}_veriloga")
+  endif()
+  add_dependencies(check-analog analog_1g_${interface})
+  add_dependencies(check-veriloga analog_1g_${interface})
+endfunction()
+add_one_g_analog_interface(level_down)
+add_one_g_analog_interface(source_follower)
+if(TARGET analog_1g_receive_frontend)
+  add_one_g_analog_interface(receive_frontend)
+  add_test(NAME analog.1g.receive_frontend.contract COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/receive_frontend_contract.py")
+  set_tests_properties(analog.1g.receive_frontend.contract PROPERTIES LABELS "analog;1g;frontend" TIMEOUT 30)
+endif()
+if(TARGET analog_1g_receive_conversion)
+  add_test(NAME analog.1g.receive_conversion.contract COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/receive_conversion_contract.py")
+  set_tests_properties(analog.1g.receive_conversion.contract PROPERTIES LABELS "analog;1g;frontend" TIMEOUT 30)
+  foreach(receive_case 1 4 16_repeat)
+    set(receive_slices "${receive_case}")
+    set(receive_bursts 1)
+    if(receive_case STREQUAL "16_repeat")
+      set(receive_slices 16)
+      set(receive_bursts 2)
+    endif()
+    set(receive_work "${CMAKE_CURRENT_BINARY_DIR}/results/receive_conversion_${receive_case}")
+    set(receive_flows cpp)
+    if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+      list(APPEND receive_flows veriloga)
+    endif()
+    foreach(flow IN LISTS receive_flows)
+      add_test(NAME analog.1g.receive_conversion_${receive_case}.${flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/receive_conversion.py" --flow "${flow}"
+        --bench "$<TARGET_FILE:analog_1g_receive_conversion>" --cxx "${CMAKE_CXX_COMPILER}"
+        --slices "${receive_slices}" --bursts "${receive_bursts}" --work "${receive_work}/${flow}"
+        --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+      set_tests_properties(analog.1g.receive_conversion_${receive_case}.${flow} PROPERTIES
+        LABELS "analog;1g;adc;frontend;${flow}" TIMEOUT 21600 RESOURCE_LOCK one_g_adc_array_memory
+        FIXTURES_SETUP "one_g_receive_conversion_${receive_case}_${flow}")
+    endforeach()
+    if("veriloga" IN_LIST receive_flows)
+      add_test(NAME analog.1g.receive_conversion_${receive_case}.compare COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/receive_conversion.py" --flow compare
+        --slices "${receive_slices}" --bursts "${receive_bursts}" --work "${receive_work}")
+      set_tests_properties(analog.1g.receive_conversion_${receive_case}.compare PROPERTIES
+        LABELS "analog;1g;adc;frontend;veriloga" TIMEOUT 120
+        FIXTURES_REQUIRED "one_g_receive_conversion_${receive_case}_cpp;one_g_receive_conversion_${receive_case}_veriloga")
+    endif()
+  endforeach()
+  add_dependencies(check-analog analog_1g_receive_conversion)
+  add_dependencies(check-veriloga analog_1g_receive_conversion)
+endif()
+set(reference_clock_flows cpp)
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  list(APPEND reference_clock_flows veriloga)
+endif()
+foreach(flow IN LISTS reference_clock_flows)
+  add_test(NAME analog.1g.reference_clock.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/reference_clock.py" --flow "${flow}"
+    --bench "$<TARGET_FILE:analog_1g_reference_clock>" --cxx "${CMAKE_CXX_COMPILER}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/reference_clock/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.reference_clock.${flow} PROPERTIES
+    LABELS "analog;1g;clock;${flow}" TIMEOUT 7200
+    FIXTURES_SETUP "one_g_reference_clock_${flow}")
+endforeach()
+if("veriloga" IN_LIST reference_clock_flows)
+  add_test(NAME analog.1g.reference_clock.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/reference_clock.py" --flow compare
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/reference_clock")
+  set_tests_properties(analog.1g.reference_clock.compare PROPERTIES
+    LABELS "analog;1g;clock;veriloga" TIMEOUT 180
+    FIXTURES_REQUIRED "one_g_reference_clock_cpp;one_g_reference_clock_veriloga")
+endif()
+add_dependencies(check-analog analog_1g_reference_clock)
+add_dependencies(check-veriloga analog_1g_reference_clock)
+add_test(NAME analog.1g.pair_training.generated COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/generate_pair_training.py" --check)
+set_tests_properties(analog.1g.pair_training.generated PROPERTIES LABELS "analog;1g;hardware" TIMEOUT 30)
+add_test(NAME analog.1g.hardware_runner COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/hardware_runner.py")
+set_tests_properties(analog.1g.hardware_runner PROPERTIES LABELS "analog;1g;hardware" TIMEOUT 30)
+if(EXISTS "${CPPHDL_1G_CONVERTER}")
+  add_test(NAME analog.1g.generated_rtl COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../generate_rtl.py" --converter "${CPPHDL_1G_CONVERTER}" --check)
+  set_tests_properties(analog.1g.generated_rtl PROPERTIES LABELS "analog;1g;hardware;rtl" TIMEOUT 1800)
+endif()
+if(TARGET analog_1g_adc_array)
+  foreach(array_case 1 4 16 16_repeat)
+    set(slices "${array_case}")
+    set(bursts 1)
+    if(array_case STREQUAL "16_repeat")
+      set(slices 16)
+      set(bursts 2)
+    endif()
+    set(array_work "${CMAKE_CURRENT_BINARY_DIR}/results/adc_array_${array_case}")
+    set(array_flows cpp)
+    if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+      list(APPEND array_flows veriloga)
+    endif()
+    set(array_fixtures "")
+    foreach(flow IN LISTS array_flows)
+      add_test(NAME analog.1g.adc_array_${array_case}.${flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/adc_array.py"
+        --bench "$<TARGET_FILE:analog_1g_adc_array>" --work "${array_work}/${flow}"
+        --flow "${flow}" --slices "${slices}" --bursts "${bursts}" --cxx "${CMAKE_CXX_COMPILER}"
+        --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+      set_tests_properties(analog.1g.adc_array_${array_case}.${flow} PROPERTIES
+        LABELS "analog;1g;adc;${flow}" TIMEOUT 21600
+        RESOURCE_LOCK one_g_adc_array_memory
+        FIXTURES_SETUP "one_g_adc_array_${array_case}_${flow}")
+      list(APPEND array_fixtures "one_g_adc_array_${array_case}_${flow}")
+    endforeach()
+    if("veriloga" IN_LIST array_flows)
+      add_test(NAME analog.1g.adc_array_${array_case}.compare COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/adc_array.py" --work "${array_work}" --flow compare --slices "${slices}" --bursts "${bursts}")
+      set_tests_properties(analog.1g.adc_array_${array_case}.compare PROPERTIES
+        LABELS "analog;1g;adc;veriloga" TIMEOUT 120 FIXTURES_REQUIRED "${array_fixtures}")
+    endif()
+  endforeach()
+  add_dependencies(check-analog analog_1g_adc_array)
+  add_dependencies(check-veriloga analog_1g_adc_array)
+endif()
 set(one_g_hardware_args "")
+if(TARGET analog_1g_adc_core)
+  foreach(core_case 1 4 16_repeat)
+    set(core_slices "${core_case}")
+    set(core_bursts 1)
+    if(core_case STREQUAL "16_repeat")
+      set(core_slices 16)
+      set(core_bursts 2)
+    endif()
+    set(core_work "${CMAKE_CURRENT_BINARY_DIR}/results/adc_core_${core_case}")
+    set(core_flows cpp)
+    if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+      list(APPEND core_flows veriloga)
+    endif()
+    foreach(flow IN LISTS core_flows)
+      add_test(NAME analog.1g.adc_core_${core_case}.${flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/adc_core.py" --flow "${flow}"
+        --bench "$<TARGET_FILE:analog_1g_adc_core>" --cxx "${CMAKE_CXX_COMPILER}"
+        --slices "${core_slices}" --bursts "${core_bursts}" --work "${core_work}/${flow}"
+        --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+      set_tests_properties(analog.1g.adc_core_${core_case}.${flow} PROPERTIES
+        LABELS "analog;1g;adc;interface;${flow}" TIMEOUT 21600 RESOURCE_LOCK one_g_adc_array_memory
+        FIXTURES_SETUP "one_g_adc_core_${core_case}_${flow}")
+    endforeach()
+    if("veriloga" IN_LIST core_flows)
+      add_test(NAME analog.1g.adc_core_${core_case}.compare COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/adc_core.py" --flow compare --slices "${core_slices}"
+        --bursts "${core_bursts}" --work "${core_work}")
+      set_tests_properties(analog.1g.adc_core_${core_case}.compare PROPERTIES
+        LABELS "analog;1g;adc;interface;veriloga" TIMEOUT 120
+        FIXTURES_REQUIRED "one_g_adc_core_${core_case}_cpp;one_g_adc_core_${core_case}_veriloga")
+    endif()
+  endforeach()
+  add_dependencies(check-analog analog_1g_adc_core)
+  add_dependencies(check-veriloga analog_1g_adc_core)
+endif()
 if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys"
     AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell/lib/sg13g2_stdcell_typ_1p20V_25C.lib")
   list(APPEND one_g_hardware_args --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
     --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2")
 endif()
-foreach(block alignment pcs scrambler)
-  add_executable(analog_1g_${block} "${block}.cpp")
+add_test(NAME analog.1g.transmit.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/transmit_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/transmit-vectors.txt")
+set_tests_properties(analog.1g.transmit.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_transmit_vectors TIMEOUT 60)
+add_test(NAME analog.1g.filter.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/filter_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/filter-vectors.txt")
+set_tests_properties(analog.1g.filter.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_filter_vectors TIMEOUT 60)
+add_test(NAME analog.1g.filter_pipeline.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/filter_pipeline_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/filter-pipeline-vectors.txt")
+set_tests_properties(analog.1g.filter_pipeline.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_filter_pipeline_vectors TIMEOUT 60)
+add_test(NAME analog.1g.timing.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/timing_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/timing-vectors.txt")
+set_tests_properties(analog.1g.timing.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_timing_vectors TIMEOUT 30)
+add_test(NAME analog.1g.synchronize.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/synchronize_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/synchronize-vectors.txt")
+set_tests_properties(analog.1g.synchronize.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_synchronize_vectors TIMEOUT 60)
+add_test(NAME analog.1g.receiver.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/receiver_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/receiver-vectors.txt")
+set_tests_properties(analog.1g.receiver.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_receiver_vectors TIMEOUT 60)
+add_test(NAME analog.1g.receiver_faults.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/receiver_faults_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/receiver-fault-vectors.txt")
+set_tests_properties(analog.1g.receiver_faults.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_receiver_fault_vectors TIMEOUT 60)
+add_test(NAME analog.1g.receiver_faults.native COMMAND analog_1g_receiver --faults "${CMAKE_CURRENT_BINARY_DIR}/receiver-fault-vectors.txt")
+set_tests_properties(analog.1g.receiver_faults.native PROPERTIES LABELS "analog;1g;hardware;cpp"
+  FIXTURES_REQUIRED one_g_receiver_fault_vectors TIMEOUT 30)
+add_test(NAME analog.1g.framer.reference COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/framer_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/framer-vectors.txt")
+set_tests_properties(analog.1g.framer.reference PROPERTIES LABELS "analog;1g;hardware"
+  FIXTURES_SETUP one_g_framer_vectors TIMEOUT 60)
+foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics branch_metrics_pipeline trellis synchronize receiver framer filter filter_pipeline filter_datapath timing adc_sar flp_tx flp_rx master_slave negotiation autoneg_link pma_control pma_endpoint pma_aligned adc_interleave adc_receive pair_acquisition normalizer receive_calibration pam5_driver)
+  if(block STREQUAL "filter_pipeline")
+    add_executable(analog_1g_${block} filter.cpp)
+    target_compile_definitions(analog_1g_${block} PRIVATE PIPELINED_FILTER)
+  elseif(block STREQUAL "pma_aligned")
+    add_executable(analog_1g_${block} pma_endpoint.cpp)
+    target_compile_definitions(analog_1g_${block} PRIVATE ALIGNED_PMA)
+  elseif(block STREQUAL "branch_metrics_pipeline")
+    add_executable(analog_1g_${block} branch_metrics.cpp)
+    target_compile_definitions(analog_1g_${block} PRIVATE PIPELINED_METRICS)
+  else()
+    add_executable(analog_1g_${block} "${block}.cpp")
+  endif()
   target_link_libraries(analog_1g_${block} PRIVATE cpphdl::runtime)
-  if(block STREQUAL "pcs")
+  if(block STREQUAL "pcs" OR block MATCHES "^branch_metrics" OR block STREQUAL "trellis")
     add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_SOURCE_DIR}")
+  elseif(block MATCHES "^transmit")
+    add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/transmit-vectors.txt")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES FIXTURES_REQUIRED one_g_transmit_vectors)
+  elseif(block STREQUAL "filter")
+    add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/filter-vectors.txt")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES FIXTURES_REQUIRED one_g_filter_vectors)
+  elseif(block MATCHES "^(filter_pipeline|filter_datapath)$")
+    add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/filter-pipeline-vectors.txt")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES FIXTURES_REQUIRED one_g_filter_pipeline_vectors)
+  elseif(block STREQUAL "timing")
+    add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/timing-vectors.txt")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES FIXTURES_REQUIRED one_g_timing_vectors)
+  elseif(block STREQUAL "synchronize")
+    add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/synchronize-vectors.txt")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES FIXTURES_REQUIRED one_g_synchronize_vectors)
+  elseif(block STREQUAL "receiver")
+    add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/receiver-vectors.txt")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES FIXTURES_REQUIRED one_g_receiver_vectors)
+  elseif(block STREQUAL "framer")
+    add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/framer-vectors.txt")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES FIXTURES_REQUIRED one_g_framer_vectors)
   else()
     add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block})
   endif()
   set_tests_properties(analog.1g.${block}.native PROPERTIES LABELS "analog;1g;hardware;cpp" TIMEOUT 30)
+  if(block STREQUAL "autoneg_link")
+    set_tests_properties(analog.1g.${block}.native PROPERTIES TIMEOUT 600)
+  endif()
   if(ONE_G_VERILATOR AND EXISTS "${CPPHDL_1G_CONVERTER}")
+    set(hardware_case "${block}")
+    if(block MATCHES "^(pma_control|pma_endpoint|pma_aligned|autoneg_link|adc_interleave|adc_receive|pair_acquisition|normalizer|receive_calibration|pam5_driver)$")
+      set(hardware_runner composed_hardware.py)
+      if(block STREQUAL "autoneg_link")
+        set(hardware_case autoneg_link_complete)
+      endif()
+    else()
+      set(hardware_runner hardware.py)
+    endif()
     add_test(NAME analog.1g.${block}.rtl COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/hardware.py" --case "${block}" --converter "${CPPHDL_1G_CONVERTER}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/${hardware_runner}" --case "${block}" --converter "${CPPHDL_1G_CONVERTER}"
       --native "$<TARGET_FILE:analog_1g_${block}>"
       --verilator "${ONE_G_VERILATOR}" --cxx "${CMAKE_CXX_COMPILER}"
       ${one_g_hardware_args}
-      --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${block}")
+      --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${hardware_case}")
     set_tests_properties(analog.1g.${block}.rtl PROPERTIES LABELS "analog;1g;hardware;rtl" TIMEOUT 300)
+    if(block MATCHES "^(pma_control|pma_endpoint|pma_aligned|adc_interleave|adc_receive|pair_acquisition|normalizer|receive_calibration|pam5_driver)$")
+      set_tests_properties(analog.1g.${block}.rtl PROPERTIES TIMEOUT 21600 RESOURCE_LOCK one_g_heavy_hardware)
+    endif()
+    if(block MATCHES "^(trellis|receiver|filter|filter_pipeline|filter_datapath|branch_metrics_pipeline)$")
+      set_tests_properties(analog.1g.${block}.rtl PROPERTIES TIMEOUT 1200 RESOURCE_LOCK one_g_heavy_hardware)
+    endif()
+    if(block MATCHES "^filter")
+      set_tests_properties(analog.1g.${block}.rtl PROPERTIES TIMEOUT 2400 RESOURCE_LOCK one_g_heavy_hardware)
+    endif()
+    if(block STREQUAL "autoneg_link")
+      set_tests_properties(analog.1g.${block}.rtl PROPERTIES TIMEOUT 21600 RESOURCE_LOCK one_g_heavy_hardware)
+    endif()
+    if(block MATCHES "^(trellis|branch_metrics_pipeline|adc_sar|filter_datapath|receiver|flp_tx|flp_rx|master_slave|negotiation|autoneg_link|pma_control|pma_endpoint|pma_aligned|adc_interleave|adc_receive|pair_acquisition|normalizer|receive_calibration|pam5_driver)$" AND one_g_hardware_args
+        AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+      if(block STREQUAL "trellis")
+        set(cell_module PCSTrellisDecoder)
+        set(cell_period 8)
+      elseif(block STREQUAL "branch_metrics_pipeline")
+        set(cell_module PipelinedPCSBranchMetrics)
+        set(cell_period 8)
+      elseif(block STREQUAL "filter_datapath")
+        set(cell_module ReceiveFilter)
+        set(cell_period 8)
+      elseif(block STREQUAL "flp_tx")
+        set(cell_module FLPTransmitter)
+        set(cell_period 8)
+      elseif(block STREQUAL "flp_rx")
+        set(cell_module FLPReceiver)
+        set(cell_period 8)
+      elseif(block STREQUAL "master_slave")
+        set(cell_module MasterSlaveResolver)
+        set(cell_period 8)
+      elseif(block STREQUAL "negotiation")
+        set(cell_module Autonegotiator)
+        set(cell_period 8)
+      elseif(block STREQUAL "autoneg_link")
+        set(cell_module Autonegotiation)
+        set(cell_period 8)
+      elseif(block STREQUAL "pma_control")
+        set(cell_module PMAControl)
+        set(cell_period 8)
+      elseif(block STREQUAL "pma_endpoint")
+        set(cell_module PMAEndpoint)
+        set(cell_period 8)
+      elseif(block STREQUAL "pma_aligned")
+        set(cell_module AlignedPMAEndpoint)
+        set(cell_period 8)
+      elseif(block STREQUAL "adc_interleave")
+        set(cell_module InterleavedSARController)
+        set(cell_period 4)
+      elseif(block STREQUAL "adc_receive")
+        set(cell_module ADCReceiveController)
+        set(cell_period 4)
+      elseif(block STREQUAL "normalizer")
+        set(cell_module ReceiveSampleNormalizer)
+        set(cell_period 4)
+      elseif(block STREQUAL "receive_calibration")
+        set(cell_module ReceiveGainCalibration)
+        set(cell_period 8)
+      elseif(block STREQUAL "pam5_driver")
+        set(cell_module PAM5DriverControl)
+        set(cell_period 8)
+      elseif(block STREQUAL "pair_acquisition")
+        set(cell_module ReceivePairAcquirer)
+        set(cell_period 8)
+      elseif(block STREQUAL "receiver")
+        set(cell_module PCSReceiver)
+        set(cell_period 8)
+      else()
+        set(cell_module ADCSARController)
+        set(cell_period 4)
+      endif()
+      set_tests_properties(analog.1g.${block}.rtl PROPERTIES FIXTURES_SETUP one_g_${block}_mapped)
+      add_test(NAME analog.1g.${block}.cells COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cell_timing.py" --module "${cell_module}" --period "${cell_period}"
+        --repair --require-functional --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${hardware_case}"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2")
+      set_tests_properties(analog.1g.${block}.cells PROPERTIES LABELS "analog;1g;hardware;timing"
+        TIMEOUT 180 FIXTURES_REQUIRED one_g_${block}_mapped)
+    endif()
+    if(block STREQUAL "filter_pipeline" AND one_g_hardware_args
+        AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+      set_tests_properties(analog.1g.${block}.rtl PROPERTIES FIXTURES_SETUP one_g_pipeline_mapped)
+      add_test(NAME analog.1g.filter_pipeline.timing COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cell_timing.py" --module PipelinedReceiveFilter --repair --require-functional
+        --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/filter_pipeline"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2")
+      set_tests_properties(analog.1g.filter_pipeline.timing PROPERTIES LABELS "analog;1g;hardware;timing"
+        TIMEOUT 180 FIXTURES_REQUIRED one_g_pipeline_mapped)
+    endif()
+    if(block STREQUAL "timing" AND one_g_hardware_args
+        AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+      set_tests_properties(analog.1g.timing.rtl PROPERTIES FIXTURES_SETUP one_g_timing_mapped)
+      add_test(NAME analog.1g.timing.cells COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cell_timing.py" --module ReceiveTimingLoop --repair --require-functional
+        --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/timing"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2")
+      set_tests_properties(analog.1g.timing.cells PROPERTIES LABELS "analog;1g;hardware;timing"
+        TIMEOUT 180 FIXTURES_REQUIRED one_g_timing_mapped)
+    endif()
   endif()
 endforeach()
-set(one_g_cases dac dac_loaded driver driver_loaded mos_driver biased_driver trimmed_driver memory pulse_shaper slicer
+foreach(flow cpp veriloga)
+  if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+    continue()
+  endif()
+  add_test(NAME analog.1g.flp_frontend.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/flp_frontend.py" --flow "${flow}"
+    --bench "$<TARGET_FILE:analog_1g_flp_frontend>" --cxx "${CMAKE_CXX_COMPILER}"
+    --decoder "$<TARGET_FILE:analog_1g_flp_frontend_receiver>"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/flp_frontend/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.flp_frontend.${flow} PROPERTIES LABELS "analog;1g;${flow}"
+    TIMEOUT 600 FIXTURES_SETUP one_g_flp_frontend_${flow})
+endforeach()
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  add_test(NAME analog.1g.flp_frontend.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/flp_frontend.py" --flow compare
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/flp_frontend")
+  set_tests_properties(analog.1g.flp_frontend.compare PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 30
+    FIXTURES_REQUIRED "one_g_flp_frontend_cpp;one_g_flp_frontend_veriloga")
+endif()
+foreach(profile pam center)
+if(profile STREQUAL "pam")
+  set(adc_case adc_cosim)
+else()
+  set(adc_case adc_zero)
+endif()
+foreach(flow cpp veriloga)
+  if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+    continue()
+  endif()
+  add_test(NAME analog.1g.${adc_case}.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/adc_cosim.py" --flow "${flow}"
+    --bench "$<TARGET_FILE:analog_1g_adc_analog>" --cxx "${CMAKE_CXX_COMPILER}"
+    --profile "${profile}" --work "${CMAKE_CURRENT_BINARY_DIR}/results/${adc_case}/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.${adc_case}.${flow} PROPERTIES
+    LABELS "analog;1g;${flow}" TIMEOUT 7200 FIXTURES_SETUP one_g_${adc_case}_${flow}
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+endforeach()
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  add_test(NAME analog.1g.${adc_case}.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/adc_cosim.py" --flow compare
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/${adc_case}/cpp"
+    --other "${CMAKE_CURRENT_BINARY_DIR}/results/${adc_case}/veriloga")
+  set_tests_properties(analog.1g.${adc_case}.compare PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 30
+    FIXTURES_REQUIRED "one_g_${adc_case}_cpp;one_g_${adc_case}_veriloga")
+endif()
+endforeach()
+foreach(flow cpp veriloga)
+  if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+    continue()
+  endif()
+  add_test(NAME analog.1g.clock_oscillator.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/clock_oscillator.py" --flow "${flow}"
+    --bench "$<TARGET_FILE:analog_1g_clock_oscillator>" --cxx "${CMAKE_CXX_COMPILER}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/clock_oscillator/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.clock_oscillator.${flow} PROPERTIES
+    LABELS "analog;1g;${flow}" TIMEOUT 3600 FIXTURES_SETUP one_g_clock_oscillator_${flow}
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+endforeach()
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  add_test(NAME analog.1g.clock_oscillator.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/clock_oscillator.py" --flow compare
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/clock_oscillator/cpp"
+    --other "${CMAKE_CURRENT_BINARY_DIR}/results/clock_oscillator/veriloga")
+  set_tests_properties(analog.1g.clock_oscillator.compare PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 30
+    FIXTURES_REQUIRED "one_g_clock_oscillator_cpp;one_g_clock_oscillator_veriloga")
+endif()
+foreach(flow cpp veriloga)
+  if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+    continue()
+  endif()
+  add_test(NAME analog.1g.level_shifter.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/level_shifter.py" --flow "${flow}"
+    --bench "$<TARGET_FILE:analog_1g_level_shifter>" --cxx "${CMAKE_CXX_COMPILER}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/level_shifter/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.level_shifter.${flow} PROPERTIES
+    LABELS "analog;1g;${flow}" TIMEOUT 900 FIXTURES_SETUP one_g_level_shifter_${flow}
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+endforeach()
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  add_test(NAME analog.1g.level_shifter.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/level_shifter.py" --flow compare
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/level_shifter/cpp"
+    --other "${CMAKE_CURRENT_BINARY_DIR}/results/level_shifter/veriloga")
+  set_tests_properties(analog.1g.level_shifter.compare PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 30
+    FIXTURES_REQUIRED "one_g_level_shifter_cpp;one_g_level_shifter_veriloga")
+endif()
+foreach(flow cpp veriloga)
+  if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+    continue()
+  endif()
+  add_test(NAME analog.1g.level_shifter_250.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/level_shifter.py" --flow "${flow}" --clock-mhz 250
+    --bench "$<TARGET_FILE:analog_1g_level_shifter>" --cxx "${CMAKE_CXX_COMPILER}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/level_shifter_250/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.level_shifter_250.${flow} PROPERTIES
+    LABELS "analog;1g;clock;${flow}" TIMEOUT 1800 FIXTURES_SETUP one_g_level_shifter_250_${flow})
+endforeach()
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  add_test(NAME analog.1g.level_shifter_250.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/level_shifter.py" --flow compare --clock-mhz 250
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/level_shifter_250/cpp"
+    --other "${CMAKE_CURRENT_BINARY_DIR}/results/level_shifter_250/veriloga")
+  set_tests_properties(analog.1g.level_shifter_250.compare PROPERTIES LABELS "analog;1g;clock;veriloga"
+    TIMEOUT 120 FIXTURES_REQUIRED "one_g_level_shifter_250_cpp;one_g_level_shifter_250_veriloga")
+endif()
+foreach(flow cpp veriloga)
+  if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+    continue()
+  endif()
+  add_test(NAME analog.1g.clock_level_shifter_250.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/level_shifter.py" --flow "${flow}" --clock-mhz 250 --cascoded
+    --bench "$<TARGET_FILE:analog_1g_level_shifter>" --cxx "${CMAKE_CXX_COMPILER}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/clock_level_shifter_250/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.clock_level_shifter_250.${flow} PROPERTIES
+    LABELS "analog;1g;clock;${flow}" TIMEOUT 7200 FIXTURES_SETUP one_g_clock_level_shifter_250_${flow})
+endforeach()
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  add_test(NAME analog.1g.clock_level_shifter_250.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/level_shifter.py" --flow compare --clock-mhz 250 --cascoded
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/clock_level_shifter_250/cpp"
+    --other "${CMAKE_CURRENT_BINARY_DIR}/results/clock_level_shifter_250/veriloga")
+  set_tests_properties(analog.1g.clock_level_shifter_250.compare PROPERTIES LABELS "analog;1g;clock;veriloga"
+    TIMEOUT 120 FIXTURES_REQUIRED "one_g_clock_level_shifter_250_cpp;one_g_clock_level_shifter_250_veriloga")
+endif()
+set(one_g_cases dac dac_loaded r2r_dac r2r_dac_loaded driver driver_loaded mos_driver biased_driver trimmed_driver strongarm strongarm_loaded
+  mos_track_hold mos_track_hold_loaded
+  passive_hybrid passive_hybrid_loaded mos_amplifier mos_amplifier_loaded memory pulse_shaper slicer
   hybrid hybrid_bad channel channel_loaded channel_reverse ctle_low ctle_nyquist
-  dfe dfe_bypass transmitter receiver pair_link link link_loaded link_noisy link_uncancelled pair_link_refined link_refined)
+  dfe dfe_bypass transmitter receiver pair_link link link_loaded link_noisy link_uncancelled link_pcs
+  pair_link_refined link_refined strongarm_refined strongarm_loaded_refined mos_track_hold_refined mos_track_hold_loaded_refined)
 foreach(circuit IN LISTS one_g_cases)
   string(REGEX REPLACE "_refined$" "" bench_case "${circuit}")
   if(circuit MATCHES "_refined$")
@@ -40,14 +530,16 @@ foreach(circuit IN LISTS one_g_cases)
   endif()
   set(work "${CMAKE_CURRENT_BINARY_DIR}/results/${circuit}")
   add_test(NAME analog.1g.${circuit}.cpp COMMAND "${CMAKE_COMMAND}"
-    "-DBENCH=$<TARGET_FILE:analog_1g_bench>" "-DDSP=$<TARGET_FILE:analog_1g_process>"
+    "-DBENCH=$<TARGET_FILE:analog_1g_bench>" "-DDSP=$<TARGET_FILE:analog_1g_process>" "-DPCS=$<TARGET_FILE:analog_1g_pcs_waveform>"
+    "-DFIXED_DSP=$<TARGET_FILE:analog_1g_process_fixed>"
     "-DCASE=${bench_case}" "-DREFINEMENT=${refinement}" "-DFLOW=cpp" "-DWORK=${work}/cpp" "-DPYTHON=${Python3_EXECUTABLE}"
     "-DCHECKER=${CMAKE_CURRENT_SOURCE_DIR}/verify.py" -P "${CMAKE_CURRENT_SOURCE_DIR}/RunFlow.cmake")
   set_tests_properties(analog.1g.${circuit}.cpp PROPERTIES LABELS "analog;1g;cpp" TIMEOUT 900
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1" FIXTURES_SETUP one_g_${circuit}_cpp)
   if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
     add_test(NAME analog.1g.${circuit}.veriloga COMMAND "${CMAKE_COMMAND}"
-      "-DBENCH=$<TARGET_FILE:analog_1g_bench>" "-DDSP=$<TARGET_FILE:analog_1g_process>"
+      "-DBENCH=$<TARGET_FILE:analog_1g_bench>" "-DDSP=$<TARGET_FILE:analog_1g_process>" "-DPCS=$<TARGET_FILE:analog_1g_pcs_waveform>"
+      "-DFIXED_DSP=$<TARGET_FILE:analog_1g_process_fixed>"
       "-DCASE=${bench_case}" "-DREFINEMENT=${refinement}" "-DFLOW=veriloga" "-DWORK=${work}/veriloga" "-DPYTHON=${Python3_EXECUTABLE}"
       "-DOPENVAF=${OPENVAF_EXECUTABLE}" "-DNGSPICE=${NGSPICE_EXECUTABLE}"
       "-DCHECKER=${CMAKE_CURRENT_SOURCE_DIR}/verify.py" -P "${CMAKE_CURRENT_SOURCE_DIR}/RunFlow.cmake")
@@ -64,7 +556,7 @@ set(guard_fixtures one_g_dac_cpp)
 if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
   list(APPEND guard_args --veriloga "${CMAKE_CURRENT_BINARY_DIR}/results/dac/veriloga")
   list(APPEND guard_fixtures one_g_dac_veriloga)
-  foreach(circuit pair_link link)
+  foreach(circuit pair_link link strongarm strongarm_loaded mos_track_hold mos_track_hold_loaded)
     add_test(NAME analog.1g.${circuit}.refinement COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/refinement.py" "${CMAKE_CURRENT_BINARY_DIR}/results" "${circuit}")
     set_tests_properties(analog.1g.${circuit}.refinement PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 120
@@ -86,10 +578,189 @@ if(OPENVAF_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
   add_test(NAME analog.1g.generated_compile COMMAND "${CMAKE_COMMAND}"
     "-DGENERATOR=$<TARGET_FILE:analog_1g_generate>" "-DROOT=${CPPHDL_ANALOG_PACKAGE_ROOT}"
     "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/.." "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/generated-compile"
-    "-DOPENVAF=${OPENVAF_EXECUTABLE}" -P "${CMAKE_CURRENT_SOURCE_DIR}/Generated.cmake")
-  set_tests_properties(analog.1g.generated_compile PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 240)
+    "-DDRIVER=$<TARGET_FILE:cpphdl-veriloga>"
+    "-DOPENVAF=${OPENVAF_EXECUTABLE}" "-DPYTHON=${Python3_EXECUTABLE}" -P "${CMAKE_CURRENT_SOURCE_DIR}/Generated.cmake")
+  set_tests_properties(analog.1g.generated_compile PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 3600 RUN_SERIAL TRUE)
 endif()
 add_custom_target(check-1g
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" -L 1g --output-on-failure -j 2
-  DEPENDS analog_1g_bench analog_1g_generate analog_1g_process analog_1g_algorithms
-    analog_1g_alignment analog_1g_pcs analog_1g_scrambler USES_TERMINAL)
+  DEPENDS analog_1g_bench analog_1g_generate analog_1g_process analog_1g_process_fixed analog_1g_algorithms analog_1g_pcs_waveform
+    analog_1g_alignment analog_1g_pcs analog_1g_scrambler analog_1g_transmit_bits analog_1g_transmitter
+    analog_1g_branch_metrics analog_1g_branch_metrics_pipeline analog_1g_trellis analog_1g_synchronize analog_1g_receiver analog_1g_framer
+    analog_1g_filter analog_1g_filter_pipeline analog_1g_filter_datapath analog_1g_timing analog_1g_adc_sar
+    analog_1g_adc_analog analog_1g_clock_oscillator analog_1g_reference_clock analog_1g_level_shifter analog_1g_flp_frontend analog_1g_flp_frontend_receiver
+    analog_1g_flp_tx analog_1g_flp_rx analog_1g_master_slave analog_1g_negotiation analog_1g_autoneg_link
+    analog_1g_pma_control analog_1g_pma_endpoint analog_1g_pma_aligned analog_1g_adc_interleave analog_1g_adc_receive analog_1g_pair_acquisition analog_1g_normalizer analog_1g_receive_calibration analog_1g_pam5_driver USES_TERMINAL)
+if(TARGET analog_1g_adc_array)
+  add_dependencies(check-1g analog_1g_adc_array)
+endif()
+if(TARGET analog_1g_adc_core)
+  add_dependencies(check-1g analog_1g_adc_core)
+endif()
+add_dependencies(check-1g analog_1g_level_down analog_1g_source_follower)
+if(TARGET analog_1g_receive_frontend)
+  add_dependencies(check-1g analog_1g_receive_frontend analog_1g_receive_conversion)
+endif()
+foreach(flow cpp veriloga)
+  if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+    continue()
+  endif()
+  add_test(NAME analog.1g.transmit_driver.${flow} COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/transmit_driver.py" --flow "${flow}"
+    --bench "$<TARGET_FILE:analog_1g_transmit_driver>" --cxx "${CMAKE_CXX_COMPILER}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/transmit_driver_600pf/${flow}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+  set_tests_properties(analog.1g.transmit_driver.${flow} PROPERTIES
+    LABELS "analog;1g;transmitter;${flow}" TIMEOUT 7200 FIXTURES_SETUP one_g_transmit_driver_${flow})
+endforeach()
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+  add_test(NAME analog.1g.transmit_driver.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/transmit_driver.py" --flow compare
+    --work "${CMAKE_CURRENT_BINARY_DIR}/results/transmit_driver_600pf")
+  set_tests_properties(analog.1g.transmit_driver.compare PROPERTIES LABELS "analog;1g;transmitter;veriloga"
+    TIMEOUT 180 FIXTURES_REQUIRED "one_g_transmit_driver_cpp;one_g_transmit_driver_veriloga")
+endif()
+add_custom_target(check-1g-transmit-driver
+  COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -j 2
+    -R "^analog[.]1g[.]transmit_driver[.]"
+  DEPENDS analog_1g_transmit_driver USES_TERMINAL VERBATIM)
+add_test(NAME analog.1g.transmit_driver.checker_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/transmit_driver_guards.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/results/transmit_driver_600pf/cpp")
+set_tests_properties(analog.1g.transmit_driver.checker_guards PROPERTIES
+  LABELS "analog;1g;transmitter" TIMEOUT 180 FIXTURES_REQUIRED one_g_transmit_driver_cpp)
+add_dependencies(check-1g analog_1g_transmit_driver)
+add_custom_target(check-1g-sample-and-driver-control
+  COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -j 1
+    -R "^analog[.]1g[.](normalizer|pam5_driver)[.]"
+  DEPENDS analog_1g_normalizer analog_1g_pam5_driver USES_TERMINAL VERBATIM)
+add_custom_target(check-1g-clock-interface
+  COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -j 2
+    -R "^analog[.]1g[.](clock_level_shifter_250[.]|ihp_clock_level_shifter[.]|ihp_direct_level_shifter_250[.])"
+  DEPENDS analog_1g_level_shifter USES_TERMINAL VERBATIM)
+if(TARGET analog_1g_reference_clock_domain)
+  foreach(flow cpp veriloga)
+    if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+      continue()
+    endif()
+    add_test(NAME analog.1g.reference_clock_domain.${flow} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/reference_clock_domain.py" --flow "${flow}"
+      --bench "$<TARGET_FILE:analog_1g_reference_clock_domain>" --cxx "${CMAKE_CXX_COMPILER}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/results/reference_clock_domain/${flow}"
+      --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+    set_tests_properties(analog.1g.reference_clock_domain.${flow} PROPERTIES
+      LABELS "analog;1g;clock;${flow}" TIMEOUT 7200 FIXTURES_SETUP one_g_reference_clock_domain_${flow})
+  endforeach()
+  if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+    add_test(NAME analog.1g.reference_clock_domain.compare COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/reference_clock_domain.py" --flow compare
+      --work "${CMAKE_CURRENT_BINARY_DIR}/results/reference_clock_domain")
+    set_tests_properties(analog.1g.reference_clock_domain.compare PROPERTIES LABELS "analog;1g;clock;veriloga"
+      TIMEOUT 180 FIXTURES_REQUIRED "one_g_reference_clock_domain_cpp;one_g_reference_clock_domain_veriloga")
+  endif()
+  add_custom_target(check-1g-reference-clock-domain
+    COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -j 2
+      -R "^analog[.]1g[.]reference_clock_domain[.]"
+    DEPENDS analog_1g_reference_clock_domain USES_TERMINAL VERBATIM)
+  add_dependencies(check-1g analog_1g_reference_clock_domain)
+endif()
+add_custom_target(check-1g-reference-clock
+  COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -j 2
+    -R "^analog[.]1g[.]reference_clock[.]"
+  DEPENDS analog_1g_reference_clock USES_TERMINAL VERBATIM)
+if(TARGET analog_1g_core_transmit_driver)
+  set(core_transmit_fixtures "")
+  foreach(flow cpp veriloga)
+    if(flow STREQUAL "veriloga" AND (NOT OPENVAF_EXECUTABLE OR NOT NGSPICE_EXECUTABLE OR CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF"))
+      continue()
+    endif()
+    add_test(NAME analog.1g.core_transmit_driver.${flow} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/core_transmit_driver.py" --flow "${flow}"
+      --bench "$<TARGET_FILE:analog_1g_core_transmit_driver>" --cxx "${CMAKE_CXX_COMPILER}"
+      --fixture "${CMAKE_CURRENT_BINARY_DIR}/results/transmit_driver_600pf/cpp/checks.json"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/results/core_transmit_driver/${flow}"
+      --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
+    set_tests_properties(analog.1g.core_transmit_driver.${flow} PROPERTIES
+      LABELS "analog;1g;transmitter;${flow}" TIMEOUT 18000
+      FIXTURES_REQUIRED one_g_transmit_driver_cpp FIXTURES_SETUP one_g_core_transmit_driver_${flow})
+    list(APPEND core_transmit_fixtures one_g_core_transmit_driver_${flow})
+  endforeach()
+  if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+    add_test(NAME analog.1g.core_transmit_driver.compare COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/core_transmit_driver.py" --flow compare
+      --work "${CMAKE_CURRENT_BINARY_DIR}/results/core_transmit_driver")
+    set_tests_properties(analog.1g.core_transmit_driver.compare PROPERTIES
+      LABELS "analog;1g;transmitter;veriloga" TIMEOUT 600 FIXTURES_REQUIRED "${core_transmit_fixtures}")
+  endif()
+  add_custom_target(check-1g-core-transmit-driver
+    COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -j 2
+      -R "^analog[.]1g[.]core_transmit_driver[.]"
+    DEPENDS analog_1g_core_transmit_driver analog_1g_transmit_driver USES_TERMINAL VERBATIM)
+  add_dependencies(check-1g analog_1g_core_transmit_driver)
+  add_dependencies(check-analog analog_1g_core_transmit_driver)
+  add_dependencies(check-veriloga analog_1g_core_transmit_driver)
+endif()
+
+foreach(pattern_module pma_test_pattern pma_transmit_lane receive_gain_control receive_range_calibration receive_acquisition)
+  add_executable(analog_1g_${pattern_module} ${pattern_module}.cpp)
+  target_link_libraries(analog_1g_${pattern_module} PRIVATE cpphdl::runtime)
+  add_dependencies(check-1g analog_1g_${pattern_module})
+  add_dependencies(check-analog analog_1g_${pattern_module})
+  add_test(NAME analog.1g.${pattern_module}.native COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${pattern_module}.py" --flow cpp
+    --bench "$<TARGET_FILE:analog_1g_${pattern_module}>" --cxx "${CMAKE_CXX_COMPILER}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${pattern_module}/cpp")
+  set_tests_properties(analog.1g.${pattern_module}.native PROPERTIES LABELS "analog;1g;hardware;cpp" TIMEOUT 60)
+  if(ONE_G_VERILATOR AND EXISTS "${CPPHDL_1G_CONVERTER}")
+    foreach(pattern_flow rtl mapped)
+      if(pattern_flow STREQUAL "mapped" AND (NOT EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys"
+          OR NOT EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell/lib/sg13g2_stdcell_typ_1p20V_25C.lib"))
+        continue()
+      endif()
+      add_test(NAME analog.1g.${pattern_module}.${pattern_flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${pattern_module}.py" --flow "${pattern_flow}"
+        --bench "$<TARGET_FILE:analog_1g_${pattern_module}>" --cxx "${CMAKE_CXX_COMPILER}"
+        --converter "${CPPHDL_1G_CONVERTER}" --verilator "${ONE_G_VERILATOR}"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${pattern_module}/${pattern_flow}")
+      set_tests_properties(analog.1g.${pattern_module}.${pattern_flow} PROPERTIES
+        LABELS "analog;1g;hardware;${pattern_flow}" TIMEOUT 3600 RESOURCE_LOCK one_g_heavy_hardware)
+    endforeach()
+  endif()
+endforeach()
+
+if(TEST analog.1g.receive_gain_control.mapped AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+  set_tests_properties(analog.1g.receive_gain_control.mapped PROPERTIES FIXTURES_SETUP one_g_gain_control_mapped)
+  add_test(NAME analog.1g.receive_gain_control.cells COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/receive_gain_control_cells.py"
+    --mapped-proof "${CMAKE_CURRENT_BINARY_DIR}/hardware/receive_gain_control/mapped/checks.json"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/receive_gain_control/cells"
+    --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2"
+    --verilator "${ONE_G_VERILATOR}" --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(analog.1g.receive_gain_control.cells PROPERTIES LABELS "analog;1g;hardware;timing"
+    TIMEOUT 1200 RESOURCE_LOCK one_g_heavy_hardware FIXTURES_REQUIRED one_g_gain_control_mapped)
+endif()
+
+if(TEST analog.1g.receive_range_calibration.mapped AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+  set_tests_properties(analog.1g.receive_range_calibration.mapped PROPERTIES FIXTURES_SETUP one_g_range_calibration_mapped)
+  add_test(NAME analog.1g.receive_range_calibration.cells COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/receive_gain_control_cells.py" --module ReceiveRangeCalibration
+    --mapped-proof "${CMAKE_CURRENT_BINARY_DIR}/hardware/receive_range_calibration/mapped/checks.json"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/receive_range_calibration/cells"
+    --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2"
+    --verilator "${ONE_G_VERILATOR}" --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(analog.1g.receive_range_calibration.cells PROPERTIES LABELS "analog;1g;hardware;timing"
+    TIMEOUT 1200 RESOURCE_LOCK one_g_heavy_hardware FIXTURES_REQUIRED one_g_range_calibration_mapped)
+endif()
+
+if(TEST analog.1g.receive_acquisition.mapped AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+  set_tests_properties(analog.1g.receive_acquisition.mapped PROPERTIES FIXTURES_SETUP one_g_acquisition_mapped)
+  add_test(NAME analog.1g.receive_acquisition.cells COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/receive_gain_control_cells.py" --module ReceiveAnalogAcquisition
+    --mapped-proof "${CMAKE_CURRENT_BINARY_DIR}/hardware/receive_acquisition/mapped/checks.json"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/receive_acquisition/cells"
+    --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2"
+    --verilator "${ONE_G_VERILATOR}" --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(analog.1g.receive_acquisition.cells PROPERTIES LABELS "analog;1g;hardware;timing"
+    TIMEOUT 1200 RESOURCE_LOCK one_g_heavy_hardware FIXTURES_REQUIRED one_g_acquisition_mapped)
+endif()

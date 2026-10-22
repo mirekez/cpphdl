@@ -19,14 +19,24 @@ unit literals are in `analog::literals`.
 |---|---|---|
 | [inverter.hpp](inverter.hpp), `cmos<Model>` | A, Y | Two complementary MOS purposes enable and disable Y; a selectable fast policy approximates the channels |
 | [level_inverter.hpp](level_inverter.hpp), `level_inverter` | A, Y | Two complementary voltage-controlled resistor paths approximate finite inverter drive |
+| [level_shifter.hpp](level_shifter.hpp), `level_shifter` | Vlogic, A, Y, Y_N | Ten-MOS interface from low-voltage logic to the inherited high-voltage supply; finite loading and cross-coupled restoration |
+| [level_down.hpp](level_down.hpp), `level_down` | A, Y | [Ratioed high-voltage input and core inverter](level_down.md); inherited supply is the core rail, and input charge/static current remain physical |
+| [differential_source_follower.hpp](differential_source_follower.hpp), `differential_source_follower` | PLUS, MINUS, OUTP, OUTN | Two biased MOS followers lower common mode; [shared-supply loading, charge and tests](differential_source_follower.md) |
+| [phase_frequency_detector.hpp](phase_frequency_detector.hpp), `cmos_phase_frequency_detector` | REF, FEEDBACK, CLEAR, UP, UP_N, DOWN, DOWN_N | Two MOS flip-flops and a finite common reset path; [operation and tests](phase_frequency_detector.md) |
+| [cascoded_level_shifter.hpp](cascoded_level_shifter.hpp), `level_shift_bias`, `cascoded_level_shifter` | Vlogic, BIAS; translator A, Y, Y_N | [Replica-biased cascodes](cascoded_level_shifter.md) translate low input swings; explicit gate charge loads the shared bias |
 | [rc_filter.hpp](rc_filter.hpp), `rc_filter` | IN, OUT | Series resistor delivers input; a capacitor opposes rapid output changes |
 | [resistor_divider.hpp](resistor_divider.hpp), `resistor_divider` | TOP, BOTTOM, TAP | Two resistors establish a loaded fraction of the terminal difference |
 | [nmos_differential_pair.hpp](nmos_differential_pair.hpp), `nmos_differential_pair` | PLUS, MINUS, LEFT, RIGHT, TAIL | Two NMOS devices steer the shared tail current between drain branches |
+| [nmos_resistor_amplifier.hpp](nmos_resistor_amplifier.hpp), `nmos_resistor_amplifier` | PLUS, MINUS, OUTP, OUTN | Source degeneration and load resistors give differential gain; explicit gate/output charge couples input loading and bandwidth |
+| [strongarm_comparator.hpp](strongarm_comparator.hpp), `strongarm_comparator` | PLUS, MINUS, CLOCK, OUTP, OUTN | Eleven MOS devices precharge then regenerate a differential decision; [operation and tests](../1G/comparator.md) |
+| [mos_track_hold.hpp](mos_track_hold.hpp), `mos_track_hold` | IN, CLOCK, OUT | CMOS transmission gate, clock inverter, half-width dummy switches and a real hold capacitor; input loading and held-node disturbances remain electrical |
+| [mos_r2r_dac.hpp](mos_r2r_dac.hpp), `mos_r2r_dac` | BIT_N[8], OUT | Eight complementary MOS rail drivers feed an R/2R resistor ladder; finite output resistance preserves loading |
 | [pmos_current_mirror.hpp](pmos_current_mirror.hpp), `pmos_current_mirror` | IN, OUT | A diode-connected PMOS establishes the gate voltage of a matched sourcing PMOS |
 | [opamp.hpp](opamp.hpp), `opamp` | PLUS, MINUS, OUT | Differential pair and mirror provide differential gain; explicit resistors and capacitor set bias and dynamics |
 | [non_inverting_amplifier.hpp](non_inverting_amplifier.hpp), `non_inverting_amplifier` | IN, OUT | An op-amp and divider intend a closed-loop gain of `1 + upper / lower` |
 | [ldo.hpp](ldo.hpp), `ldo` | REF, OUT | PMOS pass channel plus divider and transistor error amplifier request an output/reference ratio |
 | [cmos_logic.hpp](cmos_logic.hpp), `cmos_nand`, `cmos_xor` | A, B, Y | MOS gate networks with explicit output charge and weak return paths |
+| [cmos_storage.hpp](cmos_storage.hpp), `cmos_d_latch`, `cmos_dff`, `cmos_divide2` | D/ENABLE or CLOCK, CLEAR, Q/Q_N | [MOS storage, rising-edge transfer and electrical divide-by-two feedback](cmos_storage.md) |
 | [ring_vco.hpp](ring_vco.hpp), `current_starved_inverter`, `ring_vco` | CONTROL, OUT (stage also A, Y) | Three charge-storing inverter stages form a voltage-controlled oscillator |
 | [pll.hpp](pll.hpp), `lead_lag_filter`, `pll` | IN/OUT or REF/OUT | Passive filter and transistor phase comparison correct physical oscillator timing |
 | [agc.hpp](agc.hpp), `agc` and its constituent classes | IN, OUT, BIAS, REF | MOS attenuation, amplifier, peak detector and error integrator correct positive output peaks |
@@ -252,6 +262,12 @@ and report status, including deliberately unsuccessful physical requirements.
 
 ## Feedback examples
 
+[`nmos_source_follower`](nmos_source_follower.md) provides a MOS output buffer
+with resistor bias and explicit input/output charge. Its native and Verilog-A
+tests independently check delivery and overload, then compare trajectories.
+The explicitly sized IHP PSP counterpart passes 90 PVT/load cases. Connected
+amplifier/ADC performance requires its own integration check.
+
 The [LDO](../examples/ldo/README.md), [PLL](../examples/pll/README.md) and
 [AGC](../examples/agc/README.md) document their complete hierarchies, physical
 relations, initial conditions, model parameters and measured operating limits.
@@ -287,3 +303,19 @@ The core also supports ideal inductors (branch-current state), finite PWL voltag
 stimuli, and the diode law `I = max(V - drop, 0) / Ron + V / Rleak`. All enter the
 shared MNA system. 10G tests check their independent analytic responses and compare
 analytic-Jacobian Newton solutions with finite-difference Newton solutions.
+
+[`nand_latch` and `cleared_nand_latch`](nand_latch.hpp) store a decision using
+cross-connected MOS NAND gates. Active-low `SET_N` enables Q; active-low
+`RESET_N` disables it; both high retain the state. Both low force both outputs
+high. The cleared variant adds four MOS devices and a clear-inverter load.
+`analog.basic.nand_latch` checks clear, set, reset, retention, simultaneous
+assertion, recovery and output loading independently in native and Verilog-A
+simulation, then compares the complete waveforms. Both load cases pass.
+
+[`buffered_nand_latch`](buffered_nand_latch.md) places two inverter stages on
+each active-low command before the cleared NAND storage. The stages retain
+polarity and isolate a regenerative comparator from state-dependent storage
+gate charge. Its own input charge, rail current and delay remain electrical
+loads. The same absolute unit contract and 20 mV waveform limit apply.
+
+[Cascode amplifier](cascode_opamp.md) exposes external bias ports and has a tested programmable-gain application.

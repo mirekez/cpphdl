@@ -6,7 +6,34 @@ import re
 import xml.etree.ElementTree as ET
 
 
-def check_drc(report):
+def check_drc_completion(report, rule_directory):
+    """The upstream parallel runner can exit zero after a worker exception."""
+    prefix = str(report).removesuffix("_full.lyrdb")
+    tables = set()
+    for group in ("feol", "beol", "forbidden", "geometry", "pin"):
+        for path in (rule_directory / "rule_decks" / group).glob("*.drc"):
+            tables.add("_".join(path.stem.split("_")[2:]))
+    if len(tables) < 30:
+        raise ValueError("missing/incomplete PDK rule-table inventory")
+    main = Path(prefix + "_main.log")
+    if main.is_file():
+        if "KLayout DRC run for tables 'main' completed" not in main.read_text():
+            raise ValueError("main DRC tables did not complete")
+    else:
+        for table in sorted(tables):
+            log = Path(prefix + "_" + table + ".log")
+            if not log.is_file() or f"KLayout DRC run for tables '{table}' completed" not in log.read_text():
+                raise ValueError("DRC table did not complete: " + table)
+    extra = Path(prefix + "_sg13g2_maximal.log")
+    if not extra.is_file() or "KLayout DRC run for maximum ruleSet completed" not in extra.read_text():
+        raise ValueError("maximum DRC rules did not complete")
+    density = Path(prefix + "_density.log")
+    if not density.is_file() or "KLayout DRC run for density table completed" not in density.read_text():
+        raise ValueError("density DRC rules did not complete")
+    return dict(main_tables=len(tables), maximum_rules_completed=True, density_completed=True)
+
+
+def check_drc(report, rule_directory=None):
     root = ET.parse(report).getroot()
     items, categories = root.find("items"), root.find("categories")
     if root.tag != "report-database" or items is None or categories is None or not len(categories):
@@ -15,9 +42,12 @@ def check_drc(report):
         rules = sorted({item.findtext("category") for item in items})
         raise ValueError(f"KLayout DRC has {len(items)} violations: {rules}")
     names = {category.findtext("name") for category in categories.iter("category")}
-    required = {"M2.d", "M3.d", "Ant.a", "Pin.a", "metal2_drw_Angle45"}
+    required = {"M2.d", "M3.d", "Ant.a", "Ant.g", "Ant.i", "Ant.e_TopMetal2", "Pin.a", "metal2_drw_Angle45"}
     if len(names) < 800 or not required.issubset(names) or not any("offgrid" in (name or "").lower() for name in names):
         raise ValueError("DRC evidence omits required rule groups")
+    if rule_directory is None:
+        rule_directory = Path(__file__).resolve().parent.parent / "IHPSG13G2/ihp-sg13g2/libs.tech/klayout/tech/drc"
+    completion = check_drc_completion(report, rule_directory)
     # The upstream density deck creates rule categories only on violations.
     # Its database is merged into the full report, then removed by the runner.
     # Require its measured limits even when no density categories were emitted.
@@ -32,7 +62,7 @@ def check_drc(report):
         values[material] = value
     if len(values) != 9:
         raise ValueError("density evidence omits material layers")
-    return dict(violations=0, report=str(report), categories=len(names), density_percent=values)
+    return dict(violations=0, report=str(report), categories=len(names), density_percent=values, completion=completion)
 
 
 def check_lvs(report, top_name="RepeaterCore", expected_ports=None, minimum_devices=100):
@@ -94,10 +124,10 @@ def check_timing(work):
 
 def chip_blockers():
     return [
-        "Complete Clause 40 PCS beyond the implemented mapper/LFSRs: scrambling/sign expansion, trellis/decoder, state machines, training and auto-negotiation",
-        "Physical receive AFE/ADC/DSP and layout/characterization of the MOS-biased/trimmed transmit drivers",
+        "Qualify and integrate the implemented PCS, scrambler acquisition, trellis, master/slave startup, pair deskew and auto-negotiation with continuous physical receive training",
+        "Physical receive AFE/ADC and implementation/timing of the fixed-point receive DSP; layout/characterization of the MOS-biased/trimmed transmit drivers",
         "Physical receive timing recovery, reset distribution and routed CDC proof for the implemented reference-clock aligner",
-        "DRC/LVS-qualified padframe with implemented core routing, seal ring, power distribution, package/magnetics and ESD qualification",
+        "Integrate the DRC/LVS-verified common-ground padframe with core routing and power distribution; qualify package/magnetics and ESD behavior",
         "Full-chip post-fill extraction, PVT/mismatch/noise, channel/interoperability and physical signoff",
     ]
 

@@ -29,6 +29,16 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     find_program(CONSTANTS_VERILATOR verilator)
     if(CONSTANTS_VERILATOR)
+        add_test(NAME child_clock_sources COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildClockChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/child-clock")
+        set_tests_properties(child_clock_sources PROPERTIES TIMEOUT 240 LABELS "rtl;cdc")
+        add_test(NAME child_reset_expressions COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildResetChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/child-reset")
+        set_tests_properties(child_reset_expressions PROPERTIES TIMEOUT 240 LABELS "rtl;cdc")
         add_test(NAME templates_port_aliases COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/templates/PortAliasesChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"

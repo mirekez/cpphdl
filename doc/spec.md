@@ -809,6 +809,22 @@ The clock options follow these rules:
 
 &nbsp;&nbsp;&nbsp;&nbsp;The frequency values describe and validate the clock topology. They do not create a clock source and do not automatically schedule native C++ simulation edges. A testbench must drive each clock with the required period, phase, and edge ordering.
 
+Nested modules retain the clock source selected by their native lifecycle calls
+in the SystemVerilog converter. For example, calling a legacy child
+`adc._work(reset)` from `_work_sample_clk` connects that child's primary clock
+port to `sample_clk`. Indexed children follow the same rule. Calling a child's
+positive-edge method from a parent negative-edge process inverts that clock
+connection. Local helper delegation is followed when identifying the calling
+domain. A child clock called from conflicting parent clocks is rejected.
+This wiring does not provide clock generation, synchronization or CDC proof.
+
+The child reset connection likewise preserves the argument passed to its work
+method, such as `reset || !enable_in()`. Array loop indices become the generated
+instance indices. Conflicting reset arguments and process-local reset variables
+are rejected because they cannot define one unambiguous structural reset wire.
+The `child_clock_sources` and `child_reset_expressions` CTests compare these
+boundaries against independent native and generated-RTL expectations.
+
 ## Clock process methods
 
 &nbsp;&nbsp;&nbsp;&nbsp;For every declared clock `<clk_name>` in a multi-clock design, every generated module must define this positive-edge pair:
