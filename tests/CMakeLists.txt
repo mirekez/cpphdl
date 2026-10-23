@@ -614,6 +614,11 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
 # directory. They contain generated .cpp files, not independent C++HDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
+# These model-only CDC fixtures have separate native/RTL testbench drivers
+# registered above as child_clock_sources and child_reset_expressions.
+list(REMOVE_ITEM TEST_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildClock.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildReset.cpp")
 # These fixtures are built by SwitchControlChecks.py with a separate runner
 # and flow-specific definitions, not as standalone inline-test executables.
 list(REMOVE_ITEM TEST_SOURCES
