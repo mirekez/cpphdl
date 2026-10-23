@@ -69,8 +69,8 @@ Optimized unity batches contain at most four source units (eight for constructor
 units); compiler memory exhaustion retries smaller batches automatically.
 Content-keyed partition checkpoints avoid repeating failed large batches when
 an interrupted build resumes. Constructor units retain the stage's address-space
-limit; optimized batches have a stricter local limit and split before exhausting
-the host's available RAM.
+limit; multi-source constructor batches and optimized batches have a stricter
+local limit and split before exhausting the host's available RAM.
 If one generated unit still exceeds that bound, partitioning continues at
 explicit member-instantiation boundaries. Mixed singleton units separate
 construction (`-O0`) from cycle methods (`-O2`), rather than optimizing large
@@ -86,6 +86,9 @@ driver; only atomically completed, checksum-verified collections are reused.
 Multi-alias collections use a local 4 GB address-space limit and split after
 memory exhaustion; single aliases retain the stage's 6 GB limit. Completed
 child collections and split checkpoints survive retries as well.
+Non-opaque markers explicitly require complete template definitions with
+`sizeof`: a pointer declaration alone need not instantiate the marked class,
+which otherwise leaves missing children when bounded collections are merged.
 The comb collection path avoids a multi-gigabyte PCH; ordinary C++ execution is
 not silently replaced by the faster native graph backend.
 
@@ -121,6 +124,11 @@ and cycle counts, rather than a particular number of seconds, are enforced.
 The small original ELF can be selected with `ELF="$PWD/matrix_multiply.riscv"`.
 Use `python3 -B -m unittest discover -s . -p 'test_*.py'` for helper regressions;
 set `CPPHDL_TEST_CXX` to enable the compiler-backed harness tests as well.
+Set `CPPHDL_TEST_TOOL` to the cpphdl executable to exercise actual bounded AST
+collection, including the incomplete-template regression.
+Set `CPPHDL_TEST_HDLCPP` as well to verify concrete specialization preserves
+the precedence of substituted non-type parameter expressions. Type parameters
+remain type expressions; no numeric casts are introduced by this fix.
 
 ## Qualification (2026-10-22)
 
@@ -140,7 +148,8 @@ cycles and all 297,074 ordered integer commits. An additional five-trial native
 qualification measured medians of 4.576255 seconds (one thread) and 3.097285
 seconds (four threads); reference medians were 8.096051 and 8.004287 seconds.
 These measurements retain the tracing caveat and constructor build policy
-described above. All 55 helper regressions pass.
+described above. All 59 helper regressions pass, including actual AST collection
+and converter specialization.
 
 Not all five modes currently pass. Comb collection completes 29 checkpoints,
 then its next shard trips the available-RAM guard. Isolating its aliases shows

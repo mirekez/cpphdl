@@ -357,7 +357,7 @@ class Workflow:
 
     def ready(self, mode):
         stamp = self.root / 'builds' / (mode + '.json')
-        self.require(stamp, '.build_cva6_' + mode.removeprefix('cpphdl-') + '.sh')
+        self.require(stamp, '.build_cva6_' + mode + '.sh')
         record = json.loads(stamp.read_text())
         binary = Path(record['binary'])
         if record['signature'] != self.signature(mode) or not binary.is_file() or digest(binary) != record['binary_sha256']:

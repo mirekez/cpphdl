@@ -1,16 +1,18 @@
 import argparse
 from contextlib import redirect_stdout
+import gzip
 import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import cva6_workflow as workflow
-from build_cpp_model import ObjectCache, collection_cache_key, instantiation_declarations, unity_sources
+from build_cpp_model import ObjectCache, collection_cache_key, compiler_address_space, instantiation_declarations, unity_sources
 
 
 class WorkflowTests(unittest.TestCase):
@@ -53,6 +55,15 @@ class WorkflowTests(unittest.TestCase):
                 subprocess.run([script, '--work-root', destination, '--help'],
                                check=True, stdout=subprocess.DEVNULL)
             self.assertFalse(destination.exists())
+
+    def test_missing_build_names_the_existing_mode_wrapper(self):
+        with tempfile.TemporaryDirectory(prefix='cva6-missing-build-', dir='/tmp') as directory:
+            instance = self.instance(Path(directory))
+            for mode in workflow.MODES:
+                script = '.build_cva6_' + mode + '.sh'
+                self.assertTrue((workflow.SUPPORT / script).is_file())
+                with self.assertRaisesRegex(RuntimeError, re.escape(script)):
+                    instance.ready(mode)
 
     def test_artifacts_and_cleanup_are_confined(self):
         with self.assertRaises(ValueError):
@@ -201,6 +212,45 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(sizes, [('-O0', 8), ('-O0', 4),
                                      ('-O2', 4), ('-O2', 4), ('-O2', 4)])
 
+    def test_constructor_batches_split_before_using_the_singleton_budget(self):
+        self.assertEqual(compiler_address_space(Path('unity-O0-0.cpp'), '-O0', 8), 4_000_000_000)
+        self.assertEqual(compiler_address_space(Path('unity-O0-0.cpp'), '-O0', 2), 4_000_000_000)
+        self.assertIsNone(compiler_address_space(Path('unity-O0-0.cpp'), '-O0', 1))
+        self.assertEqual(compiler_address_space(Path('unity-O2-0.cpp'), '-O2', 1), 4_000_000_000)
+        self.assertIsNone(compiler_address_space(Path('unity-runtime.cpp'), '-O2', 0))
+
+    @unittest.skipUnless(os.environ.get('CPPHDL_TEST_HDLCPP') and os.environ.get('CPPHDL_TEST_CXX'),
+                         'set CPPHDL_TEST_HDLCPP and CPPHDL_TEST_CXX for specialization regression')
+    def test_specialization_preserves_non_type_parameter_expression_precedence(self):
+        with tempfile.TemporaryDirectory(prefix='cva6-specialize-precedence-', dir='/tmp') as directory:
+            root = Path(directory)
+            (root / 'generated').mkdir()
+            (root / 'generated/model.h').write_text('#pragma once\n#include "cpphdl.h"\n'
+                'using namespace cpphdl;\n'
+                'template<typename Data, unsigned Tag, typename Stored>\n'
+                'class Child : public Module {\npublic: Child() {}\n'
+                'void _assign() {} void _work(bool) {} void _strobe() {}\n};\n'
+                'template<unsigned Ports, unsigned Width = (Ports != 1) ? 4 : 1, '
+                'typename Data = logic<Width>, unsigned Depth = Width + 1>\n'
+                'class Parent : public Module {\npublic: Parent() {}\n'
+                'Child<logic<Width - 1>, Depth * 2, Data> child;\n'
+                'void _assign() {} void _work(bool) {} void _strobe() {}\n};\n')
+            (root / 'all_generated.h').write_text('#include "generated/model.h"\n')
+            seed = root / 'seed.cpp'
+            seed.write_text('#include "all_generated.h"\n'
+                'Parent<10> first;\nParent<5 + 5, 2 + 2, logic<4>, 2 + 3> second;\n')
+            result = subprocess.run([os.environ['CPPHDL_TEST_HDLCPP'], '--optimize', seed], cwd=root,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            externs = (root / 'cpphdl_optimized_externs.h').read_text()
+            children = re.findall(r'^using (cpphdl_opt_t\d+) = Child<', externs, re.MULTILINE)
+            self.assertGreaterEqual(len(children), 2, externs)
+            probe = root / 'probe.cpp'
+            probe.write_text('#include "cpphdl_optimized_externs.h"\n#include <type_traits>\n' + ''.join(
+                f'static_assert(std::is_same_v<{name}, Child<logic<3>, 10, logic<4>>>);\n' for name in children))
+            subprocess.run([os.environ['CPPHDL_TEST_CXX'], '-std=c++23', '-fsyntax-only',
+                            '-I' + str(workflow.REPO / 'include'), '-I' + str(root), probe], check=True)
+
     def test_instantiation_partition_preserves_overloads_and_rejects_other_definitions(self):
         prefix = '#line 1 "inst.cpp"\n#include "types.h"\n\n'
         members = ['template cpphdl_opt_t0::Cell();',
@@ -301,6 +351,7 @@ class WorkflowTests(unittest.TestCase):
             (root / 'generated').mkdir()
             source = root / 'collection.cpp'
             source.write_text('#include "context.h"\n' + ''.join(
+                f'static_assert(sizeof(cpphdl_opt_t{index}) != 0);\n'
                 f'cpphdl_opt_t{index}* cpphdlCombsCollect000_{index:03d} = nullptr;\n' for index in range(4)))
             (root / 'cpphdl_comb_collection_sources.txt').write_text(source.name + '\n')
             tool = root / 'cpphdl'
@@ -322,6 +373,8 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stdout)
             self.assertEqual(first.stdout.count('--optimize-combs-load='), 4)
             self.assertEqual(len(list((root / 'collections').glob('*.bin'))), 4)
+            for collection in (root / 'collections').glob('*.bin'):
+                self.assertEqual(collection.read_text().count('static_assert(sizeof('), 1)
             second = run()
             self.assertEqual(second.returncode, 0, second.stdout)
             self.assertNotIn('--optimize-combs-collect=', second.stdout)
@@ -333,6 +386,33 @@ class WorkflowTests(unittest.TestCase):
             failure = run()
             self.assertNotEqual(failure.returncode, 0)
             self.assertIn('syntax error', failure.stdout)
+
+    @unittest.skipUnless(os.environ.get('CPPHDL_TEST_TOOL'), 'set CPPHDL_TEST_TOOL for AST collection regression')
+    def test_comb_preparation_materializes_marker_template_definitions(self):
+        with tempfile.TemporaryDirectory(prefix='cva6-comb-definition-', dir='/tmp') as directory:
+            root = Path(directory)
+            (root / 'model.h').write_text('#include "cpphdl.h"\n'
+                'template<unsigned Width> class Leaf : public cpphdl::Module {\n'
+                'public: cpphdl::logic<Width> value; void _assign() {} void _work(bool) {} void _strobe() {} };\n'
+                'template<class Child> class Root : public cpphdl::Module {\n'
+                'public: Child child; void _assign() {} void _work(bool) {} void _strobe() {} };\n')
+            (root / 'all_generated.h').write_text('#include "model.h"\n')
+            (root / 'cpphdl_optimized_externs.h').write_text('#include "all_generated.h"\n'
+                'using cpphdl_opt_t0 = Root<Leaf<4>>;\nusing cpphdl_opt_t1 = Leaf<4>;\n')
+            subprocess.run(['python3', '-B', workflow.SUPPORT / 'support/cpphdl/prepare_optimize_combs.py', root],
+                           check=True, stdout=subprocess.DEVNULL)
+            source = root / 'cpphdl_comb_collect_000.cpp'
+            collection = root / 'collection.bin'
+            command = [os.environ['CPPHDL_TEST_TOOL'], '--optimize-combs', 'cpphdl_opt_t0',
+                       '--optimize-combs-collect=' + str(collection), source, '--', '-std=c++26', '-w',
+                       '-I' + str(workflow.REPO / 'include'), '-I' + str(root)]
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+            with gzip.open(collection, 'rb') as stream:
+                self.assertIn(b'cpphdl_opt_t1', stream.read())
+            source.write_text(source.read_text().replace('static_assert(sizeof(cpphdl_opt_t1) != 0);\n', ''))
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+            with gzip.open(collection, 'rb') as stream:
+                self.assertNotIn(b'cpphdl_opt_t1', stream.read())
 
     def test_runtime_refresh_does_not_regenerate_unchanged_systemverilog(self):
         with tempfile.TemporaryDirectory(prefix='cva6-convert-cache-', dir='/tmp') as directory:

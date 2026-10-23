@@ -143,6 +143,12 @@ def collection_cache_key(work, include, cpphdl, driver):
                                     sort_keys=True).encode()).hexdigest()
 
 
+def compiler_address_space(source, optimization, piece_count):
+    if source.name.startswith('unity-O') and (optimization == '-O2' or piece_count > 1):
+        return 4_000_000_000
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('ordinary', 'output', 'riscv'):
@@ -271,7 +277,7 @@ def main():
             return compile_halves()
         try:
             run([args.cxx, *compile_flags, '-c', source, '-o', target], 'compile-' + label,
-                address_space=4_000_000_000 if optimization == '-O2' and source.name.startswith('unity-O') else None)
+                address_space=compiler_address_space(source, optimization, len(pieces)))
             return [cache.store(source, compile_flags, target)]
         except RuntimeError:
             with (output / ('compile-' + label + '.log')).open('rb') as stream:

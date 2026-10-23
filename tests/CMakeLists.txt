@@ -316,6 +316,12 @@ if(Python3_Interpreter_FOUND)
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME hdlcpp_specialization_precedence COMMAND "${CMAKE_COMMAND}" -E env
+            "CPPHDL_TEST_HDLCPP=$<TARGET_FILE:hdlcpp>" "CPPHDL_TEST_CXX=${CMAKE_CXX_COMPILER}"
+            "${Python3_EXECUTABLE}" -B -m unittest
+            test_workflow.WorkflowTests.test_specialization_preserves_non_type_parameter_expression_precedence)
+        set_tests_properties(hdlcpp_specialization_precedence PROPERTIES TIMEOUT 120
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/hdlcpp/tests/cva6" LABELS "hdlcpp;templates")
         add_test(NAME hdlcpp_wide_select_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/WideSelectChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"

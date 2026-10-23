@@ -13950,6 +13950,7 @@ struct GeneratedModuleInfo {
     std::filesystem::path path;
     std::string definition;
     std::vector<std::pair<std::string, std::string>> params;
+    std::set<std::string> nonTypeParams;
     std::set<std::string> localTypes;
     std::set<std::string> localValues;
     bool hasInstantiableDefaultConstructor = false;
@@ -14113,7 +14114,8 @@ static std::string normalizeConcreteType(std::string type)
     return out;
 }
 
-static std::vector<std::pair<std::string, std::string>> parseTemplateParamSpecs(const std::string& templateLine)
+static std::vector<std::pair<std::string, std::string>> parseTemplateParamSpecs(
+    const std::string& templateLine, std::set<std::string>& nonTypeParams)
 {
     auto lt = templateLine.find('<');
     auto gt = lt == std::string::npos ? std::string::npos : templateLine.rfind('>');
@@ -14138,7 +14140,13 @@ static std::vector<std::pair<std::string, std::string>> parseTemplateParamSpecs(
             --begin;
         }
         if (end > begin) {
-            params.push_back({left.substr(begin, end - begin), def});
+            auto name = left.substr(begin, end - begin);
+            auto declarationType = trim(left.substr(0, begin));
+            if (declarationType != "typename" && declarationType != "class" &&
+                !declarationType.starts_with("template")) {
+                nonTypeParams.insert(name);
+            }
+            params.push_back({name, def});
         }
     }
     return params;
@@ -14331,7 +14339,7 @@ static std::map<std::string, GeneratedModuleInfo> findGeneratedModuleInfos(const
                 auto& info = infos[name];
                 info.path = it->path();
                 info.definition = extractGeneratedClassDefinition(text, name);
-                info.params = parseTemplateParamSpecs(trim(prev));
+                info.params = parseTemplateParamSpecs(trim(prev), info.nonTypeParams);
                 info.localTypes = parseLocalTypeNames(info.definition);
                 info.localValues = parseLocalValueNames(info.definition);
                 info.hasInstantiableDefaultConstructor = hasUserDefinedDefaultConstructor(text, name);
@@ -14415,6 +14423,9 @@ static std::map<std::string, std::string> concreteTemplateParamValues(
             value = replaceIdentifiers(defaultValue, values);
         }
         if (!value.empty()) {
+            if (info.nonTypeParams.contains(name)) {
+                value = "(" + value + ")";
+            }
             values[name] = normalizeConcreteType(value);
         }
     }

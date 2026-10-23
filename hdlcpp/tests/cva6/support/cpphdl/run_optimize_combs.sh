@@ -107,7 +107,8 @@ def collect(source, target):
         print(f'verified comb collection cache: {source.name}', file=sys.stderr, flush=True)
         return [target]
     text = source.read_text()
-    markers = list(re.finditer(r'^cpphdl_opt_t\d+\* cpphdlCombs(?:Collect|Opaque)\w* = nullptr;[ \t]*$', text, re.MULTILINE))
+    markers = list(re.finditer(r'(?:^static_assert\(sizeof\(cpphdl_opt_t\d+\) != 0\);\n)?'
+                              r'^cpphdl_opt_t\d+\* cpphdlCombs(?:Collect|Opaque)\w* = nullptr;[ \t]*$', text, re.MULTILINE))
     partition = Path(str(target) + '.split')
     can_split = (len(markers) > 1 and not text[markers[-1].end():].strip()
                  and all(not text[first.end():second.start()].strip()
