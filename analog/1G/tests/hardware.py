@@ -14,6 +14,9 @@ from pathlib import Path
 import subprocess
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'tests'))
+from TestToolchain import TestToolchain
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'pdk/1G_repeater_IHPSG13G2'))
 from tool_process import configure_cleanup, execute
 
@@ -37,6 +40,7 @@ def source_dependencies(roots, repo, cxx='c++', defines=()):
 def run(args):
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     (work / "hardware_checks.json").unlink(missing_ok=True)
     source = Path(__file__).resolve().parents[1]
     repo = source.parents[1]
@@ -125,14 +129,14 @@ def run(args):
     commands = [
         [args.native, *fixture_args, work / "cpp_trace.csv"],
         [args.converter, *clocks, "--generated-dir", work / "rtl", source / implementation, "--", "-I" + str(repo / "include")],
-        [args.verilator, "--cc", "--exe", "--build", "--no-skip-identical", "-j", "2", "--top-module", module, "-Wno-fatal",
+        [args.verilator.resolve(), "--cc", "--exe", "--build", "--no-skip-identical", "-j", "2", "--top-module", module, "-Wno-fatal",
          "--Mdir", work / "obj", "-CFLAGS", "-DVERILATOR -std=c++17" + defines, *rtl_files,
-         harness,
-         "-MAKEFLAGS", "CXX=" + args.cxx + " LINK=" + args.cxx],
+         harness],
         [work / "obj" / ("V" + module), *fixture_args, work / "rtl_trace.csv"]]
     for index, command in enumerate(commands):
         with (work / f"stage{index}.log").open("w") as log:
-            result = execute([str(value) for value in command], stdout=log, stderr=subprocess.STDOUT, timeout=stage_timeout)
+            result = execute(toolchain.command(command), env=toolchain.env,
+                             stdout=log, stderr=subprocess.STDOUT, timeout=stage_timeout)
         if result.returncode:
             raise RuntimeError((work / f"stage{index}.log").read_text())
     if args.case == "alignment":
@@ -152,7 +156,7 @@ def run(args):
     print("Native and RTL trajectories match exactly.")
     def check_receiver_faults(binary, flow):
         command = [str(binary), "--faults", str(work / "receiver-fault-vectors.txt"), str(work / (flow + "_fault_trace.csv"))]
-        execute(command, check=True, timeout=60)
+        execute(command, env=toolchain.env, check=True, timeout=60)
         if flow != "cpp" and not filecmp.cmp(work / "cpp_fault_trace.csv", work / (flow + "_fault_trace.csv"), shallow=False):
             raise ValueError("native/" + flow + " receiver fault trajectories differ")
     if args.case == "receiver":
@@ -183,13 +187,13 @@ write_verilog {quote(work / 'frontend.v')}
                 execute([str(binary / "yosys"), "-Q", "-T", "-s", str(work / "frontend.ys")],
                         stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
             with (work / "frontend-build.log").open("w") as log:
-                execute([str(args.verilator), "--cc", "--exe", "--build", "--no-skip-identical",
+                execute(toolchain.command([args.verilator.resolve(), "--cc", "--exe", "--build", "--no-skip-identical",
                          "--output-groups", "0", "-j", "2", "--top-module", module, "-Wno-fatal",
                          "--Mdir", str(work / "frontend_obj"), "-CFLAGS", "-DVERILATOR -DMAPPED -std=c++17" + defines,
-                         str(work / "frontend.v"), str(harness), "-MAKEFLAGS", "CXX=" + args.cxx + " LINK=" + args.cxx],
+                         work / "frontend.v", harness]), env=toolchain.env,
                         stdout=log, stderr=subprocess.STDOUT, check=True, timeout=180)
             execute([str(work / "frontend_obj" / ("V" + module)), *map(str, fixture_args), str(work / "frontend_trace.csv")],
-                    check=True, timeout=60)
+                    env=toolchain.env, check=True, timeout=60)
             if not filecmp.cmp(work / "cpp_trace.csv", work / "frontend_trace.csv", shallow=False):
                 raise ValueError("native/Yosys frontend trajectories differ")
         script = f'''read_liberty -lib {quote(liberty)}
@@ -215,17 +219,18 @@ write_verilog -noattr {quote(work / 'cells.v')}
         counts = Counter(cell["type"] for cell in mapped["cells"].values())
         if not counts or any(not cell.startswith("sg13g2_") for cell in counts):
             raise ValueError("hardware synthesis left non-IHP or blackbox cells")
-        command = [str(args.verilator), "--cc", "--exe", "--build", "--no-skip-identical", "-j",
+        command = [args.verilator.resolve(), "--cc", "--exe", "--build", "--no-skip-identical", "-j",
                    "2", "--top-module", module,
                    "--flatten", "--output-groups", "0", "--output-split", "10000", "--output-split-cfuncs", "500",
                    "-Wno-fatal", "--Mdir", str(work / "mapped_obj"), "-CFLAGS", "-DVERILATOR -DMAPPED -std=c++17" + defines,
-                   str(work / "mapped.v"), str(work / "cells.v"), str(harness),
-                   "-MAKEFLAGS", "CXX=" + args.cxx + " LINK=" + args.cxx +
-                   (" OPT_FAST=-O0 OPT_SLOW=-O0" if filter_case else "")]
+                   work / "mapped.v", work / "cells.v", harness]
+        if filter_case:
+            command += ["-MAKEFLAGS", "OPT_FAST=-O0 OPT_SLOW=-O0"]
         with (work / "mapped-build.log").open("w") as log:
-            execute(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=stage_timeout)
+            execute(toolchain.command(command), env=toolchain.env,
+                    stdout=log, stderr=subprocess.STDOUT, check=True, timeout=stage_timeout)
         execute([str(work / "mapped_obj" / ("V" + module)), *map(str, fixture_args), str(work / "mapped_trace.csv")],
-                       check=True, timeout=1200 if args.case == "autoneg_link" else 180 if filter_case else 60)
+                       env=toolchain.env, check=True, timeout=1200 if args.case == "autoneg_link" else 180 if filter_case else 60)
         if not filecmp.cmp(work / "cpp_trace.csv", work / "mapped_trace.csv", shallow=False):
             raise ValueError("native/IHP mapped output trajectories differ")
         if args.case == "receiver":

@@ -15,7 +15,7 @@ from types import SimpleNamespace
 SOURCE = Path(__file__).resolve()
 ANALOG = SOURCE.parents[2]
 sys.path.insert(0, str(ANALOG / '1G/IHPSG13G2'))
-from hardware import configure_cleanup, execute
+from hardware import TestToolchain, configure_cleanup, execute
 import cell_timing
 from mapped_area import library_areas
 
@@ -28,6 +28,7 @@ def run(args):
     root = args.work.resolve()
     root.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=root))
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     cases = {'ReceiveAnalogGainControl': ('receive_gain_control', 200000, 'receive_gain_control_reference.py'),
              'ReceiveRangeCalibration': ('receive_range_calibration', 50000, 'receive_range_calibration_reference.py'),
              'ReceiveAnalogAcquisition': ('receive_acquisition', 400000, 'receive_gain_control_reference.py')}
@@ -83,14 +84,14 @@ def run(args):
         hashes.update(timing['input_sha256'])
         hashes[str(work / 'resized.v')] = digest(work / 'resized.v')
         with (work / 'build.log').open('w') as output:
-            execute([str(args.verilator.resolve()), '--cc', '--exe', '--build', '--no-skip-identical',
+            execute(toolchain.command([str(args.verilator.resolve()), '--cc', '--exe', '--build', '--no-skip-identical',
                 '-j', '1', '--top-module', args.module, '-Wno-fatal', '--Mdir', str(work / 'obj'),
                 '-CFLAGS', '-DVERILATOR -DMAPPED -std=c++17', str(work / 'resized.v'), str(work / 'cells.v'),
-                str(bench), '-MAKEFLAGS', 'CXX=' + args.cxx + ' LINK=' + args.cxx],
+                str(bench)]), env=toolchain.env,
                 stdout=output, stderr=-2, check=True, timeout=600)
         with (work / 'simulate.log').open('w') as output:
             execute([str(work / ('obj/V' + args.module)), str(work / 'vectors.txt'), str(work / 'resized.csv')],
-                    stdout=output, stderr=-2, check=True, timeout=120)
+                    env=toolchain.env, stdout=output, stderr=-2, check=True, timeout=120)
         if not filecmp.cmp(work / 'native.csv', work / 'resized.csv', shallow=False):
             raise ValueError('gain-controller repaired/native trajectories differ')
         report['native_repaired_exact'] = True

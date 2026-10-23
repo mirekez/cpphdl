@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 import subprocess
 
-from hardware import configure_cleanup, execute, source_dependencies
+from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 
 SOURCE = Path(__file__).resolve()
 MODULES = {
@@ -42,6 +42,7 @@ def run(args):
     repo = source.parents[1]
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     (work / 'hardware_checks.json').unlink(missing_ok=True)
     harness = SOURCE.parent / ('pma_endpoint.cpp' if args.case == 'pma_aligned' else args.case + '.cpp')
     defines = ['-DALIGNED_PMA'] if args.case == 'pma_aligned' else []
@@ -51,7 +52,8 @@ def run(args):
 
     def stage(name, command, timeout=1200, output=None):
         with (output or work / (name + '.log')).open('w') as log:
-            execute(list(map(str, command)), stdout=log, stderr=subprocess.STDOUT, check=True, timeout=timeout)
+            execute(toolchain.command(command), env=toolchain.env,
+                    stdout=log, stderr=subprocess.STDOUT, check=True, timeout=timeout)
 
     def simulate(binary, name):
         stage(name, [binary, work / (name + '_trace.csv')], simulation_timeout)
@@ -69,8 +71,7 @@ def run(args):
         stage(name + '-build', [args.verilator.resolve(), '--cc', '--exe', '--build', '--no-skip-identical',
             '--flatten', '--output-groups', '0', '--output-split', '10000', '--output-split-cfuncs', '500',
             '-j', '2', '--top-module', top, '-Wno-fatal', '--Mdir', directory,
-            '-CFLAGS', ' '.join(['-DVERILATOR', '-std=c++17', *defines]), *files, harness,
-            '-MAKEFLAGS', 'CXX=' + args.cxx + ' LINK=' + args.cxx], timeout=1800)
+            '-CFLAGS', ' '.join(['-DVERILATOR', '-std=c++17', *defines]), *files, harness], timeout=1800)
         return directory / ('V' + top)
 
     simulate(build('rtl', rtl), 'rtl')

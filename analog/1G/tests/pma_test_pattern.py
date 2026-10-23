@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 from pma_test_pattern_reference import generate
-from hardware import configure_cleanup, execute, source_dependencies
+from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 
 SOURCE = Path(__file__).resolve()
 ANALOG = SOURCE.parents[2]
@@ -27,6 +27,7 @@ def run(args, *, source=SOURCE, top=TOP, generate_vectors=generate,
     root = args.work.resolve()
     root.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=root))
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve() if args.verilator else None, work)
     module_source = source.parents[1] / (source.stem + '.cpp')
     hashes = source_dependencies([source.with_suffix('.cpp'), module_source],
                                  ANALOG.parent, args.cxx)
@@ -49,7 +50,8 @@ def run(args, *, source=SOURCE, top=TOP, generate_vectors=generate,
 
     def command(label, argv, timeout=300):
         with (work / (label + '.log')).open('w') as output:
-            execute(list(map(str, argv)), stdout=output, stderr=-2, timeout=timeout, check=True)
+            execute(toolchain.command(argv), env=toolchain.env,
+                    stdout=output, stderr=-2, timeout=timeout, check=True)
 
     save()
     try:
@@ -93,8 +95,7 @@ write_verilog -noattr "{work / 'cells.v'}"
                 defines += ' -DMAPPED'
             command('build', [args.verilator.resolve(), '--cc', '--exe', '--build', '--no-skip-identical',
                 '-j', '1', '--top-module', top, '-Wno-fatal', '--Mdir', work / 'obj',
-                '-CFLAGS', defines, *design, source.with_suffix('.cpp'),
-                '-MAKEFLAGS', 'CXX=' + args.cxx + ' LINK=' + args.cxx], timeout=600)
+                '-CFLAGS', defines, *design, source.with_suffix('.cpp')], timeout=600)
             command('simulate', [work / 'obj' / ('V' + top), fixture, work / 'hardware.csv'])
             if not filecmp.cmp(work / 'native.csv', work / 'hardware.csv', shallow=False):
                 raise ValueError('test-pattern native/hardware trajectories differ')
