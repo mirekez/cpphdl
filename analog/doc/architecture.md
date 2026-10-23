@@ -119,6 +119,14 @@ local integration error. The default retains fixed-step failure behavior. It che
 of treating their zero-valued initial guess as a uniquely determined solution.
 Independent sources and capacitor charges seed Newton iteration; resistor
 connections propagate tentative voltage guesses without imposing extra constraints.
+Consistent capacitor-voltage loops use a spanning constraint basis during startup
+and zero-time holds. Dependent capacitor multipliers receive a zero-current gauge;
+all capacitor voltage conditions are still checked, and every capacitor retains
+its full integration equation. This avoids singular initialization without
+discarding stored charge or depending on declaration order. Contradictory initial
+voltages produce `E_INITIAL_CHARGE`. An ideal source jump incompatible with held
+loop charge produces `E_CHARGE_DISCONTINUITY`; finite PWL edges are supported.
+General impulsive charge redistribution is not implemented by this hold scheme.
 Trial voltage updates are limited before backtracking, scaled to the current
 voltage magnitude, to avoid enormous steps through cutoff channels with weak
 return paths. This changes the iteration, not the physical network.
@@ -133,7 +141,9 @@ An accuracy certificate needs observations, operating envelope, metric/bound,
 reference data/model, initial-state mapping and timing alignment. No class name,
 C++ subtype or number of equations proves precision.
 
-A production backend needs sparse matrices, adaptive DAE integration,
+An [optional sparse QR backend](sparse_solver.md) now consumes the same Jacobian
+stamps and has independent rank, circuit-response and dense-equivalence tests.
+A production backend still needs adaptive DAE integration,
 consistent-initialization analysis, root-localized events, validated foundry/device
 models, supply energy accounting, noise and thermal coupling. Shared environmental
 and technology contexts should supply defaults while retaining important local

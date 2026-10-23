@@ -1,0 +1,80 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module strongarm_comparator(Vdd, Vss, PLUS, MINUS, CLOCK, OUTP, OUTN);
+    inout Vdd, Vss, PLUS, MINUS, CLOCK, OUTP, OUTN;
+    electrical Vdd, Vss, PLUS, MINUS, CLOCK, OUTP, OUTN;
+    electrical cpphdl_n8;
+    electrical cpphdl_n9;
+    electrical cpphdl_n10;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:28
+        I(cpphdl_n8, cpphdl_n10) <+ cpphdl_channel(V(PLUS, cpphdl_n10), V(cpphdl_n8, cpphdl_n10), 0.0080000000000000002, 0.69999999999999996, 1.0);
+        // device 1, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:29
+        I(cpphdl_n9, cpphdl_n10) <+ cpphdl_channel(V(MINUS, cpphdl_n10), V(cpphdl_n9, cpphdl_n10), 0.0080000000000000002, 0.69999999999999996, 1.0);
+        // device 2, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:30
+        I(cpphdl_n10, Vss) <+ cpphdl_channel(V(CLOCK, Vss), V(cpphdl_n10, Vss), 0.0080000000000000002, 0.69999999999999996, 1.0);
+        // device 3, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:33
+        I(OUTN, cpphdl_n8) <+ cpphdl_channel(V(OUTP, cpphdl_n8), V(OUTN, cpphdl_n8), 0.0040000000000000001, 0.69999999999999996, 1.0);
+        // device 4, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:34
+        I(OUTP, cpphdl_n9) <+ cpphdl_channel(V(OUTN, cpphdl_n9), V(OUTP, cpphdl_n9), 0.0040000000000000001, 0.69999999999999996, 1.0);
+        // device 5, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:35
+        I(OUTP, Vdd) <+ cpphdl_channel(V(OUTN, Vdd), V(OUTP, Vdd), 0.002, 0.69999999999999996, -1.0);
+        // device 6, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:36
+        I(OUTN, Vdd) <+ cpphdl_channel(V(OUTP, Vdd), V(OUTN, Vdd), 0.002, 0.69999999999999996, -1.0);
+        // device 7, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:38
+        I(cpphdl_n8, Vdd) <+ cpphdl_channel(V(CLOCK, Vdd), V(cpphdl_n8, Vdd), 0.002, 0.69999999999999996, -1.0);
+        // device 8, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:39
+        I(cpphdl_n9, Vdd) <+ cpphdl_channel(V(CLOCK, Vdd), V(cpphdl_n9, Vdd), 0.002, 0.69999999999999996, -1.0);
+        // device 9, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:40
+        I(OUTP, Vdd) <+ cpphdl_channel(V(CLOCK, Vdd), V(OUTP, Vdd), 0.002, 0.69999999999999996, -1.0);
+        // device 10, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:41
+        I(OUTN, Vdd) <+ cpphdl_channel(V(CLOCK, Vdd), V(OUTN, Vdd), 0.002, 0.69999999999999996, -1.0);
+        // device 11, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:42
+        I(cpphdl_n8, Vss) <+ 2.9999999999999998e-14 * ddt(V(cpphdl_n8, Vss)); // Bench initial voltage = 0.0 V.
+        // device 12, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:43
+        I(cpphdl_n9, Vss) <+ 2.9999999999999998e-14 * ddt(V(cpphdl_n9, Vss)); // Bench initial voltage = 0.0 V.
+        // device 13, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:44
+        I(cpphdl_n10, Vss) <+ 2.9999999999999998e-14 * ddt(V(cpphdl_n10, Vss)); // Bench initial voltage = 0.0 V.
+        // device 14, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:45
+        I(OUTP, Vss) <+ 5.0000000000000002e-14 * ddt(V(OUTP, Vss)); // Bench initial voltage = 0.0 V.
+        // device 15, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:46
+        I(OUTN, Vss) <+ 5.0000000000000002e-14 * ddt(V(OUTN, Vss)); // Bench initial voltage = 0.0 V.
+        // device 16, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:47
+        I(PLUS, cpphdl_n10) <+ 2e-14 * ddt(V(PLUS, cpphdl_n10)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 17, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:48
+        I(MINUS, cpphdl_n10) <+ 2e-14 * ddt(V(MINUS, cpphdl_n10)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 18, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:49
+        I(PLUS, cpphdl_n8) <+ 2.9999999999999998e-15 * ddt(V(PLUS, cpphdl_n8)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 19, IC strongarm_comparator, analog/basic/strongarm_comparator.hpp:50
+        I(MINUS, cpphdl_n9) <+ 2.9999999999999998e-15 * ddt(V(MINUS, cpphdl_n9)); // Bench initial voltage = 1.6499999999999999 V.
+    end
+endmodule

@@ -1,0 +1,68 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module nmos_resistor_amplifier(Vdd, Vss, PLUS, MINUS, OUTP, OUTN);
+    inout Vdd, Vss, PLUS, MINUS, OUTP, OUTN;
+    electrical Vdd, Vss, PLUS, MINUS, OUTP, OUTN;
+    electrical cpphdl_n7;
+    electrical cpphdl_n8;
+    electrical cpphdl_n9;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:23
+        I(Vdd, OUTN) <+ V(Vdd, OUTN) / 1000.0;
+        // device 1, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:24
+        I(Vdd, OUTP) <+ V(Vdd, OUTP) / 1000.0;
+        // device 2, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:25
+        I(OUTN, cpphdl_n7) <+ cpphdl_channel(V(PLUS, cpphdl_n7), V(OUTN, cpphdl_n7), 0.014999999999999999, 0.69999999999999996, 1.0);
+        // device 3, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:26
+        I(OUTP, cpphdl_n8) <+ cpphdl_channel(V(MINUS, cpphdl_n8), V(OUTP, cpphdl_n8), 0.014999999999999999, 0.69999999999999996, 1.0);
+        // device 4, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:27
+        I(cpphdl_n9, cpphdl_n7) <+ V(cpphdl_n9, cpphdl_n7) / 50.0;
+        // device 5, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:28
+        I(cpphdl_n9, cpphdl_n8) <+ V(cpphdl_n9, cpphdl_n8) / 50.0;
+        // device 6, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:29
+        I(Vss, cpphdl_n9) <+ V(Vss, cpphdl_n9) / 150.0;
+        // device 7, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:30
+        I(OUTN, Vdd) <+ 2.9999999999999998e-13 * ddt(V(OUTN, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 8, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:31
+        I(OUTP, Vdd) <+ 2.9999999999999998e-13 * ddt(V(OUTP, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 9, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:32
+        I(cpphdl_n9, Vss) <+ 4e-14 * ddt(V(cpphdl_n9, Vss)); // Bench initial voltage = 0.0 V.
+        // device 10, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:34
+        I(PLUS, cpphdl_n7) <+ 1.4999999999999999e-13 * ddt(V(PLUS, cpphdl_n7)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 11, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:35
+        I(MINUS, cpphdl_n8) <+ 1.4999999999999999e-13 * ddt(V(MINUS, cpphdl_n8)); // Bench initial voltage = 1.6499999999999999 V.
+        // device 12, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:36
+        I(PLUS, OUTN) <+ 2e-14 * ddt(V(PLUS, OUTN)); // Bench initial voltage = -1.6499999999999999 V.
+        // device 13, IC nmos_resistor_amplifier, analog/basic/nmos_resistor_amplifier.hpp:37
+        I(MINUS, OUTP) <+ 2e-14 * ddt(V(MINUS, OUTP)); // Bench initial voltage = -1.6499999999999999 V.
+    end
+endmodule

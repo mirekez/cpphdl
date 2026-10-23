@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """A core, absent layout or stale report directory must not qualify as a chip."""
 from pathlib import Path
+from contextlib import redirect_stdout
+import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -30,11 +35,19 @@ class PhysicalVerification(unittest.TestCase):
                     "work = Path(sys.argv[sys.argv.index('--run_dir') + 1])\n"
                     "work.mkdir(parents=True)\n"
                     "(work / 'pad_RepeaterPadframe_full.lyrdb').write_text('<broken>')\n")
-            result = subprocess.run([sys.executable, str(SOURCE / "verify_physical.py"),
-                "--layout", str(work / "pad.gds"), "--netlist", str(work / "pad.cdl"),
-                "--interface", str(work / "interface.json"), "--top", "RepeaterPadframe",
-                "--pdk", str(work / "pdk"), "--work", str(work / "checks")], text=True, capture_output=True)
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            sys.path.insert(0, str(SOURCE))
+            spec = importlib.util.spec_from_file_location('physical_verification_negative', SOURCE / 'verify_physical.py')
+            verification = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(verification)
+            args = SimpleNamespace(layout=work / 'pad.gds', netlist=work / 'pad.cdl',
+                interface=work / 'interface.json', top='RepeaterPadframe', pdk=work / 'pdk',
+                tools=work / 'unused-tools', work=work / 'checks', mode='deep', timeout=5)
+            # These runners only write malformed fixture reports. Keep them
+            # outside the real EDA memory queue while testing the production
+            # report validation and its zero-exit rejection.
+            with patch.object(verification, 'execute', side_effect=subprocess.run), redirect_stdout(io.StringIO()):
+                result = verification.verify(args)
+            self.assertEqual(result, 1)
             report = json.loads((work / "checks/physical_checks.json").read_text())
             self.assertEqual(report["status"], "failed")
             self.assertEqual(report["checks"], {})

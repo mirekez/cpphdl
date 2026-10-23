@@ -31,6 +31,22 @@ class ToolchainChecks(unittest.TestCase):
             self.assertEqual(self.toolchain.command(command), command)
             probe.assert_not_called()
 
+    def test_atomic_library_directory_comes_from_selected_compiler(self):
+        root = Path(self.directory.name)
+        libraries = {}
+        for name, directory in (('libstdc++.so', 'cxx runtime'), ('libatomic.so', 'atomic runtime')):
+            path = root / directory / name
+            path.parent.mkdir()
+            path.touch()
+            libraries[name] = str(path)
+        with patch('subprocess.check_output', side_effect=lambda command, **kwargs:
+                   libraries[command[1].split('=', 1)[1]]):
+            toolchain = TestToolchain('/tools/bin/clang++', '/tools/bin/verilator', root)
+        self.assertIn(str(root / 'atomic runtime'), toolchain.library_dirs)
+        self.assertIn(str(root / 'atomic runtime'), toolchain.env['LD_LIBRARY_PATH'].split(':'))
+        command = toolchain.command(['/tools/bin/verilator', '--build', 'test.sv'])
+        self.assertIn("-L'" + str(root / 'atomic runtime') + "'", command[command.index('-LDFLAGS') + 1])
+
     def test_timing_does_not_downgrade_requested_standard(self):
         command = self.toolchain.command(['/tools/bin/verilator', '--binary',
                                            '-CFLAGS', '-std=c++23', 'test.sv'])

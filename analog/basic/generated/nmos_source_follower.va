@@ -1,0 +1,47 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module nmos_source_follower(Vdd, Vss, IN, OUT);
+    inout Vdd, Vss, IN, OUT;
+    electrical Vdd, Vss, IN, OUT;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC nmos_source_follower, analog/basic/nmos_source_follower.hpp:19
+        I(Vdd, OUT) <+ cpphdl_channel(V(IN, OUT), V(Vdd, OUT), 0.050000000000000003, 0.69999999999999996, 1.0);
+        // device 1, IC nmos_source_follower, analog/basic/nmos_source_follower.hpp:20
+        I(Vss, OUT) <+ V(Vss, OUT) / 500.0;
+        // device 2, IC nmos_source_follower, analog/basic/nmos_source_follower.hpp:23
+        I(IN, OUT) <+ 2e-14 * ddt(V(IN, OUT)); // Bench initial voltage = 0.0 V.
+        // device 3, IC nmos_source_follower, analog/basic/nmos_source_follower.hpp:24
+        I(IN, Vdd) <+ 5e-15 * ddt(V(IN, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 4, IC nmos_source_follower, analog/basic/nmos_source_follower.hpp:25
+        I(OUT, Vss) <+ 2e-14 * ddt(V(OUT, Vss)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

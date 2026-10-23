@@ -22,10 +22,14 @@ flowchart LR
     B -->|Achieved local replicas| RB
     RA --> DA[Sampled ADC and adaptive FFE / echo cancellation A]
     RB --> DB[Sampled ADC and adaptive FFE / echo cancellation B]
+    DA --> PA[C++RTL receive PCS A]
+    DB --> PB[C++RTL receive PCS B]
 ```
 
 The shared network and receive front ends run in each electrical simulator.
 The sampled receiver consumes each simulation's resulting voltages separately.
+The `link_pcs` case drives both transmitters from actual C++RTL GMII encoders
+and recovers complete FCS-checked frames from each solver's voltages.
 
 | Source | Purpose |
 | --- | --- |
@@ -36,13 +40,44 @@ The sampled receiver consumes each simulation's resulting voltages separately.
 | `transmitter.hpp` | Partial-response pulse filter, finite-impedance differential driver and composed transmitter |
 | `channel.hpp` | Reciprocal loaded pair and four-pair network with coupling |
 | `hybrid.hpp` | Local transmit-replica subtraction, with configurable balance error |
+| `passive_hybrid.hpp` | Four-resistor physical subtraction bridge with attenuation, input loading and output charge; [circuit explanation](frontend.md) |
 | `equalizer.hpp` | Passive lead network and finite-bandwidth gain stage |
 | `dfe.hpp` | One postcursor tap using the receiver's own held PAM5 decisions |
 | `phy.hpp` | Receive front end, one bidirectional pair, and four simultaneous bidirectional pairs |
 | `adaptation.hpp` | Sampled ADC, joint receive FFE and adaptive local echo/coupling cancellation |
+| `receive_filter.hpp` | Fixed-point hardware FFE and adaptive echo/NEXT cancellation; [interface and arithmetic](receive_filter.md) |
+| `receive_filter_pipeline.hpp` | Pipelined implementation with delayed adaptation and explicit latency |
+| `receive_filter_datapath.hpp` | PHY-facing pipelined filter interface; coefficient test probes remain internal |
+| `adc_sar_control.hpp`, `adc.hpp` | SAR controller and electrical sample/hold, ladder, preamplifier and comparator; [clock schedule and feedback test](adc.md) |
+| `adc_core.hpp`, `adc_receive.hpp` | [Electrical core-domain decision interfaces and composed calibrated receive stream](adc_receive.md) |
+| `receive_frontend.hpp` | [MOS differential amplifier, shared source follower and core-domain ADC bank](receive_frontend.md); coupled acquisition qualification in progress |
+| `receive_normalizer.hpp` | [Programmable ADC gain/offset normalization](receive_normalizer.md) into the PCS sample convention |
+| `receive_calibration.hpp` | [Measured training gain and offset](receive_calibration.md), with balanced-label checks and sequential hardware division |
+| `receive_gain_control.hpp` | [Coarse analog gain acquisition](receive_gain_control.md), with settling, bounded sample windows and training-only changes |
+| `receive_range_calibration.hpp` | [Measured-range normalization](receive_range_calibration.md), using a sixteen-clock divider without requiring five labeled training levels |
+| `receive_acquisition.hpp` | [Connected gain-acquisition and range-calibration handoff](receive_acquisition.md); freezes gain before releasing the calibrated stream |
+| `IHPSG13G2/programmable_receive_frontend.hpp` | [Fixed-termination buffered receiver with one programmable gain stage](IHPSG13G2/programmable_receive_frontend.md); all five single-slice generic flows and their waveform comparisons pass; sixteen-slice loading is under qualification |
+| `pam5_driver_control.hpp` | [Registered main/history unary controls](pam5_driver_control.md) and their physical implementation; [weighted output stage](IHPSG13G2/emphasized_driver.md) |
+| `pma_test_pattern.hpp` | [Registered PMA transmitter test symbols](pma_test_pattern.md), with independent native/RTL sequence checks |
+| `pma_transmit_lane.hpp` | [Shared normal/test steering path](pma_transmit_lane.md), with explicit PCS polarity and history reset at stream boundaries |
+| `IHPSG13G2/core_transmit_driver.hpp` | [Sixteen loaded voltage translators and the weighted output stage](IHPSG13G2/core_transmit_driver.md); generic independent flows/comparison and nominal PSP pass |
 | `timing_recovery.hpp` | Sampled Gardner timing-loop reference |
+| `receive_timing.hpp` | Fixed-point C++RTL timing controller; noisy closed-loop native/RTL/IHP gate tests; [interface and boundary](timing.md) |
 | `receive_alignment.hpp` | Hardware GMII crossing from a recovered clock to the reference domain, with frame buffering and fault containment |
-| `pcs.hpp` | Hardware normal/control symbol mapper and master/slave LFSRs; complete PCS state machines and trellis coding remain open |
+| `pair_acquisition.hpp`, `pma_aligned.hpp` | [Cable pair identification/deskew and aligned PMA/PCS](pair_acquisition.md) |
+| `flp_frontend.hpp` | [MOS link-pulse driver and either-polarity detector](flp_frontend.md) |
+| `pcs.hpp` | Hardware normal/control symbol mapper and master/slave LFSRs |
+| `flp_transmit.hpp`, `flp_receive.hpp`, `master_slave.hpp`, `negotiation.hpp`, `autonegotiation.hpp` | Digital link-pulse timing, role resolution, page exchange/retry and composed negotiation; [interfaces and validation boundaries](negotiation.md) |
+| `receive_clock_oscillator.hpp` | Two physical R/2R DACs and MOS ring actuator; separate tuning/load/refinement and solver comparisons |
+| `reference_clock.hpp` | [Physical 125-to-250 MHz reference PLL](reference_clock.md), with MOS divider/PFD, finite charge paths and passive filter |
+| `reference_clock_domain.hpp` | [Connected PLL and 3.3 V clock delivery](reference_clock_domain.md), including translator loading and achieved-edge controller checks |
+| `clock_level_shifter.hpp` | Derived cascode clock interface with explicit output-charge correction; [circuit and pending qualification](../basic/cascoded_level_shifter.md) |
+| `pcs_transmit.hpp` | GMII scrambler, convolutional encoder, delimiters and composed PAM5 transmitter |
+| `pcs_synchronize.hpp` | Unseeded receive scrambler and polarity acquisition |
+| `pcs_framer.hpp` | Receive framing, control tags, error containment and re-acquisition requests |
+| `pcs_receive.hpp` | Soft branch metrics, eight-state Viterbi decoding and terminated tail buffering |
+| `pcs_receiver.hpp` | Composed ADC-sample-to-GMII receiver with aligned masks and metadata |
+| `pma_control.hpp`, `pma_endpoint.hpp` | Startup, receiver-readiness exchange, mode control and connected TX/RX PCS; [interfaces and current tests](pma_control.md) |
 
 All electrical modules derive from `IC`, declare member ports and define purposes
 line by line in `_assign()`. They share actual nodes: changing another device's
@@ -61,7 +96,7 @@ vdd = sim_voltage_source(vss, voltage(3.3));
 vcm = sim_voltage_source(vss, voltage(1.65));
 vref = sim_voltage_source(vss, voltage(.6));
 // The bench supplies a 1.2 V boundary clock and thermometer controls.
-link cable_link;
+analog::one_g::link cable_link;
 cable_link.Vdd = vdd;
 cable_link.Vss = vss;
 cable_link.VCM = vcm;
@@ -86,6 +121,7 @@ cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
     -DOPENVAF_EXECUTABLE="$PWD/analog/out/veriloga-toolchain/openvaf-compatible/openvaf" \
     -DNGSPICE_EXECUTABLE="$PWD/analog/out/veriloga-toolchain/install/bin/ngspice"
 cmake --build analog/build --target generate-1g-veriloga -j 2
+cmake --build analog/build --target generate-1g-rtl
 cmake --build analog/build --target check-1g -j 2
 ```
 
@@ -107,8 +143,8 @@ The [PCS hardware](pcs.md) and [receive clock alignment](receive_alignment.md)
 also run in native C++, generated SystemVerilog and mapped IHP gates. Each
 implementation passes the same absolute checks, followed by exact output-trace
 comparison. Run them with `ctest --test-dir analog/build -L hardware
---output-on-failure -j 2` after building `analog_1g_alignment`, `analog_1g_pcs`
-and `analog_1g_scrambler`. IHP gate simulation is enabled when the prepared
+--output-on-failure -j 1` after building the targets through `check-1g`.
+IHP gate simulation is enabled when the prepared
 repeater toolchain and standard-cell library exist.
 
 The new [MOS-biased drivers](IHPSG13G2/biased_driver.md) replace the ideal tail
@@ -130,3 +166,5 @@ These schematic blocks do not yet supply a layout-ready complete PHY macro.
 
 Source material checked 2026-10-17. No waveform in this prototype is asserted to
 meet a normative transmit template or the complete 100 m cable specification.
+
+[Analog gain acquisition](receive_gain_control.md) provides a five-setting training controller and independent native/RTL/mapped regression flows.

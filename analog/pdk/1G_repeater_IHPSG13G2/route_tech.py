@@ -2,8 +2,10 @@
 """Select PDK fixed vias whose intermediate metal meets its minimum area.
 
 The router otherwise emits isolated intermediate landings in stacked vias that
-pass its checks but fail IHP M2.d/M3.d. The PDK already supplies larger '_s'
-variants. Filter undersized alternatives from a local LEF copy and add area-safe
+pass its checks but fail IHP M2.d/M3.d. Keep the original Via1 pin-access choices:
+their upper Metal2 connects to a route or the larger Via2 landing. Filtering
+these choices prevents legal access to the tightly spaced sg13g2_or2_1 pins.
+Filter undersized upper-stack alternatives from a local LEF copy and add area-safe
 single-cut variants with square and oriented rectangular metal landings. Their
 0.19 um cut and 20 Ohm resistance follow the PDK's Via2_s/Via3_s/Via4_s.
 The installed PDK and all rule limits remain unchanged.
@@ -30,7 +32,9 @@ def prepare(pdk, work):
 
     def via(match):
         name = match[1]
-
+        if name.startswith("Via1_"):
+            kept.append(name)
+            return match[0]
         for layer, coords in re.findall(r"LAYER\s+(\w+)\s*;\s*\n\s*RECT\s+([-\d.\s]+)\s*;", match[0]):
             if layer in rules:
                 left, bottom, right, top = map(float, coords.split())

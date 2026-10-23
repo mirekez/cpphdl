@@ -1,72 +1,165 @@
-# PCS hardware blocks
+# PCS hardware
 
-[pcs.hpp](pcs.hpp) contains two C++RTL `Module` classes. They are hardware
-building blocks for Clause 40, **not a complete GMII-to-MDI PCS**. They do not
-substitute a private framing protocol for Ethernet.
+The PCS classes use the shared C++HDL `Module` and member-port syntax. They
+operate on digital values at the PMA boundary; electrical loading belongs to
+connected `IC` models. The target is full-duplex 1000BASE-T at 125 MBd.
 
-`PCSSymbolMapper` registers four PAM5 symbols in one symbol-clock cycle:
+| Class | Purpose | Interface / latency |
+| --- | --- | --- |
+| `PCSSideStream` | Master/slave 33-bit LFSR, seed and hold checks | State advances on an enabled symbol |
+| `PCSSymbolMapper` | IEEE Tables 40-1/40-2, including special code groups | One registered stage |
+| `PCSTransmitBits` | Sx/Sy/Sg expansion, alternating scrambling, convolutional coding, delimiter/control selection and sign reversal | One registered stage |
+| `PCSTransmitter` | Composed GMII-to-PAM5 transmit path | Bit encoder followed by mapper |
+| `PCSReceiveSynchronizer` | Acquire remote scrambler state and pair polarities from idle; track without a supplied seed | 33 observed bits and at least 64 qualifying symbols |
+| `PCSReceiveFramer` | Confirm SSD, recognize data/reset/ESD, propagate errors and request re-acquisition | One registered observation; SSD1 is committed only after SSD2 |
+| `PCSBranchMetrics` | Closest constellation point and squared distance for each of eight subsets | One registered stage |
+| `PipelinedPCSBranchMetrics` | Same subset costs, with registered coordinate, pair, group and subset reductions | Four registered stages; output at input edge + 3 |
+| `PCSTrellisDecoder` | Eight-state soft-decision Viterbi decoding and terminated-stream draining | 32-observation survivor history |
+| `PCSReceiver` | Synchronizer, framer, pipelined metrics, decoder and aligned GMII metadata | 39 symbol clocks from ADC observation to GMII |
+
+Sources are `pcs.hpp`, `pcs_transmit.hpp`, `pcs_synchronize.hpp`,
+`pcs_framer.hpp`, `pcs_receive.hpp`, `pcs_branch_metrics_pipeline.hpp` and `pcs_receiver.hpp`. Each `.cpp` entry
+point includes its hardware classes for conversion by the root `build/cpphdl`.
+
+## Representations
+
+Four PAM5 values are packed in 12 bits: A in bits 2:0, B in 5:3, C in 8:6 and
+D in 11:9. Each three-bit value is **physical symbol + 2**, so codes 0..4 mean
+-2..+2. The DAC thermometer decoder remains a separate circuit.
+
+The table subset is the printed string **Sd[6], Sd[7], Sd[8]**: Sd[6] is its
+most significant bit. This differs from `(Sd >> 6) & 7`. The encoder reverses
+these bits explicitly. The mapper's point is Sd[5:0].
+
+`PCSReceiver.samples_in` packs four unsigned eight-bit ADC samples in A/B/C/D
+order. Code 128 means zero; a PAM level spans 32 counts. Its output uses the
+shared GMII word format: data in bits 7:0, valid in bit 8 and error in bit 9.
+The receiver needs **simultaneous deskewed observations on a recovered symbol
+clock**. It does not provide the analog ADC or recover that clock itself.
 
 ```cpp
-PCSSymbolMapper mapper;
-// Bind class member ports, then call _assign(). The hardware clock is 125 MHz.
-mapper.point_in = _ASSIGN(point);         // Sd[5:0], unsigned 0..63
-mapper.subset_in = _ASSIGN(subset);       // Printed order Sd[6], Sd[7], Sd[8]
-mapper.condition_in = _ASSIGN(condition);
-mapper.negate_in = _ASSIGN(negate);       // Bit i requests sign inversion on pair i
+PCSTransmitter tx;
+tx.data_in = _ASSIGN(gmii_data);
+tx.enable_in = _ASSIGN(gmii_valid);
+tx.error_in = _ASSIGN(gmii_error);
+tx.master_in = _ASSIGN(local_is_master);
+tx.link_in = _ASSIGN(link_ok);
+tx.local_receiver_ok_in = _ASSIGN(local_receiver_ok);
+tx.mode_in = _ASSIGN(mode);             // 0: SEND_Z, 1: SEND_I, 2: SEND_N
+// Bind seed_load_in and a nonzero seed_in, then call _assign().
+
+PCSReceiver rx;
+rx.samples_in = _ASSIGN(adc_samples);
+rx.remote_master_in = _ASSIGN(!local_is_master);
+rx.pma_ok_in = _ASSIGN(pma_receive_ok);
+rx._assign();
 ```
 
-`subset` is the number represented by the **printed** three-bit string, so
-Sd[6] is its most significant bit. It is not `(Sd >> 6) & 7` in a conventional
-least-significant-bit-first integer representation.
+The receive interface has **no seed input**. During idle D0, the magnitude of
+pair A identifies Scr[0]. After collecting the 33-bit history, the synchronizer
+checks the recurrence, both odd/even hypotheses and consistent polarity on all
+four pairs. It continues the acquired polynomial through data. The framer
+requests re-acquisition after invalid groups. PMA failure revokes lock.
+Pair ordering and deskew are prerequisites; this is polarity acquisition, not
+an implementation of cable-pair identification or skew compensation.
 
-`symbols_out` packs four three-bit unsigned DAC codes, with pair A in bits 2:0,
-B in 5:3, C in 8:6 and D in 11:9. Code = physical symbol + 2; hence 0..4
-represent -2..+2. This format avoids unsigned/sign-extension ambiguity at the
-DAC boundary. The terminal thermometer decoder and DAC remain separate devices.
+The independent ADC/FFE reference in `adaptation.hpp` remains sampled software.
+A usable `pma_ok_in` in a chip requires implemented receive-training and timing
+logic. Passing a bench's declared training interval is not that circuitry.
 
-| condition | Code group |
-| --- | --- |
-| 0 | Normal data: all 512 point/subset combinations |
-| 1, 2 | xmt_err, CSExtend_Err |
-| 3, 4 | CSExtend, CSReset |
-| 5, 6 | SSD1, SSD2 |
-| 7 | ESD1 |
-| 8, 9, 10 | ESD2_Ext_0, ESD2_Ext_1, ESD2_Ext_2 |
-| 11 | ESD_Ext_Err |
-| 12 | Idle/Carrier Extension: subset 0, point 0..15 |
-| 13 | SEND_Z: four zero-amplitude symbols |
-| 14, 15 | Invalid |
+## Coding and buffering
 
-Delimiter entries exist only in subset 0. Unsupported combinations produce
-zero amplitude and `invalid_out = true`. Reset produces zero amplitude without
-an invalid indication. The caller supplies the condition and per-pair sign
-inversions; this mapper does not infer the transmit state machine, sign bits,
-GMII pipeline delay or convolutional state.
+Both LFSRs shift toward increasing bit indices. New bit 0 is old bit 32 XOR
+old bit 12 for a master, or old bit 19 for a slave. The auxiliary XOR networks
+implement the Clause 40 polynomial construction. Sc[3:1] alternates between
+current Sy and inverted previous Sy; Sc[0] uses current Sy. Upper scrambling
+bits are present during data. The trellis encoder retains three bits, and two
+CSReset symbols terminate it at zero. Sign reversal uses logical OR of the
+delayed transmit enables.
 
-`PCSSideStream` advances one 33-bit LFSR step per enabled symbol. Bits shift toward
-higher indices. New bit 0 is old bit 32 XOR old bit 12 for a master, or old bit
-19 for a slave. These are the master `1 + x^13 + x^33` and slave
-`1 + x^20 + x^33` recurrences. `load_in` takes priority over advance; reset takes
-priority over both and seeds state 1. Loading zero reports invalid and stops
-advancement until a nonzero seed or reset. The output is the LFSR state, **not**
-a fabricated eight-bit scrambling mask. The Clause 40 Sx/Sy/Sg expansion,
-odd/even encoding, trellis encoder/Viterbi decoder, receive synchronization and
-PCS transmit/receive state machines remain to be implemented.
+`PCSTransmitter` replaces the first two preamble octets with SSD1/SSD2 and
+appends two reset symbols and two ESD symbols. Re-arming after link loss requires
+quiet GMII. Zero seeds and invalid transmit modes fail closed at the DAC output.
 
-[tests/pcs.cpp](tests/pcs.cpp) applies 8,816 data/control/sign combinations and
-invalid/reset cases. [tests/scrambler.cpp](tests/scrambler.cpp) uses an independent
-bit-array recurrence for 20,000 master/slave steps, holds, seed errors and reset.
-Each runs natively and against converted RTL, passes its absolute checker, then
-compares every output trace exactly. When the local IHP toolchain is available,
-the same tests also run against actual mapped IHP gates and compare their traces.
-Digital logic is converted to SystemVerilog, not behavioral Verilog-A.
+The metric block partitions each 64-point subset into six Cartesian groups.
+It evaluates the nearest point in each group, then selects the minimum. A
+separate test searches every table entry directly, including tie cases and
+full-scale ADC samples. Squared distances fit in 18 bits; ADC subtraction uses
+signed host arithmetic before taking a bounded magnitude.
 
-References:
+The Viterbi decoder retains eight survivor paths of 32 bytes and uses the known
+zero ending state at the second reset symbol. Its 21-bit circular metrics avoid
+a serial global-minimum subtraction. Every trellis state can reach every other
+state in two symbols. With branch costs bounded by `2^18 - 1`, reachable metric
+spread is at most twice that bound; candidate spread is at most three times it,
+strictly below the half-range `2^20`. Modular comparisons therefore preserve
+the ordinary unbounded-cost ordering, including wraparound. Four-candidate
+selection uses parallel pairwise comparisons and preserves predecessor order
+on ties. Registered selectors separate metric arithmetic from survivor-history
+fanout; a decision stage accounts for the additional output clock.
+Pending tail decisions have their own validity schedule. Starting another
+stream, including a short malformed stream, cannot erase an earlier frame's
+tail. The receiver delays tags and scrambling masks to match those decisions.
+SSD1 is provisional: SSD2 confirmation inserts both preamble bytes into that
+delay before either is observable on GMII.
 
+The mapper conditions remain: 0 data; 1 transmit error; 2/3 extension error /
+extension; 4 CSReset; 5/6 SSD; 7 ESD1; 8/9/10 ESD2 variants; 11 ESD extension
+error; 12 idle; 13 SEND_Z. Unsupported mapper combinations report invalid and
+produce zero amplitude. The full-duplex receive regression does not qualify
+half-duplex collision/carrier-extension operation.
+
+## Verification
+
+All digital blocks have native, generated-RTL and IHP-mapped-gate contracts.
+Each flow passes its own checker before complete traces are compared exactly.
+The receive system uses an independently encoded stream rather than the DUT
+transmitter as its only oracle. Separate integration drives the actual DUT
+transmitter through both electrical simulators.
+
+- Transmit: 82,099 vectors; every LFSR basis state, both roles, all fourteen
+  conditions, seed errors, training, delimiters, deferred errors and re-arming.
+  Auxiliary reference bits come from GF(2) polynomial multiplication.
+- Metrics: 16,706 observations checked against exhaustive IEEE-table search.
+  The four-stage version checks 16,709 clock states, including pipeline drainage.
+- Trellis: independent full-path dynamic programming, clean payloads, moderate
+  noise coding gain, excessive-noise failure and overlapping terminated tails;
+  17,670 states include 4096 high common-offset costs forcing repeated metric wraps.
+- Synchronization: 90,243 observations; arbitrary seeds and phases, both roles,
+  sixteen polarity combinations, tracking, remote status, PMA loss and stuck data.
+- Framing: 3,730 explicit tag/control/sign observations and bad-SSD recovery.
+- Receive system: 64 complete 64/1518-byte Ethernet frames, 51,136 GMII octets,
+  preamble/SFD, FCS, minimum IFG and twelve explicit error frames. Another 4,244
+  observations inject malformed SSD/ESD, seed changes and PMA failures.
+- Electrical `link_pcs`: both ends transmit a complete frame simultaneously over
+  all four coupled pairs. Each solver's voltages pass the same analog checks,
+  ADC/equalization and actual C++RTL receiver independently, then its recovered
+  GMII stream is compared with the other solver's.
+
+Use `check-1g`, or select `ctest --test-dir analog/build -L hardware
+--output-on-failure -j 1`. A CTest fixture generates each independent stimulus;
+removing or truncating it fails its consumer. `generate-1g-rtl` exports the
+catalog; `analog.1g.generated_rtl` checks it for drift.
+
+## Remaining PHY integration
+
+These blocks do not complete PHY startup, auto-negotiation, master/slave
+resolution, pair identification/deskew, physical receive conversion/adaptation,
+a closed slave timing loop, routed reset/CDC or full-chip integration. The
+frame tests establish their stated coding and simulation contracts, not cable
+interoperability, a BER target or fabrication signoff.
+
+## Primary references
+
+- IEEE 802.3 Clause 40.3.1.3: scrambler and transmit encoding equations;
+  Clause 40.3.1.4 and Figures 40-8 through 40-10: transmit/receive behavior.
+  The 2005 encoding excerpts are also reproduced in Appendix 1 of the authors'
+  [UC Berkeley report EECS-2009-68](https://www2.eecs.berkeley.edu/Pubs/TechRpts/2009/EECS-2009-68.pdf).
+  The report is background evidence, not a claim of current-standard qualification.
 - IEEE [Table 40-1](https://www.ieee802.org/3/publication/ab/table40_1.txt) and
-  [Table 40-2](https://www.ieee802.org/3/publication/ab/table40_2.txt): numerical
-  normal/control code groups; downloaded and checked 2026-10-17. Independent
-  numeric fixtures are in `tests/pcs_data.csv` and `tests/pcs_controls.csv`.
-- IEEE [side-stream scrambling presentation, slide 8](https://grouper.ieee.org/groups/802/3/cg/public/Sept2017/Graber_3cg_15a_0917.pdf):
-  the Clause 40 master/slave generator polynomials reused by that proposal.
-  This presentation does not specify the rest of a Clause 40 PCS.
+  [Table 40-2](https://www.ieee802.org/3/publication/ab/table40_2.txt): independently
+  retained numeric fixtures in `tests/pcs_data.csv` and `tests/pcs_controls.csv`.
+- IEEE [maintenance request 1030](https://www.ieee802.org/3/maint/requests/maint_1030.pdf):
+  delayed-enable / SSD subset corrections relevant to encoding.
+
+Encoding sources checked 2026-10-18. Full standards text is not redistributed.

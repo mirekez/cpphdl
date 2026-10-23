@@ -21,29 +21,29 @@ public:
 
 private:
     memory<u<10>, 1, DEPTH> words;
-    reg<u<POINTER_BITS>> write_bin, write_gray, read_bin, read_gray;
+    reg<u<POINTER_BITS>> write_bin{}, write_gray{}, read_bin{}, read_gray{};
     // Only Gray pointers and single-bit fault indications cross clock domains.
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> read_sync1;
+    reg<u<POINTER_BITS>> read_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> read_sync2;
+    reg<u<POINTER_BITS>> read_sync2{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> write_sync1;
+    reg<u<POINTER_BITS>> write_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> write_sync2;
-    reg<u<POINTER_BITS>> written_frames, written_frames_gray, read_frames, read_frames_gray;
+    reg<u<POINTER_BITS>> write_sync2{};
+    reg<u<POINTER_BITS>> written_frames{}, written_frames_gray{}, read_frames{}, read_frames_gray{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> frames_sync1;
+    reg<u<POINTER_BITS>> frames_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> frames_sync2;
-    reg<u1> previous_valid, overflow_reg;
+    reg<u<POINTER_BITS>> frames_sync2{};
+    reg<u1> previous_valid{}, overflow_reg{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u1> overflow_sync1;
+    reg<u1> overflow_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u1> overflow_sync2;
-    reg<u1> in_frame, fault_reg;
-    reg<u<4>> gap;
-    reg<u<10>> output_reg;
+    reg<u1> overflow_sync2{};
+    reg<u1> in_frame{}, fault_reg{};
+    reg<u<4>> gap{};
+    reg<u<10>> output_reg{};
 
 public:
     void _assign() {}

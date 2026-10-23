@@ -24,7 +24,7 @@ def differences(first, second):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path)
-    parser.add_argument("case", choices=("pair_link", "link"))
+    parser.add_argument("case", choices=("pair_link", "link", "strongarm", "strongarm_loaded", "mos_track_hold", "mos_track_hold_loaded"))
     args = parser.parse_args()
     results, traces = [], {}
     for flow in ("cpp", "veriloga"):

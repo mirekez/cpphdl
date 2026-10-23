@@ -23,21 +23,30 @@
 7. A core-only result must not be labeled a complete repeater chip or fabrication
    signoff. The chip target remains unsuccessful until its missing implementation
    is present and validated.
+8. First meet functional and electrical requirements, then minimize verified
+   die area. Prefer shared resources and smaller devices when the connected
+   circuit still passes the same checks; do not trade away operating margin
+   merely to fit a template. There is no user-imposed die-area or power ceiling.
+   Size the chip from the implemented PHY/PCS, analog blocks,
+   routing, power distribution, pad access and verification margins. Existing
+   standalone die templates are test fixtures, not a fixed full-chip budget.
+   Enlarging a floorplan requires fresh physical verification.
 
-## Required physical blocks that are not implemented
+## Required physical blocks and remaining qualification
 
-The generic `1G/` PAM5 library is a development model, not these complete,
-synthesizable or layout-ready PHY blocks:
+The `1G/` library contains implemented controllers and electrical circuits.
+The table distinguishes their completed checks from the remaining work for
+complete, integrated physical PHYs:
 
 | Block | Remaining implementation and evidence |
 | --- | --- |
-| PCS per port | Hardware symbol/control mapper and LFSRs now exist in `1G/pcs.hpp`; Sx/Sy/Sg expansion, trellis encoder/decoder, transmit/receive state machines and link handling remain |
-| Startup | Auto-negotiation, master/slave resolution, training, pair/polarity handling and diagnostics |
-| Receive AFE | Physical hybrids, gain/equalization, 125 MS/s conversion, noise/linearity/headroom and PVT characterization |
-| Receive DSP | Hardware echo/coupling cancellation, FFE/DFE adaptation and trellis decoding with independent implementation tests |
+| PCS per port | GMII transmit/receive, Sx/Sy/Sg, trellis coding/decoding, framing and unseeded polarity/scrambler acquisition now exist in `1G/`; complete control/error qualification, startup and chip integration remain |
+| Startup | Digital FLP transmit/receive, page arbitration/retry and role resolution have native/RTL/IHP unit tests; composed native/RTL and separate mapped endurance checks pass. Aligned PMA startup/PCS, pair identification, polarity and deskew pass native/RTL/IHP frame and retraining checks. The generic electrical FLP interface passes its separate pulse/decoder checks; continuous physical negotiation and chip integration remain |
+| Receive AFE | Physical hybrids, programmable gain/equalization, 250 MS/s conversion for half-symbol timing observations, noise/linearity/headroom and PVT characterization. The 3 pF parallel-drive receiver passes 32 consecutive closed-loop conversions in C++, Verilog-A and actual PSP, including controller decisions and normalization; its PSP acquisition error is 9.554 mV. Physical control/clock translation, full receiver PVT, gain-loop integration, layout and complete receive-chain integration remain |
+| Receive DSP | Fixed-point FFE/echo/NEXT adaptation and trellis decoding have hardware classes. Composed SAR control and current normalization pass native/RTL/IHP/routed equivalence, 250 MHz setup/hold with 160 fF control-output loads, full DRC and strict transistor LVS in a 500 × 500 µm macro. Filter area/routing, startup-controlled training and receive integration remain |
 | Timing | `1G/receive_alignment.hpp` implements the digital crossing and passes native/RTL/mapped tests; physical receive recovery, reset distribution and routed CDC/MTBF proof remain |
-| TX | MOS-biased and externally trimmed PSP-tested driver schematics now exist; transistor layout, gate buffering, calibrated standard-qualified amplitude/template and pulse shaping remain |
-| Chip interface | Real IHP pad/ESD cells now assemble into a ring with abutment checks; transistor LVS is unresolved, and seal ring, core routing, power distribution, package/pinout and magnetics integration remain |
+| TX | The complete sixteen-translator weighted main/history bank passes independent generic flows/comparison and nominal IHP PSP checking with 218 valid-finger MOS devices. Its registered unary controller passes native/RTL/IHP/routed equivalence, setup/hold, DRC and LVS as a standalone macro. PVT/mismatch, analog transistor layout, calibrated standard-qualified amplitude/template and chip integration remain |
+| Chip interface | The common-ground IHP pad/ESD cells, seal ring, fill and connected decoupling pass full standalone padframe DRC and strict-port transistor LVS. Enlarging the opening requires fresh checks. Core routing, power distribution, package/pinout and magnetics integration remain |
 | Verification | Full-chip post-fill extraction, timing, noise/mismatch, power integrity, DRC/LVS, cable compliance and interoperability |
 
 The core flow implements forwarding and its physical path. The chip target

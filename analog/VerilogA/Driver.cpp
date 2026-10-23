@@ -28,6 +28,8 @@ void help() {
     std::cout << R"(Usage:
   cpphdl --verilog-a SOURCE --top TYPE --ports Vdd,Vss,IN,OUT [options] -- [C++ compiler arguments]
   cpphdl-veriloga SOURCE --top TYPE --ports Vdd,Vss,IN,OUT [options] -- [C++ compiler arguments]
+  cpphdl --verilog-a --partition MODEL.va --output DIRECTORY [--experiment BENCH.cir]
+  cpphdl-veriloga --partition MODEL.va --output DIRECTORY [--experiment BENCH.cir]
 
   --top TYPE           C++ class derived from analog::IC; templates are supported.
   --ports MEMBERS      Explicit comma-separated electrical member ports, including inherited rails.
@@ -37,7 +39,11 @@ void help() {
   --cxx EXECUTABLE     Native C++20 compiler (default: configured CMake compiler).
   --help               Show this help.
 
-The converter compiles and executes a native elaboration harness. The source and
+Partitioning emits small IC contribution models and a SPICE hierarchy. Shared
+wires remain connected in one global solve. --experiment preserves an exported
+bench while replacing its flat OSDI instance with that hierarchy.
+
+Source conversion compiles and executes a native elaboration harness. The source and
 compiler arguments are ordinary trusted C++ code. Nested ICs lower to one flat
 Verilog-A module with component/device provenance. Simulation-only primitives
 and digital operations are rejected for reusable IC export.
@@ -105,6 +111,17 @@ int run(int argc, const char* const* argv) {
         std::string compiler = CPPHDL_ANALOG_CXX;
         std::vector<std::string> compiler_arguments;
         int first = argc > 1 && std::string_view(argv[1]) == "--verilog-a" ? 2 : 1;
+        if (argc > first && std::string_view(argv[first]) == "--partition") {
+#if defined(_WIN32)
+            throw std::runtime_error("Verilog-A partition entry point currently requires a POSIX host");
+#else
+            std::vector<std::string> command{"python3",
+                (std::filesystem::path(CPPHDL_ANALOG_PACKAGE_ROOT) / "analog/VerilogA/hierarchy.py").string()};
+            for (int i = first; i < argc; ++i)
+                command.emplace_back(argv[i]);
+            return execute(command);
+#endif
+        }
         for (int i = first; i < argc; ++i) {
             std::string argument = argv[i];
             if (argument == "--") {

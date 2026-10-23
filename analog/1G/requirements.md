@@ -22,23 +22,40 @@
 8. Put process-specific implementations and tests in `IHPSG13G2/`. Test the IHP
    driver with actual PDK compact models. Generic compact-model and IHP results
    share functional requirements, not identical physics.
+9. Encode real GMII frames with the C++RTL transmit PCS, pass them through the
+   coupled electrical link in both solvers, and recover them with the unseeded
+   receive PCS. Require exact bytes, preamble/SFD, FCS and frame boundaries in
+   each flow before comparing recovered streams. Expected symbols may train
+   sampled equalization only during the declared training interval.
+
+10. Distinguish the internal weighted-level precision tests from formal
+    transmitter compliance. Exercise the required transmitter test waveforms
+    through the same physical path, with the proper peak, symmetry, relative
+    level, droop, distortion, common-mode, return-loss and timing checks. See
+    [transmitter levels and compliance](line-compliance.md).
 
 ## Implemented coverage
 
 The original electrical-system constellation mapper covers **normal-data entries only**. Inputs are an
 explicit six-bit point and a three-bit subset in printed `Sdn[6:8]` order. Tests
 exhaustively check all 512 unique quartets, inverse mapping, parity and the
-within-subset squared distance. Electrical system stimuli use these quartets;
-they are not PCS-generated Ethernet frames. The separate hardware `PCSSymbolMapper`
-adds the normal and special code-group tables, supplied per-pair sign inversions,
-and explicit invalid-code reporting. `PCSSideStream` adds the 33-bit master/slave
-LFSR recurrences. Neither implements the complete PCS; see [PCS hardware](pcs.md).
+within-subset squared distance. Original electrical cases use these quartets;
+`link_pcs` now uses actual C++RTL transmitters carrying complete Ethernet frames.
+`PCSSymbolMapper` includes normal and special code-group tables. Additional
+classes implement the Sx/Sy/Sg expansion, alternating scrambling, trellis coding,
+unseeded receive acquisition, framing, soft branch metrics and Viterbi decoding.
+Native, RTL and IHP-gate contracts and the precise remaining boundary are in
+[PCS hardware](pcs.md).
 
 The analog system clock is a bench-supplied 1.2 V signal. Gardner timing recovery
-is a separately tested sampled algorithm; it is not yet connected back into the
-electrical transmitter/receiver clock network. The receiver exposes continuous
-voltage to a sampled eight-bit ADC and C++ DSP reference model. This is an
-explicit simulation boundary, not a hidden ideal ADC/sense primitive.
+has both a sampled reference and a fixed-point `ReceiveTimingLoop` hardware
+controller with noisy closed-loop native/RTL/mapped tests. Its physical sampling
+and clock actuator are not yet connected to the electrical transmitter/receiver
+network. The receiver exposes continuous
+voltage to a sampled eight-bit ADC. Both a floating-point DSP reference and the
+actual fixed-point `ReceiveAdaptiveFilter` hardware consume each flow's samples.
+The ADC remains an explicit simulation boundary. See [filter hardware](receive_filter.md)
+for its function, area and remaining timing/physical implementation work.
 
 `ReceiveClockAligner` implements a separate recovered-GMII/reference clock
 crossing with frame buffering, minimum output IFG, Gray-pointer synchronizers,
@@ -48,11 +65,44 @@ physical clock recovery, reset distribution or routed CDC signoff.
 
 ## Work needed for an interoperable PHY
 
-The following are not implemented or proved by these tests: complete Clause 40
-side-stream scrambling/sign coding, trellis encoder/Viterbi decoder, SSD/ESD and
-idle/control handling, GMII transactions, auto-negotiation, master/slave startup,
-pair/polarity identification, deskew and a closed slave timing loop. A complete
-1000BASE-T PHY needs those functions in addition to this PAM5/PMA development model.
+The implemented Gardner detector consumes half-symbol observations. The
+physical receive conversion target is therefore 250 MS/s for 125 MBd PAM5,
+using an internal receive clock and one external 125 MHz reference. A single
+125 MS/s converter stream does not supply those observations. The sixteen-slice
+controller and electrical array pass finite 250 MS/s experiments, including
+32 consecutive conversions with slice reuse. The
+[core-domain receive interface](adc_receive.md) connects physical level-down
+gates and a composed calibrated output stream; its larger array experiments
+are under qualification.
+
+The following remain unimplemented or unproved: complete standards qualification
+of the PCS control/error behavior, process-qualified and continuously connected
+link-pulse driver/detection, full startup qualification, physical
+implementation/timing of receive adaptation and a closed slave
+timing loop. Polarity and scrambler acquisition and full-duplex GMII frame
+transfer now have explicit hardware tests. A complete 1000BASE-T PHY still
+requires the remaining functions and physical implementations.
+
+Cable pair identification and ±8-symbol relative deskew now have an actual
+hardware class and independent native/RTL/IHP tests. The composed aligned PMA
+passes native/RTL/IHP frame, startup and retraining checks; its further qualification is
+tracked in [pair acquisition](pair_acquisition.md). Input gain normalization,
+timing and channel adaptation remain separate requirements.
+
+FLP transmit/receive timing, page arbitration/retry and master/slave role
+resolution now have digital hardware and independent native/RTL/IHP unit tests.
+The composed two-peer negotiation passes native, RTL and a separate mapped
+endurance run; the original complete CTest needs repetition after its timeout
+was corrected. [Negotiation](negotiation.md) describes the
+physical pulse and PMA-training boundaries. A separate electrical SAR slice now
+closes actual controller feedback around both solvers. The interleaved electrical
+array passes its one/four/sixteen-slice burst checks in both solvers at 250 MS/s;
+it does not yet replace
+the full link's simulation ADC boundary.
+
+The generic MOS [FLP interface](flp_frontend.md) now has independent electrical,
+refinement and sampled-decoder checks in both solvers. Process sizing,
+pad/magnetics loading and full physical negotiation integration remain open.
 
 The lumped RC/coupling fixture is not a measured or worst-case 100 m Cat5 channel.
 Magnetics, galvanic isolation, ESD/surge behavior, return-loss masks, transmitter
