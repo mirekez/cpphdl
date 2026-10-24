@@ -4,17 +4,23 @@ from pathlib import Path
 import subprocess
 import re
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 p=argparse.ArgumentParser()
 p.add_argument('--cxx',required=True)
 a=p.parse_args()
 root=Path(__file__).resolve().parents[2]
 def run(argv):
-    r=subprocess.run(list(map(str,argv)),capture_output=True,text=True,timeout=180)
+    r=subprocess.run(toolchain.command(argv),env=toolchain.env,
+                     capture_output=True,text=True,timeout=180)
     if r.returncode: raise RuntimeError(r.stdout+r.stderr)
     return r.stdout
 with tempfile.TemporaryDirectory(prefix='cpphdl-host-overlap-') as tmp:
     w=Path(tmp)
+    toolchain = TestToolchain(a.cxx, None, w)
     (w/'emit.cpp').write_text(r'''
 #include <cpphdl_graph_native.h>
 using namespace cpphdl::graph;
