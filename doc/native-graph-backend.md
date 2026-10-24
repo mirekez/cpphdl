@@ -94,8 +94,9 @@ For large ordinary C++ designs, `--chunk-size=512` writes a compact
 which identifies unchanged graph RAMs for host-side ELF preloading.
 Single-lane chunks preserve ordered `random`, `jtag_tick`, and `debug_tick`
 transactions, including pointer outputs used by later chunks. Settling invokes
-none of those callbacks. Parallel implicit callbacks still require explicit
-host boundaries. Module-array port bindings remain hierarchy aliases rather
+none of those callbacks. Parallel host effects execute once on the caller in
+the work phase; their dependent cones stay on that lane. Settling retains only
+their observable output dependencies. Module-array port bindings remain hierarchy aliases rather
 than packed values; packed element proxies lower directly to their original
 storage slices, and `std::as_const` retains its argument's storage identity.
 
@@ -112,6 +113,18 @@ still runs before liveness filtering, so this is not a way to hide bad drivers
 or combinational cycles. `native_graph_phase_liveness` checks both state-only
 and combinational-output models, mixed chunks, read/write validation, and
 unchanged work-only scratch slots during settling.
+
+The direct `Graph::emit` API also supports optional chunk memoization for pure
+logic and immutable ROM. A sixth Boolean argument enables input-key caching;
+the seventh caches assembled next-state words and the eighth enables exact
+changed-bit invalidation. Mutable RAM and host callbacks are rejected in these
+modes. Mixed chunks keep separate settle/work cache validity, so settling cannot
+cache skipped register work. Delta invalidations survive output-only calls and
+propagate through ordered lane-private chunks; cache state is copied with the
+model. The ninth argument selects chunks per compilation unit. For compatibility,
+an integer sixth argument still selects split compilation, not memoization.
+`native_graph_word_slice` checks the combined modes with registered feedback,
+held inputs, invalid offsets and alternating settle/work calls.
 
 Native C++ lowering also preserves dynamic indexing as word operations rather
 than enumerating an equality/mux for every possible bit offset. Single-word

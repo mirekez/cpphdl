@@ -102,6 +102,14 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(cpp_graph_empty_repeat_cast PROPERTIES TIMEOUT 240)
     add_test(NAME test_toolchain_setup COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/TestToolchainChecks.py")
+    if(CONSTANTS_VERILATOR)
+        add_test(NAME templates_root_instance COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/templates/TemplateRootInstanceChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/template-root-instance")
+        set_tests_properties(templates_root_instance PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
+    endif()
     add_test(NAME cpp_graph_closure_scope COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/ClosureScopeChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"

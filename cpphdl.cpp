@@ -2317,13 +2317,25 @@ struct ModuleSpecializationCollector
         }
     }
 
-    bool VisitFieldDecl(FieldDecl* field)
+    void considerObject(QualType type)
     {
-        QualType type = field->getType().getNonReferenceType();
+        type = type.getNonReferenceType();
         while (const ArrayType* array = context.getAsArrayType(type)) {
             type = array->getElementType().getNonReferenceType();
         }
         consider(type->getAsCXXRecordDecl());
+    }
+
+    bool VisitFieldDecl(FieldDecl* field)
+    {
+        considerObject(field->getType());
+        return true;
+    }
+
+    bool VisitVarDecl(VarDecl* variable)
+    {
+        // Standalone roots need method bodies just as member modules do.
+        considerObject(variable->getType());
         return true;
     }
 

@@ -109,6 +109,11 @@ public:
     }
 };
 
+#ifdef SYNTHESIS
+// Keep a concrete DUT visible when the native testbench is excluded.
+PLICTest<24, 4, 32> plic_test_top;
+#endif
+
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 class TestPLIC : public Module
@@ -436,7 +441,9 @@ int main(int argc, char** argv)
                  (source_root / "tribe_cpu" / "common").string(),
                  (source_root / "tribe_cpu" / "devices").string()},
                 24, 4, 32);
-            ok &= std::system("PLIC/obj_dir/VPLICTest") == 0;
+            if (ok) {
+                ok = std::system("PLIC/obj_dir/VPLICTest") == 0;
+            }
         }
     }
 #endif

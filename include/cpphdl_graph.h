@@ -16,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #ifndef CPPHDL_NATIVE_THREADS
@@ -1159,7 +1160,16 @@ public:
     // continuation can run while workers prepare inactive register state.
     // balanceLanes spreads sink work instead of compacting overlapping cones.
     void emit(const std::string& path, unsigned chunkSize = 0, unsigned threads = CPPHDL_NATIVE_THREADS,
-              bool hostOverlap = false, bool balanceLanes = false, unsigned splitChunks = 0);
+              bool hostOverlap = false, bool balanceLanes = false, bool memoizeChunks = false,
+              bool memoizeNextWords = false, bool memoizeDeltas = false, unsigned splitChunks = 0);
+
+    // Preserve both APIs: a sixth bool selects memoization; an integer selects
+    // the number of chunks per compilation unit. Combined use is explicit.
+    template<class Split, std::enable_if_t<std::is_integral_v<Split> && !std::is_same_v<Split, bool>, int> = 0>
+    void emit(const std::string& path, unsigned chunkSize, unsigned threads,
+              bool hostOverlap, bool balanceLanes, Split splitChunks) {
+        emit(path, chunkSize, threads, hostOverlap, balanceLanes, false, false, false, unsigned(splitChunks));
+    }
 
 };
 }
