@@ -1,4 +1,4 @@
-"""State-derived asynchronous resets and quiet timestamps preserve edge semantics."""
+"""Check native graph C++17 compatibility, asynchronous resets and quiet timestamps."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -57,7 +57,7 @@ int main(int argc,char**argv) {
     assert(rejected);
 }
 ''')
-    flags = [args.cxx, '-std=c++23', '-O1', '-I' + str(repo / 'include')]
+    flags = [args.cxx, '-std=c++17', '-O1', '-I' + str(repo / 'include')]
     run([*flags, source, '-o', work / 'emit'])
     run([work / 'emit', work / 'plain.h', work / 'quiet.h'])
     runner = work / 'run.cpp'

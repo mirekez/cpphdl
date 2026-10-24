@@ -330,7 +330,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             compact();
             order = dependencyOrder();
         }
-        for(const auto& state:states)if(nodes[owner(state.bits.at(0))].name.starts_with("SV blocking storage:"))
+        for(const auto& state:states)if(nodes[owner(state.bits.at(0))].name.rfind("SV blocking storage:", 0) == 0)
             throw std::runtime_error("observable clocked blocking storage is not supported: "+nodes[owner(state.bits.at(0))].name);
         size_t cachedNextWords=0;
         if (memoizeNextWords) {
@@ -479,7 +479,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         }
         output << "}\n";
         std::string pendingResets="bool __cpphdl_pending_async_reset() const { return false";
-        for(const auto& port:ports)if(!port.input && port.name.starts_with("__cpphdl_async_reset_")) {
+        for(const auto& port:ports)if(!port.input && port.name.rfind("__cpphdl_async_reset_", 0) == 0) {
             if(port.bits.size()!=2)throw std::runtime_error("invalid asynchronous reset event probe");
             pendingResets+=" || (("+port.name+"[0] ^ ("+port.name+"[0] >> 1)) & 1u)";
         }
@@ -566,7 +566,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         output << "bool __cpphdl_advance_quiet_event() {\n";
         if(quietEvents) {
             output << "if(__cpphdl_event_active[0]) return false;\n";
-            for(const auto& port:ports)if(!port.input&&port.name.starts_with("__cpphdl_event_history_")) {
+            for(const auto& port:ports)if(!port.input&&port.name.rfind("__cpphdl_event_history_", 0) == 0) {
                 auto bit=resolve(port.bits.at(1));auto index=owner(bit);
                 if(bit<2||lane(bit)||nodes[index].op!="state"||nodes[index].width!=1)
                     throw std::runtime_error("quiet-event history lost its state identity");
