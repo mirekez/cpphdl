@@ -53,13 +53,13 @@ global_route -end_incremental -guide_file "$work/core.guide"
 # Use real diffusion protection: routing jumpers alone left a cumulative
 # violation in the independent KLayout deck after detailed routing.
 repair_antennas sg13g2_antennanp -diode_only -iterations 5 -ratio_margin 20
-if {$::env(REPEATER_TOP) == "ADCReceiveController"} {
+if {[info exists ::env(REPEATER_ADC_COMPARISON_PORTS)] && $::env(REPEATER_ADC_COMPARISON_PORTS) > 0} {
     # Detailed routing exposed a long comparison-input antenna that the
     # global-route estimate missed. Protect these analog receiver boundaries.
     global_route -start_incremental
     source "$::env(REPEATER_SOURCE)/antenna_inputs.tcl"
     set protected [protect_input_delay_gates {comparisons_in*} "$work/input_antenna.csv"]
-    if {$protected != 16} { error "ADC comparison-input protection is incomplete" }
+    if {$protected != $::env(REPEATER_ADC_COMPARISON_PORTS)} { error "ADC comparison-input protection is incomplete" }
     global_route -end_incremental -guide_file "$work/core.guide"
 }
 check_antennas -report_file "$work/global_antenna.rpt"
@@ -77,9 +77,9 @@ extract_parasitics -ext_model_file "$::env(REPEATER_TOOLS)/rcx_patterns.rules" -
 write_spef "$work/core.spef"
 read_spef -corner slow "$work/core.spef"
 read_spef -corner fast "$work/core.spef"
-report_checks -path_delay min_max -format full_clock_expanded > "$work/timing.rpt"
-report_worst_slack -max > "$work/setup.rpt"
-report_worst_slack -min > "$work/hold.rpt"
+report_checks -path_delay min_max -format full_clock_expanded -digits 9 > "$work/timing.rpt"
+report_worst_slack -max -digits 9 > "$work/setup.rpt"
+report_worst_slack -min -digits 9 > "$work/hold.rpt"
 # Sizing uses the tighter routing target. Qualification uses the explicit
 # interface budget, still tighter than the library's 2.5074 ns slow-corner limit.
 set_max_transition $::env(REPEATER_MAX_TRANSITION) [current_design]

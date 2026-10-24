@@ -12,7 +12,7 @@ NUMBER = r'([-+0-9.eE]+)'
 NODE = r'(n\d+)'
 
 
-def process_deck(model, original, inventory, models, corner='mos_tt', temperature=27):
+def process_deck(model, original, inventory, models, corner='mos_tt', temperature=27, *, profile='single_ended'):
     if corner not in ('mos_tt', 'mos_ss', 'mos_ff', 'mos_sf', 'mos_fs') or not -40 <= temperature <= 125:
         raise ValueError('unsupported receive gain process conditions')
     records = list(csv.DictReader(io.StringIO(inventory)))
@@ -28,9 +28,22 @@ def process_deck(model, original, inventory, models, corner='mos_tt', temperatur
             if not math.isfinite(row[field]):
                 raise ValueError('nonfinite receive gain physical parameter')
         devices[key] = row
-    if Counter(row['kind'] for row in records) != Counter(R=24, C=24, N=7, P=13):
+    if profile not in ('single_ended', 'differential', 'reference'):
+        raise ValueError('unknown receive analog component profile')
+    bindings = BINDINGS
+    if profile == 'differential':
+        bindings = (('N', .003, 10, 5), ('N', .03, 100, 13), ('N', .06, 200, 3),
+                    ('N', .2, 800, 1), ('P', .003, 30, 5), ('P', .03, 300, 2),
+                    ('P', .06, 600, 2), ('P', .02, 200, 4))
+    if profile == 'reference':
+        bindings = tuple(('N', .4, 1600, 1) if entry[:2] == ('N', .2) else entry
+                         for entry in BINDINGS if entry[:2] != ('P', .02))
+    counts = {'single_ended': Counter(R=24, C=24, N=7, P=13),
+              'differential': Counter(R=34, C=30, N=22, P=13),
+              'reference': Counter(R=10, C=21, N=7, P=4)}[profile]
+    if Counter(row['kind'] for row in records) != counts:
         raise ValueError('changed receive gain passive/MOS inventory')
-    expected = Counter({(kind, width): count for kind, _, width, count in BINDINGS})
+    expected = Counter({(kind, width): count for kind, _, width, count in bindings})
     if Counter((row['kind'], row['width_um']) for row in records if row['kind'] in ('N', 'P')) != expected:
         raise ValueError('changed receive gain physical geometry inventory')
     marker, suffix = '    analog begin\n', '    end\nendmodule\n'
@@ -67,7 +80,7 @@ def process_deck(model, original, inventory, models, corner='mos_tt', temperatur
             raise ValueError('unbound receive gain contribution')
         a, b, gate, source, drain, drain_source = map(node, match.groups()[:6])
         beta, threshold, sign = map(float, match.groups()[6:])
-        choices = [entry for entry in BINDINGS if entry[0] == row['kind'] and math.isclose(entry[1], beta, rel_tol=1e-12)]
+        choices = [entry for entry in bindings if entry[0] == row['kind'] and math.isclose(entry[1], beta, rel_tol=1e-12)]
         if (row['kind'] not in ('N', 'P') or len(choices) != 1 or (a, b) != (row['a'], row['b'])
                 or gate != row['gate'] or (source, drain, drain_source) != (b, a, b)
                 or not math.isclose(threshold, .7) or sign != (1 if row['kind'] == 'N' else -1)
@@ -78,7 +91,7 @@ def process_deck(model, original, inventory, models, corner='mos_tt', temperatur
     observations = dict(re.findall(r'^let observation(\d+) = v\((n\d+)\)$', original, re.M))
     if set(observations) != set(map(str, range(8))):
         raise ValueError('changed receive gain physical interface')
-    vdd = observations['5']
+    vdd = observations['1' if profile == 'reference' else '5']
     caps = {}
     for line in original.splitlines():
         match = re.fullmatch(r'Cdevice(\d+) (0|n\d+) (0|n\d+) ' + NUMBER + ' IC=' + NUMBER, line)
@@ -119,5 +132,5 @@ def process_deck(model, original, inventory, models, corner='mos_tt', temperatur
     result = '\n'.join(deck) + '\n'
     if any(token in result for token in ('CircuitModel', 'cpphdl_channel', 'design.osdi')):
         raise ValueError('generic channel remains in receive gain process experiment')
-    return result, dict(mos_count=20, resistor_count=24, capacitor_count=24,
+    return result, dict(component_profile=profile, mos_count=counts['N'] + counts['P'], resistor_count=counts['R'], capacitor_count=counts['C'],
                         scope='explicit total widths and reviewed connectivity; valid fingers selected separately')

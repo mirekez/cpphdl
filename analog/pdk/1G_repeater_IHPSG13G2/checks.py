@@ -108,7 +108,9 @@ def check_timing(work):
         if len(values) != 1:
             raise ValueError("missing/ambiguous " + kind + " timing evidence")
         slack = float(values[0])
-        if not math.isfinite(slack) or slack < 0:
+        # OpenSTA can round a small violation to "-0.00". Its sign still
+        # denotes a negative slack and must not turn into a passing zero.
+        if not math.isfinite(slack) or slack < 0 or (slack == 0 and values[0].startswith('-')):
             raise ValueError(f"{kind} timing failed: {slack} ns")
         measurements[kind + "_slack_ns"] = slack
     electrical = (work / "electrical.rpt").read_text()

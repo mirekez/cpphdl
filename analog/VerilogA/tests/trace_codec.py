@@ -13,6 +13,30 @@ spec.loader.exec_module(codec)
 
 
 class Codec(unittest.TestCase):
+    def test_compressed_input_stays_compressed_and_retains_original_byte_audit(self):
+        original = b'time v(a)\n0 0\n1e-9 1\n1e-9 1.000000000000001\n2e-9 2\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'trace.dat.gz'
+            with gzip.open(path, 'wb') as stream:
+                stream.write(original)
+            audit = codec.normalize_roundoff_duplicates(path)
+            self.assertEqual(codec.verify_roundoff_audit(path, audit), 1)
+            with gzip.open(path, 'rb') as stream:
+                self.assertEqual(stream.read(), b'time v(a)\n0 0\n1e-9 1\n2e-9 2\n')
+            self.assertEqual(audit.name, 'trace.dat.roundoff.json')
+            self.assertFalse(path.with_suffix('').exists())
+
+    def test_compressed_changed_state_is_rejected_without_replacing_input(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'trace.dat.gz'
+            with gzip.open(path, 'wb') as stream:
+                stream.write(b'time v(a)\n0 0\n1e-9 1\n1e-9 .5\n')
+            original = path.read_bytes()
+            with self.assertRaises(ValueError):
+                codec.normalize_roundoff_duplicates(path)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertFalse(list(Path(temporary).glob('*.tmp*')))
+
     def test_explicit_roundoff_bound_is_recorded_and_cannot_accumulate(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'trace.dat'
@@ -64,6 +88,21 @@ class Codec(unittest.TestCase):
             with self.assertRaises(ValueError):
                 codec.normalize_roundoff_duplicates(path)
             self.assertEqual(path.read_bytes(), text)
+
+    def test_scratch_link_and_temporary_storage_are_preserved(self):
+        text = b'time v(a)\n0 0\n1e-9 1\n1e-9 1.000000000000001\n2e-9 2\n'
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as scratch:
+            storage = Path(scratch) / 'physical.gz'
+            with gzip.open(storage, 'wb') as file:
+                file.write(text)
+            path = Path(directory) / 'spice.dat.gz'
+            path.symlink_to(storage)
+            audit = codec.normalize_roundoff_duplicates(path)
+            self.assertTrue(path.is_symlink())
+            self.assertEqual(path.resolve(), storage)
+            self.assertEqual(codec.verify_roundoff_audit(path, audit), 1)
+            self.assertEqual(list(Path(scratch).iterdir()), [storage])
+            self.assertEqual(set(Path(directory).iterdir()), {path, audit})
 
 
 if __name__ == '__main__':

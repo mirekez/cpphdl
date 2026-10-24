@@ -18,6 +18,27 @@ spec.loader.exec_module(timing)
 
 
 class PhysicalModule(unittest.TestCase):
+    def test_def_import_preserves_public_array_bit_identity(self):
+        mapped = 'output [0:2] acquire_out; output [0:2] convert_out; output [23:0] trial_out;'
+        routed = 'output [2:0] acquire_out; output [2:0] convert_out; output [23:0] trial_out;'
+        interface = ('module Top(output wire acquire_out[3], convert_out[3],\n'
+            'output wire [7:0] trial_out[3]);\n'
+            'Top_mapped impl(.acquire_out({acquire_out[0], acquire_out[1], acquire_out[2]}),'
+            '.convert_out({convert_out[0], convert_out[1], convert_out[2]}),'
+            '.trial_out({trial_out[0], trial_out[1], trial_out[2]})); endmodule')
+        adapted, changes = flow.routed_array_interface(mapped, routed, interface)
+        self.assertIn('.acquire_out({acquire_out[2], acquire_out[1], acquire_out[0]})', adapted)
+        self.assertIn('.convert_out({convert_out[2], convert_out[1], convert_out[0]})', adapted)
+        self.assertIn('.trial_out({trial_out[0], trial_out[1], trial_out[2]})', adapted)
+        self.assertEqual(set(changes), {'acquire_out', 'convert_out'})
+        self.assertEqual(flow.routed_array_interface(mapped, mapped, interface), (interface, {}))
+        with self.assertRaisesRegex(ValueError, 'index set changed'):
+            flow.routed_array_interface(mapped, routed.replace('[2:0] acquire_out', '[3:1] acquire_out'), interface)
+        with self.assertRaisesRegex(ValueError, 'unsupported routed array permutation'):
+            flow.routed_array_interface(mapped, routed.replace('[23:0] trial_out', '[0:23] trial_out'), interface)
+        with self.assertRaisesRegex(ValueError, 'missing or ambiguous'):
+            flow.routed_array_interface(mapped, routed.replace('output [2:0] convert_out;', ''), interface)
+
     def test_timing_recheck_keeps_adc_clock_and_all_analog_loads(self):
         original = dict(period_ns=4, clock_uncertainty_ns=.1, input_output_delay_ns=.4,
                         accepted_transition_ns=.5, accepted_fanout=8,
@@ -28,6 +49,15 @@ class PhysicalModule(unittest.TestCase):
         self.assertIn('llength $analog_controls] != 160', script)
         self.assertIn('set_load 0.16 $analog_controls', script)
         self.assertIn('set_max_capacitance 0.25', script)
+        for top, count in (('InterleavedSARBankController', 130), ('ADCReceiveLaneController', 162)):
+            with self.subTest(top=top):
+                _, array_script = timing.timing_contract(dict(top=top, constraints=original))
+                self.assertIn(f'llength $analog_controls] != {count}', array_script)
+                self.assertIn('set_load 0.16 $analog_controls', array_script)
+                if top == 'ADCReceiveLaneController':
+                    self.assertIn('clear_out evaluate_enable_out', array_script)
+        with self.assertRaisesRegex(ValueError, 'unknown module'):
+            timing.timing_contract(dict(top='Unknown', constraints=original))
         original['period_ns'] = 3.8
         self.assertIn('-period 3.8', timing.timing_contract(dict(top='ADCReceiveController', constraints=original))[1])
         for key in tuple(original):
@@ -276,6 +306,14 @@ class PhysicalModule(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r'C\+\+ module/harness source changed'):
                 timing.recheck(args)
             self.assertFalse(args.work.exists())
+
+
+class DieSizeContract(unittest.TestCase):
+    def test_bad_dimensions_are_rejected_before_running_tools(self):
+        from types import SimpleNamespace
+        for value in (0, 40, -1, float('nan'), float('inf'), True, '360'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'die size'):
+                flow.implement(SimpleNamespace(module='InterleavedSARBankController', die_size=value))
 
 
 if __name__ == '__main__':

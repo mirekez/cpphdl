@@ -16,6 +16,7 @@ public:
     std::array<cmos_nand, 2> gates;
     capacitance_value storage{.05e-12}, input_storage{.003e-12};
     mos_model channel{channel_strength(.01), voltage(.7)};
+    bool weak_returns{true};
 
     void _assign() override {
         gates[0].A = SET_N;
@@ -29,6 +30,7 @@ public:
             gate.Vss = Vss;
             gate.parameters = channel;
             gate.output_capacitance = storage;
+            gate.weak_returns = weak_returns;
             gate.elaborate();
         }
         SET_N = capacitor(Vss, input_storage);

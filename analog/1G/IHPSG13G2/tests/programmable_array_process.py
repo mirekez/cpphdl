@@ -38,7 +38,8 @@ def run(args):
     hashes.update({str(p): digest(p) for p in tracked})
     report = dict(status='running', corner=args.corner, temperature_C=args.temperature, source_sha256=hashes,
         cases={}, run_directory=str(work), fixture_source=str(args.fixture_source.resolve()), same_equations_as_square_law=False, warmup_maximum_step_s=args.warmup_step,
-        initialization=args.initialization,
+        initialization=args.initialization, sampler_dummy_p_width_um=args.dummy_p_width_um,
+        charge_defined_nodes=args.charge_defined_nodes,
         scope='actual IHP PSP MOS with declared external R/C and fixed host controls; sixteen 1.5 pF samplers, 64 acquisitions and fixed 100 ohm termination; no ADC conversion, AGC, noise or layout proof')
     def save():
         payload = json.dumps(report, indent=2) + '\n'
@@ -55,7 +56,8 @@ def run(args):
                 execute([str(args.bench.resolve()), str(case), 'export', str(code)],
                         stdout=log, stderr=-2, check=True, timeout=60)
             deck, bindings = process_deck((case / 'design.va').read_text(), (case / 'bench.cir').read_text(),
-                models / 'models', args.corner, args.temperature)
+                models / 'models', args.corner, args.temperature, dummy_p_width_um=args.dummy_p_width_um,
+                charge_defined_nodes=args.charge_defined_nodes)
             deck, geometry = size_mos_instances(deck)
             deck, timing_grid = windowed_transient(windowed_deck(deck), args.warmup_step)
             if args.initialization == 'bias':
@@ -161,6 +163,8 @@ if __name__ == '__main__':
     parser.add_argument('--temperature', type=float, default=27)
     parser.add_argument('--warmup-step', type=float, default=1e-9)
     parser.add_argument('--initialization', choices=('uic', 'bias'), default='uic')
+    parser.add_argument('--dummy-p-width-um', type=int, choices=(25, 30), default=25)
+    parser.add_argument('--charge-defined-nodes', action='store_true')
     parser.add_argument('--cxx', default='/usr/bin/c++')
     parser.add_argument('--compare', type=Path, nargs=2)
     parser.add_argument('--output', type=Path)

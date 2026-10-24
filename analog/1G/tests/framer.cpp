@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
         dut.polarity_in = _ASSIGN(polarity);
         dut.locked_in = _ASSIGN(locked);
         dut.pma_ok_in = _ASSIGN(pma);
+        dut.symbol_enable_in = _ASSIGN(true);
         dut._assign();
 #endif
         std::string line;
@@ -60,6 +61,7 @@ int main(int argc, char** argv) {
 #ifdef VERILATOR
             dut.clk = 0;
             dut.reset = reset;
+            dut.symbol_enable_in = true;
             dut.symbols_in = symbols;
             dut.sg_in = sg;
             dut.sx_in = sx;

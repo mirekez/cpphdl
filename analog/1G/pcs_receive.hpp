@@ -208,6 +208,8 @@ class PCSTrellisDecoder : public Module {
     static constexpr unsigned DEPTH = 32;
 
 public:
+    // Hold the entire symbol pipeline between recovered observations.
+    _PORT(bool) symbol_enable_in;
     _PORT(u<18>) metric_in[8];
     _PORT(u<6>) point_in[8];
     _PORT(bool) advance_in;
@@ -462,6 +464,26 @@ public:
             drain_valid._next = 0;
             pending_control._next = 0;
             pending_count._next = 0;
+        }
+        // Gate stored state, not combinational temporaries, so synthesis
+        // does not build enable muxes for every unrolled arithmetic temporary.
+        if (!symbol_enable_in() && !reset) {
+            for (unsigned state = 0; state < 8; ++state) {
+                costs[state]._next = costs[state];
+                survivors[state]._next = survivors[state];
+                selectors[state]._next = selectors[state];
+                selected_bytes[state]._next = selected_bytes[state];
+            }
+            count._next = count;
+            reachable._next = reachable;
+            pending_control._next = pending_control;
+            pending_count._next = pending_count;
+            data_reg._next = data_reg;
+            state_reg._next = state_reg;
+            valid_reg._next = valid_reg;
+            drain._next = drain;
+            drain_left._next = drain_left;
+            drain_valid._next = drain_valid;
         }
     }
     void _strobe() {

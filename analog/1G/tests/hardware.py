@@ -47,7 +47,7 @@ def run(args):
     filter_case = args.case.startswith('filter')
     clocks = (["--primary_clock", "ref_clk", "125000000", "--secondary_clock", "rx_clk", "125000000"]
               if args.case == "alignment" else ["--primary_clock", "clk", "250000000"]
-              if args.case == "adc_sar" else ["--primary_clock", "clk", "125000000"]
+              if args.case in ("adc_sar", "receiver") else ["--primary_clock", "clk", "125000000"]
               if args.case == "autoneg_link" else [])
     module = {"alignment": "ReceiveClockAligner", "pcs": "PCSSymbolMapper", "scrambler": "PCSSideStream",
               "transmit_bits": "PCSTransmitBits", "transmitter": "PCSTransmitter",
@@ -159,9 +159,26 @@ def run(args):
         execute(command, env=toolchain.env, check=True, timeout=60)
         if flow != "cpp" and not filecmp.cmp(work / "cpp_fault_trace.csv", work / (flow + "_fault_trace.csv"), shallow=False):
             raise ValueError("native/" + flow + " receiver fault trajectories differ")
+        enable_trace = work / (flow + "_enable_trace.csv")
+        execute([str(binary), "--enable", str(work / "receiver-vectors.txt"), str(enable_trace)],
+                check=True, timeout=60)
+        if flow != "cpp" and not filecmp.cmp(work / "cpp_enable_trace.csv", enable_trace, shallow=False):
+            raise ValueError("native/" + flow + " receiver symbol-enable trajectories differ")
     if args.case == "receiver":
         check_receiver_faults(args.native, "cpp")
         check_receiver_faults(work / "obj" / ("V" + module), "rtl")
+    if any(hashlib.sha256(Path(path).read_bytes()).hexdigest() != value for path, value in source_hashes.items()):
+        raise ValueError("hardware sources changed during native/RTL validation")
+    if any(hashlib.sha256(Path(path).read_bytes()).hexdigest() != value for path, value in fixture_hashes.items()):
+        raise ValueError("hardware fixtures changed during native/RTL validation")
+    native_rtl_traces = [work / (flow + suffix) for flow in ("cpp", "rtl")
+                         for suffix in (["_trace.csv", "_fault_trace.csv", "_enable_trace.csv"]
+                                        if args.case == "receiver" else ["_trace.csv"])]
+    (work / "native_rtl_checks.json").write_text(json.dumps(dict(status="pass", module=module,
+        scope="native/generated RTL functional equivalence; physical timing requires separate checks",
+        source_sha256=source_hashes, fixture_sha256=fixture_hashes,
+        trace_sha256={str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in native_rtl_traces},
+        native_rtl_exact=True), indent=2) + "\n")
     if args.tools is not None:
         binary = args.tools.resolve() / "bin"
         liberty = args.pdk.resolve() / "ihp-sg13g2/libs.ref/sg13g2_stdcell/lib/sg13g2_stdcell_typ_1p20V_25C.lib"

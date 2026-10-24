@@ -49,7 +49,7 @@ public:
         comparator.CLOCK = EVALUATE;
         comparator.OUTP = POSITIVE;
         comparator.OUTN = NEGATIVE;
-        comparator.initial_input = voltage(3.3);
+        comparator.initial_input = preamplifier.initial_supply;
         comparator.Vdd = Vdd;
         comparator.Vss = Vss;
         comparator.elaborate();

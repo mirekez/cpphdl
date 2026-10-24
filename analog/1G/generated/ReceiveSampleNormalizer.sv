@@ -67,13 +67,28 @@ module ReceiveSampleNormalizer (
         return signed'(32'((value ^ sign))) - signed'(32'(sign));
     endfunction
 
+    function logic[31:0] combine_digits (
+        input logic[31:0] a
+,       input logic[31:0] b
+    );
+        logic[31:0] middle;
+        logic[31:0] upper;
+        logic[31:0] upper_plus;
+        logic[31:0] upper_minus;
+        logic[31:0] upper_word;
+        middle=((b & 32'hFF)) + ((((a >>> 32'sh4)) & 32'hFF));
+        upper=((b >>> 32'sh8)) & 32'h1F;
+        upper_plus=((upper + 32'h1)) & 32'h1F;
+        upper_minus=((upper - 32'h1)) & 32'h1F;
+        upper_word=((((((a >>> 32'shC)) & 32'h1)) != '0)) ? ((((((middle >>> 32'sh8)) != '0)) ? (upper) : (upper_minus))) : ((((((middle >>> 32'sh8)) != '0)) ? (upper_plus) : (upper)));
+        return (((upper_word <<< 'hC)) | ((((middle & 32'hFF)) <<< 'h4))) | ((a & 32'hF));
+    endfunction
+
     generate  // _assign
     endgenerate
 
     task _work (input logic reset);
     begin: _work
-        logic signed[31:0] value;
-        logic signed[31:0] high_value;
         logic[31:0] remainder;
         logic[31:0] carry;
         logic[31:0] rounding_sum;
@@ -83,6 +98,8 @@ module ReceiveSampleNormalizer (
         logic[31:0] upper_minus;
         logic[31:0] upper_word;
         logic[31:0] low_negative;
+        logic[31:0] quotient_upper;
+        logic[31:0] rounding_carry;
         raw_sample_tmp = sample_in;
         raw_offset_tmp = offset_in;
         raw_gain_tmp = gain_in;
@@ -94,8 +111,8 @@ module ReceiveSampleNormalizer (
         for (logic[31:0] i = 32'h0;i < 32'h4;i=i+1) begin
             partial_tmp[i] = signed'(32'(signed_value(unsigned'(32'(half_products[(32'h2*i)])), 32'h400) + (signed_value(unsigned'(32'(half_products[((32'h2*i) + 32'h1)])), 32'h400)*'h4)));
         end
-        low_tmp = signed'(32'(signed_value(unsigned'(32'(partial['h0])), 32'h1000) + (signed_value(unsigned'(32'(partial['h1])), 32'h1000)*'h10)));
-        high_tmp = signed'(32'(signed_value(unsigned'(32'(partial['h2])), 32'h1000) + (signed_value(unsigned'(32'(partial['h3])), 32'h1000)*'h10)));
+        low_tmp = combine_digits(unsigned'(32'(partial['h0])), unsigned'(32'(partial['h1])));
+        high_tmp = combine_digits(unsigned'(32'(partial['h2])), unsigned'(32'(partial['h3])));
         integral_low=((unsigned'(32'(high)) & 32'hFF)) + ((((unsigned'(32'(low)) >>> 32'sh8)) & 32'hFF));
         integral_high=unsigned'(32'(high)) >>> 32'sh8;
         upper_plus=((integral_high + 32'h1)) & 32'h1FF;
@@ -104,14 +121,14 @@ module ReceiveSampleNormalizer (
         upper_word=(((low_negative) != '0)) ? ((((((integral_low >>> 32'sh8)) != '0)) ? (integral_high) : (upper_minus))) : ((((((integral_low >>> 32'sh8)) != '0)) ? (upper_plus) : (integral_high)));
         integral_tmp = 32'(((upper_word <<< 'h8)) | ((integral_low & 32'hFF)));
         fraction_tmp = 32'(unsigned'(32'(low)) & 32'hFF);
-        value=signed_value(unsigned'(32'(integral)), 32'h10000);
         remainder=fraction;
-        carry=(remainder > 32'h80) || (((remainder == 32'h80) && value>=32'sh0));
+        carry=(remainder > 32'h80) || (((remainder == 32'h80) && (((unsigned'(32'(integral)) >>> 32'sh10)) == 32'h0)));
         rounding_sum=((unsigned'(32'(integral)) & 32'hFF)) + ((32'h80 | carry));
-        high_value=signed_value(unsigned'(32'(integral)) >>> 32'sh8, 32'h100);
+        quotient_upper=unsigned'(32'(integral)) >>> 32'sh8;
+        rounding_carry=((((((unsigned'(32'(integral)) >>> 32'sh7)) & 32'h1))) != '0) || (((((unsigned'(32'(integral)) & 32'h7F)) == 32'h7F) && ((carry) != '0)));
         rounded_tmp = 32'(rounding_sum & 32'hFF);
-        rounded_low_tmp = (high_value < signed'(32'(-'h1))) || (((high_value == signed'(32'(-'h1))) && (((rounding_sum >>> 32'sh8)) == 32'h0)));
-        rounded_high_tmp = (high_value > 32'sh0) || (((high_value == 32'sh0) && (((rounding_sum >>> 32'sh8)) != 32'h0)));
+        rounded_low_tmp = ((((quotient_upper & 32'h100))) != '0) && (((quotient_upper != 32'h1FF) || !((rounding_carry) != '0)));
+        rounded_high_tmp = !((((quotient_upper & 32'h100))) != '0) && (((quotient_upper != 32'h0) || ((rounding_carry) != '0)));
         accepted_tmp = ((accepted <<< 'h1)) | 64'(unsigned'(32'(valid_in)));
         valid_tmp = ((((accepted >>> 32'sh6)) & 64'h1) != '0);
         clipped_tmp = (('h0) != '0);

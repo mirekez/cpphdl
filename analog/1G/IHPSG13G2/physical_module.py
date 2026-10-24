@@ -16,9 +16,9 @@ from contextlib import nullcontext
 SOURCE = Path(__file__).resolve().parent
 ANALOG = SOURCE.parents[1]
 COMMON = ANALOG / 'pdk/1G_repeater_IHPSG13G2'
-sys.path.insert(0, str(COMMON))
-sys.path.insert(0, str(SOURCE.parent / 'tests'))
+sys.path[:0] = [str(SOURCE), str(COMMON), str(SOURCE.parent / 'tests')]
 from checks import check_drc, check_lvs, check_timing
+from lvs_disconnected_ports import prepare as prepare_disconnected_lvs
 from hardware import configure_cleanup, execute
 from stream import stream
 from route_checkpoints import retain_route_snapshots
@@ -43,6 +43,23 @@ MODULES = {
                                 optimization_capacitance=.22, analog_control_load=.16,
                                 output_buffer_cell='sg13g2_buf_4',
                                 route_setup_margin=.2, route_cap_margin=10),
+    'InterleavedSARBankController': dict(case='adc_bank', die=400, harness='adc_bank.cpp', period=4,
+                                        fixture=None, arguments=[13], defines=' -DBANK_SLICES=13',
+                                        clock_distance=100, clock_branch_distance=25,
+                                        capacitance_limit=.25, preparation_capacitance=.18,
+                                        optimization_capacitance=.22, analog_control_load=.16,
+                                        output_buffer_cell='sg13g2_buf_4', array_interface=True,
+                                        analog_control_ports=130, comparison_ports=13,
+                                        route_setup_margin=.2, route_cap_margin=10),
+    'ADCReceiveLaneController': dict(case='adc_receive_lane', die=500, harness='adc_receive_lane.cpp', period=4,
+                                    fixture=None, defines='', clock_distance=100, clock_branch_distance=25,
+                                    capacitance_limit=.25, preparation_capacitance=.18,
+                                    optimization_capacitance=.22, analog_control_load=.16,
+                                    output_buffer_cell='sg13g2_buf_4', array_interface=True,
+                                    analog_control_ports=162, comparison_ports=13,
+                                    disconnected_ports=['comparisons_in[13]', 'comparisons_in[14]', 'comparisons_in[15]'],
+                                    analog_control_patterns='trial_out* acquire_out* convert_out* clear_out evaluate_enable_out',
+                                    route_setup_margin=.2, route_cap_margin=10),
     'PAM5DriverControl': dict(case='pam5_driver', die=200, harness='pam5_driver.cpp', period=8,
                             fixture=None, defines='', clock_distance=25, clock_branch_distance=25,
                             capacitance_limit=.05),
@@ -55,6 +72,33 @@ def digest(path):
         for block in iter(lambda: source.read(1024 * 1024), b''):
             value.update(block)
     return value.hexdigest()
+
+
+def routed_array_interface(mapped, routed, interface):
+    """Preserve named bus bits when a DEF import changes declaration order."""
+    changes = {}
+    scalar_arrays = set()
+    for declaration in re.finditer(r'\b(?:input|output|inout)\s+wire\s+(\w+\s*\[\d+\](?:\s*,\s*\w+\s*\[\d+\])*)', interface):
+        scalar_arrays.update(re.findall(r'(\w+)\s*\[\d+\]', declaration[1]))
+    for match in list(re.finditer(r'\.(\w+)\(\{([^{}]+)\}\)', interface)):
+        name, expressions = match.groups()
+        declaration = r'\b(?:input|output|inout)\s+(?:wire\s+)?\[(\d+):(\d+)\]\s+' + re.escape(name) + r'\s*;'
+        before, after = re.findall(declaration, mapped), re.findall(declaration, routed)
+        if len(before) != 1 or len(after) != 1:
+            raise ValueError('missing or ambiguous routed array declaration: ' + name)
+        if before == after:
+            continue
+        if before[0] != after[0][::-1]:
+            raise ValueError('routed array index set changed: ' + name)
+        elements = [value.strip() for value in expressions.split(',')]
+        width = abs(int(before[0][0]) - int(before[0][1])) + 1
+        if len(elements) != width or name not in scalar_arrays:
+            raise ValueError('unsupported routed array permutation: ' + name)
+        old = match[0]
+        new = '.' + name + '({' + ', '.join(reversed(elements)) + '})'
+        interface = interface.replace(old, new, 1)
+        changes[name] = dict(mapped_range=list(map(int, before[0])), routed_range=list(map(int, after[0])))
+    return interface, changes
 
 
 def changed_inputs(expected, retained=None):
@@ -123,7 +167,13 @@ def import_placement(origin, work, top, constraints):
 
 def implement(args):
     top = getattr(args, 'module', 'ReceiveFilter')
-    module_spec = MODULES[top]
+    module_spec = dict(MODULES[top])
+    die_size = getattr(args, 'die_size', None)
+    if die_size is not None:
+        if (isinstance(die_size, bool) or not isinstance(die_size, (int, float)) or
+                not math.isfinite(die_size) or die_size <= 40):
+            raise ValueError('die size must be finite and exceed the two 20 um core margins')
+        module_spec['die'] = die_size
     workers = getattr(args, 'workers', 1)
     route_threads = getattr(args, 'route_threads', 1)
     if route_threads not in (1, 2):
@@ -149,7 +199,7 @@ def implement(args):
                   clock_tree=dict(buffer_distance_um=module_spec['clock_distance'],
                                   branch_buffer_min_distance_um=module_spec['clock_branch_distance'],
                                   sink_cluster_size=4, sink_cluster_max_diameter_um=40),
-                  constraints=dict(period_ns=module_spec.get('period', 8), clock_uncertainty_ns=.1, input_output_delay_ns=.4,
+                  constraints=dict(die_size_um=module_spec['die'], period_ns=module_spec.get('period', 8), clock_uncertainty_ns=.1, input_output_delay_ns=.4,
                                    optimization_transition_ns=.3, accepted_transition_ns=transition,
                                    optimization_fanout=4, accepted_fanout=8,
                                    preparation_capacitance_pf=module_spec.get('preparation_capacitance', .01),
@@ -174,6 +224,7 @@ def implement(args):
                        REPEATER_ROUTE_TRANSITION_TARGET=str(module_spec.get('route_transition_target', .3)),
                        REPEATER_ROUTE_CAP_MARGIN=str(module_spec.get('route_cap_margin', 10)),
                        REPEATER_ROUTE_THREADS=str(route_threads),
+                       REPEATER_ADC_COMPARISON_PORTS=str(module_spec.get('comparison_ports', 16 if top == 'ADCReceiveController' else 0)),
                        REPEATER_CONSTRAINTS=str(work / 'constraints.sdc'))
     environment['PATH'] = str(args.tools.resolve() / 'bin') + os.pathsep + environment.get('PATH', '')
 
@@ -215,7 +266,7 @@ def implement(args):
         # database resident beside OpenROAD's routing database.
         del module
         input_names = ('mapped.v', 'mapped.json', 'cells.v', 'cpp_trace.csv', 'hardware_checks.json')
-        if top == 'ADCReceiveController':
+        if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)):
             if evidence.get('simulation_interface_sha256') != digest(mapped / 'mapped_interface.sv'):
                 raise ValueError('ADC array-port simulation interface is absent or stale')
             input_names += ('mapped_interface.sv',)
@@ -228,7 +279,7 @@ def implement(args):
         # Verify the copies, including the evidence, before any expensive stage.
         if (json.loads((work / 'hardware_checks.json').read_text()) != evidence or
                 digest(work / 'mapped.v') != evidence['mapped_sha256'] or
-                (top == 'ADCReceiveController' and digest(work / 'mapped_interface.sv') !=
+                ((top == 'ADCReceiveController' or module_spec.get('array_interface', False)) and digest(work / 'mapped_interface.sv') !=
                  evidence['simulation_interface_sha256'])):
             raise ValueError('mapped evidence changed while taking the implementation snapshot')
         report['input_sha256'].update(evidence['source_sha256'])
@@ -247,6 +298,14 @@ def implement(args):
                      SOURCE.parent / 'tests/hardware.py'):
             report['input_sha256'][str(path)] = digest(path)
         tech = pdk / 'ihp-sg13g2/libs.tech/klayout/tech'
+        lvs_runner = tech / 'lvs/run_lvs.py'
+        if module_spec.get('disconnected_ports'):
+            mapped_module = json.loads((work / 'mapped.json').read_text())['modules'][top]
+            lvs_runner, adapter_hashes = prepare_disconnected_lvs(tech, work / 'lvs_adapter',
+                top, mapped_module, module_spec['disconnected_ports'])
+            report['input_sha256'].update(adapter_hashes)
+            report['preserved_disconnected_ports'] = module_spec['disconnected_ports']
+            del mapped_module
         library = pdk / 'ihp-sg13g2/libs.ref/sg13g2_stdcell'
         for pattern in ('drc/**/*.drc', 'drc/**/*.json', 'lvs/**/*.lvs', 'macros/sg13g2_filler_*.lym'):
             for path in tech.glob(pattern):
@@ -259,7 +318,7 @@ def implement(args):
         for source_path in report['input_sha256']:
             path = Path(source_path)
             if path.is_relative_to(ANALOG.parent) and not path.is_relative_to(pdk):
-                if path.suffix in ('.cpp', '.hpp', '.h', '.py', '.tcl'):
+                if path.suffix in ('.cpp', '.hpp', '.h', '.py', '.tcl', '.rb', '.lvs'):
                     snapshot = work / 'source_snapshot' / path.relative_to(ANALOG.parent)
                     snapshot.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(path, snapshot)
@@ -270,10 +329,11 @@ set_input_transition 0.1 [all_inputs]
 set_output_delay 0.4 -clock sample_clock [all_outputs]
 set_load 0.005 [all_outputs]
 ''')
-        if top == 'ADCReceiveController':
+        if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)):
             with (work / 'constraints.sdc').open('a') as constraints:
-                constraints.write(f'''set analog_controls [get_ports {{trial_out* acquire_out* convert_out*}}]
-if {{[llength $analog_controls] != 160}} {{ error "ADC analog-control interface is incomplete" }}
+                patterns = module_spec.get('analog_control_patterns', 'trial_out* acquire_out* convert_out*')
+                constraints.write(f'''set analog_controls [get_ports {{{patterns}}}]
+if {{[llength $analog_controls] != {module_spec.get("analog_control_ports", 160)}}} {{ error "ADC analog-control interface is incomplete" }}
 set_load {module_spec['analog_control_load']} $analog_controls
 ''')
         stage('routing-technology', [pdk_python, COMMON / 'route_tech.py', '--pdk', pdk, '--work', work])
@@ -304,11 +364,11 @@ set_load {module_spec['analog_control_load']} $analog_controls
             environment['REPEATER_STAGE'] = 'route'
             stage('route-extract', [tools / 'bin/openroad', '-no_init', '-exit', COMMON / 'place_route.tcl'],
                   timeout=43200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else
-                          5400 if top == 'ADCReceiveController' else 1800)
+                          5400 if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)) else 1800)
         # The exact independent oracle runs again on the routed netlist, using
         # the real Liberty-derived cell functions, before layout qualification.
         postroute_sources = [work / 'postroute.v']
-        if top == 'ADCReceiveController':
+        if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)):
             # The routed netlist keeps its physical flattened ports. Restore
             # the already checked public array interface only for simulation.
             text, count = re.subn(r'\bmodule\s+' + top + r'\s*\(',
@@ -316,7 +376,11 @@ set_load {module_spec['analog_control_load']} $analog_controls
             if count != 1:
                 raise ValueError('routed ADC controller top was not found')
             (work / 'postroute_flat.v').write_text(text)
-            postroute_sources = [work / 'postroute_flat.v', work / 'mapped_interface.sv']
+            interface, permutations = routed_array_interface((work / 'mapped.v').read_text(),
+                (work / 'postroute.v').read_text(), (work / 'mapped_interface.sv').read_text())
+            (work / 'postroute_interface.sv').write_text(interface)
+            report['postroute_array_permutations'] = permutations
+            postroute_sources = [work / 'postroute_flat.v', work / 'postroute_interface.sv']
         stage('postroute-build', [args.verilator, '--cc', '--exe', '--build', '--no-skip-identical',
               '--flatten', '--output-groups', '0', '--output-split', '10000', '--output-split-cfuncs', '500',
               '-j', '2', '--top-module', top, '-Wno-fatal', '--Mdir', work / 'postroute_obj',
@@ -324,7 +388,7 @@ set_load {module_spec['analog_control_load']} $analog_controls
               work / 'cells.v', SOURCE.parent / 'tests' / module_spec['harness'], '-MAKEFLAGS',
               'CXX=' + args.cxx + ' LINK=' + args.cxx + ' OPT_FAST=-O0 OPT_SLOW=-O0'],
               timeout=1800 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else 900)
-        arguments = [] if module_spec['fixture'] is None else [work / module_spec['fixture']]
+        arguments = module_spec.get('arguments', []) if module_spec['fixture'] is None else [work / module_spec['fixture']]
         stage('postroute-vectors', [work / 'postroute_obj' / ('V' + top), *arguments,
                                    work / 'postroute_trace.csv'], timeout=180)
         if digest(work / 'postroute_trace.csv') != digest(work / 'cpp_trace.csv'):
@@ -352,10 +416,15 @@ set_load {module_spec['analog_control_load']} $analog_controls
         (work / 'lvs.cir').write_text(f'.include "{library / "cdl/sg13g2_stdcell.cdl"}"\n'
                                      f'.include "{work / "core.cdl"}"\n')
         try:
-            stage('lvs', [pdk_python, tech / 'lvs/run_lvs.py', '--layout', work / 'module_filled.gds',
+            stage('lvs', [pdk_python, lvs_runner, '--layout', work / 'module_filled.gds',
                           '--netlist', work / 'lvs.cir', '--topcell', top, '--run_mode', 'deep', '--run_dir', work / 'lvs'],
                   timeout=3600 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else 1800, fatal=False)
             report['lvs'] = check_lvs(work / 'lvs/module_filled.lvsdb', top, ports)
+            report['artifact_sha256']['lvs/module_filled.lvsdb'] = digest(work / 'lvs/module_filled.lvsdb')
+            if module_spec.get('disconnected_ports'):
+                audit = work / 'lvs/disconnected_ports.json'
+                report['lvs']['disconnected_port_audit'] = json.loads(audit.read_text())
+                report['artifact_sha256']['lvs/disconnected_ports.json'] = digest(audit)
         except Exception as error:
             failures.append('lvs: ' + str(error))
         report['artifact_sha256']['module_filled.gds'] = digest(work / 'module_filled.gds')
@@ -384,6 +453,7 @@ if __name__ == '__main__':
     configure_cleanup()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--module', choices=MODULES, default='ReceiveFilter')
+    parser.add_argument('--die-size', type=float, help='override square macro die side in micrometres')
     parser.add_argument('--mapped-work', type=Path, default=ANALOG / 'build/1G/tests/hardware/filter_datapath')
     parser.add_argument('--work', type=Path, default=SOURCE / 'results/receive_filter')
     parser.add_argument('--work-root', type=Path,

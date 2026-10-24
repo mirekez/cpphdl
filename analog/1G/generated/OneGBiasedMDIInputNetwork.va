@@ -1,0 +1,20 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGBiasedMDIInputNetwork(Vdd, Vss, P, N, VCM, PLUS, MINUS);
+    inout Vdd, Vss, P, N, VCM, PLUS, MINUS;
+    electrical Vdd, Vss, P, N, VCM, PLUS, MINUS;
+
+    analog begin
+        // device 0, IC OneGBiasedMDIInputNetwork, analog/1G/biased_mdi_input_network.hpp:19
+        I(P, PLUS) <+ V(P, PLUS) / 500.0;
+        // device 1, IC OneGBiasedMDIInputNetwork, analog/1G/biased_mdi_input_network.hpp:20
+        I(N, MINUS) <+ V(N, MINUS) / 500.0;
+        // device 2, IC OneGBiasedMDIInputNetwork, analog/1G/biased_mdi_input_network.hpp:21
+        I(VCM, PLUS) <+ V(VCM, PLUS) / 150.0;
+        // device 3, IC OneGBiasedMDIInputNetwork, analog/1G/biased_mdi_input_network.hpp:22
+        I(VCM, MINUS) <+ V(VCM, MINUS) / 150.0;
+    end
+endmodule

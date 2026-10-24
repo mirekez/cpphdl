@@ -36,12 +36,26 @@ private:
         return int(value ^ sign) - int(sign);
     }
 
+    unsigned combine_digits(unsigned a, unsigned b) {
+        unsigned middle, upper, upper_plus, upper_minus, upper_word;
+        // a and b are signed thirteen-bit partial products. The low nibble
+        // passes through unchanged in a + 16*b. Above it, add eight bits and
+        // select the upper five-bit correction in parallel with that sum.
+        middle = (b & 255) + ((a >> 4) & 255);
+        upper = (b >> 8) & 31;
+        upper_plus = (upper + 1) & 31;
+        upper_minus = (upper - 1) & 31;
+        upper_word = ((a >> 12) & 1) ? ((middle >> 8) ? upper : upper_minus)
+                                     : ((middle >> 8) ? upper_plus : upper);
+        return (upper_word << 12) | ((middle & 255) << 4) | (a & 15);
+    }
+
 public:
     void _assign() {}
     void _work(bool reset) {
-        int value, high_value;
         unsigned remainder, carry, rounding_sum, integral_low, integral_high;
         unsigned upper_plus, upper_minus, upper_word, low_negative;
+        unsigned quotient_upper, rounding_carry;
         // Isolate external-input hold repair from the centering arithmetic.
         // Calibration travels through the same register boundary as its sample.
         raw_sample._next = sample_in();
@@ -57,10 +71,8 @@ public:
         for (unsigned i = 0; i < 4; ++i)
             partial[i]._next = signed_value(unsigned(half_products[2 * i]), 1024) +
                 signed_value(unsigned(half_products[2 * i + 1]), 1024) * 4;
-        low._next = signed_value(unsigned(partial[0]), 4096) +
-            signed_value(unsigned(partial[1]), 4096) * 16;
-        high._next = signed_value(unsigned(partial[2]), 4096) +
-            signed_value(unsigned(partial[3]), 4096) * 16;
+        low._next = combine_digits(unsigned(partial[0]), unsigned(partial[1]));
+        high._next = combine_digits(unsigned(partial[2]), unsigned(partial[3]));
         // The sign-extended nine-bit addend changes the upper word by at
         // most one. Compute its alternatives alongside the low-byte sum,
         // avoiding carry propagation through all seventeen bits.
@@ -73,18 +85,23 @@ public:
                                  : ((integral_low >> 8) ? upper_plus : integral_high);
         integral._next = (upper_word << 8) | (integral_low & 255);
         fraction._next = unsigned(low) & 255;
-        value = signed_value(unsigned(integral), 65536);
         remainder = unsigned(fraction);
         // Floor quotient plus a carry rounds exact half-counts away from zero
         // without a 25-bit absolute-value or negation datapath.
-        carry = unsigned(remainder > 128 || (remainder == 128 && value >= 0));
+        carry = unsigned(remainder > 128 || (remainder == 128 && (unsigned(integral) >> 16) == 0));
         // Only the low byte needs addition. Its carry and the signed upper
         // word determine clipping, avoiding a wide rounding carry chain.
         rounding_sum = (unsigned(integral) & 255) + (128 | carry);
-        high_value = signed_value(unsigned(integral) >> 8, 256);
+        quotient_upper = unsigned(integral) >> 8;
+        // Adding 128 plus the rounding bit overflows the low byte exactly
+        // when its high bit is set, or when 127 receives the rounding bit.
+        // Decode this carry directly so clipping avoids the byte adder and
+        // signed upper-word arithmetic on its critical path.
+        rounding_carry = ((unsigned(integral) >> 7) & 1) ||
+                         ((unsigned(integral) & 127) == 127 && carry);
         rounded._next = rounding_sum & 255;
-        rounded_low._next = high_value < -1 || (high_value == -1 && (rounding_sum >> 8) == 0);
-        rounded_high._next = high_value > 0 || (high_value == 0 && (rounding_sum >> 8) != 0);
+        rounded_low._next = (quotient_upper & 256) && (quotient_upper != 511 || !rounding_carry);
+        rounded_high._next = !(quotient_upper & 256) && (quotient_upper != 0 || rounding_carry);
         accepted._next = (accepted << 1) | unsigned(valid_in());
         valid._next = (accepted >> 6) & 1;
         clipped._next = 0;

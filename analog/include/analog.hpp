@@ -155,6 +155,8 @@ using linear_system_backend = std::function<std::vector<double>(std::size_t,
     const std::vector<matrix_entry>&, const std::vector<double>&)>;
 inline constexpr double newton_residual_tolerance = 1e-8;
 
+enum class integration_method { backward_euler, bdf2 };
+
 class simulation {
     friend class IC;
     inline static thread_local simulation* current_ = nullptr;
@@ -163,6 +165,15 @@ class simulation {
     std::vector<std::size_t> index_;
     std::vector<std::size_t> nodes_;
     std::vector<double> solution_;
+    std::vector<double> older_solution_;
+    double previous_dt_ = 0;
+    bool history_ready_ = false;
+    std::pair<double, double> derivative_weights(double dt) const {
+        if (method != integration_method::bdf2 || !history_ready_ || previous_dt_ <= 0 || dt > 2 * previous_dt_)
+            return {1, 0};
+        const double ratio = dt / previous_dt_;
+        return {(1 + 2 * ratio) / (1 + ratio), ratio * ratio / (1 + ratio)};
+    }
     std::vector<observation> observations_;
     std::vector<obligation> obligations_;
     std::vector<trace_obligation> trace_obligations_;
@@ -221,6 +232,8 @@ public:
     std::vector<sample> trace;
     std::size_t newton_iterations = 0, register_commits = 0;
     bool analytic_jacobian = false;
+    // BDF2 uses accepted history and restarts at discontinuities.
+    integration_method method = integration_method::backward_euler;
     linear_system_backend linear_backend; // Empty selects the dependency-free dense solver.
     duration minimum_step{0}; // Optional Newton-failure bisection; zero retains fixed-step failure behavior.
     simulation() : previous_(current_) {

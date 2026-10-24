@@ -1,6 +1,8 @@
 #include <cpphdl_veriloga.h>
 #include <VerilogA/experiment.hpp>
 #include <basic/basic.hpp>
+#include <chrono>
+#include <fstream>
 #include <iostream>
 
 using namespace analog;
@@ -105,6 +107,38 @@ int main() {
                   text.find("cpphdl_bit" + std::to_string(sim.elements.back().bit)) != std::string::npos &&
                   text.find("sim_driver") != std::string::npos,
               "explicit partition exposes external digital control and retains physical drive resistance");
+    }
+    {
+        simulation sim;
+        electrical ground, supply, output;
+        bits<1> clock;
+        sim.reference(ground);
+        supply = sim_voltage_source(ground, 1.2_V);
+        sim.clock(clock, 4_ns);
+        output = sim_driver(clock, supply, ground, 100_Ohm);
+        sim.observe("OUT", output, ground);
+        const auto destination = std::filesystem::temp_directory_path() /
+            ("cpphdl-export-edge-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        verilog_a::transient timing{1_us, 10_ns, 10_ns};
+        timing.driver_edge = duration(2e-15);
+        for (double step : {1e-8, 1e-9}) {
+            timing.step = duration(step);
+            timing.maximum_step = duration(step);
+            verilog_a::write_experiment(sim, destination, timing);
+            std::ifstream source(destination / "conditions.json");
+            const std::string text((std::istreambuf_iterator<char>(source)), {});
+            const std::string key = "\"driver_edge_s\": ";
+            const auto position = text.find(key);
+            check(position != std::string::npos && std::stod(text.substr(position + key.size())) == 2e-15,
+                "explicit experiment edge is independent of integration refinement");
+        }
+        for (double value : {-1e-12, std::numeric_limits<double>::infinity(),
+                             std::numeric_limits<double>::quiet_NaN(), 2e-9}) {
+            timing.driver_edge = duration(value);
+            rejects([&] { verilog_a::write_experiment(sim, destination, timing); },
+                "invalid experiment driver edge rejected");
+        }
+        std::filesystem::remove_all(destination);
     }
     {
         simulation sim;

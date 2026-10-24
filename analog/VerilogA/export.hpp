@@ -20,6 +20,9 @@ struct transient {
     // Optional experiment-only placement of large linear capacitors in the SPICE deck.
     // Reusable Verilog-A modules always retain their complete circuit laws.
     double spice_capacitance_threshold = 0;
+    // Zero selects the automatic near-ideal experiment edge. An explicit
+    // edge keeps the stimulus fixed when integration steps are refined.
+    duration driver_edge{0};
 };
 
 namespace detail {

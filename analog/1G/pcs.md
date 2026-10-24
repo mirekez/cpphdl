@@ -15,7 +15,7 @@ connected `IC` models. The target is full-duplex 1000BASE-T at 125 MBd.
 | `PCSBranchMetrics` | Closest constellation point and squared distance for each of eight subsets | One registered stage |
 | `PipelinedPCSBranchMetrics` | Same subset costs, with registered coordinate, pair, group and subset reductions | Four registered stages; output at input edge + 3 |
 | `PCSTrellisDecoder` | Eight-state soft-decision Viterbi decoding and terminated-stream draining | 32-observation survivor history |
-| `PCSReceiver` | Synchronizer, framer, pipelined metrics, decoder and aligned GMII metadata | 39 symbol clocks from ADC observation to GMII |
+| `PCSReceiver` | Synchronizer, framer, pipelined metrics, decoder and aligned GMII metadata | 39 accepted symbol ticks from ADC observation to GMII |
 
 Sources are `pcs.hpp`, `pcs_transmit.hpp`, `pcs_synchronize.hpp`,
 `pcs_framer.hpp`, `pcs_receive.hpp`, `pcs_branch_metrics_pipeline.hpp` and `pcs_receiver.hpp`. Each `.cpp` entry
@@ -34,8 +34,14 @@ these bits explicitly. The mapper's point is Sd[5:0].
 `PCSReceiver.samples_in` packs four unsigned eight-bit ADC samples in A/B/C/D
 order. Code 128 means zero; a PAM level spans 32 counts. Its output uses the
 shared GMII word format: data in bits 7:0, valid in bit 8 and error in bit 9.
-The receiver needs **simultaneous deskewed observations on a recovered symbol
-clock**. It does not provide the analog ADC or recover that clock itself.
+The receiver needs **simultaneous deskewed observations on recovered symbol
+ticks**. `symbol_enable_in` advances every stage together, including trellis
+draining and frame metadata. Between ticks those registers hold. Reset has
+priority over the enable; PMA loss also revokes lock while paused.
+`receive_valid_out` is a registered pulse paired with `receive_out`, including
+idle words. It is distinct from GMII data-valid bit 8. Downstream logic consumes
+only these pulses. Existing symbol-clocked callers bind the enable to true.
+The receiver does not provide the analog ADC or recover symbol timing itself.
 
 ```cpp
 PCSTransmitter tx;
@@ -50,10 +56,26 @@ tx.mode_in = _ASSIGN(mode);             // 0: SEND_Z, 1: SEND_I, 2: SEND_N
 
 PCSReceiver rx;
 rx.samples_in = _ASSIGN(adc_samples);
+rx.symbol_enable_in = _ASSIGN(recovered_symbol_valid);
 rx.remote_master_in = _ASSIGN(!local_is_master);
 rx.pma_ok_in = _ASSIGN(pma_receive_ok);
 rx._assign();
 ```
+
+A 250 MHz implementation must meet 4 ns timing: rate correction can produce
+adjacent symbol-valid events. No multicycle exception follows merely from the
+average two samples per symbol. The native/RTL pause regression preserves all
+59,456 independent fixture observations across 126,996 poisoned pause clocks
+and 32 disabled resets. Earlier 8 ns physical results do not qualify this new
+enabled implementation. All three functional trajectories also match after
+mapping to 42,388 SG13G2 cells. The new 4 ns slow/1.08 V/125 °C cell-only check
+fails with −3.38 ns setup slack after fanout/capacitance repair. Its longest
+reported path starts at forced-termination control and reaches a trellis cost
+register. That failure is retained in
+`out/pcs-symbol-enable/yosys038-mapped/cell_timing.json`; it is not waived by
+average symbol rate. An isolated experiment moves the forced metric selection
+before the existing final metric register, preserving the symbol latency.
+No physical qualification is claimed for that experiment yet.
 
 The receive interface has **no seed input**. During idle D0, the magnitude of
 pair A identifies Scr[0]. After collecting the 33-bit history, the synchronizer

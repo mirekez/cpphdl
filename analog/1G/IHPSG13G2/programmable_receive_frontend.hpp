@@ -9,11 +9,16 @@ namespace analog::one_g::ihp_sg13g2 {
 // increased channel resistance at the same 250 MS/s sampling rate.
 class programmable_receive_slice : public SARADCFeedbackStage<buffered_nand_latch> {
 public:
+    mos_model sampling_n{channel_strength(.02), voltage(.7)};
+    mos_model sampling_p{channel_strength(.01), voltage(.7)};
+    mos_model cancellation_n{channel_strength(.01), voltage(.7)};
+    mos_model cancellation_p{channel_strength(.005), voltage(.7)};
+
     void _assign() override {
-        sampler.n_channel = mos_model{channel_strength(.02), voltage(.7)};
-        sampler.p_channel = mos_model{channel_strength(.01), voltage(.7)};
-        sampler.dummy_n = mos_model{channel_strength(.01), voltage(.7)};
-        sampler.dummy_p = mos_model{channel_strength(.005), voltage(.7)};
+        sampler.n_channel = sampling_n;
+        sampler.p_channel = sampling_p;
+        sampler.dummy_n = cancellation_n;
+        sampler.dummy_p = cancellation_p;
         sampler.clock_storage = capacitance_value(20e-15);
         sampler.gate_coupling = capacitance_value(2e-15);
         sampler.off_coupling = capacitance_value(1e-15);
@@ -23,7 +28,8 @@ public:
 
 // Keep cable termination independent of gain. The high-impedance differential
 // inputs precede current buffers, one programmable gain stage and the ADC.
-template <std::size_t Count = 16> class programmable_receive_frontend : public IC {
+template <std::size_t Count = 16, class Slice = programmable_receive_slice>
+class programmable_receive_frontend : public IC {
 public:
     _PORT(electrical) PLUS;
     _PORT(electrical) MINUS;
@@ -36,7 +42,7 @@ public:
     std::array<nmos_resistor_amplifier, 2> amplifiers;
     std::array<nmos_source_follower, 2> buffers;
     programmable_receive_gain gain;
-    SARADCCoreArray<Count, programmable_receive_slice> adc;
+    SARADCCoreArray<Count, Slice> adc;
     resistance termination{100};
     capacitance_value gain_output_storage{3e-12};
     capacitance_value sample_storage{1.5e-12};

@@ -91,6 +91,16 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // Every calibration word at six signed input differences exercises
+        // digit carries and sign extension against the independent arithmetic
+        // oracle, including the largest positive and negative ADC difference.
+        for (int difference : {-255, -128, -1, 1, 127, 255}) {
+            input = difference < 0 ? 0 : unsigned(difference);
+            offset = difference < 0 ? unsigned(-difference) : 0;
+            valid = true;
+            for (gain = 0; gain < 65536; ++gain)
+                edge();
+        }
         // Nominal 3.3 V ADC codes for {-2,-1,0,+1,+2} at 0.25 V per level.
         // The PCS sees approximately {64,96,128,160,192}; quantization remains.
         offset = 128;

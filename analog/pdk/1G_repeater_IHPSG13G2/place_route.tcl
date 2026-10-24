@@ -104,9 +104,9 @@ if {$design_top != "RepeaterCore"} {
     # Retain the real placement for path diagnosis even when routing fails.
     # Estimated wire delays here are distinct from the extracted final reports.
     estimate_parasitics -placement
-    report_checks -path_delay min_max -format full_clock_expanded > "$work/placed_timing.rpt"
-    report_worst_slack -max > "$work/placed_setup.rpt"
-    report_worst_slack -min > "$work/placed_hold.rpt"
+    report_checks -path_delay min_max -format full_clock_expanded -digits 9 > "$work/placed_timing.rpt"
+    report_worst_slack -max -digits 9 > "$work/placed_setup.rpt"
+    report_worst_slack -min -digits 9 > "$work/placed_hold.rpt"
     # Fail before routing if CTS violates actual electrical budgets. Restore
     # the tighter data optimization targets for the global-route repair stage.
     set_max_transition $::env(REPEATER_MAX_TRANSITION) [current_design]
@@ -169,9 +169,9 @@ write_spef "$work/core.spef"
 read_spef -corner slow "$work/core.spef"
 read_spef -corner fast "$work/core.spef"
 set_propagated_clock [all_clocks]
-report_checks -path_delay min_max -format full_clock_expanded > "$work/timing.rpt"
-report_worst_slack -max > "$work/setup.rpt"
-report_worst_slack -min > "$work/hold.rpt"
+report_checks -path_delay min_max -format full_clock_expanded -digits 9 > "$work/timing.rpt"
+report_worst_slack -max -digits 9 > "$work/setup.rpt"
+report_worst_slack -min -digits 9 > "$work/hold.rpt"
 report_check_types -max_slew -max_capacitance -max_fanout -violators > "$work/electrical.rpt"
 write_def "$work/core.def"
 write_db "$work/core.odb"

@@ -348,7 +348,8 @@ seeds known sources and charge, and solves the initial algebraic system at fixed
 continuous state. A run can be executed only once for an elaborated simulation.
 Known source steps and clock events supplement the regular integration grid.
 
-For each next timestamp, integrate to the left side with backward Euler, apply
+For each next timestamp, integrate to the left side with the selected method
+(backward Euler by default, or explicit [BDF2](integration.md)), apply
 right-sided source changes holding capacitor charge, settle physical/bit
 views, commit all active register next states together, and settle generated event
 deltas. Record the right-sided sample. Exact event timestamps take priority over

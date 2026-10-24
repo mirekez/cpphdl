@@ -17,12 +17,17 @@ def normalize_roundoff_duplicates(path, *, epsilon_units=16):
     if type(epsilon_units) is not int or not 1 <= epsilon_units <= 64:
         raise ValueError('roundoff allowance must be an integer from 1 to 64 epsilon units')
     path = Path(path)
-    temporary = path.with_name(path.name + '.normalize.tmp')
-    audit_path = path.with_name(path.name + '.roundoff.json')
+    compressed = path.suffix == '.gz'
+    base = path.with_suffix('') if compressed else path
+    storage = path.resolve() if path.is_symlink() else path
+    storage_base = storage.with_suffix('') if compressed else storage
+    temporary = storage_base.with_name(storage_base.name + '.normalize.tmp' + ('.gz' if compressed else ''))
+    audit_path = base.with_name(base.name + '.roundoff.json')
     original, canonical = hashlib.sha256(), hashlib.sha256()
     duplicates, previous, kept = [], None, 0
     try:
-        with path.open('rb') as source, temporary.open('wb') as destination:
+        with (gzip.open(path, 'rb') if compressed else path.open('rb')) as source, \
+             (gzip.open(temporary, 'wb', compresslevel=6) if compressed else temporary.open('wb')) as destination:
             header = next(source)
             columns = header.split()
             if not columns or columns[0] != b'time':
@@ -52,7 +57,7 @@ def normalize_roundoff_duplicates(path, *, epsilon_units=16):
         # Check byte-for-byte reconstruction before replacing the original.
         verify_roundoff_audit(temporary, audit)
         audit_path.write_text(json.dumps(audit, indent=2) + '\n')
-        temporary.replace(path)
+        temporary.replace(storage)
         return audit_path
     except BaseException:
         temporary.unlink(missing_ok=True)

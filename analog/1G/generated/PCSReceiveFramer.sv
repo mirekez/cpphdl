@@ -6,6 +6,7 @@ import Predef_pkg::*;
 module PCSReceiveFramer (
     input wire clk
 ,   input wire reset
+,   input wire symbol_enable_in
 ,   input wire[12-1:0] symbols_in
 ,   input wire[4-1:0] sg_in
 ,   input wire[4-1:0] sx_in
@@ -354,7 +355,7 @@ module PCSReceiveFramer (
         end
         control_reg_tmp = control;
         tag_reg_tmp = 32'(tag | ((((((unsigned'(32'(sx_in)) <<< 'h4)) | unsigned'(32'(low_mask_in)))) <<< 'hB)));
-        if ((!locked_in || !pma_ok_in) || reset) begin
+        if ((((symbol_enable_in && !locked_in)) || !pma_ok_in) || reset) begin
             state_tmp = 64'h0;
             good_idles_tmp = 64'h0;
             bad_groups_tmp = 64'h0;
@@ -364,6 +365,17 @@ module PCSReceiveFramer (
             restart_reg_tmp = (('h0) != '0);
             error_dv_tmp = (('h0) != '0);
             remote_ok_tmp = (('h0) != '0);
+        end
+        if ((!symbol_enable_in && !reset) && pma_ok_in) begin
+            state_tmp = state;
+            good_idles_tmp = good_idles;
+            bad_groups_tmp = bad_groups;
+            negate_reg_tmp = negate_reg;
+            control_reg_tmp = control_reg;
+            tag_reg_tmp = tag_reg;
+            restart_reg_tmp = restart_reg;
+            error_dv_tmp = error_dv;
+            remote_ok_tmp = remote_ok;
         end
     end
     endtask

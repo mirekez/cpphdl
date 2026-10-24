@@ -1,11 +1,12 @@
 # Recovered receive clock to reference clock
 
 [ReceiveClockAligner](receive_alignment.hpp) is a synthesizable C++RTL class with
-`receive_in`, `aligned_out`, `overflow_out` and `fault_out` member ports. Run one
-instance per PHY port. Its `rx_clk` is an internally recovered 125 MHz clock;
-`ref_clk` comes from the chip's one external reference. The class implements the
-digital clock crossing; it does not turn the sampled Gardner model into a
-physical oscillator or phase interpolator.
+`receive_in`, `receive_enable_in`, `aligned_out`, `overflow_out` and `fault_out`
+member ports. Run one instance per PHY port. Its `rx_clk` can be an internally
+recovered symbol clock, with the enable held true, or a fixed 250 MHz ADC clock,
+with `PCSReceiver.receive_valid_out` marking accepted words. `ref_clk` comes
+from the chip's one external reference. The class implements the digital clock
+crossing; symbol timing recovery precedes this block.
 
 The 64-entry memory stores GMII words (data bits 7:0, valid bit 8, error bit 9)
 and one end token per frame. Idle clock cycles consume no entries. Write and
@@ -13,6 +14,9 @@ read pointers each advance by at most one per respective clock edge. Seven-bit
 Gray pointers cross through two registers marked `ASYNC_REG`; the read domain
 never directly samples the binary write pointer. A separate Gray frame counter
 allows a completed short/error frame to drain below the eight-word start threshold.
+An invalid input clock does not advance the previous-data-valid state, write
+a word, or manufacture an end token. Pointer synchronizers continue running.
+Reset remains effective when the input enable is false.
 
 The output starts with eight available words, or a complete short frame. It
 then delivers one word on each reference-clock edge through the end token.
@@ -31,7 +35,8 @@ Resetting only one side of an active FIFO violates its contract.
 
 [tests/alignment.cpp](tests/alignment.cpp) checks forty alternating 72/1526-byte
 wire frames at each of nine initial phase/rate combinations: 0, +/-200 ppm and
-three phases. It verifies 360 frames, 287,640 bytes, FCS residue, minimum IFG, byte/error order,
+three phases, both with a symbol clock and with fixed-rate enabled sampling.
+It verifies 720 frames, 575,280 bytes, FCS residue, minimum IFG, byte/error order,
 short frames, overflow, stopped receive clock, failure containment and joint
 reset. Every native and generated-RTL output is compared exactly; mapped IHP
 simulation uses the same independent frame checker and trace comparison.

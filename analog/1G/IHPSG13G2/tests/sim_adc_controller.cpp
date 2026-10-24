@@ -1,6 +1,12 @@
 // Simulation adapter: the native C++RTL controller runs on XSPICE clock events.
 // Analog voltages remain in ngspice; adc_bridge/dac_bridge handle host signals.
+#ifdef CPPHDL_ADC_COMPACT
+#include "../../adc_receive_bank.hpp"
+using Controller = ADCReceiveBankController<13>;
+#else
 #include "../../adc_receive.hpp"
+using Controller = ADCReceiveController;
+#endif
 #include <ngspice/cmtypes.h>
 #include <ngspice/cosim.h>
 #include <array>
@@ -14,10 +20,12 @@
 long _system_clock = -1;
 
 namespace {
+[[noreturn]] void fail(const char* message);
+
 struct host {
-    ADCReceiveController controller;
+    Controller controller;
     unsigned count = 0, launches = 0, feedback = 0;
-    bool launch = false;
+    bool launch = false, precharging = true;
     int clock = -1;
     Digital_State_t previous_clock = ZERO;
     std::vector<Digital_State_t> inputs;
@@ -39,6 +47,8 @@ struct host {
         controls << ',' << unsigned(controller.normalized_out()) << ',' << bool(controller.normalized_valid_out()) << ','
                  << unsigned(controller.normalized_slice_out()) << ',' << bool(controller.clipped_out()) << '\n';
         controls.flush();
+        if (!controls)
+            fail("cannot write XSPICE controller evidence");
     }
 
     void initialize(const co_info& info) {
@@ -46,7 +56,11 @@ struct host {
             throw std::runtime_error("expected slices, bursts, controls CSV and event CSV");
         count = unsigned(std::stoul(info.sim_argv[0]));
         const unsigned bursts = unsigned(std::stoul(info.sim_argv[1]));
+#ifdef CPPHDL_ADC_COMPACT
+        if ((count != 1 && count != 4 && count != 13) || (bursts != 1 && bursts != 2) || (bursts == 2 && count != 13))
+#else
         if ((count != 1 && count != 4 && count != 16) || (bursts != 1 && bursts != 2) || (bursts == 2 && count != 16))
+#endif
             throw std::runtime_error("invalid XSPICE controller experiment");
         launches = count * bursts;
         inputs.assign(count + 1, UNKNOWN);
@@ -60,10 +74,17 @@ struct host {
             controls << ",trial" << i;
         controls << ",normalized,normalized_valid,normalized_slice,clipped\n";
         events << "clock,time_s,active_mask,feedback\n" << std::setprecision(17);
+#ifdef CPPHDL_ADC_COMPACT
+        controller.precharge_in = _ASSIGN(precharging);
+#endif
         controller.enable_in = _ASSIGN(true);
         controller.sample_enable_in = _ASSIGN(launch);
         controller.comparisons_in = _ASSIGN(feedback);
+#ifdef CPPHDL_ADC_COMPACT
+        controller.offset_in = _ASSIGN(112);
+#else
         controller.offset_in = _ASSIGN(128);
+#endif
         controller.gain_in = _ASSIGN(424);
         controller._assign();
         ++_system_clock;
@@ -92,6 +113,7 @@ void step(co_info* info) {
     if (clock_input != UNKNOWN && clock_input != context.previous_clock) {
         context.previous_clock = clock_input;
         if (clock_input == ONE) {
+            context.precharging = false;
             ++_system_clock;
             for (unsigned i = 0; i < context.count; ++i)
                 mask |= unsigned(context.controller.convert_out[i]()) << i;
@@ -106,6 +128,8 @@ void step(co_info* info) {
             context.launch = unsigned(context.clock) < context.launches;
             context.events << context.clock << ',' << info->vtime << ',' << mask << ',' << context.feedback << '\n';
             context.events.flush();
+            if (!context.events)
+                fail("cannot write XSPICE bridge-event evidence");
             ++_system_clock;
             context.controller._work(false);
             context.controller._strobe();

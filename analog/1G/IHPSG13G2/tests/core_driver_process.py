@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core_driver_process import contributions
+from core_driver_process import contributions, PROGRAMMABLE_BINDINGS
 
 
 def model(line):
@@ -38,6 +38,16 @@ class ProcessBinding(unittest.TestCase):
             'I(n2, n0) <+ cpphdl_channel(V(n3, n0), V(n2, n0), 0.07, 0.5, 1.0);'):
             with self.subTest(line=line), self.assertRaises(ValueError):
                 contributions(model(line))
+
+    def test_trim_pmos_requires_the_programmable_inventory(self):
+        line = 'I(n2, n4) <+ cpphdl_channel(V(n3, n4), V(n2, n4), 0.02, 0.7, -1.0);'
+        with self.assertRaises(ValueError):
+            contributions(model(line))
+        devices, roles = contributions(model(line), PROGRAMMABLE_BINDINGS)
+        self.assertEqual(roles, {'trim_switch': 1})
+        self.assertEqual(devices[0]['body'], 'n4')
+        self.assertEqual(devices[0]['width_um'], 100)
+        self.assertEqual(sum(entry[-1] for entry in PROGRAMMABLE_BINDINGS), 296)
 
 
 if __name__ == '__main__':

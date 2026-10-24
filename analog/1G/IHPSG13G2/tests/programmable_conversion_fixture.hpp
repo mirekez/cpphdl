@@ -151,6 +151,9 @@ static int programmable_conversion(const std::filesystem::path& destination, boo
              << ",\"clocks\":" << clocks << ",\"period_s\":" << std::setprecision(17) << array_period
              << ",\"clock_origin_s\":" << warmup << ",\"gain_code\":" << gain
              << ",\"sample_storage_F\":" << receiver.sample_storage.value
+             << ",\"sampler_dummy_p_beta_A_per_V2\":" << receiver.adc.slices[0].sampler.dummy_p.beta.value
+             << ",\"charge_defined_nodes\":"
+             << (!receiver.adc.slices[0].sampler.leakage_return && !receiver.adc.slices[0].decision.weak_returns ? "true" : "false")
              << ",\"gain_compensation_F\":" << receiver.gain.compensation_step.value << ",\"drivers\":[";
     bool first = true;
     for (auto [slice, bit, id] : bindings) {

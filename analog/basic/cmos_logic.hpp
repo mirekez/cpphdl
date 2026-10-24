@@ -9,6 +9,8 @@ public:
     _PORT(electrical) Y;
     electrical STACK;
     capacitance_value output_capacitance{1e-9};
+    capacitance_value stack_capacitance{10e-15};
+    bool weak_returns{true};
     mos_model parameters{channel_strength(.002), voltage(.35)};
 
     void _assign() override {
@@ -17,8 +19,13 @@ public:
         Y = pmos(B, Vdd, parameters); // Either low input enables a pull-up path.
         STACK = nmos(A, Y, parameters);
         Vss = nmos(B, STACK, parameters); // Both high inputs complete the pull-down path.
-        Vss = resistor(Y, resistance(1e9)); // Explicit weak output load defines the voltage when channels are off.
-        Vss = resistor(STACK, resistance(1e9)); // Explicit weak return defines an otherwise floating stack node.
+        if (weak_returns) {
+            Vss = resistor(Y, resistance(1e9));
+            Vss = resistor(STACK, resistance(1e9));
+        } else {
+            // The isolated stack retains charge until a channel conducts.
+            STACK = capacitor(Vss, stack_capacitance);
+        }
     }
 };
 

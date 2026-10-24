@@ -38,6 +38,9 @@ int main(int argc, char** argv) {
         dut.samples_in = _ASSIGN(samples);
         dut.negate_in = _ASSIGN(signs);
         dut.advance_in = _ASSIGN(advance);
+#ifdef PIPELINED_METRICS
+        dut.symbol_enable_in = _ASSIGN(true);
+#endif
         dut._assign();
 #endif
         std::array<unsigned, 8> expected_metrics{}, expected_points{};
@@ -76,6 +79,9 @@ int main(int argc, char** argv) {
 #ifdef VERILATOR
             dut.clk = 0;
             dut.reset = reset;
+#ifdef PIPELINED_METRICS
+            dut.symbol_enable_in = true;
+#endif
             dut.samples_in = samples;
             dut.negate_in = signs;
             dut.advance_in = advance;

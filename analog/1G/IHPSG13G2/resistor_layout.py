@@ -21,6 +21,11 @@ def append_rppd(layout, pdk, name, resistance_Ohm, width_um=2):
     library = device_library(pdk)
     from sg13g2_pycell_lib.ihp.utility_functions import CbResCalc, CbResCurrent
     length_um = math.ceil(CbResCalc('l', resistance_Ohm, 0, width_um * 1e-6, 0, 0, 'rppd') * 1e8 - 1e-9) / 100
+    # The pinned Tcl callbacks format lengths >= 100 um as millimetres with
+    # three decimal places. Select an upward whole-um length before producing
+    # that PCell; otherwise its geometry can differ from the requested value.
+    if length_um >= 100:
+        length_um = math.ceil(length_um - 1e-9)
     if not .5 <= length_um <= 1000:
         raise ValueError('resistor length requires a different width or segmented design')
     nominal = CbResCalc('R', 0, length_um * 1e-6, width_um * 1e-6, 0, 0, 'rppd')
@@ -56,6 +61,10 @@ def append_rppd(layout, pdk, name, resistance_Ohm, width_um=2):
     pins = sorted([shape.bbox() for shape in device.each_shape(layout.layer(8, 2))], key=lambda box: box.bottom)
     if len(pins) != 2:
         raise ValueError('rppd PCell changed its two conductive end contacts')
+    # Its straight body ends 0.28 um inside each contact centre. Check the
+    # generated geometry too: stored PCell parameters precede Tcl coercion.
+    if pins[1].center().y - pins[0].center().y != round((length_um + .56) / layout.dbu):
+        raise ValueError('rppd generated length differs from its schematic dimensions')
     for net, pin in zip(('PLUS', 'MINUS'), pins):
         contact(net, pin.center().x * layout.dbu, pin.center().y * layout.dbu)
     ring = min((shape.bbox() for shape in device.each_shape(layout.layer(8, 0))
