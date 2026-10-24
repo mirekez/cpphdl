@@ -3,6 +3,10 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -14,9 +18,11 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='native-host-threads-', dir=args.work) as directory:
         work = Path(directory)
+        toolchain = TestToolchain(args.cxx, None, work)
 
         def run(command):
-            result = subprocess.run(list(map(str, command)), capture_output=True, text=True, timeout=180)
+            result = subprocess.run(toolchain.command(command), env=toolchain.env,
+                                    capture_output=True, text=True, timeout=180)
             if result.returncode:
                 raise AssertionError((command, result.stdout, result.stderr))
 

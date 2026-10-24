@@ -1,4 +1,5 @@
 """Test build setup without requiring any particular host sanitizer runtime."""
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -52,6 +53,18 @@ class ToolchainChecks(unittest.TestCase):
                                            '-CFLAGS', '-std=c++23', 'test.sv'])
         self.assertNotIn('-std=c++20', command)
         self.assertIn('-std=c++23', command)
+
+    def test_selected_runtime_precedes_inherited_runtime(self):
+        library = Path(self.directory.name) / 'compiler-runtime' / 'libstdc++.so'
+        library.parent.mkdir()
+        library.touch()
+        with patch.dict('os.environ', {'LD_LIBRARY_PATH': '/old/runtime:/application/lib'}), \
+             patch('subprocess.check_output', return_value=str(library)):
+            toolchain = TestToolchain('/tools/bin/clang++', None, self.directory.name)
+        paths = toolchain.env['LD_LIBRARY_PATH'].split(':')
+        self.assertEqual(paths[0], str(library.parent))
+        self.assertEqual(paths[-2:], ['/old/runtime', '/application/lib'])
+        self.assertNotIn('LD_LIBRARY_PATH', os.environ)
 
     def test_asan_probe_cached(self):
         with patch.object(self.toolchain, 'probe', return_value=subprocess.CompletedProcess([], 0, '', '')) as probe:

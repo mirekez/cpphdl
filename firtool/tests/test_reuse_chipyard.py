@@ -100,6 +100,17 @@ class ReuseChipyardTest(unittest.TestCase):
                                                 text=True).strip(), revision)
         self.assertFalse(self.log.exists())
 
+    def test_fixture_commit_does_not_require_a_signing_key(self):
+        for key, value in (('commit.gpgsign', 'true'), ('gpg.program', '/bin/false')):
+            subprocess.run(['git', '-C', str(self.source), 'config', key, value], check=True)
+        (self.source / 'fixture-change').write_text('unsigned test fixture\n')
+        revision = commit(self.source)
+        self.assertEqual(len(revision), 40)
+        result = self.run_bootstrap()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('required', result.stderr)
+        self.assertFalse(self.log.exists())
+
 
 if __name__ == '__main__':
     unittest.main()
