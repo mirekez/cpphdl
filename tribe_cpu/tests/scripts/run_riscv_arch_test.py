@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 
+from riscv_dependencies import check_sail_version, load_lock
 
 REPO = "https://github.com/riscv-non-isa/riscv-arch-test.git"
 SKIP = 77
@@ -28,7 +29,8 @@ def checkout_revision(checkout: pathlib.Path) -> str:
 def prepare_work_dir(work: pathlib.Path, checkout: pathlib.Path) -> None:
     # riscv-arch-test generated makefiles contain absolute checkout paths. Drop
     # stale outputs when a build tree is reused after either checkout moves.
-    identity = f"runner={pathlib.Path(__file__).resolve()}\ncheckout={checkout.resolve()}\n"
+    identity = (f"runner={pathlib.Path(__file__).resolve()}\ncheckout={checkout.resolve()}\n"
+                f"revision={checkout_revision(checkout)}\nsail={load_lock()['sail_model_version']}\n")
     stamp = work / ".cpphdl-source-identity"
     if work.exists() and (not stamp.exists() or stamp.read_text(encoding="utf-8") != identity):
         print(f"removing stale riscv-arch-test work directory: {work}")
@@ -282,14 +284,14 @@ def main(argv: list[str]) -> int:
     ensure = pathlib.Path(__file__).with_name("ensure_git_repo.py")
     ensure_result = subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "tests"])
     if ensure_result.returncode != 0:
-        print(f"SKIP: riscv-arch-test checkout is not available: {checkout}")
-        return SKIP
+        print(f"ERROR: riscv-arch-test dependency check failed: {checkout}")
+        return 1
 
     prepare_work_dir(work, checkout)
 
     env = os.environ.copy()
     repo_root = pathlib.Path(__file__).resolve().parents[3]
-    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
+    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or str(pathlib.Path.home() / "riscv")
     env["RISCV_HOME"] = riscv_home
     # .load_sail_riscv_sim.sh installs mise under ~/.local/bin and installs
     # uv with --target under build/pydeps/bin.  Its exported PATH disappears
@@ -355,6 +357,18 @@ def main(argv: list[str]) -> int:
         print(f"unsupported TRIBE_ARCH_TEST_BACKEND={backend!r}")
         return 2
 
+    # ACT4 otherwise discovers this only after expensive RTL compilation and
+    # test generation. Check the executable actually selected by this PATH.
+    if shutil.which(ref_model, path=env["PATH"]) is None:
+        print(f"ERROR: reference model not found: {ref_model}; run .load_sail_riscv_sim.sh")
+        return 1
+    if "spike" not in pathlib.Path(ref_model).name.lower():
+        try:
+            check_sail_version(ref_model, env)
+        except RuntimeError as error:
+            print(f"ERROR: {error}")
+            return 1
+
     tribe_runner = tribe
     tribe_base_args: list[str] = ["--noveril"]
     if backend == "verilator":
@@ -369,10 +383,6 @@ def main(argv: list[str]) -> int:
             return SKIP
         tribe_runner = verilator_bin
         tribe_base_args = []
-
-    if shutil.which(ref_model, path=env["PATH"]) is None:
-        print(f"SKIP: {ref_model} is not available")
-        return SKIP
 
     if shutil.which("uv", path=env["PATH"]) is None and shutil.which("mise", path=env["PATH"]) is None:
         print("SKIP: riscv-arch-test requires uv or mise")

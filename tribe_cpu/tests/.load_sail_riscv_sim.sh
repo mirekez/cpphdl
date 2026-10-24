@@ -8,12 +8,7 @@ REPO_DIR="${SAIL_RISCV_REPO_DIR:-${SCRIPT_DIR}/sail-riscv}"
 REPO_URL="${SAIL_RISCV_REPO_URL:-https://github.com/riscv/sail-riscv.git}"
 RISCV_ARCH_TEST_DIR="${RISCV_ARCH_TEST_DIR:-${SCRIPT_DIR}/riscv-arch-test}"
 RISCV_ARCH_TEST_REPO_URL="${RISCV_ARCH_TEST_REPO_URL:-https://github.com/riscv-non-isa/riscv-arch-test.git}"
-# Keep the reference model aligned with the ACT4 framework in the fetched
-# riscv-arch-test checkout.  ACT4 validates this version before generating
-# tests because signatures and supported extension behavior are versioned.
-SAIL_RISCV_VERSION="${SAIL_RISCV_VERSION:-0.13.1}"
-SAIL_COMPILER_VERSION="${SAIL_COMPILER_VERSION:-0.20.2}"
-SAIL_COMPILER_REQUIRED_VERSION="${SAIL_COMPILER_REQUIRED_VERSION:-0.20.2}"
+# These defaults are read from the same lock as the ACT4 source revision.
 SAIL_COMPILER_REPO="${SAIL_COMPILER_REPO:-https://github.com/rems-project/sail}"
 MISE_PREFIX="${MISE_PREFIX:-${HOME}/.local}"
 MISE_INSTALL_URL="${MISE_INSTALL_URL:-https://mise.jdx.dev/install.sh}"
@@ -49,16 +44,27 @@ need_tool curl
 need_tool tar
 need_tool "${PYTHON_BIN}"
 
-clone_or_update() {
-  local url="$1"
-  local dir="$2"
+LOCK_HELPER="${SCRIPT_DIR}/scripts/riscv_dependencies.py"
+LOCKED_SAIL_MODEL="$("${PYTHON_BIN}" "${LOCK_HELPER}" value sail_model_version)"
+LOCKED_SAIL_COMPILER="$("${PYTHON_BIN}" "${LOCK_HELPER}" value sail_compiler_version)"
+SAIL_RISCV_VERSION="${SAIL_RISCV_VERSION:-${LOCKED_SAIL_MODEL}}"
+SAIL_COMPILER_VERSION="${SAIL_COMPILER_VERSION:-${LOCKED_SAIL_COMPILER}}"
+SAIL_COMPILER_REQUIRED_VERSION="${SAIL_COMPILER_REQUIRED_VERSION:-${LOCKED_SAIL_COMPILER}}"
+if [[ "${SAIL_RISCV_VERSION}" != "${LOCKED_SAIL_MODEL}" ||
+      "${SAIL_COMPILER_VERSION}" != "${LOCKED_SAIL_COMPILER}" ||
+      "${SAIL_COMPILER_REQUIRED_VERSION}" != "${LOCKED_SAIL_COMPILER}" ]]; then
+  echo "error: Sail overrides disagree with riscv-tools.lock.json; update and validate the lock as a compatible pair" >&2
+  exit 1
+fi
 
-  if [[ ! -d "${dir}/.git" ]]; then
-    git clone "${url}" "${dir}"
-  else
-    git -C "${dir}" fetch --tags --prune
-  fi
+ensure_dependency() {
+  "${PYTHON_BIN}" "${SCRIPT_DIR}/scripts/ensure_git_repo.py" \
+    "$3" "$2" "$4" --dependency "$1" --update
 }
+
+# Select the compatible sources before installing or building tools.
+ensure_dependency riscv-arch-test "${RISCV_ARCH_TEST_REPO_URL}" "${RISCV_ARCH_TEST_DIR}" tests
+ensure_dependency sail-riscv "${REPO_URL}" "${REPO_DIR}" CMakeLists.txt
 
 mkdir -p "${PREFIX}/bin"
 mkdir -p "${MISE_PREFIX}/bin"
@@ -136,7 +142,8 @@ install_sail_compiler() {
 need_sail_install=0
 if ! command -v sail >/dev/null 2>&1; then
   need_sail_install=1
-elif ! sail --version | grep -q "Sail ${SAIL_COMPILER_REQUIRED_VERSION}"; then
+elif ! sail --version | awk -v required="${SAIL_COMPILER_REQUIRED_VERSION}" \
+    'NR == 1 { matched = ($1 == "Sail" && $2 == required) } END { exit !matched }'; then
   need_sail_install=1
 fi
 
@@ -148,12 +155,12 @@ if [[ "${need_sail_install}" == "1" ]]; then
   install_sail_compiler
 fi
 
+if ! sail --version | awk -v required="${SAIL_COMPILER_REQUIRED_VERSION}" \
+    'NR == 1 { matched = ($1 == "Sail" && $2 == required) } END { exit !matched }'; then
+  echo "error: installed Sail compiler does not match ${SAIL_COMPILER_REQUIRED_VERSION}" >&2
+  exit 1
+fi
 sail --version
-
-clone_or_update "${REPO_URL}" "${REPO_DIR}"
-
-git -C "${REPO_DIR}" checkout "${SAIL_RISCV_VERSION}"
-git -C "${REPO_DIR}" submodule update --init --recursive
 
 cd "${REPO_DIR}"
 
@@ -172,10 +179,7 @@ fi
 
 install -m 0755 "${SIM}" "${PREFIX}/bin/sail_riscv_sim"
 
-"${PREFIX}/bin/sail_riscv_sim" --version
-
-clone_or_update "${RISCV_ARCH_TEST_REPO_URL}" "${RISCV_ARCH_TEST_DIR}"
-git -C "${RISCV_ARCH_TEST_DIR}" submodule update --init --recursive
+"${PYTHON_BIN}" "${LOCK_HELPER}" check-sail "${PREFIX}/bin/sail_riscv_sim"
 
 mkdir -p "${PYDEPS_DIR}"
 if ! PATH="${PYDEPS_DIR}/bin:${PATH}" command -v uv >/dev/null 2>&1; then

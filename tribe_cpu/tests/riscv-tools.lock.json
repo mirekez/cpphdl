@@ -1,0 +1,41 @@
+{
+  "sail_model_version": "0.13.1",
+  "sail_compiler_version": "0.20.2",
+  "repositories": {
+    "spike": {
+      "url": "https://github.com/riscv-software-src/riscv-isa-sim.git",
+      "revision": "4ffd6ba860f4190ceac2716fa3c2cf139e85538f",
+      "sentinel": "spike_main/spike.cc"
+    },
+    "riscv-tests": {
+      "url": "https://github.com/riscv-software-src/riscv-tests.git",
+      "revision": "2ebecad997fa58cd9e5724340ba75aa4b59bd1d0",
+      "sentinel": "isa"
+    },
+    "riscv-dv": {
+      "url": "https://github.com/google/riscv-dv.git",
+      "revision": "b7a0b4b0b51346a3c64f159f81ea262d867c14a9",
+      "sentinel": "run.py"
+    },
+    "riscv-arch-test": {
+      "url": "https://github.com/riscv-non-isa/riscv-arch-test.git",
+      "revision": "ef1f8b42be3b076138d30770f9562baad8b685b1",
+      "sentinel": "tests"
+    },
+    "sail-riscv": {
+      "url": "https://github.com/riscv/sail-riscv.git",
+      "revision": "27224ccb2290f022e46213c05b3e72e8a9ea635e",
+      "sentinel": "CMakeLists.txt"
+    },
+    "dtc": {
+      "url": "https://github.com/dgibson/dtc.git",
+      "revision": "8c37c14c95d963579ae7c32446a80a686d393b43",
+      "sentinel": "Makefile"
+    },
+    "riscv-opcodes": {
+      "url": "https://github.com/riscv/riscv-opcodes.git",
+      "revision": "7afd3dc8772909d8c94ceeb208467cff93896396",
+      "sentinel": "extensions"
+    }
+  }
+}

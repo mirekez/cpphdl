@@ -6,6 +6,10 @@ add_test(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_arch_config.py"
 )
 
+add_test(NAME scripts_RiscvDependencies
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_dependencies.py")
+set_tests_properties(scripts_RiscvDependencies PROPERTIES TIMEOUT 60)
+
 add_test(NAME L1Cache_test_lifecycle
     COMMAND "${CMAKE_COMMAND}"
         -DCPPHDL=$<TARGET_FILE:cpphdl>
