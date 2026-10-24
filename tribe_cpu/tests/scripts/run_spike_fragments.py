@@ -571,7 +571,7 @@ def main(argv: list[str]) -> int:
     work = pathlib.Path(argv[2]).resolve()
     work.mkdir(parents=True, exist_ok=True)
 
-    riscv_home = os.environ.get("RISCV_HOME") or os.environ.get("RISCV") or "/home/me/riscv"
+    riscv_home = os.environ.get("RISCV_HOME") or os.environ.get("RISCV") or str(pathlib.Path.home() / "riscv")
     os.environ["RISCV_HOME"] = riscv_home
     os.environ.setdefault("RISCV", riscv_home)
     os.environ["PATH"] = str(pathlib.Path(riscv_home) / "bin") + os.pathsep + os.environ.get("PATH", "")

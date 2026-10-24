@@ -1,0 +1,60 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module level_down(Vdd, Vss, A, Y);
+    inout Vdd, Vss, A, Y;
+    electrical Vdd, Vss, A, Y;
+    electrical cpphdl_n5;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC level_down, analog/basic/level_down.hpp:23
+        I(cpphdl_n5, Vdd) <+ cpphdl_channel(V(Vss, Vdd), V(cpphdl_n5, Vdd), 0.00050000000000000001, 0.34999999999999998, -1.0);
+        // device 1, IC level_down, analog/basic/level_down.hpp:24
+        I(cpphdl_n5, Vss) <+ cpphdl_channel(V(A, Vss), V(cpphdl_n5, Vss), 0.0040000000000000001, 0.69999999999999996, 1.0);
+        // device 2, IC level_down, analog/basic/level_down.hpp:25
+        I(Y, Vdd) <+ cpphdl_channel(V(cpphdl_n5, Vdd), V(Y, Vdd), 0.0050000000000000001, 0.34999999999999998, -1.0);
+        // device 3, IC level_down, analog/basic/level_down.hpp:26
+        I(Y, Vss) <+ cpphdl_channel(V(cpphdl_n5, Vss), V(Y, Vss), 0.01, 0.34999999999999998, 1.0);
+        // device 4, IC level_down, analog/basic/level_down.hpp:27
+        I(A, Vss) <+ 5e-15 * ddt(V(A, Vss)); // Bench initial voltage = 0.0 V.
+        // device 5, IC level_down, analog/basic/level_down.hpp:28
+        I(A, Vdd) <+ 5e-15 * ddt(V(A, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 6, IC level_down, analog/basic/level_down.hpp:29
+        I(A, cpphdl_n5) <+ 2.0000000000000002e-15 * ddt(V(A, cpphdl_n5)); // Bench initial voltage = 0.0 V.
+        // device 7, IC level_down, analog/basic/level_down.hpp:30
+        I(cpphdl_n5, Vss) <+ 8e-14 * ddt(V(cpphdl_n5, Vss)); // Bench initial voltage = 0.0 V.
+        // device 8, IC level_down, analog/basic/level_down.hpp:31
+        I(cpphdl_n5, Vdd) <+ 5e-15 * ddt(V(cpphdl_n5, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 9, IC level_down, analog/basic/level_down.hpp:32
+        I(cpphdl_n5, Y) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n5, Y)); // Bench initial voltage = 0.0 V.
+        // device 10, IC level_down, analog/basic/level_down.hpp:33
+        I(Y, Vss) <+ 1e-14 * ddt(V(Y, Vss)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

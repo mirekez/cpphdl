@@ -26,6 +26,8 @@ def main(arguments=None):
     parser.add_argument('--runner', type=Path)
     parser.add_argument('--chunk-size', type=int, default=0,
                         help='bound native function size; ordinary C++ graphs serialize without a giant C++ literal')
+    parser.add_argument('--split-chunks', type=int, default=0,
+                        help='maximum chunk functions per separately compiled translation unit (0: header-only)')
     parser.add_argument('--optimize-threads', type=int, default=1,
                         help='native evaluation lanes, including the caller (1..256; default: 1)')
     parser.add_argument('--top', help='root variable in ordinary C++HDL C++ (no hdlcpp graph mode)')
@@ -37,6 +39,8 @@ def main(arguments=None):
         parser.error('--optimize-threads must be between 1 and 256')
     if args.chunk_size < 0:
         parser.error('--chunk-size must not be negative')
+    if args.split_chunks < 0 or (args.split_chunks and not args.chunk_size):
+        parser.error('--split-chunks requires a positive --chunk-size')
     if args.chunk_size and not args.top:
         parser.error('--chunk-size requires --top for ordinary C++HDL lowering')
     clocks = clock_arguments(parser, args)
@@ -46,7 +50,8 @@ def main(arguments=None):
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         parser.error('output must be a new or empty directory')
     manifest = {'backend': 'cpphdl-native-graph', 'status': 'building', 'commands': [],
-                'optimize_threads': args.optimize_threads, 'chunk_size': args.chunk_size}
+                'optimize_threads': args.optimize_threads, 'chunk_size': args.chunk_size,
+                'split_chunks': args.split_chunks}
     try:
         source = args.source.resolve(strict=True)
         if source.suffix not in ('.cc', '.cpp', '.cxx'):
@@ -90,7 +95,7 @@ def main(arguments=None):
                                         *[(output / path).resolve(strict=True) for path in headers]]))
             manifest['inputs'] = {str(path): digest(path) for path in inputs}
             run([str(Path(args.cpphdl).resolve()), '--lower-cpp-graph', str(source),
-                 str(graph_source), args.top, *clocks, '--', '-std=c++23', '-I' + str(include),
+                 str(graph_source), args.top, '--final-native', *clocks, '--', '-std=c++23', '-I' + str(include),
                  *args.frontend_flag], 'cpp-to-graph')
         run([compiler, '-std=c++23', '-O1', '-I' + str(include),
              '-DCPPHDL_NATIVE_THREADS=' + str(args.optimize_threads), str(graph_source),
@@ -99,17 +104,19 @@ def main(arguments=None):
              '-o', str(output / 'lower')], 'build-graph-compiler')
         run([str(output / 'lower'), str(output / 'model.h')] if not args.chunk_size else
             [str(output / 'lower'), str(graph_source), str(output / 'model.h'),
-             str(args.chunk_size), str(args.optimize_threads), str(output / 'memories.tsv')], 'lower')
+             str(args.chunk_size), str(args.optimize_threads), str(output / 'memories.tsv'),
+             str(args.split_chunks)], 'lower')
+        parts = sorted(output.glob('model.part.*.cpp'))
         if runner:
             run([compiler, '-std=c++23', '-O2', '-I' + str(output), '-I' + str(include),
                  *(['-pthread'] if args.optimize_threads > 1 else []),
-                 '-include', str(output / 'model.h'), *flags, str(runner),
+                 '-include', str(output / 'model.h'), *flags, str(runner), *map(str, parts),
                  '-o', str(output / 'run')], 'build-runner')
         if manifest['inputs'] != {str(path): digest(path) for path in inputs}:
             raise RuntimeError('inputs changed during build')
         manifest['status'] = 'complete'
         manifest['artifacts'] = {path.name: digest(path) for path in
-                                 [output / 'model.h'] + ([output / 'run'] if runner else [])}
+                                 [output / 'model.h', *parts] + ([output / 'run'] if runner else [])}
         save()
         print(output / ('run' if runner else 'model.h'))
         return 0

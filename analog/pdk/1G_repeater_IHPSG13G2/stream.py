@@ -7,7 +7,7 @@ from pathlib import Path
 import klayout.db as db
 
 
-def stream(pdk, work):
+def stream(pdk, work, top_name="RepeaterCore"):
     technology = pdk / "ihp-sg13g2/libs.tech/klayout/tech"
     cells = pdk / "ihp-sg13g2/libs.ref/sg13g2_stdcell"
     tech = db.Technology()
@@ -24,9 +24,9 @@ def stream(pdk, work):
     options.lefdef_config = config
     layout = db.Layout()
     layout.read(str(work / "core.def"), options)
-    top = layout.cell("RepeaterCore")
+    top = layout.cell(top_name)
     if top is None:
-        raise ValueError("DEF did not contain RepeaterCore")
+        raise ValueError("DEF did not contain " + top_name)
     # LEF geometry is only an abstract. Keep routed vias but replace every cell.
     for cell in layout.each_cell():
         if cell.cell_index() != top.cell_index() and not cell.name.startswith("VIA_"):
@@ -34,7 +34,7 @@ def stream(pdk, work):
     layout.read(str(cells / "gds/sg13g2_stdcell.gds"))
     result = db.Layout()
     result.dbu = layout.dbu
-    final = result.create_cell("RepeaterCore")
+    final = result.create_cell(top_name)
     final.copy_tree(top)
     empty = [cell.name for cell in result.each_cell() if cell.is_empty()]
     if empty:
@@ -45,7 +45,7 @@ def stream(pdk, work):
     summary = dict(top=final.name, physical_cells=result.cells(), dbu_um=result.dbu,
                    bbox_um=[value * result.dbu for value in (final.bbox().left, final.bbox().bottom,
                                                            final.bbox().right, final.bbox().top)],
-                   scope="routed digital forwarding core; not a complete 1000BASE-T chip")
+                   scope="routed digital module; not a complete 1000BASE-T chip")
     (work / "stream.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
 
@@ -54,5 +54,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdk", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--top", default="RepeaterCore")
     args = parser.parse_args()
-    print(json.dumps(stream(args.pdk.resolve(), args.work.resolve()), indent=2))
+    print(json.dumps(stream(args.pdk.resolve(), args.work.resolve(), args.top), indent=2))

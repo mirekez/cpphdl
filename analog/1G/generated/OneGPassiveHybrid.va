@@ -1,0 +1,24 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGPassiveHybrid(Vdd, Vss, P, N, LOCAL_P, LOCAL_N, VCM, OUTP, OUTN);
+    inout Vdd, Vss, P, N, LOCAL_P, LOCAL_N, VCM, OUTP, OUTN;
+    electrical Vdd, Vss, P, N, LOCAL_P, LOCAL_N, VCM, OUTP, OUTN;
+
+    analog begin
+        // device 0, IC OneGPassiveHybrid, analog/1G/passive_hybrid.hpp:24
+        I(P, OUTP) <+ V(P, OUTP) / 2000.0;
+        // device 1, IC OneGPassiveHybrid, analog/1G/passive_hybrid.hpp:25
+        I(LOCAL_N, OUTP) <+ V(LOCAL_N, OUTP) / 5714.2857142857147;
+        // device 2, IC OneGPassiveHybrid, analog/1G/passive_hybrid.hpp:26
+        I(N, OUTN) <+ V(N, OUTN) / 2000.0;
+        // device 3, IC OneGPassiveHybrid, analog/1G/passive_hybrid.hpp:27
+        I(LOCAL_P, OUTN) <+ V(LOCAL_P, OUTN) / 5714.2857142857147;
+        // device 4, IC OneGPassiveHybrid, analog/1G/passive_hybrid.hpp:28
+        I(OUTP, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTP, VCM)); // Bench initial voltage = 0.0 V.
+        // device 5, IC OneGPassiveHybrid, analog/1G/passive_hybrid.hpp:29
+        I(OUTN, VCM) <+ 5.0000000000000002e-14 * ddt(V(OUTN, VCM)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

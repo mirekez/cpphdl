@@ -1,0 +1,81 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGFLPPulseDriver(Vdd, Vss, COMMAND, ENABLE, P, N);
+    inout Vdd, Vss, COMMAND, ENABLE, P, N;
+    electrical Vdd, Vss, COMMAND, ENABLE, P, N;
+    electrical cpphdl_n7;
+    electrical cpphdl_n8;
+    electrical cpphdl_n9;
+    electrical cpphdl_n10;
+    electrical cpphdl_n11;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:24
+        I(cpphdl_n7, Vdd) <+ cpphdl_channel(V(COMMAND, Vdd), V(cpphdl_n7, Vdd), 0.01, 0.69999999999999996, -1.0);
+        // device 1, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:25
+        I(cpphdl_n7, Vss) <+ cpphdl_channel(V(COMMAND, Vss), V(cpphdl_n7, Vss), 0.01, 0.69999999999999996, 1.0);
+        // device 2, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:26
+        I(cpphdl_n7, Vss) <+ 2e-14 * ddt(V(cpphdl_n7, Vss)); // Bench initial voltage = 0.0 V.
+        // device 3, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:27
+        I(cpphdl_n8, Vdd) <+ cpphdl_channel(V(ENABLE, Vdd), V(cpphdl_n8, Vdd), 0.01, 0.69999999999999996, -1.0);
+        // device 4, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:28
+        I(cpphdl_n8, Vss) <+ cpphdl_channel(V(ENABLE, Vss), V(cpphdl_n8, Vss), 0.01, 0.69999999999999996, 1.0);
+        // device 5, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:29
+        I(cpphdl_n8, Vss) <+ 2e-14 * ddt(V(cpphdl_n8, Vss)); // Bench initial voltage = 0.0 V.
+        // device 6, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:30
+        I(cpphdl_n9, Vdd) <+ cpphdl_channel(V(cpphdl_n7, Vdd), V(cpphdl_n9, Vdd), 0.10000000000000001, 0.69999999999999996, -1.0);
+        // device 7, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:31
+        I(cpphdl_n9, Vss) <+ cpphdl_channel(V(cpphdl_n7, Vss), V(cpphdl_n9, Vss), 0.10000000000000001, 0.69999999999999996, 1.0);
+        // device 8, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:32
+        I(cpphdl_n9, Vss) <+ 2e-14 * ddt(V(cpphdl_n9, Vss)); // Bench initial voltage = 0.0 V.
+        // device 9, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:33
+        I(cpphdl_n10, cpphdl_n9) <+ cpphdl_channel(V(cpphdl_n8, cpphdl_n9), V(cpphdl_n10, cpphdl_n9), 0.10000000000000001, 0.69999999999999996, -1.0);
+        // device 10, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:34
+        I(cpphdl_n9, cpphdl_n10) <+ cpphdl_channel(V(ENABLE, cpphdl_n10), V(cpphdl_n9, cpphdl_n10), 0.10000000000000001, 0.69999999999999996, 1.0);
+        // device 11, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:35
+        I(cpphdl_n11, Vss) <+ cpphdl_channel(V(cpphdl_n8, Vss), V(cpphdl_n11, Vss), 0.10000000000000001, 0.69999999999999996, -1.0);
+        // device 12, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:36
+        I(Vss, cpphdl_n11) <+ cpphdl_channel(V(ENABLE, cpphdl_n11), V(Vss, cpphdl_n11), 0.10000000000000001, 0.69999999999999996, 1.0);
+        // device 13, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:37
+        I(cpphdl_n10, P) <+ V(cpphdl_n10, P) / 20.0;
+        // device 14, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:38
+        I(cpphdl_n11, N) <+ V(cpphdl_n11, N) / 20.0;
+        // device 15, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:39
+        I(P, Vss) <+ 4.9999999999999999e-13 * ddt(V(P, Vss)); // Bench initial voltage = 0.0 V.
+        // device 16, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:40
+        I(N, Vss) <+ 4.9999999999999999e-13 * ddt(V(N, Vss)); // Bench initial voltage = 0.0 V.
+        // device 17, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:42
+        I(Vss, cpphdl_n10) <+ V(Vss, cpphdl_n10) / 1000000000.0;
+        // device 18, IC OneGFLPPulseDriver, analog/1G/flp_frontend.hpp:43
+        I(Vss, cpphdl_n11) <+ V(Vss, cpphdl_n11) / 1000000000.0;
+    end
+endmodule

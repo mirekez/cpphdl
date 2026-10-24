@@ -5,6 +5,10 @@ from pathlib import Path
 import statistics
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -20,13 +24,15 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
 
     def run(command):
-        result = subprocess.run(list(map(str, command)), text=True, capture_output=True, timeout=240)
+        result = subprocess.run(toolchain.command(command), env=toolchain.env,
+                                text=True, capture_output=True, timeout=240)
         if result.returncode:
             raise RuntimeError(result.stdout + result.stderr)
         return result.stdout
 
     with tempfile.TemporaryDirectory(prefix=args.workload + '-', dir=args.work) as directory:
         work = Path(directory)
+        toolchain = TestToolchain(args.cxx, None, work)
         flags = [args.cxx, '-std=c++23', '-I' + str(root / 'include'),
                  '-DSCALING_MEMORY=' + str(int(args.workload == 'ram'))]
         run([*flags, '-O1', '-DSCALING_EMIT', source, '-o', work / 'emit'])

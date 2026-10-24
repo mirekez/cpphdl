@@ -15,9 +15,13 @@ class TestToolchain:
         library = subprocess.check_output(
             [self.cxx, '-print-file-name=libstdc++.so'], text=True).strip()
         self.library_dir = str(Path(library).resolve().parent) if Path(library).is_file() else ''
+        atomic = subprocess.check_output(
+            [self.cxx, '-print-file-name=libatomic.so'], text=True).strip()
+        atomic_dir = str(Path(atomic).resolve().parent) if Path(atomic).is_file() else ''
         self.library_dirs = list(dict.fromkeys(filter(None, [self.library_dir,
+            atomic_dir,
             str(Path(self.cxx).resolve().parent.parent / 'lib')])))
-        if self.library_dir:
+        if self.library_dir or atomic_dir:
             self.env['LD_LIBRARY_PATH'] = ':'.join(self.library_dirs) + ':' + self.env.get('LD_LIBRARY_PATH', '')
 
     def probe(self, flags, name):

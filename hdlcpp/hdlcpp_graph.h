@@ -5,6 +5,7 @@
 #include "../include/cpphdl_graph.h"
 #include "slang/driver/Driver.h"
 #include "slang/ast/Compilation.h"
+#include "slang/ast/ASTVisitor.h"
 #include "slang/ast/EvalContext.h"
 #include "slang/ast/expressions/AssignmentExpressions.h"
 #include "slang/ast/expressions/CallExpression.h"
@@ -43,8 +44,72 @@ class Lowering {
     Value lvalueReference;
     Value active{1};
     bool inFunction = false;
+    bool inTask = false;
     unsigned controlDepth = 0;
     unsigned callDepth = 0;
+    std::map<const ValueSymbol*, size_t> ram;
+    std::map<size_t, const Symbol*> ramWriters;
+    const Symbol* process = nullptr;
+    bool sequentialProcess = false;
+    Value processEnable{1};
+    Value memoryActive{1};
+    std::set<std::string> externalModules;
+    struct ExternalPort { unsigned instance;std::string module,path,port,pin;bool input;unsigned bits; };
+    std::vector<ExternalPort> externalPorts;
+    unsigned externalCount=0;
+    std::map<const ValueSymbol*,std::set<const SubroutineSymbol*>> references;
+    std::set<size_t> undefinedFunctionStorage;
+    std::set<const VariableSymbol*> taskInductionVariables;
+
+    const ValueSymbol* memoryBase(const Expression& expression) const {
+        if (expression.kind != ExpressionKind::NamedValue && expression.kind != ExpressionKind::HierarchicalValue)
+            return nullptr;
+        auto& symbol = expression.as<ValueExpressionBase>().symbol;
+        return ram.count(&symbol) ? &symbol : nullptr;
+    }
+    Value memoryAddress(const ValueSymbol& symbol, Value index, bool signedIndex=false) {
+        const auto range = symbol.getType().getFixedRange();
+        // Runtime rows use increasing SV subscripts, independently of packed
+        // bitstream order. Keep full selector width before the bounds check.
+        index = resize(std::move(index),64,signedIndex);
+        return graph.binary("sub",index,constant(uint64_t(range.lower()),64),64);
+    }
+    Value memoryRead(const ValueSymbol& symbol, Value index, bool signedIndex=false) {
+        auto identity=ram.at(&symbol);
+        auto address=memoryAddress(symbol,std::move(index),signedIndex);
+        graph.memoryAccesses.push_back({identity,address,both(memoryActive,processEnable),sequentialProcess});
+        Value result;
+        for(unsigned offset=0;offset<graph.memories[identity].width;offset+=64) {
+            auto part=graph.add("memory_read",std::min(64u,graph.memories[identity].width-offset),address,
+                                constant(identity,64),constant(offset/64,64));
+            result.insert(result.end(),part.begin(),part.end());
+        }
+        return result;
+    }
+    void discoverMemories() {
+        auto visitor=makeVisitor([&](auto& self,const AssignmentExpression& assignment) {
+            if(assignment.isNonBlocking()) {
+                const auto* base=&assignment.left();
+                while(base->kind==ExpressionKind::ElementSelect || base->kind==ExpressionKind::RangeSelect) {
+                    if(base->kind==ExpressionKind::ElementSelect)base=&base->as<ElementSelectExpression>().value();
+                    else base=&base->as<RangeSelectExpression>().value();
+                }
+                if(base->kind==ExpressionKind::NamedValue || base->kind==ExpressionKind::HierarchicalValue) {
+                    const auto& symbol=base->as<ValueExpressionBase>().symbol;
+                    const auto& type=symbol.getType().getCanonicalType();
+                    if(type.kind==SymbolKind::FixedSizeUnpackedArrayType && !ram.count(&symbol)) {
+                        const auto& array=type.as<FixedSizeUnpackedArrayType>();
+                        if(!array.elementType.isIntegral())fail("RAM rows must be packed integral values",base->sourceRange);
+                        ram[&symbol]=graph.memories.size();
+                        graph.memories.push_back({symbol.getHierarchicalPath(),width(array.elementType),uint64_t(array.range.width())});
+                    }
+                }
+            }
+            self.visitDefault(assignment);
+        });
+        for(auto symbol:hardware)if(symbol->kind==SymbolKind::ProceduralBlock)
+            symbol->as<ProceduralBlockSymbol>().getBody().visit(visitor);
+    }
 
     [[noreturn]] void fail(const std::string& message, SourceRange range = {}) const {
         auto& manager = *scope->getCompilation().getSourceManager();
@@ -83,6 +148,18 @@ class Lowering {
     }
     Value read(const ValueSymbol& symbol) {
         if (symbol.kind == SymbolKind::ModportPort) return read(modportTarget(symbol));
+        if(ram.count(&symbol)) {
+            const auto range=symbol.getType().getFixedRange();
+            if(uint64_t(range.width())*graph.memories[ram.at(&symbol)].width>1048576)
+                fail("whole RAM value is too large; index its rows");
+            Value result;
+            for(int64_t offset=0;offset<range.width();++offset) {
+                auto index=range.left>=range.right?range.lower()+offset:range.upper()-offset;
+                auto row=memoryRead(symbol,constant(uint64_t(index),64));
+                result.insert(result.end(),row.begin(),row.end());
+            }
+            return result;
+        }
         auto found = current.find(&symbol);
         return found == current.end() ? signal(symbol) : found->second;
     }
@@ -185,6 +262,7 @@ class Lowering {
         case E::ElementSelect: {
             const auto& element = expression.as<ElementSelectExpression>();
             auto index = expr(element.selector());
+            if(auto symbol=memoryBase(element.value()))return memoryRead(*symbol,std::move(index),element.selector().type->isSigned());
             auto value = expr(element.value());
             if (number(index)) { auto [offset,count] = selection(expression); return slice(value,offset,count); }
             auto range = element.value().type->getFixedRange();
@@ -274,8 +352,45 @@ class Lowering {
             const auto& call = expression.as<CallExpression>();
             if (call.isSystemCall()) fail("nonconstant system call " + std::string(call.getSubroutineName()),expression.sourceRange);
             const auto& function = *std::get<0>(call.subroutine);
-            if (call.hasOutputArgs() || !function.returnValVar || function.defaultLifetime != VariableLifetime::Automatic)
-                fail("only automatic functions with input arguments are supported");
+            if(!function.returnValVar) {
+                if(call.hasOutputArgs())fail("task output/ref arguments are not supported",expression.sourceRange);
+                if(++callDepth>64)fail("task expansion limit exceeded",expression.sourceRange);
+                auto outerLocals=locals;
+                auto outerInduction=std::move(taskInductionVariables);taskInductionVariables.clear();
+                auto loops=makeVisitor([&](auto& self,const ForLoopStatement& loop){
+                    for(auto variable:loop.loopVars)taskInductionVariables.insert(variable);
+                    self.visitDefault(loop);
+                });function.getBody().visit(loops);
+                std::vector<Value> arguments;
+                for(auto argument:call.arguments())arguments.push_back(expr(*argument));
+                for(size_t i=0;i<arguments.size();++i) {
+                    auto formal=function.getArguments()[i];locals.insert(formal);current[formal]=arguments[i];
+                }
+                bool outerTask=inTask;inTask=true;
+                statement(function.getBody());
+                inTask=outerTask;
+                for(auto local:locals)if(!outerLocals.count(local)) {
+                    current.erase(local);pending.erase(local);written.erase(local);
+                }
+                locals=std::move(outerLocals);taskInductionVariables=std::move(outerInduction);--callDepth;return {};
+            }
+            if (call.hasOutputArgs())
+                fail("only value functions with input arguments are supported");
+            if(function.defaultLifetime!=VariableLifetime::Automatic) {
+                bool persistentInitializers=false;
+                std::set<const VariableSymbol*> inductionVariables;
+                auto loops=makeVisitor([&](auto& self,const ForLoopStatement& loop){
+                    for(auto variable:loop.loopVars)inductionVariables.insert(variable);
+                    self.visitDefault(loop);
+                });
+                function.getBody().visit(loops);
+                auto visitor=makeVisitor([&](auto&,const VariableDeclStatement& d){
+                    persistentInitializers|=d.symbol.getInitializer()!=nullptr &&
+                        d.symbol.lifetime==VariableLifetime::Static && !inductionVariables.count(&d.symbol);
+                });
+                function.getBody().visit(visitor);
+                if(persistentInitializers)fail("static function initializers require an automatic function: "+function.getHierarchicalPath(),expression.sourceRange);
+            }
             if (++callDepth > 64) fail("function expansion limit exceeded");
             std::vector<Value> args;
             for (auto argument : call.arguments()) args.push_back(expr(*argument));
@@ -284,16 +399,31 @@ class Lowering {
             auto savedActive = active, savedReturn = returned;
             bool savedFunction = inFunction;
             auto savedControlDepth = controlDepth;
+            auto outerUndefined=std::move(undefinedFunctionStorage);undefinedFunctionStorage.clear();
             controlDepth = 0;
             current.clear(); pending.clear(); locals.clear(); written.clear(); active={1}; returned.clear(); inFunction=true;
             for (size_t index = 0; index < args.size(); ++index) {
                 current[function.getArguments()[index]] = args[index]; locals.insert(function.getArguments()[index]);
             }
             locals.insert(function.returnValVar);
-            current[function.returnValVar] = Value(width(function.returnValVar->getType()),0);
+            current[function.returnValVar] = graph.wire(width(function.returnValVar->getType()),function.getHierarchicalPath()+" return");
+            for(auto bit:current[function.returnValVar])undefinedFunctionStorage.insert(Graph::owner(bit));
             statement(function.getBody());
-            for (auto symbol : written) if (!locals.count(symbol)) fail("function side effects unsupported");
+            for (auto symbol : written) if (!locals.count(symbol)) {
+                if(references[symbol]!=std::set<const SubroutineSymbol*>{&function})
+                    fail("function writes observable module storage",expression.sourceRange);
+                for(auto bit:signal(*symbol))if(bit>1)undefinedFunctionStorage.insert(Graph::owner(bit));
+            }
             auto result = returned.empty() ? current.at(function.returnValVar) : returned;
+            std::set<size_t> visited;
+            std::function<void(Bit)> checkDefined=[&](Bit raw) {
+                auto bit=graph.resolve(raw);if(bit<2)return;auto owner=Graph::owner(bit);
+                if(!visited.insert(owner).second)return;
+                if(undefinedFunctionStorage.count(owner))fail("function reads storage before defining its returned value",expression.sourceRange);
+                const auto& n=graph.nodes[owner];for(auto* operands:{&n.left,&n.right,&n.select})for(auto input:*operands)checkDefined(input);
+            };
+            for(auto bit:result)checkDefined(bit);
+            undefinedFunctionStorage=std::move(outerUndefined);
             current=std::move(savedCurrent); pending=std::move(savedPending); locals=std::move(savedLocals); written=std::move(savedWritten);
             active=savedActive; returned=savedReturn; inFunction=savedFunction;
             controlDepth=savedControlDepth;
@@ -305,9 +435,32 @@ class Lowering {
     }
     void assign(const Expression& target, Value value, bool nonblocking, Value guard = {1}) {
         using E = ExpressionKind;
+        const Expression* part=&target;
+        while(part->kind==E::ElementSelect || part->kind==E::RangeSelect || part->kind==E::MemberAccess) {
+            if(part->kind==E::ElementSelect) {
+                const auto& element=part->as<ElementSelectExpression>();
+                if(part!=&target && memoryBase(element.value()))
+                    fail("partial RAM row writes require explicit whole-row merging",target.sourceRange);
+                part=&element.value();
+            }else if(part->kind==E::RangeSelect)part=&part->as<RangeSelectExpression>().value();
+            else part=&part->as<MemberAccessExpression>().value();
+        }
+        if(target.kind==E::ElementSelect) {
+            const auto& element=target.as<ElementSelectExpression>();
+            if(auto symbol=memoryBase(element.value())) {
+                if(!nonblocking || !sequentialProcess)fail("RAM writes require a clocked nonblocking assignment",target.sourceRange);
+                auto identity=ram.at(symbol);
+                auto [writer,fresh]=ramWriters.emplace(identity,process);
+                if(!fresh && writer->second!=process)fail("RAM has multiple writing processes",target.sourceRange);
+                graph.memoryWrites.push_back({identity,memoryAddress(*symbol,expr(element.selector()),element.selector().type->isSigned()),
+                    resize(std::move(value),graph.memories[identity].width),both(processEnable,both(memoryActive,both(active,guard)))});
+                return;
+            }
+        }
         if (target.kind == E::NamedValue || target.kind == E::HierarchicalValue) {
             const auto& rawSymbol = target.as<ValueExpressionBase>().symbol;
             const auto& symbol = rawSymbol.kind == SymbolKind::ModportPort ? modportTarget(rawSymbol) : rawSymbol;
+            if(nonblocking&&inTask&&locals.count(&symbol))fail("task-local nonblocking storage is not supported",target.sourceRange);
             auto& environment = nonblocking ? pending : current;
             auto old = environment.count(&symbol) ? environment.at(&symbol) : read(symbol);
             environment[&symbol] = graph.mux(both(active,guard),resize(value,old.size()),old);
@@ -361,7 +514,13 @@ class Lowering {
     }
     void declaration(const VariableSymbol& symbol) {
         locals.insert(&symbol);
-        current[&symbol] = symbol.getInitializer() ? expr(*symbol.getInitializer()) : Value(width(symbol.getType()),0);
+        if(inTask&&!inFunction&&symbol.getInitializer()&&symbol.lifetime==VariableLifetime::Static&&!taskInductionVariables.count(&symbol))
+            fail("static task initializer is not supported: "+symbol.getHierarchicalPath());
+        if((inFunction||inTask)&&!symbol.getInitializer()) {
+            auto value=graph.wire(width(symbol.getType()),symbol.getHierarchicalPath());
+            if(inFunction)for(auto bit:value)undefinedFunctionStorage.insert(Graph::owner(bit));
+            current[&symbol]=std::move(value);
+        }else current[&symbol] = symbol.getInitializer() ? expr(*symbol.getInitializer()) : Value(width(symbol.getType()),0);
     }
     void branch(Value condition, const Statement& yes, const Statement* no) {
         if (auto known = number(condition)) { if (*known) statement(yes); else if (no) statement(*no); return; }
@@ -369,11 +528,15 @@ class Lowering {
         // The latter retains a false read of the old output even with an else,
         // inventing a latch and defeating a static dependency schedule.
         auto before = current, beforePending = pending;
+        auto outerActive=memoryActive;
         ++controlDepth;
+        memoryActive=both(outerActive,condition);
         statement(yes);
         auto yesValues = current, yesPending = pending;
         current = before; pending = beforePending;
+        memoryActive=both(outerActive,invert(condition));
         if (no) statement(*no);
+        memoryActive=outerActive;
         --controlDepth;
         merge(condition,yesValues,yesPending);
     }
@@ -416,6 +579,7 @@ class Lowering {
             if (cases.condition != CaseStatementCondition::Normal) fail("wildcard case unsupported",stmt.sourceRange);
             auto value = expr(cases.expr);
             auto before = current, beforePending = pending;
+            auto outerActive=memoryActive;
             ++controlDepth;
             std::vector<Value> conditions;
             for (auto& item : cases.items) {
@@ -423,15 +587,22 @@ class Lowering {
                 for (auto option : item.expressions) match = either(match,binary(BinaryOperator::Equality,value,expr(*option),1,false));
                 conditions.push_back(match);
             }
+            Value matched{0};
+            for(const auto& condition:conditions)matched=either(matched,condition);
+            memoryActive=both(outerActive,invert(matched));
             if (cases.defaultCase) statement(*cases.defaultCase);
             for (size_t index = cases.items.size(); index > 0; --index) {
                 auto otherwise = current, otherwisePending = pending;
                 current = before; pending = beforePending;
+                Value earlier{0};
+                for(size_t previous=0;previous+1<index;++previous)earlier=either(earlier,conditions[previous]);
+                memoryActive=both(outerActive,both(conditions[index-1],invert(earlier)));
                 statement(*cases.items[index-1].stmt);
                 auto selected = current, selectedPending = pending;
                 current = std::move(otherwise); pending = std::move(otherwisePending);
                 merge(conditions[index-1],selected,selectedPending);
             }
+            memoryActive=outerActive;
             --controlDepth;
             return;
         }
@@ -462,10 +633,13 @@ class Lowering {
         default: fail("unsupported statement " + std::string(toString(stmt.kind)),stmt.sourceRange);
         }
     }
-    Value trigger(const TimingControl& timing) {
+    Value trigger(const TimingControl& timing, bool resetEvent=false) {
         if (timing.kind == TimingControlKind::EventList) {
             Value result{0};
-            for (auto event : timing.as<EventListControl>().events) result = either(result,trigger(*event));
+            bool first=true;
+            for (auto event : timing.as<EventListControl>().events) {
+                result = either(result,trigger(*event,!first));first=false;
+            }
             return result;
         }
         if (timing.kind != TimingControlKind::SignalEvent) fail("unsupported sequential event");
@@ -473,8 +647,12 @@ class Lowering {
         if (event.iffCondition || (event.edge != EdgeKind::PosEdge && event.edge != EdgeKind::NegEdge))
             fail("unsupported sequential edge");
         auto value = boolean(expr(event.expr));
-        auto previous = graph.add("state",1,constant(event.edge == EdgeKind::NegEdge,1),{},{},"event history");
+        const bool asynchronousReset=resetEvent && event.edge==EdgeKind::NegEdge;
+        auto previous = graph.add("state",1,constant(event.edge == EdgeKind::NegEdge,1),{},{},
+                                  asynchronousReset?"async reset history":"event history");
         graph.states.push_back({previous,value,{1}});
+        if(asynchronousReset)graph.ports.push_back({"__cpphdl_async_reset_"+std::to_string(graph.states.size()),
+                                                    Value{value[0],previous[0]},false});
         return event.edge == EdgeKind::PosEdge ? both(value,invert(previous)) : both(invert(value),previous);
     }
     void finish(bool sequential, Value enable = {1}) {
@@ -482,13 +660,19 @@ class Lowering {
             if (locals.count(symbol)) continue;
             auto target = signal(*symbol);
             if (sequential) {
-                if (current.count(symbol)) fail("clocked blocking assignment unsupported");
-                const auto& next = pending.at(symbol);
+                if(current.count(symbol)&&pending.count(symbol))
+                    fail("mixed blocking/nonblocking module storage is not supported");
+                // Blocking temporaries keep source-order SSA reads inside the
+                // process. A queued NBA, when present, supplies the final
+                // stored value. Dead module temporaries disappear normally.
+                const auto& next = pending.count(symbol)?pending.at(symbol):current.at(symbol);
                 for (size_t offset = 0; offset < target.size();) {
                     if (graph.resolve(next[offset]) == graph.resolve(target[offset])) { ++offset; continue; }
                     auto end = offset + 1;
                     while (end < target.size() && graph.resolve(next[end]) != graph.resolve(target[end])) ++end;
-                    auto state = graph.wire(end-offset,symbol->getHierarchicalPath(),"state");
+                    auto name=symbol->getHierarchicalPath();
+                    if(!pending.count(symbol))name="SV blocking storage:"+name;
+                    auto state = graph.wire(end-offset,name,"state");
                     graph.connect(slice(target,offset,end-offset),state);
                     graph.states.push_back({state,slice(next,offset,end-offset),enable});
                     offset = end;
@@ -508,17 +692,21 @@ class Lowering {
         if (symbol.kind == SymbolKind::Instance) {
             const auto& instance = symbol.as<InstanceSymbol>();
             hardware.push_back(&symbol);
+            if(externalModules.count(std::string(instance.getDefinition().name)))return;
             for (const auto& member : instance.body.members()) collect(member);
         } else if (symbol.kind == SymbolKind::GenerateBlock) {
             if (!symbol.as<GenerateBlockSymbol>().isUninstantiated)
                 for (const auto& member : symbol.as<GenerateBlockSymbol>().members()) collect(member);
         } else if (symbol.kind == SymbolKind::GenerateBlockArray || symbol.kind == SymbolKind::InstanceArray) {
             for (const auto& member : symbol.as<Scope>().members()) collect(member);
-        } else if (symbol.kind == SymbolKind::ContinuousAssign || symbol.kind == SymbolKind::ProceduralBlock)
+        } else if (symbol.kind == SymbolKind::Net && symbol.as<NetSymbol>().getInitializer())
+            hardware.push_back(&symbol);
+        else if (symbol.kind == SymbolKind::ContinuousAssign || symbol.kind == SymbolKind::ProceduralBlock)
             hardware.push_back(&symbol);
     }
 public:
-    explicit Lowering(const InstanceSymbol& instance) : top(instance), scope(&instance.body) {}
+    explicit Lowering(const InstanceSymbol& instance,std::set<std::string> external={}) :
+        top(instance), scope(&instance.body),externalModules(std::move(external)) {}
     void run(const std::string& output) {
         for (auto portSymbol : top.body.getPortList()) {
             if (portSymbol->kind != SymbolKind::Port) fail("top interface ports unsupported");
@@ -532,11 +720,32 @@ public:
             graph.ports.push_back({std::string(port.name),value,port.direction == ArgumentDirection::In});
         }
         collect(top);
+        const SubroutineSymbol* referencingFunction = nullptr;
+        auto collector = makeVisitor(
+            [&](auto& self, const SubroutineSymbol& value) {
+                auto saved = referencingFunction;
+                referencingFunction = &value;
+                self.visitDefault(value);
+                referencingFunction = saved;
+            },
+            [&](auto&, const NamedValueExpression& value) {
+                references[&value.symbol].insert(referencingFunction);
+            },
+            [&](auto&, const HierarchicalValueExpression& value) {
+                references[&value.symbol].insert(referencingFunction);
+            });
+        top.visit(collector);
+        discoverMemories();
         for (auto symbol : hardware) {
             clear(); scope = symbol->getParentScope();
+            process=symbol;sequentialProcess=false;processEnable={1};memoryActive={1};
             if (symbol->kind == SymbolKind::Instance) {
                 auto& instance = symbol->as<InstanceSymbol>();
                 if (&instance == &top) continue;
+                const auto module=std::string(instance.getDefinition().name);
+                const bool external=externalModules.count(module);
+                unsigned externalId=externalCount;
+                if(external)++externalCount;
                 for (auto connection : instance.getPortConnections()) {
                     if (connection->port.kind == SymbolKind::InterfacePort) continue;
                     if (connection->port.kind != SymbolKind::Port) fail("complex instance port unsupported");
@@ -547,6 +756,17 @@ public:
                     if (!expression) continue;
                     if (!port.internalSymbol || !port.internalSymbol->isValue()) fail("complex internal port unsupported");
                     auto& internal = port.internalSymbol->as<ValueSymbol>();
+                    if(external) {
+                        auto name="__external_"+std::to_string(externalId)+"_"+std::string(port.name);
+                        const bool input=port.direction==ArgumentDirection::In;
+                        auto value=signal(internal);
+                        if(!input) {
+                            auto drive=graph.wire(width(port.getType()),name,"input");
+                            graph.connect(value,drive);value=drive;
+                        }
+                        graph.ports.push_back({name,value,!input});
+                        externalPorts.push_back({externalId,module,instance.getHierarchicalPath(),std::string(port.name),name,input,width(port.getType())});
+                    }
                     if (port.direction == ArgumentDirection::In) graph.connect(signal(internal),expr(*expression));
                     else if (port.direction == ArgumentDirection::Out) {
                         auto target = expression;
@@ -555,6 +775,9 @@ public:
                         finish(false); clear();
                     } else fail("bidirectional instance port unsupported");
                 }
+            } else if(symbol->kind==SymbolKind::Net) {
+                const auto& net=symbol->as<NetSymbol>();
+                graph.connect(signal(net),resize(expr(*net.getInitializer()),width(net.getType()),net.getType().isSigned()));
             } else if (symbol->kind == SymbolKind::ContinuousAssign) {
                 expr(symbol->as<ContinuousAssignSymbol>().getAssignment()); finish(false);
             } else {
@@ -569,21 +792,30 @@ public:
                     if (timed.timing.kind != TimingControlKind::ImplicitEvent) { sequential=true; enable=trigger(timed.timing); }
                     body = &timed.stmt;
                 }
+                sequentialProcess=sequential;processEnable=enable;
                 statement(*body); finish(sequential,enable);
             }
         }
         graph.writeCpp(output);
+        if(!externalPorts.empty()) {
+            std::ofstream metadata(output+".externals.tsv");
+            for(const auto& p:externalPorts)metadata<<p.instance<<'\t'<<p.module<<'\t'<<p.path<<'\t'<<p.port<<'\t'<<p.pin<<'\t'<<p.input<<'\t'<<p.bits<<'\n';
+        }
     }
 };
 
 inline int run(int argc, char** argv) {
     try {
         std::string output;
+        std::set<std::string> external;
         std::vector<const char*> args{argv[0]};
         for (int index=2; index<argc; ++index) {
             if (std::string_view(argv[index]) == "--output") {
                 if (++index == argc) throw std::runtime_error("missing output path");
                 output=argv[index];
+            } else if(std::string_view(argv[index])=="--external-module") {
+                if(++index==argc)throw std::runtime_error("missing external module name");
+                external.insert(argv[index]);
             } else args.push_back(argv[index]);
         }
         if (output.empty() || std::filesystem::exists(output)) throw std::runtime_error("--output must name a new C++ file");
@@ -595,7 +827,7 @@ inline int run(int argc, char** argv) {
         if (!driver.reportDiagnostics(true)) return 1;
         auto& root = compilation->getRoot();
         if (root.topInstances.size() != 1) throw std::runtime_error("native graph requires exactly one --top");
-        Lowering(*root.topInstances[0]).run(output);
+        Lowering(*root.topInstances[0],std::move(external)).run(output);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "hdlcpp native graph: " << error.what() << '\n'; return 1;

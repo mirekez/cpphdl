@@ -43,6 +43,7 @@ only analog targets. No external CPU test repositories are needed for analog tes
 | CTest group | Coverage |
 |---|---|
 | `analog.semantics` | 41 checks: RC/step refinement, coupled feedback, transistor schemas, loads and shared supply, IC hierarchy/lifetime, active variables, diagnostics, known/unknown events and exact 64-bit arithmetic |
+| `analog.integration_bdf2` | Independent RC/RL/LC, nonlinear MOS and coupled-capacitor solutions; time-step convergence, both Jacobians, event restarts, continuation and rejected-step history |
 | `analog.cpphdl_interop` | 12 checks: both include orders, native/managed old-state barrier, separate clocks, exact 64-bit transfer, retained ownership, unknown inputs/clocks, duplicate/context/null/width errors and unregistered/unbound outputs |
 | `analog.digital_ports` | Digital-only C++17 build with existing lazy ports and native work/strobe state behavior |
 | `analog.trace_requirements` | Completed-trajectory assertions: pass/fail/unknown status, conditional guarantees, freeze/empty callbacks and measurement evidence |

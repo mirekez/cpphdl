@@ -64,6 +64,21 @@ def main():
              '-I' + str(fixtures.parents[1] / 'include'), '-fsanitize=address,undefined'])
         print(run([work / 'dependencies/run']).stdout, end='')
         shutil.rmtree(work / 'dependencies')
+        strings = fixtures / 'CppGraphDiagnosticStrings.cc'
+        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+             '--runner', strings, '--output', work / 'diagnostic-strings', strings, '--',
+             '-DCPP_GRAPH_DIAGNOSTIC_STRINGS_RUN', '-I' + str(fixtures.parents[1] / 'include'),
+             '-fsanitize=address,undefined'])
+        print(run([work / 'diagnostic-strings/run']).stdout, end='')
+        for define in ('CPP_GRAPH_STRING_OBSERVABLE', 'CPP_GRAPH_STRING_EFFECT'):
+            destination = work / define.lower()
+            run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+                 '--frontend-flag=-D' + define, '--output', destination, strings], success=False)
+            assert 'observable C++ string operation unsupported' in (destination / 'cpp-to-graph.log').read_text()
+        destination = work / 'diagnostic-string-allocator'
+        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+             '--frontend-flag=-DCPP_GRAPH_STRING_ALLOCATOR', '--output', destination, strings], success=False)
+        assert 'unsupported C++ expression: StringLiteral' in (destination / 'cpp-to-graph.log').read_text()
         run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
              '--runner', fixtures / 'CppGraphConstants.cc', '--output', work / 'constants',
              fixtures / 'CppGraphConstants.cc', '--', '-DCPP_GRAPH_CONSTANTS_RUN',
@@ -188,15 +203,15 @@ def main():
              '-I' + str(fixtures.parents[1] / 'include'), '-fsanitize=address,undefined'])
         print(run([work / 'memory-converted/run']).stdout, end='')
         shutil.rmtree(work / 'memory-converted')
-        for name, width, body, strobe, diagnostic in [
-            ('memory-missing-apply', 64, 'storage[0] = 7;', '', 'C++ memory writes without strobe apply'),
-            ('memory-work-apply', 64, 'storage.apply();', '', 'C++ memory apply requires the strobe phase'),
-            ('memory-double-apply', 64, 'storage[0] = 7;', 'storage.apply(); storage.apply();', 'repeated C++ memory apply unsupported'),
-            ('memory-padded', 9, 'storage[0] = 7;', 'storage.apply();', 'C++ memory requires unpadded logic elements'),
+        for name, width, words, body, strobe, diagnostic in [
+            ('memory-missing-apply', 64, 1, 'storage[0] = 7;', '', 'C++ memory writes without strobe apply'),
+            ('memory-work-apply', 64, 1, 'storage.apply();', '', 'C++ memory apply requires the strobe phase'),
+            ('memory-double-apply', 64, 1, 'storage[0] = 7;', 'storage.apply(); storage.apply();', 'repeated C++ memory apply unsupported'),
+            ('memory-padded', 9, 2, 'storage[0] = 7;', 'storage.apply();', 'C++ memory requires unpadded logic elements'),
         ]:
             source = work / (name + '.cc')
             source.write_text('#include "cpphdl.h"\nclass Bad: public cpphdl::Module { public: '
-                              'cpphdl::memory<cpphdl::logic<' + str(width) + '>,1,16> storage; '
+                              'cpphdl::memory<cpphdl::logic<' + str(width) + '>,' + str(words) + ',16> storage; '
                               'void _work(bool) {' + body + '} void _strobe() {' + strobe + '} }; Bad cpphdl_top;\n')
             run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
                  '--output', work / name, source], success=False)

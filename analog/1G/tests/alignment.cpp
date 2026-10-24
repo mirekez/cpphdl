@@ -31,17 +31,20 @@ public:
     DUT dut;
 #ifndef VERILATOR
     cpphdl::u<10> input = 0;
+    bool enabled = true;
 #endif
     Bench() {
 #ifndef VERILATOR
         dut.receive_in = [this] { return &input; };
+        dut.receive_enable_in = [this] { return enabled; };
         dut._assign();
 #endif
     }
-    void rx(unsigned word, bool reset = false) {
+    void rx(unsigned word, bool reset = false, bool enable = true) {
 #ifdef VERILATOR
         dut.reset = reset;
         dut.receive_in = word;
+        dut.receive_enable_in = enable;
         dut.rx_clk = 0;
         dut.eval();
         dut.rx_clk = 1;
@@ -49,6 +52,7 @@ public:
 #else
         ++_system_clock;
         input = word;
+        enabled = enable;
         dut._work_rx_clk(reset);
         dut._strobe_rx_clk();
 #endif
@@ -87,12 +91,12 @@ public:
     }
     void reset() {
         for (unsigned i = 0; i < 4; ++i) {
-            rx(0, true);
+            rx(0, true, false);
             ref(true);
         }
     }
 };
-void crossing(double period, double phase) {
+void crossing(double period, double phase, bool sampled) {
     Bench bench;
     bench.reset();
     std::vector<unsigned> stimulus;
@@ -118,17 +122,20 @@ void crossing(double period, double phase) {
     }
     stimulus.insert(stimulus.end(), 128, 0);
     unsigned index = 0;
-    double rx_time = phase, ref_time = 0;
+    double rx_time = phase, ref_time = 0, symbol_time = phase;
     while (index < stimulus.size() || !expected.empty() || in_frame) {
         if (index < stimulus.size() && rx_time < ref_time) {
-            unsigned word = stimulus[index++];
-            if (word & 256) {
+            bool enable = !sampled || rx_time >= symbol_time;
+            unsigned word = enable ? stimulus[index++] : 0x3A5;
+            if (enable && (word & 256)) {
                 if (index == 1 || !(stimulus[index - 2] & 256))
                     ++expected_frames;
                 expected.push_back(word);
             }
-            bench.rx(word);
-            rx_time += period;
+            bench.rx(word, false, enable);
+            if (enable)
+                symbol_time += period;
+            rx_time += sampled ? .5 : period;
         } else {
             unsigned word = bench.ref();
             require(!bench.fault() && !bench.overflow(), "unexpected clock-alignment fault");
@@ -207,11 +214,12 @@ int main(int argc, char** argv) {
             trace.open(argv[1]);
             require(bool(trace), "cannot open alignment trace");
         }
-        for (double period : {.9998, 1., 1.0002})
-            for (double phase : {.001, .49, .999})
-                crossing(period, phase);
+        for (bool sampled : {false, true})
+            for (double period : {.9998, 1., 1.0002})
+                for (double phase : {.001, .49, .999})
+                    crossing(period, phase, sampled);
         fault_cases();
-        std::cout << "9 phase/rate cases, 360 frames, 287640 bytes; FCS, IFG, overflow, underflow and reset passed\n";
+        std::cout << "18 phase/rate/enable cases, 720 frames, 575280 bytes; FCS, IFG, overflow, underflow and disabled reset passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

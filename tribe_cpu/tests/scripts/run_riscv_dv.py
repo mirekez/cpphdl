@@ -250,7 +250,8 @@ def main(argv: list[str]) -> int:
     repo_root = pathlib.Path(__file__).resolve().parents[3]
 
     ensure = pathlib.Path(__file__).with_name("ensure_git_repo.py")
-    subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "run.py"], check=True)
+    if subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "run.py"]).returncode:
+        return 1
     patch_riscv_dv_pygen(checkout)
 
     python = os.environ.get("TRIBE_RISCV_DV_PYTHON", sys.executable)
@@ -260,7 +261,7 @@ def main(argv: list[str]) -> int:
         return SKIP
 
     env = os.environ.copy()
-    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
+    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or str(pathlib.Path.home() / "riscv")
     env["RISCV_HOME"] = riscv_home
     env["PATH"] = os.pathsep.join(
         (

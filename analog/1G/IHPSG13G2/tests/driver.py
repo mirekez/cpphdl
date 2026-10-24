@@ -11,6 +11,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 from verify import Trace, evaluate
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mos_geometry import size_mos_instances
 
 
 def run(args):
@@ -65,7 +67,9 @@ def run(args):
              "let difference = v(p) - v(n)", "wrdata spice.dat difference v(p) v(n)" + (" v(bias)" if args.physical_bias else ""),
              "let supply_current = -i(VSUPPLY)",
              "wrdata headroom.dat v(t0) v(t1) v(t2) v(t3) supply_current" + (" i(VBIAS_SENSE)" if args.physical_bias else ""), "quit", ".endc", ".end"]
-    (work / "ihp.cir").write_text("\n".join(deck) + "\n")
+    sized, geometry = size_mos_instances("\n".join(deck) + "\n")
+    (work / "mos_geometry.json").write_text(json.dumps(geometry, indent=2) + "\n")
+    (work / "ihp.cir").write_text(sized)
     environment = dict(os.environ, PDK_ROOT=str(args.pdk.resolve()), PDK="ihp-sg13g2",
                        SPICE_USERINIT_DIR=str(technology / "libs.tech/ngspice"))
     completed = subprocess.run([str(args.ngspice.resolve()), "-b", "ihp.cir"], cwd=work,
@@ -95,7 +99,8 @@ def run(args):
                    for i in range(8, contract["count"] - 1))
     trace.check(f"IHP {settling_time * 1e9:g} ns settling error V", settling, 0, .015)
     result.update(checks=trace.results, corner=args.corner, trim_code=args.trim_code,
-                  model="IHP sg13_hv_nmos PSP, W=100um L=0.45um; " + ("resistor/diode MOS bias, 3:1 tail mirrors" if args.physical_bias else "ideal tail bias"))
+                  geometry=geometry,
+                  model="IHP sg13_hv_nmos PSP, W=100um L=0.45um with finger widths <=10um; " + ("resistor/diode MOS bias, 3:1 tail mirrors" if args.physical_bias else "ideal tail bias"))
     result["status"] = "pass" if all(item["passed"] for item in trace.results) else "fail"
     (work / "checks.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

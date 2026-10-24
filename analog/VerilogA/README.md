@@ -6,10 +6,13 @@ The root command `cpphdl --verilog-a` converts a C++ class derived from
 [cpphdl_veriloga.h](../../include/cpphdl_veriloga.h) its public C++ export header.
 The standalone `cpphdl-veriloga` command uses the same driver and requires no LLVM.
 
+For large ICs, [partitioned compilation](hierarchy.md) preserves the connected
+equations while compiling repeated component models separately.
+
 The checked-in catalogs are [basic/generated](../basic/generated/README.md) and
-[examples/generated](../examples/generated/README.md): 28 basic modules, five
-reusable example classes, 17 complete analog example benches and one explicitly
-bounded mixed-signal analog partition. From the package root:
+[examples/generated](../examples/generated/README.md): reusable basic circuits,
+example IC classes, complete analog benches and a bounded mixed-signal analog
+partition. From the package root:
 
 ```bash
 cmake --build analog/build --target generate-veriloga -j 4
@@ -19,7 +22,7 @@ ctest --test-dir analog/build -R 'analog.veriloga.generated' --output-on-failure
 The generator elaborates the original classes and testbenches; it does not maintain
 a second hand-written circuit description. The freshness test regenerates into a
 temporary directory and compares every model and bench input. With OpenVAF enabled,
-the compile test also compiles all 51 catalog modules. Generated simulation results and OSDI
+the compile test also compiles every catalog module. Generated simulation results and OSDI
 binaries remain ignored. The pure digital pipeline and diagnostic suite have
 documented export limits instead of placeholder Verilog-A models.
 
@@ -237,6 +240,8 @@ builds and `build/analog/VerilogA/results/` for package builds.
 
 See [tests and numerical limits](tests/README.md) and
 [toolchain setup and primary references](toolchain.md).
+The [continuous-window and trace-storage helpers](time-grid.md) preserve circuit
+state and complete waveform samples while bounding integration gaps and disk use.
 
 Agreement validates the selected equations and trajectories within measured bounds.
 It cannot prove every topology, the physical accuracy of the square-law MOS model,
@@ -260,3 +265,22 @@ capacitors in Verilog-A. This preserves the linear law and initial charge while
 using ngspice's native capacitor implementation for numerically stiff mixed-scale
 experiments. The 10G integrated SFI link uses it for its two 100 nF DC blocks; its
 standalone SFI tests retain complete Verilog-A. Reusable exports are unaffected.
+
+## Large waveform storage
+
+The regression transport stores every emitted row and its printed precision in
+a gzip stream, checks its CRC, and records both the raw and compressed SHA256.
+Equal-time solver states are retained. Compression level 6 reduces disk use;
+it does not reduce sampling or numeric precision.
+
+Set `CPPHDL_ANALOG_TRACE_SCRATCH=/absolute/storage/path` to put compressed
+waveforms on another filesystem. The logical results directory contains a
+symlink; FIFOs, simulator libraries, decks and receipts remain in the results
+directory. Trace normalization rewrites the file on its storage filesystem and
+preserves the logical link. A storage failure fails the run.
+
+Use persistent storage for retained evidence. A `/dev/shm` scratch directory
+is temporary: after a reboot its symlinks are dangling and the corresponding
+simulations must be rerun. A receipt without its checked waveform cannot qualify
+a new comparison. Storage/codec regressions exercise scratch links, exact
+roundtrips and failure handling.

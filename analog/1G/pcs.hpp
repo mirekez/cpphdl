@@ -14,8 +14,8 @@ public:
     _PORT(bool) invalid_out = _ASSIGN_REG(invalid_reg);
 
 private:
-    reg<u<12>> symbols_reg;
-    reg<u1> invalid_reg;
+    reg<u<12>> symbols_reg{};
+    reg<u1> invalid_reg{};
     unsigned normal(unsigned index) {
         switch (index) {
         case 0:
@@ -1178,8 +1178,8 @@ public:
     _PORT(bool) invalid_out = _ASSIGN_REG(invalid_reg);
 
 private:
-    reg<u<33>> state_reg;
-    reg<u1> invalid_reg;
+    reg<u<33>> state_reg{};
+    reg<u1> invalid_reg{};
 
 public:
     void _assign() {}

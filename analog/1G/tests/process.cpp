@@ -5,10 +5,19 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#ifdef CPPHDL_FIXED_RECEIVER
+#include "fixed_receiver.hpp"
+long _system_clock = -1;
+using receive_model = fixed_receiver;
+using adc_model = fixed_adc;
+#else
+using receive_model = analog::one_g::adaptive_receiver;
+using adc_model = analog::one_g::sampled_adc;
+#endif
 
 using namespace analog::one_g;
 int main(int argc, char** argv) {
-    if (argc != 5)
+    if (argc != 5 && argc != 6)
         return 2;
     try {
         std::ifstream input(argv[1]);
@@ -21,11 +30,21 @@ int main(int argc, char** argv) {
         unsigned channels = unsigned(std::count(line.begin(), line.end(), ',')) / 6;
         if (channels != 2 && channels != 8)
             throw std::runtime_error("sampled DSP requires two or eight receive channels");
-        std::vector<adaptive_receiver> receiver(channels);
-        std::vector<sampled_adc> adc(channels);
+        std::vector<receive_model> receiver(channels);
+        std::vector<adc_model> adc(channels);
         std::vector<double> squared(channels), raw_squared(channels);
         std::vector<unsigned> errors(channels), raw_errors(channels), samples(channels);
-        std::vector<std::array<double, adaptive_receiver::count>> frozen(channels);
+        std::vector<std::array<double, receive_model::count>> frozen(channels);
+        std::ofstream soft;
+        if (argc == 6) {
+            soft.open(argv[5]);
+            if (!soft)
+                throw std::runtime_error("cannot open equalized ADC output");
+            soft << std::setprecision(17) << "symbol";
+            for (unsigned channel = 0; channel < channels; ++channel)
+                soft << ",soft" << channel;
+            soft << '\n';
+        }
         unsigned row = 0;
         while (std::getline(input, line)) {
             std::replace(line.begin(), line.end(), ',', ' ');
@@ -33,6 +52,8 @@ int main(int argc, char** argv) {
             unsigned index;
             if (!(values >> index) || index != row)
                 throw std::runtime_error("missing/nonsequential sampled symbol");
+            if (soft.is_open())
+                soft << index;
             for (unsigned channel = 0; channel < channels; ++channel) {
                 double rx, desired;
                 std::array<double, 4> local;
@@ -43,6 +64,8 @@ int main(int argc, char** argv) {
                 if (adapt && row < training)
                     target = desired;
                 double result = receiver[channel].sample(adc[channel].sample(rx), local, target);
+                if (soft.is_open())
+                    soft << ',' << result;
                 if (row + 1 == training)
                     frozen[channel] = receiver[channel].weights;
                 if (row >= training && receiver[channel].weights != frozen[channel])
@@ -58,6 +81,8 @@ int main(int argc, char** argv) {
             double extra;
             if (values >> extra)
                 throw std::runtime_error("unexpected sampled receiver columns");
+            if (soft.is_open())
+                soft << '\n';
             ++row;
         }
         if (row <= training + 24)

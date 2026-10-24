@@ -15,15 +15,25 @@ The C++ classes remain the definitions to edit.
 | [cmos_channel.va](cmos_channel.va) | `cmos<channel_model>` in [inverter.hpp](../inverter.hpp) | Complementary MOS inverter |
 | [cmos_fast.va](cmos_fast.va) | `cmos<fast_model>` in [inverter.hpp](../inverter.hpp) | Explicit simulation approximation using controlled conductances |
 | [level_inverter.va](level_inverter.va) | [level_inverter.hpp](../level_inverter.hpp) | Explicit simulation approximation using controlled conductances |
+| [level_shifter.va](level_shifter.va) | [level_shifter.hpp](../level_shifter.hpp) | Ten-MOS 1.2-to-3.3 V interface with cross-coupled branches and output buffers |
+| [level_down.va](level_down.va) | [level_down.hpp](../level_down.hpp) | Four-MOS ratioed high-voltage input and core inverter, with static current and explicit charge |
 | [nmos_differential_pair.va](nmos_differential_pair.va) | [nmos_differential_pair.hpp](../nmos_differential_pair.hpp) | Differential current steering |
+| [nmos_resistor_amplifier.va](nmos_resistor_amplifier.va) | [nmos_resistor_amplifier.hpp](../nmos_resistor_amplifier.hpp) | Resistor-loaded MOS gain with source degeneration, input charge and output storage |
+| [strongarm_comparator.va](strongarm_comparator.va) | [strongarm_comparator.hpp](../strongarm_comparator.hpp) | Clocked eleven-MOS regenerative comparator with input/output charge |
+| [mos_track_hold.va](mos_track_hold.va) | [mos_track_hold.hpp](../mos_track_hold.hpp) | MOS track/hold, clock inverter, dummy switches and explicit charge |
+| [mos_r2r_dac.va](mos_r2r_dac.va) | [mos_r2r_dac.hpp](../mos_r2r_dac.hpp) | Eight MOS rail drivers and loaded R/2R ladder |
 | [pmos_current_mirror.va](pmos_current_mirror.va) | [pmos_current_mirror.hpp](../pmos_current_mirror.hpp) | Matched sourcing branches |
 | [opamp.va](opamp.va) | [opamp.hpp](../opamp.hpp) | Transistor amplifier with explicit compensation |
 | [non_inverting_amplifier.va](non_inverting_amplifier.va) | [non_inverting_amplifier.hpp](../non_inverting_amplifier.hpp) | Amplifier with resistive feedback |
 | [regulator.va](regulator.va) | [regulator.hpp](../regulator.hpp) | Pass transistor with output/reference feedback |
 | [resistor_divider.va](resistor_divider.va) | [resistor_divider.hpp](../resistor_divider.hpp) | Loaded divider |
 | [rc_filter.va](rc_filter.va) | [rc_filter.hpp](../rc_filter.hpp) | Series resistance and shunt storage |
+| [nmos_source_follower.va](nmos_source_follower.va) | [nmos_source_follower.hpp](../nmos_source_follower.hpp) | Finite-drive output buffer with resistor bias and input/output charge |
 | [ldo.va](ldo.va) | [ldo.hpp](../ldo.hpp) | Divider-feedback low-dropout regulator |
 | [cmos_nand.va](cmos_nand.va), [cmos_xor.va](cmos_xor.va) | [cmos_logic.hpp](../cmos_logic.hpp) | MOS gate networks |
+| [nand_latch.va](nand_latch.va), [cleared_nand_latch.va](cleared_nand_latch.va) | [nand_latch.hpp](../nand_latch.hpp) | Eight-channel cross-coupled storage and its power-up clear |
+| [cmos_d_latch.va](cmos_d_latch.va), [cmos_dff.va](cmos_dff.va), [cmos_divide2.va](cmos_divide2.va) | [cmos_storage.hpp](../cmos_storage.hpp) | Transparent latch, rising-edge storage and physical divide-by-two feedback |
+| [cmos_phase_frequency_detector.va](cmos_phase_frequency_detector.va) | [phase_frequency_detector.hpp](../phase_frequency_detector.hpp) | Two MOS flip-flops, common reset and finite reset-pulse storage |
 | [current_starved_inverter.va](current_starved_inverter.va), [ring_vco.va](ring_vco.va) | [ring_vco.hpp](../ring_vco.hpp) | Controlled inverter stage and three-stage oscillator |
 | [lead_lag_filter.va](lead_lag_filter.va), [pll.va](pll.va) | [pll.hpp](../pll.hpp) | Passive loop filter and physical phase-locked loop |
 | [variable_gain_amplifier.va](variable_gain_amplifier.va), [mos_peak_detector.va](mos_peak_detector.va), [error_integrator.va](error_integrator.va), [agc.va](agc.va) | [agc.hpp](../agc.hpp) | Gain stage, detector, controller and composed AGC |
@@ -51,3 +61,5 @@ ctest --test-dir analog/build -R 'analog.veriloga.generated' --output-on-failure
 With OpenVAF enabled, `analog.veriloga.generated_compile` compiles every generated
 module. See the [backend documentation](../../VerilogA/README.md) for tool setup,
 root `cpphdl --verilog-a` conversion, simulation and independent solver comparisons.
+
+`cascode_opamp.va` exposes the differential signal and external bias ports; see [its circuit](../cascode_opamp.md).

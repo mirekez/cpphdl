@@ -3,6 +3,10 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 p = argparse.ArgumentParser()
 p.add_argument('--cxx', required=True)
@@ -10,8 +14,10 @@ p.add_argument('--threaded', action='store_true')
 args = p.parse_args()
 root = Path(__file__).resolve().parents[2]
 work = Path(tempfile.mkdtemp(prefix='cpphdl-native-scheduling-'))
+toolchain = TestToolchain(args.cxx, None, work)
 def run(argv):
-    result = subprocess.run(list(map(str, argv)), capture_output=True, text=True, timeout=180)
+    result = subprocess.run(toolchain.command(argv), env=toolchain.env,
+                            capture_output=True, text=True, timeout=180)
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
     return result.stdout

@@ -15,6 +15,28 @@ spec.loader.exec_module(checks)
 
 
 class Evidence(unittest.TestCase):
+    def test_zero_exit_partial_run_cannot_omit_a_rule_table(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            rules = root / "rules/rule_decks/feol"
+            rules.mkdir(parents=True)
+            report = root / "part_full.lyrdb"
+            for index in range(37):
+                table = f"table{index}"
+                (rules / f"5_{index}_{table}.drc").write_text("rule inventory fixture")
+                if index != 17:
+                    (root / f"part_{table}.log").write_text(
+                        f"KLayout DRC run for tables '{table}' completed in 1 seconds\n")
+            with self.assertRaisesRegex(ValueError, "table did not complete: table17"):
+                checks.check_drc_completion(report, root / "rules")
+            (root / "part_table17.log").write_text("KLayout DRC run for tables 'table17' completed in 1 seconds\n")
+            (root / "part_sg13g2_maximal.log").write_text("Starting maximum ruleSet\n")
+            with self.assertRaisesRegex(ValueError, "maximum DRC rules did not complete"):
+                checks.check_drc_completion(report, root / "rules")
+            (root / "part_sg13g2_maximal.log").write_text("KLayout DRC run for maximum ruleSet completed\n")
+            (root / "part_density.log").write_text("KLayout DRC run for density table completed\n")
+            self.assertEqual(checks.check_drc_completion(report, root / "rules")["main_tables"], 37)
+
     def test_drc_refuses_missing_malformed_and_violations(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "report.lyrdb"
@@ -37,6 +59,22 @@ class Evidence(unittest.TestCase):
             (work / "setup.rpt").write_text("worst slack max nan\n")
             with self.assertRaises(ValueError):
                 checks.check_timing(work)
+
+    def test_timing_rejects_rounded_negative_zero(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            (work / "electrical.rpt").write_text("")
+            (work / "core.spef").write_text("*SPEF 1481-1998\n" + "*D_NET dummy\n" * 40)
+            for kind, field in (("setup", "max"), ("hold", "min")):
+                for value in ("-0.00", "-0.000000000", "-1e-12"):
+                    (work / "setup.rpt").write_text("worst slack max 0.1\n")
+                    (work / "hold.rpt").write_text("worst slack min 0.1\n")
+                    (work / (kind + ".rpt")).write_text("worst slack " + field + " " + value + "\n")
+                    with self.subTest(kind=kind, value=value), self.assertRaises(ValueError):
+                        checks.check_timing(work)
+            (work / "setup.rpt").write_text("worst slack max 0.000000001\n")
+            (work / "hold.rpt").write_text("worst slack min 0.000000001\n")
+            self.assertEqual(checks.check_timing(work)["setup_slack_ns"], 1e-9)
 
     def test_empty_partial_rule_report_does_not_prove_full_drc(self):
         with tempfile.TemporaryDirectory() as temporary:

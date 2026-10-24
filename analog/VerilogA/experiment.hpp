@@ -16,6 +16,8 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
         detail::fail("SPICE capacitance threshold must be nonnegative");
     if (analysis.spice_order != 1 && analysis.spice_order != 2)
         detail::fail("SPICE Gear order must be 1 or 2");
+    if (!std::isfinite(analysis.driver_edge.value) || analysis.driver_edge.value < 0)
+        detail::fail("experiment driver edge must be finite and nonnegative");
     for (const auto& e : sim.elements)
         if (e.kind == law::inductor && e.initial != 0)
             detail::fail("experiment export currently supports zero initial inductor current only");
@@ -102,10 +104,16 @@ inline void write_experiment(const simulation& sim, const std::filesystem::path&
         deck << '\n';
     }
     // ngspice PULSE uses a finite edge. Keep it explicit and much shorter than either integration step.
-    double edge = std::min(analysis.maximum_step.value, analysis.step.value) * 1e-4;
+    const bool explicit_edge = analysis.driver_edge.value > 0;
+    double edge = explicit_edge ? analysis.driver_edge.value
+                               : std::min(analysis.maximum_step.value, analysis.step.value) * 1e-4;
     for (const auto& input : sim.inputs)
-        if (driver_bits.contains(input.out) && input.kind == digital_stimulus::clock)
-            edge = std::min(edge, input.period / 10000);
+        if (driver_bits.contains(input.out) && input.kind == digital_stimulus::clock) {
+            if (explicit_edge && edge >= input.period / 2)
+                detail::fail("experiment driver edge must be shorter than a clock half-period");
+            if (!explicit_edge)
+                edge = std::min(edge, input.period / 10000);
+        }
     for (auto bit : driver_bits) {
         const digital_stimulus* stimulus = nullptr;
         for (const auto& input : sim.inputs)

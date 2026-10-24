@@ -15,7 +15,7 @@ def git(repo, *args):
 def commit(repo):
     git(repo, 'add', '.')
     git(repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
-        'commit', '-qm', 'fixture')
+        '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
     return git(repo, 'rev-parse', 'HEAD')
 
 

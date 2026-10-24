@@ -27,8 +27,31 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME hdlcpp_slang_pin COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/SlangPinChecks.py")
+    set_tests_properties(hdlcpp_slang_pin PROPERTIES TIMEOUT 60)
     find_program(CONSTANTS_VERILATOR verilator)
     if(CONSTANTS_VERILATOR)
+        add_test(NAME hls_memory_map_interfaces COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/memory_map/Checks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/memory-map")
+        set_tests_properties(hls_memory_map_interfaces PROPERTIES TIMEOUT 600 LABELS "hls;rtl;memory")
+        add_test(NAME templates_namespaced_methods COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/templates/NamespacedMethodsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/namespaced-methods")
+        set_tests_properties(templates_namespaced_methods PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
+        add_test(NAME child_clock_sources COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildClockChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/child-clock")
+        set_tests_properties(child_clock_sources PROPERTIES TIMEOUT 240 LABELS "rtl;cdc")
+        add_test(NAME child_reset_expressions COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildResetChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/child-reset")
+        set_tests_properties(child_reset_expressions PROPERTIES TIMEOUT 240 LABELS "rtl;cdc")
         add_test(NAME templates_port_aliases COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/templates/PortAliasesChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -92,6 +115,14 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(cpp_graph_empty_repeat_cast PROPERTIES TIMEOUT 240)
     add_test(NAME test_toolchain_setup COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/TestToolchainChecks.py")
+    if(CONSTANTS_VERILATOR)
+        add_test(NAME templates_root_instance COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/templates/TemplateRootInstanceChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/template-root-instance")
+        set_tests_properties(templates_root_instance PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
+    endif()
     add_test(NAME cpp_graph_closure_scope COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/ClosureScopeChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -195,6 +226,33 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideShiftChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_wide_shift PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_power_of_two COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/PowerOfTwoChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_power_of_two PROPERTIES TIMEOUT 120)
+    add_test(NAME cpp_graph_power_of_two_folding COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/PowerOfTwoFoldingChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_power_of_two_folding PROPERTIES TIMEOUT 120)
+    foreach(check Memoization Batch Broadcast Settle WidePort)
+        string(TOLOWER "${check}" check_name)
+        add_test(NAME "cpp_graph_native_${check_name}" COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/Native${check}Checks.py"
+            --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties("cpp_graph_native_${check_name}" PROPERTIES TIMEOUT 600)
+    endforeach()
+    add_test(NAME cpp_graph_native_ram_memoization COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeRamMemoizationChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-ram-memoization")
+    set_tests_properties(cpp_graph_native_ram_memoization PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_ram_cache COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeRamCacheChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-ram-cache")
+    set_tests_properties(cpp_graph_native_ram_cache PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_reset_events COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeResetEventsChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_reset_events PROPERTIES TIMEOUT 120)
     add_test(NAME cpp_graph_word_helpers COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WordHelpersChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -245,6 +303,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeThreadsDriverChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_thread_driver PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_host_threads COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeHostThreadsChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-host-threads")
+    set_tests_properties(cpp_graph_native_host_threads PROPERTIES TIMEOUT 300)
     add_test(NAME cpp_graph_native_ports COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativePortsChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
@@ -305,8 +367,44 @@ if(Python3_Interpreter_FOUND)
             --work "${CMAKE_CURRENT_BINARY_DIR}/cpp-graph-memory")
         set_tests_properties(cpp_graph_memory_scaling PROPERTIES TIMEOUT 180
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_packed_proxy_read COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/PackedProxyReadChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/packed-proxy-read")
+        set_tests_properties(cpp_graph_packed_proxy_read PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_final_pruning COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/FinalPruningChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/final-pruning")
+        set_tests_properties(cpp_graph_final_pruning PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME cpp_graph_split_compilation COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSplitChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-split")
+        set_tests_properties(cpp_graph_split_compilation PROPERTIES TIMEOUT 900
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME native_graph_phase_liveness COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativePhaseChecks.py"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-phase")
+        set_tests_properties(native_graph_phase_liveness PROPERTIES TIMEOUT 600
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME native_graph_word_slice COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeWordSliceChecks.py"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/native-word-slice")
+        set_tests_properties(native_graph_word_slice PROPERTIES TIMEOUT 300
+            ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(CPPHDL_BUILD_HDLCPP)
+        add_test(NAME hdlcpp_specialization_precedence COMMAND "${CMAKE_COMMAND}" -E env
+            "CPPHDL_TEST_HDLCPP=$<TARGET_FILE:hdlcpp>" "CPPHDL_TEST_CXX=${CMAKE_CXX_COMPILER}"
+            "${Python3_EXECUTABLE}" -B -m unittest
+            test_workflow.WorkflowTests.test_specialization_preserves_non_type_parameter_expression_precedence)
+        set_tests_properties(hdlcpp_specialization_precedence PROPERTIES TIMEOUT 120
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/hdlcpp/tests/cva6" LABELS "hdlcpp;templates")
         add_test(NAME hdlcpp_wide_select_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/WideSelectChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
@@ -365,6 +463,33 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(netlist_driver PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     find_program(CPPHDL_NETLIST_VERILATOR verilator)
     if(CPPHDL_NETLIST_VERILATOR)
+        # The hdlcpp subdirectory is added after tests/. Its target exists at
+        # generation time, but not yet while this list is being configured.
+        if(CPPHDL_BUILD_HDLCPP)
+            add_test(NAME graph_guarded_feedback COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/graph/GuardedFeedbackChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/guarded-feedback")
+            set_tests_properties(graph_guarded_feedback PROPERTIES TIMEOUT 480
+                ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+            add_test(NAME graph_undriven_variable COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/graph/UndrivenVariableChecks.py"
+                --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/undriven-variable")
+            set_tests_properties(graph_undriven_variable PROPERTIES TIMEOUT 480
+                ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+            foreach(fixture SymbolicArithmetic ProjectionCarrier ConstPackedRom BlockingHold ExhaustiveSwitch DynamicStructIndex NarrowArithmeticCast TypedefRam IndexedWord)
+                add_test(NAME hdlcpp_${fixture} COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/${fixture}Checks.py"
+                    --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                    --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                    --work "${CMAKE_CURRENT_BINARY_DIR}/${fixture}")
+                set_tests_properties(hdlcpp_${fixture} PROPERTIES TIMEOUT 480
+                    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+            endforeach()
+        endif()
         add_test(NAME wide_slice_matrix_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideSliceMatrixChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -562,6 +687,11 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # Verilator can leave specialization work directories below a test source
 # directory. They contain generated .cpp files, not independent C++HDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
+# These model-only CDC fixtures have separate native/RTL testbench drivers
+# registered above as child_clock_sources and child_reset_expressions.
+list(REMOVE_ITEM TEST_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildClock.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildReset.cpp")
 # These fixtures are built by SwitchControlChecks.py with a separate runner
 # and flow-specific definitions, not as standalone inline-test executables.
 list(REMOVE_ITEM TEST_SOURCES

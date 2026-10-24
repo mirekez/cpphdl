@@ -1,0 +1,48 @@
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module level_shift_bias(Vdd, Vss, Vlogic, BIAS);
+    inout Vdd, Vss, Vlogic, BIAS;
+    electrical Vdd, Vss, Vlogic, BIAS;
+    electrical cpphdl_n5;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC level_shift_bias, analog/basic/cascoded_level_shifter.hpp:18
+        I(Vlogic, cpphdl_n5) <+ V(Vlogic, cpphdl_n5) / 200.0;
+        // device 1, IC level_shift_bias, analog/basic/cascoded_level_shifter.hpp:19
+        I(Vss, cpphdl_n5) <+ V(Vss, cpphdl_n5) / 800.0;
+        // device 2, IC level_shift_bias, analog/basic/cascoded_level_shifter.hpp:20
+        I(Vdd, BIAS) <+ V(Vdd, BIAS) / 10000.0;
+        // device 3, IC level_shift_bias, analog/basic/cascoded_level_shifter.hpp:21
+        I(BIAS, cpphdl_n5) <+ cpphdl_channel(V(BIAS, cpphdl_n5), V(BIAS, cpphdl_n5), 0.018749999999999999, 0.69999999999999996, 1.0);
+        // device 4, IC level_shift_bias, analog/basic/cascoded_level_shifter.hpp:22
+        I(BIAS, Vss) <+ 9.9999999999999998e-13 * ddt(V(BIAS, Vss)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

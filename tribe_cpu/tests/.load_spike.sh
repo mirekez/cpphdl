@@ -54,15 +54,9 @@ if [[ -n "${CONDA_PREFIX:-}" ]]; then
   )
 fi
 
-clone_or_update() {
-  local url="$1"
-  local dir="$2"
-
-  if [[ ! -d "${dir}/.git" ]]; then
-    git clone "${url}" "${dir}"
-  else
-    git -C "${dir}" fetch --tags --prune
-  fi
+ensure_dependency() {
+  "${PYTHON_BIN}" "${SCRIPT_DIR}/scripts/ensure_git_repo.py" \
+    "$3" "$2" "$4" --dependency "$1" --update
 }
 
 if ! command -v git >/dev/null 2>&1; then
@@ -90,7 +84,7 @@ PY
 fi
 
 if ! command -v dtc >/dev/null 2>&1 && [[ ! -x "${PREFIX}/bin/dtc" ]]; then
-  clone_or_update "${DTC_REPO_URL}" "${DTC_DIR}"
+  ensure_dependency dtc "${DTC_REPO_URL}" "${DTC_DIR}" Makefile
 
   make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 NO_YAML=1 PREFIX="${PREFIX}" -j"$(nproc)"
   make -C "${DTC_DIR}" NO_PYTHON=1 NO_VALGRIND=1 NO_YAML=1 PREFIX="${PREFIX}" install
@@ -99,9 +93,7 @@ fi
 export PATH="${PREFIX}/bin:${PATH}"
 export RISCV="${RISCV:-${PREFIX}}"
 
-clone_or_update "${REPO_URL}" "${REPO_DIR}"
-
-git -C "${REPO_DIR}" submodule update --init --recursive
+ensure_dependency spike "${REPO_URL}" "${REPO_DIR}" spike_main/spike.cc
 
 mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}"
@@ -118,11 +110,9 @@ if [[ ! -x "${PREFIX}/bin/spike" ]]; then
   exit 1
 fi
 
-clone_or_update "${RISCV_TESTS_REPO_URL}" "${RISCV_TESTS_DIR}"
-git -C "${RISCV_TESTS_DIR}" submodule update --init --recursive
+ensure_dependency riscv-tests "${RISCV_TESTS_REPO_URL}" "${RISCV_TESTS_DIR}" isa
 
-clone_or_update "${RISCV_DV_REPO_URL}" "${RISCV_DV_DIR}"
-git -C "${RISCV_DV_DIR}" submodule update --init --recursive
+ensure_dependency riscv-dv "${RISCV_DV_REPO_URL}" "${RISCV_DV_DIR}" run.py
 
 mkdir -p "${PYDEPS_DIR}"
 if ! PYTHONPATH="${PYDEPS_DIR}:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1; then

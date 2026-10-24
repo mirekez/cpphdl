@@ -52,7 +52,7 @@ flows, including +/* reductions, helpers, scratch and neighbor snapshots.
 integer conversion policies. Its restoring division and square root follow
 RNE/FTZ. `exponential` and `square_root` have named HLS overrides; native calls
 use standard host math. The integer `fp32_exp` uses range reduction and a
-degree-seven polynomial with a tested relative error bound of 1e-5 on finite
+degree-seven polynomial with a tested relative error bound of 2e-5 on finite
 normal outputs. It is not correctly rounded exp. `fp32_silu` uses the stable
 negative-exponent form. Including `Float.h` alone does not install these extra
 operators. Actual math latency depends on the selected HLS scheduler and

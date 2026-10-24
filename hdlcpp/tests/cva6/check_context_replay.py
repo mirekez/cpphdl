@@ -34,7 +34,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cva6-source", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--context", type=Path, required=True)
+    parser.add_argument("--context", type=Path)
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--hdlcpp", type=Path, default=repo / "hdlcpp/build/hdlcpp")
@@ -47,9 +47,17 @@ def main():
     parser.add_argument("--reuse-build", action="store_true")
     parser.add_argument("--native-packed", action="store_true",
                         help="store compiler-proved packed aggregates as native fields (C++ ABI change)")
+    parser.add_argument("--native-graph", action="store_true",
+                        help="lower freshly converted ordinary C++ rather than the legacy L1 callback backend")
+    parser.add_argument("--chunk-size", type=int, default=512)
     args = parser.parse_args()
     if args.trials < 1 or args.repeats < 1: parser.error("trials/repeats must be positive")
+    if not args.native_graph and args.context is None:
+        parser.error("legacy L1 requires --context; native graph uses the complete converted bus")
+    if args.chunk_size < 1: parser.error("chunk-size must be positive")
     source, model, output = args.cva6_source.resolve(), args.model.resolve(), args.output.resolve()
+    if not output.is_relative_to(Path('/tmp')):
+        parser.error("build artifacts must be inside /tmp")
     output.mkdir(parents=True, exist_ok=True)
     generated, optimized = output / "generated", output / "l1"
     generated.mkdir(exist_ok=True)
@@ -60,12 +68,17 @@ def main():
     commands_path = output / "commands.json"
     commands = json.loads(commands_path.read_text()) if args.reuse_build else []
     layout_manifest = output / "native-packed.json"
+    backend_manifest = output / "native-graph.json"
     if args.reuse_build:
         previous_layout = json.loads(layout_manifest.read_text()) if layout_manifest.exists() else False
         if previous_layout != args.native_packed:
             raise RuntimeError("native packed layout differs from the saved build")
+        previous_backend = json.loads(backend_manifest.read_text()) if backend_manifest.exists() else False
+        if previous_backend != args.native_graph:
+            raise RuntimeError("native graph backend differs from the saved build")
     else:
         layout_manifest.write_text(json.dumps(args.native_packed) + "\n")
+        backend_manifest.write_text(json.dumps(args.native_graph) + "\n")
     layout_flags = native_layout_flags(args.native_packed)
 
     def run(command, label, cwd=output):
@@ -106,7 +119,7 @@ def main():
         names = ["axi_pkg", "cf_math_pkg", "lzc", "rr_arb_tree", "delta_counter", "counter", "spill_register_flushable",
                  "spill_register", "fifo_v3", "fifo_v2", "addr_decode", "stream_register", "axi_id_prepend",
                  "axi_atop_filter", "axi_err_slv", "axi_mux", "axi_demux", "axi_xbar", "axi_intf", "ariane_soc_pkg"]
-        inputs = [*fixtures.iterdir(), args.trace.resolve(), args.context.resolve(), args.cpphdl.resolve(), args.hdlcpp.resolve(),
+        inputs = [*fixtures.iterdir(), args.trace.resolve(), *([args.context.resolve()] if args.context else []), args.cpphdl.resolve(), args.hdlcpp.resolve(),
                   Path(__file__).resolve(), *model.glob("*.tsv"),
                   source / "corev_apu/tb/ariane_testharness.sv", *sorted((repo / "include").glob("*.h")),
                   *source.glob("vendor/pulp-platform/*/include/**/*.svh")]
@@ -124,24 +137,32 @@ def main():
             converted = generated / (name + ".h")
             if not converted.exists(): raise RuntimeError("missing converted header " + str(converted))
         run([args.hdlcpp.resolve(), output / "XbarBench.sv"], "convert-bench")
-        run([args.hdlcpp.resolve(), "--optimize", output / "XbarElaborate.cc"], "elaborate")
-        aliases = [line for line in (output / "cpphdl_optimized_externs.h").read_text().splitlines() if line.startswith("using cpphdl_opt_t")]
-        (output / "XbarAliases.h").write_text("#pragma once\n" + "\n".join(aliases) + "\n")
-        run([args.cpphdl.resolve(), "--optimize-combs-l1", "XbarRoot", "--generated-dir=" + str(optimized),
-             "--replay-context=" + str(args.context.resolve()), "--replay-source=i_axi_xbar", "--replay-target=dut.dut",
-             "--replay-export=" + str(output / "replay-context.txt"), output / "XbarSeed.cc", "--", "-std=c++23", "-w",
-             "-I" + str(repo / "include"), *layout_flags], "optimize")
+        if args.native_graph:
+            seed = output / 'XbarGraph.cc'
+            seed.write_text('#include "XbarRoot.h"\nextern XbarBench<> cpphdl_top;\n')
+            run([args.cpphdl.resolve(), '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+                 '--chunk-size=' + str(args.chunk_size), '--output', output / 'graph',
+                 '--frontend-flag=-I' + str(output), *['--frontend-flag=' + flag for flag in layout_flags],
+                 '--runner', output / 'BusRun.cc', seed, '--', '-DUSE_CPP_GRAPH', '-DNDEBUG'], 'cpp-native-graph')
+        else:
+            run([args.hdlcpp.resolve(), "--optimize", output / "XbarElaborate.cc"], "elaborate")
+            aliases = [line for line in (output / "cpphdl_optimized_externs.h").read_text().splitlines() if line.startswith("using cpphdl_opt_t")]
+            (output / "XbarAliases.h").write_text("#pragma once\n" + "\n".join(aliases) + "\n")
+            run([args.cpphdl.resolve(), "--optimize-combs-l1", "XbarRoot", "--generated-dir=" + str(optimized),
+                 "--replay-context=" + str(args.context.resolve()), "--replay-source=i_axi_xbar", "--replay-target=dut.dut",
+                 "--replay-export=" + str(output / "replay-context.txt"), output / "XbarSeed.cc", "--", "-std=c++23", "-w",
+                 "-I" + str(repo / "include"), *layout_flags], "optimize")
         native = output / "verilator"
         # Match the production Verilator frontend flags, separately from C++ -O2.
         run([args.verilator, "-O3", "--unroll-count", "256", "--vpi", "--threads-dpi", "none", "--no-timing",
-             "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal", "--top-module", "XbarBench",
+             "--cc", "--exe", "--build", "-j", "1", "-Wno-fatal", "--top-module", "XbarBench",
              "--Mdir", native, *["-I" + str(path) for path in includes], "-CFLAGS", "-O2 -DNDEBUG -DUSE_VERILATOR",
              output / "XbarDesign.sv", output / "BusRun.cc"], "build-native")
         objects = output / "objects"
         objects.mkdir(exist_ok=True)
         flags = [args.cxx, "-std=c++23", "-O2", "-DNDEBUG", "-w", "-I" + str(repo / "include"),
                  "-I" + str(output), "-I" + str(optimized), *layout_flags]
-        sources = [output / "BusRun.cc", *sorted(optimized.glob("*.cpp"))]
+        sources = [] if args.native_graph else [output / "BusRun.cc", *sorted(optimized.glob("*.cpp"))]
         commands.extend(dict(command=[*flags, "-c", str(path), "-o", str(objects / (path.stem + ".o"))],
                              cwd=str(output)) for path in sources)
         commands_path.write_text(json.dumps(commands, indent=2) + "\n")
@@ -152,8 +173,9 @@ def main():
                 subprocess.run(list(map(str, command)), cwd=output, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
             return target
         with ThreadPoolExecutor(max_workers=2) as pool: built = list(pool.map(compile_source, sources))
-        run([args.cxx, *built, "-lstdc++exp", "-o", output / "run"], "link")
-    binaries = {"verilator": output / "verilator/VXbarBench", "cpphdl": output / "run"}
+        if not args.native_graph:
+            run([args.cxx, *built, "-lstdc++exp", "-o", output / "run"], "link")
+    binaries = {"verilator": output / "verilator/VXbarBench", "cpphdl": output / ("graph/run" if args.native_graph else "run")}
     verify_manifest(output / "inputs-sha256.json")
     binary_manifest = output / "binaries-sha256.json"
     if args.reuse_build:

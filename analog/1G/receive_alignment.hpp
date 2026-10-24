@@ -5,8 +5,8 @@ using namespace cpphdl;
 
 // Cross recovered GMII to a reference clock without sampling a multibit bus directly.
 // Both clock domains must observe reset before traffic resumes. The board supplies
-// one reference oscillator; rx_clk is an internally recovered clock, not another
-// reference input. This block does not implement the analog clock recovery loop.
+// one reference oscillator; rx_clk may be a recovered symbol clock or the
+// fixed ADC clock with receive_enable_in marking recovered symbol ticks.
 class ReceiveClockAligner : public Module {
     static constexpr unsigned DEPTH = 64;
     static constexpr unsigned MASK = DEPTH - 1;
@@ -15,35 +15,36 @@ class ReceiveClockAligner : public Module {
 
 public:
     _PORT(u<10>) receive_in;
+    _PORT(bool) receive_enable_in;
     _PORT(u<10>) aligned_out = _ASSIGN_REG(output_reg);
     _PORT(bool) overflow_out = _ASSIGN_REG(overflow_reg);
     _PORT(bool) fault_out = _ASSIGN_REG(fault_reg);
 
 private:
     memory<u<10>, 1, DEPTH> words;
-    reg<u<POINTER_BITS>> write_bin, write_gray, read_bin, read_gray;
+    reg<u<POINTER_BITS>> write_bin{}, write_gray{}, read_bin{}, read_gray{};
     // Only Gray pointers and single-bit fault indications cross clock domains.
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> read_sync1;
+    reg<u<POINTER_BITS>> read_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> read_sync2;
+    reg<u<POINTER_BITS>> read_sync2{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> write_sync1;
+    reg<u<POINTER_BITS>> write_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> write_sync2;
-    reg<u<POINTER_BITS>> written_frames, written_frames_gray, read_frames, read_frames_gray;
+    reg<u<POINTER_BITS>> write_sync2{};
+    reg<u<POINTER_BITS>> written_frames{}, written_frames_gray{}, read_frames{}, read_frames_gray{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> frames_sync1;
+    reg<u<POINTER_BITS>> frames_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u<POINTER_BITS>> frames_sync2;
-    reg<u1> previous_valid, overflow_reg;
+    reg<u<POINTER_BITS>> frames_sync2{};
+    reg<u1> previous_valid{}, overflow_reg{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u1> overflow_sync1;
+    reg<u1> overflow_sync1{};
     // (* ASYNC_REG = "TRUE" *)
-    reg<u1> overflow_sync2;
-    reg<u1> in_frame, fault_reg;
-    reg<u<4>> gap;
-    reg<u<10>> output_reg;
+    reg<u1> overflow_sync2{};
+    reg<u1> in_frame{}, fault_reg{};
+    reg<u<4>> gap{};
+    reg<u<10>> output_reg{};
 
 public:
     void _assign() {}
@@ -54,8 +55,9 @@ public:
         read_sync1._next = read_gray;
         read_sync2._next = read_sync1;
         valid = (receive_in() & 0x100) != 0;
-        write = valid || previous_valid;
-        previous_valid._next = valid;
+        write = receive_enable_in() && (valid || previous_valid);
+        if (receive_enable_in())
+            previous_valid._next = valid;
         // Invert the two most significant Gray bits for the full comparison.
         full = write_gray == (read_sync2 ^ u<POINTER_BITS>(96));
         if (write && !overflow_reg) {

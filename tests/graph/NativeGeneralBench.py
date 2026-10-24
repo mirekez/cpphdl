@@ -9,7 +9,11 @@ import os
 from pathlib import Path
 import statistics
 import subprocess
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 WORKLOADS = {
     'alu': 'Eight independent 64-bit multiply/add/xor datapaths, 192 rounds each.',
@@ -44,6 +48,7 @@ def main():
     root = Path(__file__).resolve().parents[2]
     source = Path(__file__).with_suffix('.cc')
     work = args.work.resolve(); work.mkdir(parents=True, exist_ok=True)
+    toolchain = TestToolchain(args.cxx, None, work)
     sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
     report = dict(status='running', kind='native_graph_cross_design', device_performance=False,
                   started_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -67,7 +72,8 @@ def main():
     def run(command, log, timeout=300):
         with log.open('w') as stream:
             stream.write(' '.join(map(str,command))+'\n'); stream.flush()
-            result=subprocess.run(list(map(str,command)),stdout=stream,stderr=subprocess.STDOUT,timeout=timeout)
+            result=subprocess.run(toolchain.command(command),env=toolchain.env,
+                                  stdout=stream,stderr=subprocess.STDOUT,timeout=timeout)
         if result.returncode:raise RuntimeError(log.read_text()[-12000:])
     for name in args.workloads:
         directory=work/name;directory.mkdir(exist_ok=True)
@@ -92,7 +98,7 @@ def main():
         def measurement(mode,cycles,aggregate=False):
             def once():
                 result=subprocess.run([executable,mode,str(cycles),str(entry['instances']),'1'],
-                    capture_output=True,text=True,timeout=90)
+                    env=toolchain.env,capture_output=True,text=True,timeout=90)
                 if result.returncode:raise RuntimeError(name+' '+mode+': '+result.stdout+result.stderr)
                 item=json.loads(result.stdout)
                 if not item['verified']:raise RuntimeError('Unverified timing sample')

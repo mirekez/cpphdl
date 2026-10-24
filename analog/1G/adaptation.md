@@ -1,5 +1,11 @@
 # Sampled receiver and training boundary
 
+The original floating-point model below remains a separate reference.
+[ReceiveAdaptiveFilter](receive_filter.md) now implements fixed-point adaptation
+as actual C++RTL hardware. Electrical regressions run both on each solver's
+waveforms; hardware receives the known local digital symbols before shaping,
+while the original reference consumes measured shaped voltages.
+
 `sampled_adc` quantizes a normalized receive voltage into eight bits over
 `[-4, +4]` PAM levels and counts clips. It receives each solver's achieved
 waveform, not a generated expected symbol. This is a sampled behavioral model;

@@ -810,6 +810,33 @@
         return false;
     }
 
+    void collectNonRamArrayUses(const SyntaxNode& node, std::set<std::string>& found)
+    {
+        // Indexed RAM transactions cannot represent whole-bank values or async reset.
+        if (node.kind == SyntaxKind::IdentifierName) {
+            found.insert(tok(node.as<IdentifierNameSyntax>().identifier));
+            return;
+        }
+        if (node.kind == SyntaxKind::TimingControlStatement) {
+            const auto& timed = node.as<TimingControlStatementSyntax>();
+            const SyntaxNode* event = timed.timingControl;
+            if (event->kind == SyntaxKind::EventControlWithExpression) {
+                event = event->as<EventControlWithExpressionSyntax>().expr;
+            }
+            while (event->kind == SyntaxKind::ParenthesizedEventExpression) {
+                event = event->as<ParenthesizedEventExpressionSyntax>().expr;
+            }
+            if (event->kind == SyntaxKind::BinaryEventExpression) {
+                collectAssignedBases(*timed.statement, found);
+            }
+        }
+        for (size_t child = 0; child < node.getChildCount(); ++child) {
+            if (auto nested = node.childNode(child)) {
+                collectNonRamArrayUses(*nested, found);
+            }
+        }
+    }
+
     void collectSequentialAssignedBases(const SyntaxNode& node, std::set<std::string>& found)
     {
         if (node.kind == SyntaxKind::AlwaysBlock ||
@@ -1697,6 +1724,7 @@
         }
 
         for (auto member : node.members) {
+            collectNonRamArrayUses(*member, mod->nonRamArrayUses);
             collectSequentialAssignedBases(*member, mod->seqAssignedVars);
         }
 
@@ -2020,6 +2048,14 @@
                 type = regTypeFor(type);
             }
             mod->vars.push_back({type, name});
+            if (d->dimensions.empty()) {
+                mod->scalarOrPackedVarNames.insert(name);
+            }
+            for (auto modifier : node.modifiers) {
+                if (tok(modifier) == "const") {
+                    mod->constantVarNames.insert(name);
+                }
+            }
             if (d->initializer && d->initializer->expr) {
                 mod->varInitializers[name] = emitTypedExpr(*d->initializer->expr, type);
             }
@@ -2389,6 +2425,27 @@
         return !lhsWidth.empty() && lhsWidth == baseWidth;
     }
 
+    std::map<std::string, std::string> generateLoopHeaderLimits;
+
+    std::string generateLoopLimit(const ExpressionSyntax& expression)
+    {
+        const ExpressionSyntax* condition = &expression;
+        while (condition->kind == SyntaxKind::ParenthesizedExpression) {
+            condition = condition->as<ParenthesizedExpressionSyntax>().expression;
+        }
+        if (BinaryExpressionSyntax::isKind(condition->kind)) {
+            auto& binary = condition->as<BinaryExpressionSyntax>();
+            auto op = tok(binary.operatorToken);
+            if (op == "<" || op == "<=") {
+                // Compare syntax, not emitted text: operand masks can contain
+                // shifts whose '<' is not the generate loop's relational token.
+                auto limit = emitUntypedNumericExpr(*binary.right);
+                return op == "<=" ? "(" + limit + " + 1ull)" : limit;
+            }
+        }
+        throw std::runtime_error("unsupported generate loop condition: " + expression.toString());
+    }
+
     void handle(const LoopGenerateSyntax& node)
     {
         if (!mod) {
@@ -2399,16 +2456,14 @@
         auto iter = emitExpr(*node.iterationExpr);
         replaceIdentifierAll(stop, id, "i");
         replaceIdentifierAll(iter, id, "i");
-        auto limit = stop;
-        auto lt = limit.find('<');
-        if (lt != std::string::npos) {
-            limit = trim(limit.substr(lt + 1));
-        }
+        auto limit = generateLoopLimit(*node.stopExpr);
+        replaceIdentifierAll(limit, id, "i");
         auto init = emitExpr(*node.initialExpr);
         replaceIdentifierAll(init, id, "i");
         std::vector<std::string> methodLoopHeaders = {
             "for (unsigned i = " + init + ";" + stop + ";" + iter + ") {"
         };
+        generateLoopHeaderLimits[methodLoopHeaders.back()] = limit;
         mod->assignLines.push_back(methodLoopHeaders.back());
         emitGenerateMember(*node.block, id, limit, {{id, "i"}}, methodLoopHeaders);
         mod->assignLines.push_back("}");
@@ -2655,6 +2710,9 @@
             return;
         }
         if (node.kind == SyntaxKind::InitialBlock || node.kind == SyntaxKind::FinalBlock) {
+            if (node.kind == SyntaxKind::InitialBlock) {
+                collectAssignedBases(*node.statement, mod->initialAssignedVars);
+            }
             return;
         }
         auto comb = tok(node.keyword).find("comb") != std::string::npos;
@@ -2843,6 +2901,7 @@
         if (node.prototype->portList) {
             bool first = true;
             std::string lastDirection = "input";
+            std::string lastType = "bool";
             for (auto p : node.prototype->portList->ports) {
                 if (p->kind == SyntaxKind::FunctionPort) {
                     auto& fp = p->as<FunctionPortSyntax>();
@@ -2850,12 +2909,16 @@
                         m.args += ", ";
                     }
                     first = false;
-                    auto type = fp.dataType ? typeText(*fp.dataType) : "bool";
+                    // An untyped, direction-less function argument inherits the
+                    // preceding argument's type, not a fresh one-bit default.
+                    auto type = fp.dataType ? typeText(*fp.dataType) :
+                        (fp.direction ? "bool" : lastType);
                     if (mod->isPackage) {
                         if (type.rfind("logic<", 0) != 0 && type.rfind("u<", 0) != 0) {
                             type = constexprType(type);
                         }
                     }
+                    lastType = type;
                     auto name = tok(fp.declarator->name);
                     std::string direction = lastDirection;
                     if (fp.direction) {
@@ -3071,15 +3134,14 @@
             applyGenerateReplacements(iter);
             replaceIdentifierAll(stop, loopId, loopVar);
             replaceIdentifierAll(iter, loopId, loopVar);
-            auto limit = stop;
-            auto lt = limit.find('<');
-            if (lt != std::string::npos) {
-                limit = trim(limit.substr(lt + 1));
-            }
+            auto limit = generateLoopLimit(*loop.stopExpr);
+            applyGenerateReplacements(limit);
+            replaceIdentifierAll(limit, loopId, loopVar);
             auto init = emitExpr(*loop.initialExpr);
             applyGenerateReplacements(init);
             replaceIdentifierAll(init, loopId, loopVar);
             auto loopHeader = "for (unsigned " + loopVar + " = " + init + ";" + stop + ";" + iter + ") {";
+            generateLoopHeaderLimits[loopHeader] = limit;
             mod->assignLines.push_back(loopHeader);
             auto nestedReplacements = replacements;
             if (nestedReplacements.empty() && !index.empty()) {
@@ -3280,14 +3342,14 @@
                         continue;
                     }
                     auto loopName = trim(text.substr(nameBegin, equal - nameBegin));
-                    auto condition = trim(text.substr(firstSemi + 1, secondSemi - firstSemi - 1));
-                    auto less = condition.find('<');
-                    if (loopName.empty() || less == std::string::npos ||
-                        less + 1 >= condition.size()) {
+                    auto limit = generateLoopHeaderLimits.find(text);
+                    if (loopName.empty()) {
                         continue;
                     }
-                    activeLoops.push_back({loopName,
-                        dropExtraTrailingClosingParens(trim(condition.substr(less + 1)))});
+                    if (limit == generateLoopHeaderLimits.end()) {
+                        throw std::runtime_error("generate loop header has no syntax-derived limit: " + text);
+                    }
+                    activeLoops.push_back({loopName, limit->second});
                 }
                 if (activeLoops.empty()) {
                     activeLoops.push_back({"i", indexLimit});
@@ -5279,6 +5341,26 @@
         if (unpacked.size() == 1 && sequentialElementStorage) {
             return "memory<" + text + ",1," + unpacked[0] + ">";
         }
+        if (unpacked.empty() && sequentialElementStorage &&
+            mod->nonblockingAssignedVars.count(declaratorName) &&
+            !mod->nonRamArrayUses.count(declaratorName)) {
+            // A typedef must not turn an indexed SRAM into a register-array mux tree.
+            // Preserve the packed row and lower only the outer unpacked dimension.
+            auto resolved = resolveAliasValueType(text);
+            auto dimensions = templateArgsFor(resolved, "array");
+            if (dimensions.size() == 2) {
+                auto rowType = resolveAliasValueType(dimensions[0]);
+                auto rowDimensions = templateArgsFor(rowType, "array");
+                if (rowDimensions.size() == 3 && trim(rowDimensions[2]) == "true" &&
+                    isNumericValueType(resolveAliasValueType(rowDimensions[0]))) {
+                    return "memory<" + rowDimensions[0] + "," + rowDimensions[1] +
+                        "," + dimensions[1] + ">";
+                }
+                if (isNumericValueType(rowType)) {
+                    return "memory<" + dimensions[0] + ",1," + dimensions[1] + ">";
+                }
+            }
+        }
         for (auto it = unpacked.rbegin(); it != unpacked.rend(); ++it) {
             text = "array<" + text + "," + *it + ">";
         }
@@ -5676,45 +5758,45 @@
                     }
                 }
             }
-            else if (st.expr->kind == SyntaxKind::InvocationExpression) {
-                auto& call = st.expr->as<InvocationExpressionSyntax>();
-                auto directions = functionArgumentDirections(call.left->toString());
-                if (directions && call.arguments) {
-                    size_t index = 0;
-                    for (auto argument : call.arguments->parameters) {
-                        if (index >= directions->size()) {
-                            break;
-                        }
-                        const auto& direction = (*directions)[index++];
-                        if (direction != "output" && direction != "inout" && direction != "ref") {
-                            continue;
-                        }
-                        if (argument->kind != SyntaxKind::OrderedArgument) {
-                            continue;
-                        }
-                        auto expressionNode = argument->as<OrderedArgumentSyntax>().expr;
-                        const ExpressionSyntax* expression = nullptr;
-                        if (expressionNode && ExpressionSyntax::isKind(expressionNode->kind)) {
-                            expression = &expressionNode->as<ExpressionSyntax>();
-                        }
-                        else if (expressionNode && expressionNode->kind == SyntaxKind::SimplePropertyExpr) {
-                            auto& property = expressionNode->as<SimplePropertyExprSyntax>();
-                            if (property.expr && property.expr->kind == SyntaxKind::SimpleSequenceExpr) {
-                                auto sequenceExpression = property.expr->as<SimpleSequenceExprSyntax>().expr;
-                                if (sequenceExpression && ExpressionSyntax::isKind(sequenceExpression->kind)) {
-                                    expression = &sequenceExpression->as<ExpressionSyntax>();
-                                }
+        }
+        else if (node.kind == SyntaxKind::InvocationExpression) {
+            auto& call = node.as<InvocationExpressionSyntax>();
+            auto directions = functionArgumentDirections(call.left->toString());
+            if (directions && call.arguments) {
+                size_t index = 0;
+                for (auto argument : call.arguments->parameters) {
+                    if (index >= directions->size()) {
+                        break;
+                    }
+                    const auto& direction = (*directions)[index++];
+                    if (direction != "output" && direction != "inout" && direction != "ref") {
+                        continue;
+                    }
+                    if (argument->kind != SyntaxKind::OrderedArgument) {
+                        continue;
+                    }
+                    auto expressionNode = argument->as<OrderedArgumentSyntax>().expr;
+                    const ExpressionSyntax* expression = nullptr;
+                    if (expressionNode && ExpressionSyntax::isKind(expressionNode->kind)) {
+                        expression = &expressionNode->as<ExpressionSyntax>();
+                    }
+                    else if (expressionNode && expressionNode->kind == SyntaxKind::SimplePropertyExpr) {
+                        auto& property = expressionNode->as<SimplePropertyExprSyntax>();
+                        if (property.expr && property.expr->kind == SyntaxKind::SimpleSequenceExpr) {
+                            auto sequenceExpression = property.expr->as<SimpleSequenceExprSyntax>().expr;
+                            if (sequenceExpression && ExpressionSyntax::isKind(sequenceExpression->kind)) {
+                                expression = &sequenceExpression->as<ExpressionSyntax>();
                             }
                         }
-                        if (!expression) {
-                            continue;
-                        }
-                        auto name = assignedBase(*expression);
-                        if (!name.empty()) {
-                            found.insert(name);
-                            if (partial && expression->kind != SyntaxKind::IdentifierName) {
-                                partial->insert(name);
-                            }
+                    }
+                    if (!expression) {
+                        continue;
+                    }
+                    auto name = assignedBase(*expression);
+                    if (!name.empty()) {
+                        found.insert(name);
+                        if (partial && expression->kind != SyntaxKind::IdentifierName) {
+                            partial->insert(name);
                         }
                     }
                 }
@@ -5746,6 +5828,13 @@
         else if (node.kind == SyntaxKind::SequentialBlockStatement || node.kind == SyntaxKind::ParallelBlockStatement) {
             for (auto item : node.as<BlockStatementSyntax>().items) {
                 collectAssignedBases(*item, found, partial, nonblocking);
+            }
+        }
+        if (node.kind == SyntaxKind::ExpressionStatement || ExpressionSyntax::isKind(node.kind)) {
+            for (size_t child = 0; child < node.getChildCount(); ++child) {
+                if (auto nested = node.childNode(child)) {
+                    collectAssignedBases(*nested, found, partial, nonblocking);
+                }
             }
         }
     }

@@ -2,14 +2,19 @@
 import argparse
 from pathlib import Path
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 import tempfile
 
 p=argparse.ArgumentParser();p.add_argument('--cxx',required=True);a=p.parse_args()
 root=Path(__file__).resolve().parents[2]
 with tempfile.TemporaryDirectory(prefix='cpphdl-settle-') as temporary:
     work=Path(temporary)
+    toolchain = TestToolchain(a.cxx, None, work)
     def run(args):
-        r=subprocess.run(list(map(str,args)),capture_output=True,text=True,timeout=240)
+        r=subprocess.run(toolchain.command(args),env=toolchain.env,capture_output=True,text=True,timeout=240)
         if r.returncode:raise RuntimeError(r.stdout+r.stderr)
         return r.stdout
     (work/'emit.cpp').write_text(r'''

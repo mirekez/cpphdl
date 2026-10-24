@@ -1,0 +1,221 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGEmphasizedPAM5Driver(Vdd, Vss, P, N, MAIN_P0, MAIN_N0, HISTORY_P0, HISTORY_N0, MAIN_P1, MAIN_N1, HISTORY_P1, HISTORY_N1, MAIN_P2, MAIN_N2, HISTORY_P2, HISTORY_N2, MAIN_P3, MAIN_N3, HISTORY_P3, HISTORY_N3);
+    inout Vdd, Vss, P, N, MAIN_P0, MAIN_N0, HISTORY_P0, HISTORY_N0, MAIN_P1, MAIN_N1, HISTORY_P1, HISTORY_N1, MAIN_P2, MAIN_N2, HISTORY_P2, HISTORY_N2, MAIN_P3, MAIN_N3, HISTORY_P3, HISTORY_N3;
+    electrical Vdd, Vss, P, N, MAIN_P0, MAIN_N0, HISTORY_P0, HISTORY_N0, MAIN_P1, MAIN_N1, HISTORY_P1, HISTORY_N1, MAIN_P2, MAIN_N2, HISTORY_P2, HISTORY_N2, MAIN_P3, MAIN_N3, HISTORY_P3, HISTORY_N3;
+    electrical cpphdl_n11;
+    electrical cpphdl_n12;
+    electrical cpphdl_n13;
+    electrical cpphdl_n14;
+    electrical cpphdl_n20;
+    electrical cpphdl_n29;
+    electrical cpphdl_n30;
+    electrical cpphdl_n31;
+    electrical cpphdl_n32;
+
+    // Square-law channel, including reverse conduction. This is not a BSIM model.
+    analog function real cpphdl_channel;
+        input vgs, vds, beta, threshold, polarity;
+        real vgs, vds, beta, threshold, polarity;
+        real gate, drain, direction, overdrive, current;
+        begin
+            gate = polarity * vgs;
+            drain = polarity * vds;
+            direction = 1.0;
+            if (drain < 0.0) begin
+                gate = gate - drain;
+                drain = -drain;
+                direction = -1.0;
+            end
+            overdrive = gate - threshold;
+            current = 0.0;
+            if (overdrive > 0.0) begin
+                if (drain < overdrive)
+                    current = beta * (overdrive * drain - drain * drain / 2.0);
+                else
+                    current = beta * overdrive * overdrive / 2.0;
+            end
+            cpphdl_channel = polarity * direction * current;
+        end
+    endfunction
+
+    analog begin
+        // device 0, IC IC1, analog/1G/IHPSG13G2/biased_driver.hpp:14
+        I(Vdd, cpphdl_n20) <+ V(Vdd, cpphdl_n20) / 1525.0;
+        // device 1, IC IC1, analog/1G/IHPSG13G2/biased_driver.hpp:15
+        I(cpphdl_n20, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n20, Vss), 0.014268727705112965, 0.34999999999999998, 1.0);
+        // device 2, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:55
+        I(Vdd, P) <+ V(Vdd, P) / 50.0;
+        // device 3, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:56
+        I(Vdd, N) <+ V(Vdd, N) / 50.0;
+        // device 4, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:57
+        I(P, Vdd) <+ 4.9999999999999999e-13 * ddt(V(P, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 5, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:58
+        I(N, Vdd) <+ 4.9999999999999999e-13 * ddt(V(N, Vdd)); // Bench initial voltage = 0.0 V.
+        // device 6, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n11) <+ cpphdl_channel(V(MAIN_P0, cpphdl_n11), V(P, cpphdl_n11), 0.02, 0.69999999999999996, 1.0);
+        // device 7, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n11) <+ cpphdl_channel(V(MAIN_N0, cpphdl_n11), V(N, cpphdl_n11), 0.02, 0.69999999999999996, 1.0);
+        // device 8, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n11, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n11, Vss), 0.0659862954984239, 0.34999999999999998, 1.0);
+        // device 9, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n12) <+ cpphdl_channel(V(MAIN_P1, cpphdl_n12), V(P, cpphdl_n12), 0.02, 0.69999999999999996, 1.0);
+        // device 10, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n12) <+ cpphdl_channel(V(MAIN_N1, cpphdl_n12), V(N, cpphdl_n12), 0.02, 0.69999999999999996, 1.0);
+        // device 11, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n12, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n12, Vss), 0.0659862954984239, 0.34999999999999998, 1.0);
+        // device 12, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n13) <+ cpphdl_channel(V(MAIN_P2, cpphdl_n13), V(P, cpphdl_n13), 0.02, 0.69999999999999996, 1.0);
+        // device 13, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n13) <+ cpphdl_channel(V(MAIN_N2, cpphdl_n13), V(N, cpphdl_n13), 0.02, 0.69999999999999996, 1.0);
+        // device 14, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n13, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n13, Vss), 0.0659862954984239, 0.34999999999999998, 1.0);
+        // device 15, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:60
+        I(P, cpphdl_n14) <+ cpphdl_channel(V(MAIN_P3, cpphdl_n14), V(P, cpphdl_n14), 0.02, 0.69999999999999996, 1.0);
+        // device 16, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:61
+        I(N, cpphdl_n14) <+ cpphdl_channel(V(MAIN_N3, cpphdl_n14), V(N, cpphdl_n14), 0.02, 0.69999999999999996, 1.0);
+        // device 17, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/biased_driver.hpp:62
+        I(cpphdl_n14, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n14, Vss), 0.0659862954984239, 0.34999999999999998, 1.0);
+        // device 18, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:39
+        I(cpphdl_n20, Vss) <+ 6e-10 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 19, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:41
+        I(P, cpphdl_n29) <+ cpphdl_channel(V(HISTORY_P0, cpphdl_n29), V(P, cpphdl_n29), 0.02, 0.69999999999999996, 1.0);
+        // device 20, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:42
+        I(N, cpphdl_n29) <+ cpphdl_channel(V(HISTORY_N0, cpphdl_n29), V(N, cpphdl_n29), 0.02, 0.69999999999999996, 1.0);
+        // device 21, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:43
+        I(cpphdl_n29, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n29, Vss), 0.021995431832807968, 0.34999999999999998, 1.0);
+        // device 22, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:44
+        I(cpphdl_n29, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n29, Vss)); // Bench initial voltage = 0.0 V.
+        // device 23, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:45
+        I(cpphdl_n11, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n11, Vss)); // Bench initial voltage = 0.0 V.
+        // device 24, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:46
+        I(HISTORY_P0, cpphdl_n29) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_P0, cpphdl_n29)); // Bench initial voltage = 0.0 V.
+        // device 25, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:47
+        I(HISTORY_N0, cpphdl_n29) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_N0, cpphdl_n29)); // Bench initial voltage = 0.0 V.
+        // device 26, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:48
+        I(MAIN_P0, cpphdl_n11) <+ 1.7999999999999999e-13 * ddt(V(MAIN_P0, cpphdl_n11)); // Bench initial voltage = 0.0 V.
+        // device 27, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:49
+        I(MAIN_N0, cpphdl_n11) <+ 1.7999999999999999e-13 * ddt(V(MAIN_N0, cpphdl_n11)); // Bench initial voltage = 0.0 V.
+        // device 28, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:50
+        I(HISTORY_P0, P) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_P0, P)); // Bench initial voltage = 0.0 V.
+        // device 29, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:51
+        I(HISTORY_N0, N) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_N0, N)); // Bench initial voltage = 0.0 V.
+        // device 30, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:52
+        I(MAIN_P0, P) <+ 4.4999999999999998e-14 * ddt(V(MAIN_P0, P)); // Bench initial voltage = 0.0 V.
+        // device 31, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:53
+        I(MAIN_N0, N) <+ 4.4999999999999998e-14 * ddt(V(MAIN_N0, N)); // Bench initial voltage = 0.0 V.
+        // device 32, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:54
+        I(cpphdl_n20, Vss) <+ 8.0999999999999998e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 33, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:56
+        I(cpphdl_n20, cpphdl_n11) <+ 2.025e-13 * ddt(V(cpphdl_n20, cpphdl_n11)); // Bench initial voltage = 0.0 V.
+        // device 34, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:58
+        I(cpphdl_n20, Vss) <+ 2.7000000000000001e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 35, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:60
+        I(cpphdl_n20, cpphdl_n29) <+ 6.7500000000000003e-14 * ddt(V(cpphdl_n20, cpphdl_n29)); // Bench initial voltage = 0.0 V.
+        // device 36, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:41
+        I(P, cpphdl_n30) <+ cpphdl_channel(V(HISTORY_P1, cpphdl_n30), V(P, cpphdl_n30), 0.02, 0.69999999999999996, 1.0);
+        // device 37, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:42
+        I(N, cpphdl_n30) <+ cpphdl_channel(V(HISTORY_N1, cpphdl_n30), V(N, cpphdl_n30), 0.02, 0.69999999999999996, 1.0);
+        // device 38, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:43
+        I(cpphdl_n30, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n30, Vss), 0.021995431832807968, 0.34999999999999998, 1.0);
+        // device 39, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:44
+        I(cpphdl_n30, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n30, Vss)); // Bench initial voltage = 0.0 V.
+        // device 40, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:45
+        I(cpphdl_n12, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n12, Vss)); // Bench initial voltage = 0.0 V.
+        // device 41, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:46
+        I(HISTORY_P1, cpphdl_n30) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_P1, cpphdl_n30)); // Bench initial voltage = 0.0 V.
+        // device 42, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:47
+        I(HISTORY_N1, cpphdl_n30) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_N1, cpphdl_n30)); // Bench initial voltage = 0.0 V.
+        // device 43, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:48
+        I(MAIN_P1, cpphdl_n12) <+ 1.7999999999999999e-13 * ddt(V(MAIN_P1, cpphdl_n12)); // Bench initial voltage = 0.0 V.
+        // device 44, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:49
+        I(MAIN_N1, cpphdl_n12) <+ 1.7999999999999999e-13 * ddt(V(MAIN_N1, cpphdl_n12)); // Bench initial voltage = 0.0 V.
+        // device 45, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:50
+        I(HISTORY_P1, P) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_P1, P)); // Bench initial voltage = 0.0 V.
+        // device 46, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:51
+        I(HISTORY_N1, N) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_N1, N)); // Bench initial voltage = 0.0 V.
+        // device 47, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:52
+        I(MAIN_P1, P) <+ 4.4999999999999998e-14 * ddt(V(MAIN_P1, P)); // Bench initial voltage = 0.0 V.
+        // device 48, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:53
+        I(MAIN_N1, N) <+ 4.4999999999999998e-14 * ddt(V(MAIN_N1, N)); // Bench initial voltage = 0.0 V.
+        // device 49, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:54
+        I(cpphdl_n20, Vss) <+ 8.0999999999999998e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 50, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:56
+        I(cpphdl_n20, cpphdl_n12) <+ 2.025e-13 * ddt(V(cpphdl_n20, cpphdl_n12)); // Bench initial voltage = 0.0 V.
+        // device 51, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:58
+        I(cpphdl_n20, Vss) <+ 2.7000000000000001e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 52, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:60
+        I(cpphdl_n20, cpphdl_n30) <+ 6.7500000000000003e-14 * ddt(V(cpphdl_n20, cpphdl_n30)); // Bench initial voltage = 0.0 V.
+        // device 53, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:41
+        I(P, cpphdl_n31) <+ cpphdl_channel(V(HISTORY_P2, cpphdl_n31), V(P, cpphdl_n31), 0.02, 0.69999999999999996, 1.0);
+        // device 54, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:42
+        I(N, cpphdl_n31) <+ cpphdl_channel(V(HISTORY_N2, cpphdl_n31), V(N, cpphdl_n31), 0.02, 0.69999999999999996, 1.0);
+        // device 55, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:43
+        I(cpphdl_n31, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n31, Vss), 0.021995431832807968, 0.34999999999999998, 1.0);
+        // device 56, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:44
+        I(cpphdl_n31, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n31, Vss)); // Bench initial voltage = 0.0 V.
+        // device 57, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:45
+        I(cpphdl_n13, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n13, Vss)); // Bench initial voltage = 0.0 V.
+        // device 58, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:46
+        I(HISTORY_P2, cpphdl_n31) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_P2, cpphdl_n31)); // Bench initial voltage = 0.0 V.
+        // device 59, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:47
+        I(HISTORY_N2, cpphdl_n31) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_N2, cpphdl_n31)); // Bench initial voltage = 0.0 V.
+        // device 60, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:48
+        I(MAIN_P2, cpphdl_n13) <+ 1.7999999999999999e-13 * ddt(V(MAIN_P2, cpphdl_n13)); // Bench initial voltage = 0.0 V.
+        // device 61, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:49
+        I(MAIN_N2, cpphdl_n13) <+ 1.7999999999999999e-13 * ddt(V(MAIN_N2, cpphdl_n13)); // Bench initial voltage = 0.0 V.
+        // device 62, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:50
+        I(HISTORY_P2, P) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_P2, P)); // Bench initial voltage = 0.0 V.
+        // device 63, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:51
+        I(HISTORY_N2, N) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_N2, N)); // Bench initial voltage = 0.0 V.
+        // device 64, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:52
+        I(MAIN_P2, P) <+ 4.4999999999999998e-14 * ddt(V(MAIN_P2, P)); // Bench initial voltage = 0.0 V.
+        // device 65, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:53
+        I(MAIN_N2, N) <+ 4.4999999999999998e-14 * ddt(V(MAIN_N2, N)); // Bench initial voltage = 0.0 V.
+        // device 66, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:54
+        I(cpphdl_n20, Vss) <+ 8.0999999999999998e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 67, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:56
+        I(cpphdl_n20, cpphdl_n13) <+ 2.025e-13 * ddt(V(cpphdl_n20, cpphdl_n13)); // Bench initial voltage = 0.0 V.
+        // device 68, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:58
+        I(cpphdl_n20, Vss) <+ 2.7000000000000001e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 69, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:60
+        I(cpphdl_n20, cpphdl_n31) <+ 6.7500000000000003e-14 * ddt(V(cpphdl_n20, cpphdl_n31)); // Bench initial voltage = 0.0 V.
+        // device 70, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:41
+        I(P, cpphdl_n32) <+ cpphdl_channel(V(HISTORY_P3, cpphdl_n32), V(P, cpphdl_n32), 0.02, 0.69999999999999996, 1.0);
+        // device 71, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:42
+        I(N, cpphdl_n32) <+ cpphdl_channel(V(HISTORY_N3, cpphdl_n32), V(N, cpphdl_n32), 0.02, 0.69999999999999996, 1.0);
+        // device 72, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:43
+        I(cpphdl_n32, Vss) <+ cpphdl_channel(V(cpphdl_n20, Vss), V(cpphdl_n32, Vss), 0.021995431832807968, 0.34999999999999998, 1.0);
+        // device 73, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:44
+        I(cpphdl_n32, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n32, Vss)); // Bench initial voltage = 0.0 V.
+        // device 74, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:45
+        I(cpphdl_n14, Vss) <+ 1.1e-13 * ddt(V(cpphdl_n14, Vss)); // Bench initial voltage = 0.0 V.
+        // device 75, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:46
+        I(HISTORY_P3, cpphdl_n32) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_P3, cpphdl_n32)); // Bench initial voltage = 0.0 V.
+        // device 76, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:47
+        I(HISTORY_N3, cpphdl_n32) <+ 1.7999999999999999e-13 * ddt(V(HISTORY_N3, cpphdl_n32)); // Bench initial voltage = 0.0 V.
+        // device 77, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:48
+        I(MAIN_P3, cpphdl_n14) <+ 1.7999999999999999e-13 * ddt(V(MAIN_P3, cpphdl_n14)); // Bench initial voltage = 0.0 V.
+        // device 78, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:49
+        I(MAIN_N3, cpphdl_n14) <+ 1.7999999999999999e-13 * ddt(V(MAIN_N3, cpphdl_n14)); // Bench initial voltage = 0.0 V.
+        // device 79, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:50
+        I(HISTORY_P3, P) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_P3, P)); // Bench initial voltage = 0.0 V.
+        // device 80, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:51
+        I(HISTORY_N3, N) <+ 4.4999999999999998e-14 * ddt(V(HISTORY_N3, N)); // Bench initial voltage = 0.0 V.
+        // device 81, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:52
+        I(MAIN_P3, P) <+ 4.4999999999999998e-14 * ddt(V(MAIN_P3, P)); // Bench initial voltage = 0.0 V.
+        // device 82, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:53
+        I(MAIN_N3, N) <+ 4.4999999999999998e-14 * ddt(V(MAIN_N3, N)); // Bench initial voltage = 0.0 V.
+        // device 83, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:54
+        I(cpphdl_n20, Vss) <+ 8.0999999999999998e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 84, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:56
+        I(cpphdl_n20, cpphdl_n14) <+ 2.025e-13 * ddt(V(cpphdl_n20, cpphdl_n14)); // Bench initial voltage = 0.0 V.
+        // device 85, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:58
+        I(cpphdl_n20, Vss) <+ 2.7000000000000001e-13 * ddt(V(cpphdl_n20, Vss)); // Bench initial voltage = 0.0 V.
+        // device 86, IC OneGEmphasizedPAM5Driver, analog/1G/IHPSG13G2/emphasized_driver.hpp:60
+        I(cpphdl_n20, cpphdl_n32) <+ 6.7500000000000003e-14 * ddt(V(cpphdl_n20, cpphdl_n32)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

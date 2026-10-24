@@ -49,11 +49,11 @@ def main(argv: list[str]) -> int:
     work.mkdir(parents=True, exist_ok=True)
 
     ensure = pathlib.Path(__file__).with_name("ensure_git_repo.py")
-    subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "isa"], check=True)
-    subprocess.run(["git", "-C", str(checkout), "submodule", "update", "--init", "--recursive"], check=True)
+    if subprocess.run([sys.executable, str(ensure), str(checkout), REPO, "isa"]).returncode:
+        return 1
 
     env = os.environ.copy()
-    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or "/home/me/riscv"
+    riscv_home = env.get("RISCV_HOME") or env.get("RISCV") or str(pathlib.Path.home() / "riscv")
     env["RISCV_HOME"] = riscv_home
     env.setdefault("RISCV", riscv_home)
     env["PATH"] = str(pathlib.Path(riscv_home) / "bin") + os.pathsep + env.get("PATH", "")

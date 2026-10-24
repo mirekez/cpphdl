@@ -80,6 +80,7 @@ struct element {
     bool stepped = false;
     bool falling = false;
     bool buffered = false;
+    bool hold_basis = true; // Backend constraint basis; every capacitor remains active during integration.
     std::size_t auxiliary = 0;
     std::string file{};
     unsigned line = 0;
@@ -106,6 +107,7 @@ struct digital_operation {
     double low = 0, high = 0;
     std::function<bit_value()> read{};
     const void* native_identity = nullptr;
+    bool retain_in_band = false;
 };
 struct clocked_process {
     std::size_t clock;
@@ -144,6 +146,17 @@ struct trace_obligation {
     std::string status = "unverified";
 };
 
+struct matrix_entry {
+    std::size_t row, column;
+    double value;
+};
+
+using linear_system_backend = std::function<std::vector<double>(std::size_t,
+    const std::vector<matrix_entry>&, const std::vector<double>&)>;
+inline constexpr double newton_residual_tolerance = 1e-8;
+
+enum class integration_method { backward_euler, bdf2 };
+
 class simulation {
     friend class IC;
     inline static thread_local simulation* current_ = nullptr;
@@ -152,16 +165,29 @@ class simulation {
     std::vector<std::size_t> index_;
     std::vector<std::size_t> nodes_;
     std::vector<double> solution_;
+    std::vector<double> older_solution_;
+    double previous_dt_ = 0;
+    bool history_ready_ = false;
+    std::pair<double, double> derivative_weights(double dt) const {
+        if (method != integration_method::bdf2 || !history_ready_ || previous_dt_ <= 0 || dt > 2 * previous_dt_)
+            return {1, 0};
+        const double ratio = dt / previous_dt_;
+        return {(1 + 2 * ratio) / (1 + ratio), ratio * ratio / (1 + ratio)};
+    }
     std::vector<observation> observations_;
     std::vector<obligation> obligations_;
     std::vector<trace_obligation> trace_obligations_;
-    std::vector<std::vector<std::optional<double>>> obligation_samples_;
+    std::vector<std::optional<double>> obligation_samples_;
+    std::vector<bool> assumption_pass_;
     bool frozen_ = false;
     std::string status_ = "unverified";
     std::size_t unknowns_ = 0;
     std::vector<component_info> components_;
     std::size_t active_component_ = no_component;
     std::vector<clocked_process> clocked_;
+    std::vector<bit_value> previous_clocks_;
+    double accepted_time_ = 0;
+    bool transient_started_ = false, transient_failed_ = false;
 
     std::size_t register_component() {
         editable();
@@ -171,6 +197,7 @@ class simulation {
     }
 
     void compile();
+    void integrate(duration stop, duration step, bool continuation);
     std::pair<std::vector<double>, std::vector<double>> residual(const std::vector<double>& x,
                                                                  const std::vector<double>& old, double dt, double time,
                                                                  bool hold, bool initial, bool right) const;
@@ -179,6 +206,8 @@ class simulation {
     std::vector<double> settle(std::vector<double> x, const std::vector<double>& old, double dt, double time,
                                bool hold = false, bool initial = false, bool right = true);
     std::vector<std::vector<double>> jacobian(const std::vector<double>& x, double dt, bool hold) const;
+    void stamp_jacobian(const std::vector<double>& x, double dt, bool hold,
+                       const std::function<void(std::size_t, std::size_t, double)>& add) const;
     void combinational();
     void stimuli(double time, bool right);
     void record(double time);
@@ -203,6 +232,9 @@ public:
     std::vector<sample> trace;
     std::size_t newton_iterations = 0, register_commits = 0;
     bool analytic_jacobian = false;
+    // BDF2 uses accepted history and restarts at discontinuities.
+    integration_method method = integration_method::backward_euler;
+    linear_system_backend linear_backend; // Empty selects the dependency-free dense solver.
     duration minimum_step{0}; // Optional Newton-failure bisection; zero retains fixed-step failure behavior.
     simulation() : previous_(current_) {
         current_ = this;
@@ -317,6 +349,14 @@ public:
         trace_obligations_.push_back({std::move(name), std::move(predicate)});
     }
     void run(duration stop, duration step);
+    // Continue the existing physical and digital state to an absolute time.
+    void advance_to(duration stop, duration step);
+    duration elapsed() const { return duration(accepted_time_); }
+    void discard_trace() {
+        if (!trace_obligations_.empty())
+            throw diagnostic("E_TRACE_HISTORY", "a trace requirement needs the retained complete trajectory");
+        trace.clear();
+    }
     const std::string& status() const {
         return status_;
     }
@@ -760,6 +800,15 @@ inline digital_purpose sim_sense(const electrical& a, const electrical& referenc
     op.low = low.value;
     op.high = high.value;
     return {&a.owner(), 1, op};
+}
+
+// Simulation-only hysteretic interpretation. Retention adds no input current,
+// physical gate or startup level; an initially in-band voltage remains unknown.
+inline digital_purpose sim_schmitt_sense(const electrical& a, const electrical& reference, analog::voltage low,
+                                        analog::voltage high) {
+    auto purpose = sim_sense(a, reference, low, high);
+    purpose.operation.retain_in_band = true;
+    return purpose;
 }
 
 // Simulation-only bit-to-rail path; resistance models loading, not an output-stage topology.

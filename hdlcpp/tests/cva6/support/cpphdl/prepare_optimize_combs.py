@@ -231,7 +231,8 @@ def main() -> int:
             (
                 f"{name}* cpphdlCombsOpaque{index:03d}_{marker:03d} = nullptr;"
                 if name in opaque_names
-                else f"{name}* cpphdlCombsCollect{index:03d}_{marker:03d} = nullptr;"
+                else f"static_assert(sizeof({name}) != 0);\n"
+                     f"{name}* cpphdlCombsCollect{index:03d}_{marker:03d} = nullptr;"
             )
             for marker, name in enumerate(targets)
         )

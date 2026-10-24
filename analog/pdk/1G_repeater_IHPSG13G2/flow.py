@@ -17,6 +17,7 @@ import sys
 import time
 
 from checks import chip_blockers
+from tool_process import configure_cleanup, execute
 
 SOURCE = Path(__file__).resolve().parent
 REPO = SOURCE.parents[2]
@@ -46,11 +47,11 @@ def run(args):
         with log.open("w") as file:
             if output:
                 with output.open("w") as stdout:
-                    process = subprocess.run([str(x) for x in command], cwd=work, env=environment,
-                                             stdout=stdout, stderr=file, timeout=timeout)
+                    process = execute([str(x) for x in command], cwd=work, env=environment,
+                                      stdout=stdout, stderr=file, timeout=timeout)
             else:
-                process = subprocess.run([str(x) for x in command], cwd=work, env=environment,
-                                         stdout=file, stderr=subprocess.STDOUT, timeout=timeout)
+                process = execute([str(x) for x in command], cwd=work, env=environment,
+                                  stdout=file, stderr=subprocess.STDOUT, timeout=timeout)
         report["stages"].append(dict(name=name, seconds=round(time.monotonic() - started, 3),
                                      returncode=process.returncode, log=str(log)))
         save()
@@ -167,12 +168,18 @@ write_json {quoted(work / 'mapped.json')}
                                          work / "core.cdl", work / "core.spef", work / "core.def", work / "route_tech.lef")}
         report["input_sha256"] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
                                   for path in (SOURCE / "repeater.hpp", SOURCE / "constraints.sdc",
-                                               SOURCE / "place_route.tcl", SOURCE / "fill_core.py", SOURCE / "route_tech.py", liberty,
+                                               SOURCE / "place_route.tcl", SOURCE / "clean_empty_nets.tcl", SOURCE / "tool_process.py",
+                                               SOURCE / "fill_core.py", SOURCE / "route_tech.py", liberty,
                                                libroot / "lef/sg13g2_tech.lef", libroot / "lef/sg13g2_stdcell.lef",
                                                libroot / "gds/sg13g2_stdcell.gds", libroot / "cdl/sg13g2_stdcell.cdl",
                                                libroot / "lib/sg13g2_stdcell_slow_1p08V_125C.lib",
                                                libroot / "lib/sg13g2_stdcell_fast_1p32V_m40C.lib", converter,
                                                tools / "rcx_patterns.rules")}
+        for pattern in ("drc/**/*.drc", "drc/**/*.json", "lvs/**/*.lvs"):
+            for path in verification.glob(pattern):
+                report["input_sha256"][str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (verification.parent / "python/sg13g2_pycell_lib").glob("*.json"):
+            report["input_sha256"][str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
         save()
         print("Core checks passed:", report["gds"])
         return 0
@@ -198,4 +205,5 @@ def main():
 
 
 if __name__ == "__main__":
+    configure_cleanup()
     sys.exit(main())

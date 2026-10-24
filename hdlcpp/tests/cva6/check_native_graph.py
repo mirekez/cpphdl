@@ -26,8 +26,8 @@ def main():
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[3]
     output = args.output.resolve()
-    if output.is_relative_to(repo) or output.exists():
-        parser.error('output must be a new directory outside the cpphdl checkout')
+    if Path('/tmp') not in output.parents or output.exists():
+        parser.error('output must be a new directory inside /tmp')
     if args.trials < 1:
         parser.error('trials must be positive')
     source = args.cva6_source.resolve(strict=True)

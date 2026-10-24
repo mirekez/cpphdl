@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.26...3.30)
+cmake_minimum_required(VERSION 3.28...3.31)
 
 project(hdlcpp LANGUAGES CXX)
 
@@ -6,6 +6,16 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/slang/CMakeLists.txt")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/slang-revision.txt")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/slang-revision.txt" HDLCPP_SLANG_REVISION LIMIT_COUNT 1)
+    find_package(Git REQUIRED)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}/slang" rev-parse HEAD
+        OUTPUT_VARIABLE slang_revision OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE slang_git_status)
+    if(NOT slang_git_status EQUAL 0 OR NOT slang_revision STREQUAL HDLCPP_SLANG_REVISION)
+        message(FATAL_ERROR "Slang must be at ${HDLCPP_SLANG_REVISION}, found '${slang_revision}'. "
+            "Run bash ${CMAKE_CURRENT_SOURCE_DIR}/setup_slang.sh; it preserves dirty checkouts.")
+    endif()
     set(SLANG_INCLUDE_TOOLS OFF CACHE BOOL "" FORCE)
     set(SLANG_INCLUDE_TESTS OFF CACHE BOOL "" FORCE)
     set(SLANG_USE_THREADS OFF CACHE BOOL "" FORCE)
@@ -13,8 +23,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/slang/CMakeLists.txt")
     add_subdirectory(slang)
 else()
     message(FATAL_ERROR
-        "Missing hdlcpp/slang. Clone it with: "
-        "git clone https://github.com/MikePopoloski/slang.git hdlcpp/slang")
+        "Missing pinned hdlcpp/slang. Run: "
+        "bash ${CMAKE_CURRENT_SOURCE_DIR}/setup_slang.sh")
 endif()
 
 add_executable(hdlcpp hdlcpp.cpp)
@@ -53,6 +63,15 @@ add_test(NAME hdlcpp_expression_helpers COMMAND bash
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    set(native_infrastructure_args)
+    if(HDLCPP_WIDTHS_VERILATOR)
+        list(APPEND native_infrastructure_args --verilator "${HDLCPP_WIDTHS_VERILATOR}")
+    endif()
+    add_test(NAME hdlcpp_native_infrastructure COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NativeInfrastructureChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/native-infrastructure" ${native_infrastructure_args})
+    set_tests_properties(hdlcpp_native_infrastructure PROPERTIES TIMEOUT 300)
     add_test(NAME hdlcpp_wide_select_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/WideSelectChecks.py"
         --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"

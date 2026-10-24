@@ -8,6 +8,7 @@ module ReceiveClockAligner (
 ,   input wire rx_clk
 ,   input wire reset
 ,   input wire[10-1:0] receive_in
+,   input wire receive_enable_in
 ,   output wire[10-1:0] aligned_out
 ,   output wire overflow_out
 ,   output wire fault_out
@@ -210,8 +211,10 @@ module ReceiveClockAligner (
             read_sync1_tmp = read_gray;
             read_sync2_tmp = read_sync1;
             valid=((receive_in & 64'h100)) != 64'h0;
-            write=valid || ((previous_valid) != '0);
-            previous_valid_tmp = valid;
+            write=receive_enable_in && ((valid || ((previous_valid) != '0)));
+            if (receive_enable_in) begin
+                previous_valid_tmp = valid;
+            end
             full=write_gray == ((read_sync2 ^ (unsigned'(64'(POINTER_BITS)))'(64'h60)));
             if (write && !((overflow_reg) != '0)) begin
                 if (full) begin
