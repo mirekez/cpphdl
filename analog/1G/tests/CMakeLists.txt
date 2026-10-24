@@ -128,6 +128,34 @@ if(EXISTS "${CPPHDL_1G_CONVERTER}" AND ONE_G_VERILATOR)
     LABELS "analog;1g;hardware;rtl" TIMEOUT 3600)
 endif()
 add_dependencies(check-analog analog_1g_receive_sample_recovery)
+foreach(dsp_case receive_dsp receive_dsp_pcs)
+  add_executable(analog_1g_${dsp_case} ${dsp_case}.cpp)
+  target_link_libraries(analog_1g_${dsp_case} PRIVATE cpphdl::runtime)
+  add_dependencies(check-analog analog_1g_${dsp_case})
+  set(dsp_vectors "${CMAKE_CURRENT_BINARY_DIR}/${dsp_case}_vectors")
+  add_test(NAME analog.1g.${dsp_case}.reference COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${dsp_case}_reference.py" "${dsp_vectors}")
+  set_tests_properties(analog.1g.${dsp_case}.reference PROPERTIES
+    LABELS "analog;1g;hardware" TIMEOUT 120 FIXTURES_SETUP one_g_${dsp_case}_vectors)
+  add_test(NAME analog.1g.${dsp_case}.native COMMAND analog_1g_${dsp_case}
+    "${dsp_vectors}" "${CMAKE_CURRENT_BINARY_DIR}/${dsp_case}_native.csv")
+  set_tests_properties(analog.1g.${dsp_case}.native PROPERTIES
+    LABELS "analog;1g;hardware;cpp" TIMEOUT 300 FIXTURES_REQUIRED one_g_${dsp_case}_vectors)
+  if(EXISTS "${CPPHDL_1G_CONVERTER}" AND ONE_G_VERILATOR)
+    set(dsp_args)
+    if(dsp_case STREQUAL "receive_dsp_pcs")
+      list(APPEND dsp_args --pcs)
+    endif()
+    add_test(NAME analog.1g.${dsp_case}.rtl COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/receive_dsp.py" ${dsp_args}
+      --native "$<TARGET_FILE:analog_1g_${dsp_case}>"
+      --converter "${CPPHDL_1G_CONVERTER}" --verilator "${ONE_G_VERILATOR}"
+      --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${dsp_case}")
+    set_tests_properties(analog.1g.${dsp_case}.rtl PROPERTIES
+      LABELS "analog;1g;hardware;rtl" TIMEOUT 7200 RESOURCE_LOCK one_g_receive_dsp_memory
+      FIXTURES_SETUP one_g_${dsp_case}_rtl)
+  endif()
+endforeach()
 add_test(NAME analog.1g.receive_sample_recovery.bounds COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/receive_sample_recovery_bounds.py")
 set_tests_properties(analog.1g.receive_sample_recovery.bounds PROPERTIES
@@ -277,6 +305,32 @@ if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys"
     AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell/lib/sg13g2_stdcell_typ_1p20V_25C.lib")
   list(APPEND one_g_hardware_args --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
     --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2")
+endif()
+if(one_g_hardware_args AND EXISTS "${CPPHDL_1G_CONVERTER}" AND ONE_G_VERILATOR)
+  foreach(dsp_case receive_dsp receive_dsp_pcs)
+    set(dsp_args)
+    set(dsp_mapping receive_dsp_mapping.py)
+    if(dsp_case STREQUAL "receive_dsp_pcs")
+      list(APPEND dsp_args --pcs)
+      set(dsp_mapping receive_hierarchy_mapping.py)
+    endif()
+    add_test(NAME analog.1g.${dsp_case}.mapped COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/${dsp_mapping}" ${dsp_args} ${one_g_hardware_args}
+      --functional "${CMAKE_CURRENT_BINARY_DIR}/hardware/${dsp_case}/checks.json"
+      --verilator "${ONE_G_VERILATOR}" --cxx "${CMAKE_CXX_COMPILER}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${dsp_case}_mapped")
+    set_tests_properties(analog.1g.${dsp_case}.mapped PROPERTIES
+      LABELS "analog;1g;hardware;ihp" TIMEOUT 7200 RESOURCE_LOCK one_g_receive_dsp_memory
+      FIXTURES_REQUIRED one_g_${dsp_case}_rtl FIXTURES_SETUP one_g_${dsp_case}_mapped)
+    if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+      add_test(NAME analog.1g.${dsp_case}.timing COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/receive_dsp_timing.py" ${one_g_hardware_args}
+        --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${dsp_case}_mapped")
+      set_tests_properties(analog.1g.${dsp_case}.timing PROPERTIES
+        LABELS "analog;1g;hardware;timing" TIMEOUT 360 RESOURCE_LOCK one_g_receive_dsp_memory
+        FIXTURES_REQUIRED one_g_${dsp_case}_mapped)
+    endif()
+  endforeach()
 endif()
 add_test(NAME analog.1g.transmit.reference COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/transmit_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/transmit-vectors.txt")
@@ -684,6 +738,7 @@ add_custom_target(check-1g
   DEPENDS analog_1g_bench analog_1g_generate analog_1g_process analog_1g_process_fixed analog_1g_algorithms analog_1g_pcs_waveform
     analog_1g_alignment analog_1g_pcs analog_1g_scrambler analog_1g_transmit_bits analog_1g_transmitter
     analog_1g_branch_metrics analog_1g_branch_metrics_pipeline analog_1g_trellis analog_1g_synchronize analog_1g_receiver analog_1g_framer
+    analog_1g_receive_dsp analog_1g_receive_dsp_pcs
     analog_1g_filter analog_1g_filter_pipeline analog_1g_filter_datapath analog_1g_timing analog_1g_adc_sar
     analog_1g_adc_analog analog_1g_clock_oscillator analog_1g_reference_clock analog_1g_level_shifter analog_1g_flp_frontend analog_1g_flp_frontend_receiver
     analog_1g_flp_tx analog_1g_flp_rx analog_1g_master_slave analog_1g_negotiation analog_1g_autoneg_link

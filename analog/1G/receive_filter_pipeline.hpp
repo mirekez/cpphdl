@@ -8,6 +8,9 @@ using namespace cpphdl;
 // Delayed NLMS uses a smaller 1/16 step to keep its feedback loop stable.
 class PipelinedReceiveFilter : public Module {
 public:
+    static constexpr unsigned OUTPUT_LATENCY = 6;
+    static constexpr unsigned UPDATE_LATENCY = 10;
+
     _PORT(u<8>) sample_in;
     _PORT(u<12>) local_in;
     _PORT(u<3>) desired_in;

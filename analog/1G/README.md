@@ -67,6 +67,7 @@ and recovers complete FCS-checked frames from each solver's voltages.
 | `receive_timing.hpp` | Fixed-point C++RTL timing controller; noisy closed-loop native/RTL/IHP gate tests; [interface and boundary](timing.md) |
 | `receive_alignment.hpp` | Hardware GMII crossing from a recovered clock to the reference domain, with frame buffering and fault containment |
 | `pair_acquisition.hpp`, `pma_aligned.hpp` | [Cable pair identification/deskew and aligned PMA/PCS](pair_acquisition.md) |
+| `receive_dsp.hpp`, `receive_dsp_pcs.hpp` | [Four-lane cancellation/equalization connected to pair acquisition and PCS](receive_dsp.md); supervised-training interface with independent C++RTL/RTL frame checks |
 | `flp_frontend.hpp` | [MOS link-pulse driver and either-polarity detector](flp_frontend.md) |
 | `pcs.hpp` | Hardware normal/control symbol mapper and master/slave LFSRs |
 | `flp_transmit.hpp`, `flp_receive.hpp`, `master_slave.hpp`, `negotiation.hpp`, `autonegotiation.hpp` | Digital link-pulse timing, role resolution, page exchange/retry and composed negotiation; [interfaces and validation boundaries](negotiation.md) |

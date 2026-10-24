@@ -1,14 +1,16 @@
 # 1G repeater ASIC development artifacts
 
-This package contains the existing IHP SG13G2 digital forwarding core and a
+This package contains newly regenerated IHP SG13G2 digital forwarding core and a
 **separate, unpopulated padframe prototype**. These are real physical layouts.
 **The integrated 1000BASE-T repeater ASIC is unfinished and is not released for
-fabrication.** No new simulation, regression, DRC or LVS was run for this package.
+fabrication.** The core and padframe were rebuilt from the current sources,
+with fresh standalone physical verification. The new receiver is committed as
+source and generated RTL; it is not part of either GDS hierarchy.
 
-Only the final layouts, three images, provenance and the upstream license are
-retained here. The bulk test results and raw waveform capture were deleted at
-the user's request. The images were generated from the saved layouts and capture
-before that cleanup; no circuit geometry or waveform samples were invented.
+Only the two final layouts, four images, provenance and the upstream license
+are committed here. Build logs, raw traces and verification databases stay in
+the ignored build directory. Images use actual KLayout geometry and checked
+simulation samples.
 
 ## Files
 
@@ -18,7 +20,8 @@ before that cleanup; no circuit geometry or waveform samples were invented.
 | [repeater_padframe.gds.gz](repeater_padframe.gds.gz) | Losslessly compressed `RepeaterPadframe`, 1280 × 1280 µm; independent of the core |
 | [core_layers.png](core_layers.png) | Six views of actual core masks, with scale bars |
 | [padframe.png](padframe.png) | Actual padframe geometry and its unpopulated opening |
-| [forwarding_waveforms.png](forwarding_waveforms.png) | Selected samples from the previously recorded digital forwarding capture |
+| [forwarding_waveforms.png](forwarding_waveforms.png) | Selected samples from the fresh digital forwarding capture |
+| [receive_dsp_pcs.png](receive_dsp_pcs.png) | Receiver training, pair acquisition, PCS lock and byte-valid traces for all four functional cases |
 | [provenance.json](provenance.json) | Artifact hashes, source/PDK revisions, dimensions, pinout, recorded verification summaries and limitations |
 | [IHP-LICENSE.txt](IHP-LICENSE.txt) | Apache-2.0 license for the embedded IHP PDK geometry |
 
@@ -75,19 +78,43 @@ This is a digital core illustration, not a PAM5 waveform or eye diagram.
 
 ## Evidence and release boundary
 
-The packaged core bytes match the historical successful flow receipt, and its
-recorded input hashes matched the available inputs when packaged. That run
-recorded zero full-deck DRC violations, matched transistor LVS with 48 top-level
-ports, and routed-RC setup/hold slack of **+5.95388031 / +0.787586033 ns**. Timing
-used nominal extracted routing with slow/fast IHP cell corners; post-fill
-coupling and full-chip/package effects were not extracted.
+The regenerated forwarding core passed native C++, generated RTL, mapped-gate
+and routed-gate checks, full-deck KLayout DRC (zero violations) and deep
+transistor LVS (48 top-level ports). Routed-RC setup/hold slack is
+**+5.95388031 / +0.787586033 ns**. Timing uses nominal extracted routing with
+slow/fast IHP cell corners; post-fill coupling and full-chip/package effects
+were not extracted.
 
-The padframe bytes match its historical standalone passing DRC/deep-LVS receipt
-(zero DRC violations, 43 top-level ports). Two verification scripts,
-`checks.py` and `tool_process.py`, changed after that run. This package preserves
-the historical result and identifies the changed hashes; it does not claim a
-fresh qualification. Raw verification databases were removed during cleanup,
-so the retained summaries alone are not a signoff archive.
+The newly assembled and filled padframe passed fresh full-deck KLayout DRC
+(zero violations). Deep transistor LVS passes with 43 top-level ports using
+the PDK's documented **ideal ohmic tap-contact model**, applied independently
+to the schematic and layout. Default extracted-tap LVS failed with unmatched
+circuits; that diagnostic receipt is retained in the provenance. The ideal
+mode preserves non-tap devices and their parameters, but does not validate tap
+area/perimeter parameters. This is the same model used by the earlier passing
+padframe package; see [the tap-model explanation](../../../pdk/1G_repeater_IHPSG13G2/chip.md).
+Neither standalone check verifies an integrated repeater.
+
+![Receive DSP and PCS functional traces](receive_dsp_pcs.png)
+
+The new [ReceiveDSP and ReceiveDSPPCS](../../receive_dsp.md) sources, generated
+RTL, independent reference models and CTest tests accompany this package.
+Native C++, generated RTL and IHP gate simulation each pass the same independent
+checks and match exactly: four composed cases, eight frames and 6,392 bytes.
+The image shows training, acquisition and decoded-data availability from the
+checked trace. It does not assert an achieved clock frequency.
+
+The receiver still fails the requested 4 ns cell-timing limit: DSP **−2.13 ns**,
+DSP + PCS **−3.13 ns**. Its mapped cell area is **2.550 mm² per receive path**,
+before routing and analog integration. External supervised training targets,
+recovered-symbol samples and aligned local transmit references remain required.
+The timing tests intentionally retain their failing constraint.
+
+`provenance.json` records the fresh physical receipts, the existing receiver
+functional/timing receipts with inputs rechecked, and hashes of the shipped
+files. `source_base_commit` identifies the parent revision; the accompanying
+source changes and exact input hashes identify the worktree used for generation.
+This compact package is not a complete signoff archive.
 
 A complete product still requires physical receive AFE/ADC/DSP implementation,
 qualified continuous PCS/training and role negotiation, transmit-driver layout,
@@ -110,7 +137,7 @@ load `ihp-sg13g2/libs.tech/klayout/tech/sg13g2.lyp` for the full technology laye
 palette. Alternatively, `gzip -dk repeater_padframe.gds.gz` creates an ordinary
 GDS file. Neither viewing nor decompression runs verification.
 
-The three PNGs can be viewed directly without the PDK or EDA tools. Their colors
+The four PNGs can be viewed directly without the PDK or EDA tools. Their colors
 are a simplified display palette; dimensions and shapes come from the GDS.
 
 ## Attribution
@@ -120,4 +147,28 @@ The GDS hierarchies embed standard-cell, I/O and seal-ring geometry from the
 `89d42ee6d2fd9b50b86a1aada6fee6673c3e6008`. Copyright IHP PDK Authors;
 distributed under [Apache-2.0](IHP-LICENSE.txt). The custom circuit arrangement,
 routing and package illustrations are cpphdl project work. The original PDK
-cell geometry in these existing layouts was not edited during packaging.
+cell geometry is preserved in the generated layouts.
+
+## Reproducing this package
+
+From `analog/`, with the local IHP PDK, toolchain and root converter installed:
+
+```sh
+python3 pdk/1G_repeater_IHPSG13G2/flow.py --target core --work build/asic-refresh/core
+pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/padframe.py --common-ground --work build/asic-refresh/padframe
+pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/fill_padframe.py --layout build/asic-refresh/padframe/repeater_padframe.gds --output build/asic-refresh/padframe/repeater_padframe_filled.gds --work build/asic-refresh/padframe/fill
+pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/verify_physical.py --layout build/asic-refresh/padframe/repeater_padframe_filled.gds --netlist build/asic-refresh/padframe/lvs.cir --interface build/asic-refresh/padframe/interface.json --top RepeaterPadframe --work build/asic-refresh/padframe/verification
+# The default extracted-tap LVS run above records a mismatch. Reuse its passing
+# DRC only after the verification runner checks identical layout and rule hashes.
+pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/verify_physical.py --layout build/asic-refresh/padframe/repeater_padframe_filled.gds --netlist build/asic-refresh/padframe/lvs.cir --interface build/asic-refresh/padframe/interface.json --top RepeaterPadframe --work build/asic-refresh/padframe/verification_ideal --ideal-tap-contacts --drc-evidence build/asic-refresh/padframe/verification/physical_checks.json
+pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/package_results.py --work build/asic-refresh
+```
+
+The first command needs `verilator` on `PATH`. The final renderer needs KLayout,
+Pillow and matplotlib in its Python environment (or on `PYTHONPATH`). It also
+requires receiver functional, mapped-gate and timing receipts in
+`build/1G/tests/hardware`; reproduce those with the CTests documented in
+[receive_dsp.md](../../receive_dsp.md). Timing failures remain recorded failures.
+The packager rejects changed verification inputs or layout bytes and does not
+run tests itself. It replaces the artifacts in this directory only after its
+input checks pass.
