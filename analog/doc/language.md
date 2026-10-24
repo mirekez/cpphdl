@@ -139,7 +139,8 @@ devices; there is no automatic topology synthesis from a function name.
 From the package root:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build -j 4
 ctest --test-dir analog/build --output-on-failure -L analog
 ```

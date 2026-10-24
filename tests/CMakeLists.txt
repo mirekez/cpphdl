@@ -27,6 +27,11 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME analog_test_options COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/AnalogTestOptions.py"
+        --cmake "${CMAKE_COMMAND}" --ctest "${CMAKE_CTEST_COMMAND}"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(analog_test_options PROPERTIES TIMEOUT 180 LABELS "cmake")
     add_test(NAME hdlcpp_slang_pin COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/SlangPinChecks.py")
     set_tests_properties(hdlcpp_slang_pin PROPERTIES TIMEOUT 60)

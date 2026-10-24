@@ -38,6 +38,7 @@ mkdir -p "$VERILOGA_DIR/ngspice-build"
 "$VERILOGA_DIR/install/bin/ngspice" --version
 
 cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON \
   -DCPPHDL_ANALOG_VERILOGA_TESTS=ON \
   -DOPENVAF_EXECUTABLE="$VERILOGA_DIR/openvaf/openvaf" \
   -DNGSPICE_EXECUTABLE="$VERILOGA_DIR/install/bin/ngspice"
