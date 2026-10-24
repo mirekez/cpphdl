@@ -16,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -469,6 +470,48 @@ public:
     template<class Redirect> void simplifyNode(Node& node, Redirect redirect) {
         node.left = resolved(std::move(node.left)); node.right = resolved(std::move(node.right));
         node.select = resolved(std::move(node.select));
+        // Hierarchy/parameter aliases can reveal constants only after a node
+        // was constructed. These unsigned operations are wiring, including
+        // during timing/feedback scheduling; a fictitious divider here can
+        // otherwise slow every logical step of an HLS memory controller.
+        if (node.op == "div" || node.op == "mod" || node.op == "mul") {
+            auto power = [](const Value& value) {
+                int shift = -1;
+                Bit enable = 0;
+                for (size_t bit = 0; bit < value.size(); ++bit) {
+                    if (value[bit]) {
+                        if (shift >= 0) return std::pair<int, Bit>{-1, 0};
+                        shift = int(bit);
+                        enable = value[bit];
+                    }
+                }
+                return std::pair<int, Bit>{shift, enable};
+            };
+            const Value* operand = &node.left;
+            auto [shift, enable] = power(node.right);
+            if (shift < 0 && node.op == "mul") {
+                std::tie(shift, enable) = power(node.left); operand = &node.right;
+            }
+            if (shift >= 0) {
+                Value wiring(node.width, 0);
+                for (unsigned offset = 0; offset < node.width; ++offset) {
+                    if (node.op == "div") {
+                        if (size_t(shift) < operand->size() && offset < operand->size() - shift)
+                            wiring[offset] = (*operand)[offset + shift];
+                    } else if (node.op == "mod") {
+                        if (offset < unsigned(shift) && offset < operand->size()) wiring[offset] = (*operand)[offset];
+                    } else if (offset >= unsigned(shift) && offset - shift < operand->size()) {
+                        wiring[offset] = (*operand)[offset - shift];
+                    }
+                }
+                // HLS guards call arguments, including literal divisors, with
+                // the active-state predicate. A one-bit divisor is therefore
+                // either 2^shift or zero; graph division/modulo by zero returns
+                // zero. Keep that predicate as an AND, not a full divider.
+                node.op = "and"; node.left = std::move(wiring);
+                node.right = Value(node.width, enable); node.select.clear();
+            }
+        }
         if (node.op == "word_slice") {
             if (auto start = number(node.right); start && node.width <= node.left.size())
                 for (unsigned offset = 0; offset < node.width; ++offset)

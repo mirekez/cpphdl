@@ -27,8 +27,21 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME hdlcpp_slang_pin COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/SlangPinChecks.py")
+    set_tests_properties(hdlcpp_slang_pin PROPERTIES TIMEOUT 60)
     find_program(CONSTANTS_VERILATOR verilator)
     if(CONSTANTS_VERILATOR)
+        add_test(NAME hls_memory_map_interfaces COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/memory_map/Checks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/memory-map")
+        set_tests_properties(hls_memory_map_interfaces PROPERTIES TIMEOUT 600 LABELS "hls;rtl;memory")
+        add_test(NAME templates_namespaced_methods COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/templates/NamespacedMethodsChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/namespaced-methods")
+        set_tests_properties(templates_namespaced_methods PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
         add_test(NAME child_clock_sources COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildClockChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -213,6 +226,33 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WideShiftChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_wide_shift PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_power_of_two COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/PowerOfTwoChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_power_of_two PROPERTIES TIMEOUT 120)
+    add_test(NAME cpp_graph_power_of_two_folding COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/PowerOfTwoFoldingChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_power_of_two_folding PROPERTIES TIMEOUT 120)
+    foreach(check Memoization Batch Broadcast Settle WidePort)
+        string(TOLOWER "${check}" check_name)
+        add_test(NAME "cpp_graph_native_${check_name}" COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/graph/Native${check}Checks.py"
+            --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties("cpp_graph_native_${check_name}" PROPERTIES TIMEOUT 600)
+    endforeach()
+    add_test(NAME cpp_graph_native_ram_memoization COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeRamMemoizationChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-ram-memoization")
+    set_tests_properties(cpp_graph_native_ram_memoization PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_ram_cache COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeRamCacheChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-ram-cache")
+    set_tests_properties(cpp_graph_native_ram_cache PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_reset_events COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeResetEventsChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(cpp_graph_native_reset_events PROPERTIES TIMEOUT 120)
     add_test(NAME cpp_graph_word_helpers COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WordHelpersChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"

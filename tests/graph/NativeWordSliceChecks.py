@@ -126,7 +126,7 @@ int main() {
         for chunk, threads, split, memo in ((0, 1, 0, 0), (2, 1, 0, 0), (2, 1, 2, 0), (2, 2, 2, 0),
                                            (512, 1, 2, 1), (512, 2, 2, 1), (512, 2, 2, 2), (2, 2, 2, 2),
                                            (2, 1, 2, 3), (2, 2, 2, 4),
-                                           (2, 1, 2, 5), (2, 2, 2, 6)):
+                                           (2, 1, 2, 5), (2, 2, 2, 6), (2, 1, 2, 7)):
             output = work / f'{chunk}-{threads}-{split}-{memo}'
             output.mkdir()
             run([work / 'generate', output / 'model.h', chunk, threads, split, memo])
@@ -135,9 +135,8 @@ int main() {
                  '-I' + str(repo / 'include'), '-I' + str(output), runner,
                  *sorted(output.glob('model.part.*.cpp')), '-o', output / 'run'])
             run([output / 'run'])
-        for memo, chunk, error in ((7, 2, 'requires pure logic or immutable ROM'),
-                                    (8, 2, 'requires pure logic or immutable ROM'),
-                                    (9, 2, 'require chunk memoization'),
+        for memo, chunk, error in ((8, 2, 'does not support host effects'),
+                                    (9, 2, 'chunk memoization'),
                                     (1, 0, 'requires chunking')):
             header = work / f'rejected-{memo}-{chunk}.h'
             run([work / 'generate', header, chunk, 1, 0, memo], expected_error=error)

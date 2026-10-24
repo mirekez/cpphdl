@@ -234,7 +234,7 @@ static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD)
         return false;
     }
     if ((RD->getQualifiedNameAsString().find("cpphdl::") == 0
-            && RD->getQualifiedNameAsString().find("cpphdl::hls::math::") != 0) ||
+            && RD->getQualifiedNameAsString().find("cpphdl::hls::") != 0) ||
         RD->getQualifiedNameAsString().find("std::") == 0) {
         return false;
     }
@@ -1267,7 +1267,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             name = sname + "_pkg::" + name;
             ignoreBase = true;
         } else
-        if (mod->origName.find(CRD->getQualifiedNameAsString()) != 0 && CRD->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+        if (mod->origName.find(CRD->getQualifiedNameAsString()) != 0 && (CRD->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1 || CRD->getQualifiedNameAsString().rfind("cpphdl::hls::", 0) == 0)
             && expr.type == cpphdl::Expr::EXPR_NONE && !str_ending(name, "_in") && !str_ending(name, "_out") ) {  // add base class name, ports dont get this prefix
             name = genTypeName(CRD->getQualifiedNameAsString()) + "___" + name;
         }
@@ -1656,7 +1656,7 @@ cpphdl::Expr Helpers::exprToExpr(const Stmt* E)
             CRD = CanonicalMD->getParent();
         }
 
-        if (CRD && mod->origName.find(CRD->getQualifiedNameAsString()) != 0 && CRD->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1
+        if (CRD && mod->origName.find(CRD->getQualifiedNameAsString()) != 0 && (CRD->getQualifiedNameAsString().find("cpphdl::") == (size_t)-1 || CRD->getQualifiedNameAsString().rfind("cpphdl::hls::", 0) == 0)
             && call.value.find("___") == std::string::npos
             && !str_ending(call.value, "_in") && !str_ending(call.value, "_out") ) {  // add base class name, ports dont get this prefix
             std::string combSignal = flattenedCombSignalName(mod, call.value);

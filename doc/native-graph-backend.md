@@ -70,6 +70,11 @@ C++HDL graph compiler and a host C++ compiler. **Neither invokes sv2v,
 Yosys, CXXRTL, or Verilator.** The older callback/L1 path remains available;
 this is a replacement representation, not another callback scheduling pass.
 
+The optional SystemVerilog frontend uses the exact Slang commit recorded in
+`hdlcpp/slang-revision.txt`, not a moving branch. Run
+`bash hdlcpp/setup_slang.sh` before configuring it. Setup refuses dirty checkouts,
+and CMake rejects a different commit. See [frontend build instructions](../hdlcpp/README.md).
+
 ## Ordinary C++ frontend
 
 `cpphdl --native-graph --top ROOT_VARIABLE` also accepts ordinary C++HDL C++:
@@ -115,9 +120,10 @@ and combinational-output models, mixed chunks, read/write validation, and
 unchanged work-only scratch slots during settling.
 
 The direct `Graph::emit` API also supports optional chunk memoization for pure
-logic and immutable ROM. A sixth Boolean argument enables input-key caching;
+logic, ROM and mutable RAM. A sixth Boolean argument enables input-key caching;
 the seventh caches assembled next-state words and the eighth enables exact
-changed-bit invalidation. Mutable RAM and host callbacks are rejected in these
+changed-bit invalidation. Chunks reading mutable RAM always reevaluate, including
+after host writes at unchanged addresses. Host callbacks are rejected in these
 modes. Mixed chunks keep separate settle/work cache validity, so settling cannot
 cache skipped register work. Delta invalidations survive output-only calls and
 propagate through ordered lane-private chunks; cache state is copied with the
@@ -560,11 +566,12 @@ currently limited to at most 64 bits, while wiring,
 packed aggregates, muxes and bitwise operations support wider values.
 
 Unsupported cases fail closed: live latches or combinational cycles;
-state-derived clocks/resets requiring extra event deltas; timed assignments;
+state-derived clocks; timed assignments;
 inout/tri-state ports; hardware declaration/output-port initializers; dynamic
 loops/range selections; nonconstant system tasks; wildcard cases; clocked
-blocking assignments; signed dynamic division; and functions with side effects,
-static lifetime, or conditional early returns. Some valid RTL therefore still
+blocking storage that remains observable; signed dynamic division; and functions
+with observable side effects, persistent initialized locals, or conditional
+early returns. Some valid RTL therefore still
 needs additional compiler support. Do not use this mode as an implicit fallback
 for unsupported legacy models. Synthesis `translate_off` regions must be
 excluded explicitly, e.g. `--translate-off-format pragma,translate_off,translate_on`.
@@ -2024,3 +2031,101 @@ CPU performance. These measurements exclude conversion/compilation and use the
 same ELF; Verilator's RTL diagnostic file I/O remains a host-I/O difference.
 Complete timing samples, correctness scope, executable hashes and the bounded
 sampling evidence are in `hdlcpp/tests/cva6/compare_matmul.md`.
+
+## Converted RTL infrastructure and inactive timestamps
+
+The preserved Slang frontend retains one-dimensional unpacked arrays written by
+clocked nonblocking assignments as RAM blocks with packed integral rows. Depth
+is runtime storage rather than a bank of flattened state bits. Reads observe
+committed rows; write operands are captured before commit, and whole-row writes
+retain source order. Distinct writing processes are rejected. Partial row writes
+must be expressed as explicit whole-row merging; implicit partial NBA merging
+is not implemented. Signed selectors and nonzero declared bounds are preserved.
+
+Net declaration assignments such as `wire full = expression` are continuous
+drivers. Input-only tasks inline into their caller's current/NBA environments.
+Clocked blocking temporaries are accepted when their stored state is dead after
+lowering. Observable blocking storage is rejected to avoid inventing an ordering
+for races between clocked processes. Task-local nonblocking storage, retained
+uninitialized task data and persistent task initializers remain unsupported.
+
+A value function may use private module scratch only when that storage is
+referenced exclusively by that function and its returned value does not depend
+on the old scratch contents. Uninitialized local/return storage is tracked;
+partially defined or retained results fail instead of becoming zero. This covers
+cpphdl-generated packed-data getters without permitting observable side effects.
+
+For explicit event lists, a subsequent active-low reset event can depend on
+synchronizer state. Generated reset probes make `step()` resolve those events
+with bounded additional transactions, without adding a device clock. Independent
+state-derived clocks remain rejected. A stopped clock still observes a reset
+assertion, and reset deassertion alone never advances ordinary hardware state.
+
+`hdlcpp --native-graph --external-module NAME ...` exposes each matching
+instance's ports as explicit graph-boundary pins. Its C++ output is accompanied
+by `.externals.tsv` containing instance identity, module, port direction, width
+and boundary pin. The caller must provide a checked implementation for every
+boundary; this is not an implementation of an omitted hardware module.
+
+The optional root scope attribute `native.quiet_events=1` is restricted to
+one-lane explicit-event graphs without host effects. It exposes a predicate for
+all non-history state triggers, clocked RAM accesses/writes and checks. After
+output settling, `__cpphdl_advance_quiet_event()` returns true only when none is
+active, and updates only event histories to their sampled levels. The caller
+then settles outputs again. Otherwise it returns false and the normal commit
+must execute. The default emitter leaves this optimization disabled. This is
+host work elimination; timestamp order, hardware clock counts and memory
+latencies are unchanged.
+
+An application can combine a quiet control lane with separately scheduled math
+graphs. Control-lane inactivity does not demonstrate compute scaling; measure
+numerical correctness, device-clock behavior and host throughput separately.
+
+`tests/graph/NativeRamMemoizationChecks.py` checks uncached, key-cached and
+delta-cached RAM against an independent 64,000-transaction oracle, including
+held addresses, host mutations, registered reads and output-only settling.
+
+## Parallel root scanning and private state
+
+Two optional root-scope attributes address caller-only work in delta-memoized
+evaluators:
+
+```cpp
+graph.attributes.push_back({"", "native.parallel_roots", "1"});
+graph.attributes.push_back({"", "native.cache_state_roots", "1"});
+graph.emit("model.h", 512, 6, false, false, true, false, true);
+```
+
+`native.parallel_roots` gives each independent lane its own root keys and dirty
+flags. The lane observes shared input/state roots and invalidates only chunks
+it owns before evaluating them. Workers read the same committed state bank;
+publication waits for all lanes. No worker writes another lane's root history
+or invalidation flags. This requires delta memoization.
+
+`native.cache_state_roots` additionally skips register-root scans while the
+committed state bank is unchanged. **Enable it only when the evaluator owns
+all register updates.** The host must not modify internal state-bank fields or
+the bank selector. Input-port changes and host RAM mutations remain supported;
+inputs are observed on each evaluation and mutable RAM keeps its independent
+invalidation path. Copies retain the bank observations and root histories.
+This option requires parallel roots and a pure named-edge graph. A plan that
+compacts to one lane uses the ordinary state-observation path.
+
+These attributes are opt-in; default emission keeps the previous scheduler.
+Memoized multi-lane models without host overlap select serial or parallel
+execution using the previous activity of each evaluation phase. Parallel root
+scans also account for pending root and commit work before choosing serial
+execution. Set `CPPHDL_NATIVE_DISPATCH=auto`, `serial`, or `parallel` before
+constructing a model to select its initial policy. This changes host scheduling,
+not device-clock behavior.
+More workers can cost more when private cones duplicate shared logic. Measure
+the intended workload rather than assuming that more lanes increase throughput.
+
+`NativeRamCacheChecks.py` checks ordinary, key-cached, delta-cached,
+parallel-root and private-state modes across resets, held clocks, copied models
+and host memory mutations. `NativeResetEventsChecks.py` checks quiet timestamps,
+state-derived reset settling and continued rejection of state-derived clocks.
+
+`NativeMemoizationChecks.py` additionally compares forced serial, forced
+parallel and adaptive dispatch across held clocks, both edges, ROM, packed
+outputs, retained initialized state and copied models.

@@ -942,7 +942,7 @@ static bool cpphdlRecordShouldExportAsStruct(const CXXRecordDecl* RD, Helpers& h
         return false;
     }
     if ((RD->getQualifiedNameAsString().find("cpphdl::") == 0
-            && RD->getQualifiedNameAsString().find("cpphdl::hls::math::") != 0) ||
+            && RD->getQualifiedNameAsString().find("cpphdl::hls::") != 0) ||
         RD->getQualifiedNameAsString().find("std::") == 0) {
         return false;
     }
@@ -1637,12 +1637,15 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         }
     }
 
-    if (MD->getQualifiedNameAsString().find("::" + hlp.parent->getNameAsString()) != (size_t)-1  // constructor
-    || MD->getQualifiedNameAsString().find("::~" + hlp.parent->getNameAsString()) != (size_t)-1  // destructor
-    || MD->getQualifiedNameAsString().find("::operator=") != (size_t)-1
+    // Class-name substring matching also rejects every method of a namespaced
+    // module (ns::Module::method). Identify lifecycle declarations by AST kind.
+    if (isa<CXXConstructorDecl>(MD)
+    || isa<CXXDestructorDecl>(MD)
+    || MD->getNameAsString() == "operator="
     // A user's template argument can be cpphdl::logic<N>; that does not make
     // the enclosing module method a method of the cpphdl implementation.
-    || MD->getParent()->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0
+    || (MD->getParent()->getQualifiedNameAsString().rfind("cpphdl::", 0) == 0 &&
+        MD->getParent()->getQualifiedNameAsString().rfind("cpphdl::hls::", 0) != 0)
     || MD->getQualifiedNameAsString().find("std::") == (size_t)0
     || MD->getQualifiedNameAsString().find("*(*)()") != (size_t)-1  // lambda
 //    || (MD->getParent()->isDerivedFrom(ModuleClass) && hlp.mod->name.find(MD->getParent()->getQualifiedNameAsString())) != 0  // module's class method but not current module
@@ -1733,6 +1736,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
                 // Non-module helper bases still need their type specialization
                 // in the method name to distinguish concrete helper APIs.
                 if (!MD->getParent()->isDerivedFrom(ModuleClass)) {
+                    parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
                     appendTemplateTypeSpecializationName(parentName, MD->getParent(), hlp);
                 }
             }
@@ -2139,9 +2143,10 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
         }
 
         cpphdl::Module* mod = nullptr;
-        auto it = std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& mod){ return mod.name == RD->getQualifiedNameAsString(); });
+        const auto moduleName = genTypeName(RD->getQualifiedNameAsString());
+        auto it = std::find_if(currProject->modules.begin(), currProject->modules.end(), [&](auto& mod){ return mod.name == moduleName; });
         if (it == currProject->modules.end()) {
-            mod = &currProject->modules.emplace_back(cpphdl::Module{RD->getQualifiedNameAsString()});
+            mod = &currProject->modules.emplace_back(cpphdl::Module{moduleName});
         }
         else {
             mod = &*it;
