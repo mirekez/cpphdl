@@ -19,6 +19,7 @@ public:
     capacitance_value storage{2e-12}, clock_storage{5e-15};
     capacitance_value gate_coupling{2e-15}, off_coupling{1e-15};
     resistance leakage{1e9};
+    bool leakage_return{true};
     voltage initial_input{1.65}, initial_supply{3.3};
 
     void _assign() override {
@@ -36,7 +37,8 @@ public:
         OUT = nmos(complement.Y, OUT, dummy_n);
         OUT = pmos(CLOCK, OUT, dummy_p);
         OUT = capacitor(Vss, storage, initial_input);
-        OUT = resistor(Vss, leakage);
+        if (leakage_return)
+            OUT = resistor(Vss, leakage);
         CLOCK = capacitor(OUT, gate_coupling, voltage(-initial_input.value));
         complement.Y = capacitor(OUT, gate_coupling, voltage(initial_supply.value - initial_input.value));
         IN = capacitor(OUT, off_coupling); // Input changes can still disturb a held voltage.

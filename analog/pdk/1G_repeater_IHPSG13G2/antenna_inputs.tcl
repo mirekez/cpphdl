@@ -55,7 +55,9 @@ proc protect_input_delay_gates {patterns audit} {
         # need whitespace; moving all old cells can cascade through dense rows.
         foreach instance $original { $instance setPlacementStatus FIRM }
         try {
-            detailed_placement -max_displacement {10 10}
+            # Search beyond the nearest two rows when their whitespace is
+            # occupied. The gate-to-diode distance is checked independently.
+            detailed_placement -max_displacement {20 20}
         } finally {
             foreach instance $original { $instance setPlacementStatus PLACED }
         }
@@ -68,7 +70,7 @@ proc protect_input_delay_gates {patterns audit} {
         lassign [$diode getLocation] x y
         set distance [expr {double(abs($vx - $x) + abs($vy - $y)) / $dbu}]
         puts $output "$pin,$net,[$diode getName],$distance"
-        # The legalizer permits 10 um in each axis from the nearby target.
+        # A larger search window never relaxes this electrical proximity bound.
         if {$distance > 25} { close $output; error "protection diode remains remote from $pin" }
     }
     close $output

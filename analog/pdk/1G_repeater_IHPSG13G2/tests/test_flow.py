@@ -60,6 +60,22 @@ class Evidence(unittest.TestCase):
             with self.assertRaises(ValueError):
                 checks.check_timing(work)
 
+    def test_timing_rejects_rounded_negative_zero(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            (work / "electrical.rpt").write_text("")
+            (work / "core.spef").write_text("*SPEF 1481-1998\n" + "*D_NET dummy\n" * 40)
+            for kind, field in (("setup", "max"), ("hold", "min")):
+                for value in ("-0.00", "-0.000000000", "-1e-12"):
+                    (work / "setup.rpt").write_text("worst slack max 0.1\n")
+                    (work / "hold.rpt").write_text("worst slack min 0.1\n")
+                    (work / (kind + ".rpt")).write_text("worst slack " + field + " " + value + "\n")
+                    with self.subTest(kind=kind, value=value), self.assertRaises(ValueError):
+                        checks.check_timing(work)
+            (work / "setup.rpt").write_text("worst slack max 0.000000001\n")
+            (work / "hold.rpt").write_text("worst slack min 0.000000001\n")
+            self.assertEqual(checks.check_timing(work)["setup_slack_ns"], 1e-9)
+
     def test_empty_partial_rule_report_does_not_prove_full_drc(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "partial.lyrdb"

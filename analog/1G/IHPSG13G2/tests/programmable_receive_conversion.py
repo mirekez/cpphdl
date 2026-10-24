@@ -119,7 +119,8 @@ def run(args):
              SOURCE.with_name('programmable_receive_array.py'), SOURCE.with_name('programmable_receive_gain.py'),
              SOURCE.parents[1] / 'programmable_array_process.py', SOURCE.parents[1] / 'programmable_conversion_process.py',
              SOURCE.parents[1] / 'receive_frontend_process.py', SOURCE.parents[1] / 'mos_geometry.py',
-             SOURCE.parents[1] / 'spice_vectors.py', SOURCE.parents[1] / 'xspice_live.py']
+             SOURCE.parents[1] / 'spice_vectors.py', SOURCE.parents[1] / 'xspice_live.py',
+             SOURCE.parents[1] / 'xspice_bridges.py']
     paths += [ANALOG / 'VerilogA/compare.py']
     if args.flow != 'cpp':
         installation = args.ngspice.resolve().parents[1]

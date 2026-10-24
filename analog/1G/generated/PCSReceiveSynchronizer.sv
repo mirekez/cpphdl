@@ -6,6 +6,7 @@ import Predef_pkg::*;
 module PCSReceiveSynchronizer (
     input wire clk
 ,   input wire reset
+,   input wire symbol_enable_in
 ,   input wire[12-1:0] symbols_in
 ,   input wire remote_master_in
 ,   input wire pma_ok_in
@@ -168,7 +169,7 @@ module PCSReceiveSynchronizer (
                 end
             end
         end
-        if ((!pma_ok_in || restart_in) || reset) begin
+        if ((!pma_ok_in || ((symbol_enable_in && restart_in))) || reset) begin
             state_tmp = 64'h0;
             collected_tmp = 64'h0;
             qualified_tmp = 64'h0;
@@ -182,6 +183,21 @@ module PCSReceiveSynchronizer (
             locked_tmp = (('h0) != '0);
             odd_tmp = (('h0) != '0);
             remote_ok_tmp = (('h0) != '0);
+        end
+        if ((!symbol_enable_in && !reset) && pma_ok_in) begin
+            state_tmp = state;
+            collected_tmp = collected;
+            qualified_tmp = qualified;
+            phase_candidates_tmp = phase_candidates;
+            known_polarity_tmp = known_polarity;
+            polarity_tmp = polarity;
+            sx_reg_tmp = sx_reg;
+            sy_reg_tmp = sy_reg;
+            sg_reg_tmp = sg_reg;
+            low_mask_tmp = low_mask;
+            locked_tmp = locked;
+            odd_tmp = odd;
+            remote_ok_tmp = remote_ok;
         end
     end
     endtask

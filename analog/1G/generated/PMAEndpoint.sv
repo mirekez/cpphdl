@@ -86,6 +86,8 @@ module PMAEndpoint (
 ,       .fault_out(tx__fault_out)
     );
     wire[32-1:0] rx__samples_in;
+    wire rx__symbol_enable_in;
+    wire rx__receive_valid_out;
     wire rx__remote_master_in;
     wire rx__pma_ok_in;
     wire[10-1:0] rx__receive_out;
@@ -95,6 +97,8 @@ module PMAEndpoint (
         .clk(clk)
 ,       .reset((reset || restart_in) || !enable_in)
 ,       .samples_in(rx__samples_in)
+,       .symbol_enable_in(rx__symbol_enable_in)
+,       .receive_valid_out(rx__receive_valid_out)
 ,       .remote_master_in(rx__remote_master_in)
 ,       .pma_ok_in(rx__pma_ok_in)
 ,       .receive_out(rx__receive_out)
@@ -123,6 +127,7 @@ module PMAEndpoint (
         assign tx__local_receiver_ok_in = (((rx__locked_out && samples_valid_in) && receiver_quality_in) != '0);
         assign tx__seed_load_in = (((control__state_out == 64'h0) && enable_in) != '0);
         assign tx__seed_in = seed_in;
+        assign rx__symbol_enable_in = ((1) != '0);
         assign rx__samples_in = samples_in;
         assign rx__remote_master_in = ((!control__master_out) != '0);
         assign rx__pma_ok_in = (((enable_in && !restart_in) && samples_valid_in) != '0);

@@ -39,7 +39,7 @@ for group in ("ActGatP", "Metal", "TopMetal"):
         def spacing(match):
             distance = 0.6 if receive_module and match[2] in ("2", "3") else 1.0
             if os.environ.get("REPEATER_TOP") in ("ReceiveSampleNormalizer", "ADCReceiveController",
-                                                 "ReceiveFilter", "PipelinedReceiveFilter") and match[2] == "2":
+                                                 "ReceiveFilter", "PipelinedReceiveFilter", "InterleavedSARBankController", "ADCReceiveLaneController") and match[2] == "2":
                 distance = 0.42
             return match[1] + str(distance)
         macro.text, count = re.subn(r"('distance_m([1-5])' => )\d+(?:\.\d+)?", spacing, macro.text)
@@ -51,11 +51,11 @@ for group in ("ActGatP", "Metal", "TopMetal"):
     print("PDK fill complete: " + group, flush=True)
 layout = pya.CellView.active().layout()
 if os.environ.get("REPEATER_TOP") in ("ReceiveSampleNormalizer", "ADCReceiveController",
-                                      "ReceiveFilter", "PipelinedReceiveFilter"):
+                                      "ReceiveFilter", "PipelinedReceiveFilter", "InterleavedSARBankController", "ADCReceiveLaneController"):
     sys.path.insert(0, str(Path(os.environ.get("REPEATER_SOURCE", Path(__file__).resolve().parent))))
     from fill_remainder import add_metal2_remainder, add_metal3_remainder, add_metal4_remainder
     print("Metal2 remainder fill: " + str(add_metal2_remainder(layout, layout.top_cell())), flush=True)
     print("Metal3 remainder fill: " + str(add_metal3_remainder(layout, layout.top_cell())), flush=True)
-    if os.environ.get("REPEATER_TOP") in ("ReceiveFilter", "PipelinedReceiveFilter"):
+    if os.environ.get("REPEATER_TOP") in ("ReceiveFilter", "PipelinedReceiveFilter", "InterleavedSARBankController", "ADCReceiveLaneController"):
         print("Metal4 remainder fill: " + str(add_metal4_remainder(layout, layout.top_cell())), flush=True)
 layout.write(output_file)

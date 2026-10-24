@@ -6,7 +6,7 @@ namespace analog::one_g::ihp_sg13g2 {
 
 // The sixteen independent inputs preserve the controller's all-gates-low
 // disable state. A complementary pair alone cannot express that state.
-class core_emphasized_pam5_driver : public IC {
+template <class Output> class basic_core_emphasized_pam5_driver : public IC {
 public:
     _PORT(electrical) Vlogic;
     std::array<port<electrical>, 4> MAIN_P, MAIN_N, HISTORY_P, HISTORY_N;
@@ -14,7 +14,7 @@ public:
     _PORT(electrical) N;
     level_shift_bias translation_bias;
     std::array<clock_level_shifter, 16> gates;
-    emphasized_pam5_driver output;
+    Output output;
     capacitance_value shared_translation_storage{50e-12};
 
     void _assign() override {
@@ -49,5 +49,7 @@ public:
         output.elaborate();
     }
 };
+
+using core_emphasized_pam5_driver = basic_core_emphasized_pam5_driver<emphasized_pam5_driver>;
 
 } // namespace analog::one_g::ihp_sg13g2

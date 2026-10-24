@@ -36,47 +36,47 @@ module cleared_nand_latch(Vdd, Vss, SET_N, RESET_N, CLEAR, Q, Q_N);
     endfunction
 
     analog begin
-        // device 0, IC IC1, analog/basic/cmos_logic.hpp:15
+        // device 0, IC IC1, analog/basic/cmos_logic.hpp:17
         I(Q, Vss) <+ 5.0000000000000002e-14 * ddt(V(Q, Vss)); // Bench initial voltage = 0.0 V.
-        // device 1, IC IC1, analog/basic/cmos_logic.hpp:16
+        // device 1, IC IC1, analog/basic/cmos_logic.hpp:18
         I(Q, Vdd) <+ cpphdl_channel(V(SET_N, Vdd), V(Q, Vdd), 0.01, 0.69999999999999996, -1.0);
-        // device 2, IC IC1, analog/basic/cmos_logic.hpp:17
+        // device 2, IC IC1, analog/basic/cmos_logic.hpp:19
         I(Q, Vdd) <+ cpphdl_channel(V(Q_N, Vdd), V(Q, Vdd), 0.01, 0.69999999999999996, -1.0);
-        // device 3, IC IC1, analog/basic/cmos_logic.hpp:18
+        // device 3, IC IC1, analog/basic/cmos_logic.hpp:20
         I(Q, cpphdl_n12) <+ cpphdl_channel(V(SET_N, cpphdl_n12), V(Q, cpphdl_n12), 0.01, 0.69999999999999996, 1.0);
-        // device 4, IC IC1, analog/basic/cmos_logic.hpp:19
+        // device 4, IC IC1, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n12, Vss) <+ cpphdl_channel(V(Q_N, Vss), V(cpphdl_n12, Vss), 0.01, 0.69999999999999996, 1.0);
-        // device 5, IC IC1, analog/basic/cmos_logic.hpp:20
+        // device 5, IC IC1, analog/basic/cmos_logic.hpp:23
         I(Q, Vss) <+ V(Q, Vss) / 1000000000.0;
-        // device 6, IC IC1, analog/basic/cmos_logic.hpp:21
+        // device 6, IC IC1, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n12, Vss) <+ V(cpphdl_n12, Vss) / 1000000000.0;
-        // device 7, IC IC2, analog/basic/cmos_logic.hpp:15
+        // device 7, IC IC2, analog/basic/cmos_logic.hpp:17
         I(Q_N, Vss) <+ 5.0000000000000002e-14 * ddt(V(Q_N, Vss)); // Bench initial voltage = 0.0 V.
-        // device 8, IC IC2, analog/basic/cmos_logic.hpp:16
+        // device 8, IC IC2, analog/basic/cmos_logic.hpp:18
         I(Q_N, Vdd) <+ cpphdl_channel(V(RESET_N, Vdd), V(Q_N, Vdd), 0.01, 0.69999999999999996, -1.0);
-        // device 9, IC IC2, analog/basic/cmos_logic.hpp:17
+        // device 9, IC IC2, analog/basic/cmos_logic.hpp:19
         I(Q_N, Vdd) <+ cpphdl_channel(V(Q, Vdd), V(Q_N, Vdd), 0.01, 0.69999999999999996, -1.0);
-        // device 10, IC IC2, analog/basic/cmos_logic.hpp:18
+        // device 10, IC IC2, analog/basic/cmos_logic.hpp:20
         I(Q_N, cpphdl_n18) <+ cpphdl_channel(V(RESET_N, cpphdl_n18), V(Q_N, cpphdl_n18), 0.01, 0.69999999999999996, 1.0);
-        // device 11, IC IC2, analog/basic/cmos_logic.hpp:19
+        // device 11, IC IC2, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n18, Vss) <+ cpphdl_channel(V(Q, Vss), V(cpphdl_n18, Vss), 0.01, 0.69999999999999996, 1.0);
-        // device 12, IC IC2, analog/basic/cmos_logic.hpp:20
+        // device 12, IC IC2, analog/basic/cmos_logic.hpp:23
         I(Q_N, Vss) <+ V(Q_N, Vss) / 1000000000.0;
-        // device 13, IC IC2, analog/basic/cmos_logic.hpp:21
+        // device 13, IC IC2, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n18, Vss) <+ V(cpphdl_n18, Vss) / 1000000000.0;
-        // device 14, IC cleared_nand_latch, analog/basic/nand_latch.hpp:34
+        // device 14, IC cleared_nand_latch, analog/basic/nand_latch.hpp:36
         I(SET_N, Vss) <+ 2.9999999999999998e-15 * ddt(V(SET_N, Vss)); // Bench initial voltage = 0.0 V.
-        // device 15, IC cleared_nand_latch, analog/basic/nand_latch.hpp:35
+        // device 15, IC cleared_nand_latch, analog/basic/nand_latch.hpp:37
         I(RESET_N, Vss) <+ 2.9999999999999998e-15 * ddt(V(RESET_N, Vss)); // Bench initial voltage = 0.0 V.
         // device 16, IC IC3, analog/basic/inverter.hpp:11
         I(cpphdl_n23, Vdd) <+ cpphdl_channel(V(CLEAR, Vdd), V(cpphdl_n23, Vdd), 0.01, 0.69999999999999996, -1.0);
         // device 17, IC IC3, analog/basic/inverter.hpp:12
         I(cpphdl_n23, Vss) <+ cpphdl_channel(V(CLEAR, Vss), V(cpphdl_n23, Vss), 0.01, 0.69999999999999996, 1.0);
-        // device 18, IC cleared_nand_latch, analog/basic/nand_latch.hpp:56
+        // device 18, IC cleared_nand_latch, analog/basic/nand_latch.hpp:58
         I(cpphdl_n23, Vss) <+ 2.9999999999999998e-15 * ddt(V(cpphdl_n23, Vss)); // Bench initial voltage = 0.0 V.
-        // device 19, IC cleared_nand_latch, analog/basic/nand_latch.hpp:57
+        // device 19, IC cleared_nand_latch, analog/basic/nand_latch.hpp:59
         I(Q, Vss) <+ cpphdl_channel(V(CLEAR, Vss), V(Q, Vss), 0.050000000000000003, 0.69999999999999996, 1.0);
-        // device 20, IC cleared_nand_latch, analog/basic/nand_latch.hpp:58
+        // device 20, IC cleared_nand_latch, analog/basic/nand_latch.hpp:60
         I(Q_N, Vdd) <+ cpphdl_channel(V(cpphdl_n23, Vdd), V(Q_N, Vdd), 0.050000000000000003, 0.69999999999999996, -1.0);
     end
 endmodule

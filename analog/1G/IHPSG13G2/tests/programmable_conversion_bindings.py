@@ -14,6 +14,7 @@ from programmable_conversion_process import process_deck
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--bench', type=Path, required=True)
+parser.add_argument('--dummy-p-width-um', type=int, choices=(25, 30), default=25)
 args, remaining = parser.parse_known_args()
 
 
@@ -46,10 +47,19 @@ class Bindings(unittest.TestCase):
                 self.assertEqual(len(inventory), 26 + 59 * count)
                 self.assertEqual(deck.count('BhostLow'), 9 * count)
                 self.assertEqual(deck.count('BhostHigh'), 9 * count)
-                self.assertEqual(len(re.findall(r'w=25u l=0.45u ng=5$', deck, re.M)), 2 * count)
+                self.assertEqual(len(re.findall(r'w=25u l=0.45u ng=5$', deck, re.M)),
+                                 (2 if args.dummy_p_width_um == 25 else 1) * count)
+                expected = .005 if args.dummy_p_width_um == 25 else .006
+                self.assertEqual(self.examples[count][2].get('sampler_dummy_p_beta_A_per_V2', .005), expected)
                 self.assertNotIn('cpphdl_channel', deck)
                 self.assertNotIn('CircuitModel', deck)
                 self.assertEqual(len(re.findall(r'^let observation', deck, re.M)), 7 + 3 * count)
+
+    def test_charge_cancellation_metadata_cannot_select_another_geometry(self):
+        metadata = copy.deepcopy(self.examples[1][2])
+        metadata['sampler_dummy_p_beta_A_per_V2'] = .006 if args.dummy_p_width_um == 25 else .005
+        with self.assertRaisesRegex(ValueError, 'sampler'):
+            self.bind(metadata=metadata)
 
     def test_changed_storage_is_not_accepted_by_a_different_exported_profile(self):
         _, deck, metadata = self.examples[1]

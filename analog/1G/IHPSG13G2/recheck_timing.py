@@ -25,9 +25,14 @@ def timing_contract(evidence):
            or not 0 < constraints[key] < float('inf') for key in keys):
         raise ValueError('original implementation timing constraints are incomplete or invalid')
     analog = ''
-    if evidence['top'] == 'ADCReceiveController':
-        analog = f'''set analog_controls [get_ports {{trial_out* acquire_out* convert_out*}}]
-if {{[llength $analog_controls] != 160}} {{ error "ADC analog-control interface is incomplete" }}
+    if evidence.get('top') not in MODULES:
+        raise ValueError('unknown module timing interface')
+    module = MODULES[evidence['top']]
+    if evidence['top'] == 'ADCReceiveController' or module.get('array_interface', False):
+        patterns = module.get('analog_control_patterns', 'trial_out* acquire_out* convert_out*')
+        count = module.get('analog_control_ports', 160)
+        analog = f'''set analog_controls [get_ports {{{patterns}}}]
+if {{[llength $analog_controls] != {count}}} {{ error "ADC analog-control interface is incomplete" }}
 set_load {constraints['analog_control_load_pf']} $analog_controls
 '''
     return constraints.copy(), f'''create_clock -name sample_clock -period {constraints['period_ns']} [get_ports clk]
@@ -91,14 +96,15 @@ link_design {evidence['top']}
 set_propagated_clock [all_clocks]
 read_spef -corner slow {{{spef}}}
 read_spef -corner fast {{{spef}}}
-report_checks -path_delay min_max -format full_clock_expanded > {{{work / 'timing.rpt'}}}
-report_worst_slack -max > {{{work / 'setup.rpt'}}}
-report_worst_slack -min > {{{work / 'hold.rpt'}}}
+report_checks -path_delay min_max -format full_clock_expanded -digits 9 > {{{work / 'timing.rpt'}}}
+report_worst_slack -max -digits 9 > {{{work / 'setup.rpt'}}}
+report_worst_slack -min -digits 9 > {{{work / 'hold.rpt'}}}
 report_check_types -max_slew -max_capacitance -max_fanout -violators > {{{work / 'electrical.rpt'}}}
 write_sdc {{{work / 'physical.sdc'}}}
 exit
 ''')
-    inputs = [Path(__file__).resolve(), original, script, slow, fast, tech, cells, netlist, spef, work / 'core.spef',
+    inputs = [Path(__file__).resolve(), SOURCE / 'physical_module.py', COMMON / 'checks.py',
+              COMMON / 'tool_process.py', original, script, slow, fast, tech, cells, netlist, spef, work / 'core.spef',
               implementation / 'module_filled.gds', implementation / 'hardware_checks.json']
     provenance = {str(path): digest(path) for path in inputs}
     report = dict(status='running', top=evidence['top'], original_implementation=str(original),

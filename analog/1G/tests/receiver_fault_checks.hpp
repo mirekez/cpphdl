@@ -21,6 +21,7 @@ inline int receiver_fault_checks(int argc, char** argv) {
         dut.samples_in = _ASSIGN(samples);
         dut.remote_master_in = _ASSIGN(master);
         dut.pma_ok_in = _ASSIGN(pma);
+        dut.symbol_enable_in = _ASSIGN(true);
         dut._assign();
 #endif
         std::string line;
@@ -49,6 +50,7 @@ inline int receiver_fault_checks(int argc, char** argv) {
 #ifdef VERILATOR
             dut.clk = 0;
             dut.reset = reset;
+            dut.symbol_enable_in = true;
             dut.remote_master_in = master;
             dut.pma_ok_in = pma;
             dut.samples_in = samples;

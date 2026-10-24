@@ -36,7 +36,12 @@
 
 The `1G/` library contains implemented controllers and electrical circuits.
 The table distinguishes their completed checks from the remaining work for
-complete, integrated physical PHYs:
+complete, integrated physical PHYs. Recorded component results below belong
+to their tested revisions. Current receiver/transmitter candidates and their
+separate acceptance boundaries are tracked in
+[IHP qualification status](../../1G/IHPSG13G2/qualification-status.md).
+In particular, the thirteen-slice cold receiver and the controller that
+includes startup do not inherit the earlier receiver/controller proofs.
 
 | Block | Remaining implementation and evidence |
 | --- | --- |

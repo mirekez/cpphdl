@@ -8,6 +8,7 @@ import re
 
 from hardware import execute
 from compare import read_spice
+from xspice_bridges import dac_bridge_cards
 
 SOURCE = Path(__file__).resolve()
 
@@ -38,6 +39,11 @@ def live_flow(args, work, prepare_process):
         execute([str(args.bench.resolve()), str(work), 'export', *map(str, export_arguments)],
                 stdout=log, stderr=-2, check=True, timeout=60)
     metadata = json.loads((work / 'live.json').read_text())
+    conditions = json.loads((work / 'conditions.json').read_text())
+    edge = conditions.get('driver_edge_s')
+    if (isinstance(edge, bool) or not isinstance(edge, (int, float)) or
+            not math.isfinite(edge) or edge <= 0):
+        raise ValueError('exported driver edge must be finite and positive')
     experiment, setup = prepare_process(work, metadata)
     deck, control = experiment.split('.control\n', 1)
     if (metadata['feedback_low_V'], metadata['feedback_high_V']) != (.36, .84):
@@ -47,7 +53,11 @@ def live_flow(args, work, prepare_process):
         raise ValueError('XSPICE controller output ordering differs')
     library = work / 'controller.so'
     with (work / 'controller-build.log').open('w') as log:
+        compact = metadata.get('controller_bank_slices')
+        if compact not in (None, 13):
+            raise ValueError('unsupported compact controller bank')
         execute([args.cxx, '-std=c++17', '-O1', '-fPIC', '-shared',
+                 *(['-DCPPHDL_ADC_COMPACT'] if compact == 13 else []),
                  '-I' + str(SOURCE.parents[3] / 'include'), '-I' + str(headers(args.ngspice)),
                  str(SOURCE.parent / 'tests/sim_adc_controller.cpp'), '-o', str(library)],
                 # This fixed digital-only adapter compiled below 200 MB in
@@ -74,9 +84,9 @@ def live_flow(args, work, prepare_process):
 Ahost_clock [host_clock] [host_clock_d] host_input
 Ahost_decisions [{' '.join(metadata['decisions'])}] [{' '.join(decisions)}] host_input
 Ahost_controller [host_clock_d {' '.join(decisions)}] [{' '.join(outputs)}] null host_controller
-Ahost_controls [{' '.join(outputs)}] [{' '.join(analog)}] host_output
+{dac_bridge_cards(outputs, analog, 'host_output', 'host_controls')}
 .model host_input adc_bridge(in_low=.36 in_high=.84 rise_delay=1p fall_delay=1p)
-.model host_output dac_bridge(out_low=0 out_high=1 out_undef=.5 t_rise=100p t_fall=100p)
+.model host_output dac_bridge(out_low=0 out_high=1 out_undef=.5 t_rise={edge:.17g} t_fall={edge:.17g})
 .model host_controller d_cosim(simulation="./controller.so" sim_args=["{args.slices}" "{args.bursts}" "controls.csv" "bridge_events.csv"] delay=1p)
 '''
     # The prepared PSP deck uses installed models through the pinned PDK's

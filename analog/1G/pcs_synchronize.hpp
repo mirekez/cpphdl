@@ -10,6 +10,8 @@ using namespace cpphdl;
 // The PMA must supply deskewed pairs in A/B/C/D order and flag invalid timing.
 class PCSReceiveSynchronizer : public Module {
 public:
+    // Hold the entire symbol pipeline between recovered observations.
+    _PORT(bool) symbol_enable_in;
     _PORT(u<12>) symbols_in;
     _PORT(bool) remote_master_in;
     _PORT(bool) pma_ok_in;
@@ -130,7 +132,7 @@ public:
                 remote_ok._next = ((point ^ mask) & 4) != 0;
             }
         }
-        if (!pma_ok_in() || restart_in() || reset) {
+        if (!pma_ok_in() || (symbol_enable_in() && restart_in()) || reset) {
             state._next = 0;
             collected._next = 0;
             qualified._next = 0;
@@ -144,6 +146,23 @@ public:
             locked._next = 0;
             odd._next = 0;
             remote_ok._next = 0;
+        }
+        // Gate stored state, not combinational temporaries, so synthesis
+        // does not build enable muxes for every unrolled arithmetic temporary.
+        if (!symbol_enable_in() && !reset && pma_ok_in()) {
+            state._next = state;
+            collected._next = collected;
+            qualified._next = qualified;
+            phase_candidates._next = phase_candidates;
+            known_polarity._next = known_polarity;
+            polarity._next = polarity;
+            sx_reg._next = sx_reg;
+            sy_reg._next = sy_reg;
+            sg_reg._next = sg_reg;
+            low_mask._next = low_mask;
+            locked._next = locked;
+            odd._next = odd;
+            remote_ok._next = remote_ok;
         }
     }
     void _strobe() {

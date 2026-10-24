@@ -52,6 +52,8 @@ and recovers complete FCS-checked frames from each solver's voltages.
 | `adc_core.hpp`, `adc_receive.hpp` | [Electrical core-domain decision interfaces and composed calibrated receive stream](adc_receive.md) |
 | `receive_frontend.hpp` | [MOS differential amplifier, shared source follower and core-domain ADC bank](receive_frontend.md); coupled acquisition qualification in progress |
 | `receive_normalizer.hpp` | [Programmable ADC gain/offset normalization](receive_normalizer.md) into the PCS sample convention |
+| `adc_interleaved_bank.hpp` | [Parameterized SAR control](adc_interleaved_bank.md); thirteen slices sustain one result per 4 ns, with a separately verified 0.1296 mm² raw-controller layout |
+| `adc_receive_lane.hpp` | [Precharge, release, conversion and calibration sequence](adc_receive_lane.md); native, RTL and mapped-gate tests; physical analog-control integration remains open |
 | `receive_calibration.hpp` | [Measured training gain and offset](receive_calibration.md), with balanced-label checks and sequential hardware division |
 | `receive_gain_control.hpp` | [Coarse analog gain acquisition](receive_gain_control.md), with settling, bounded sample windows and training-only changes |
 | `receive_range_calibration.hpp` | [Measured-range normalization](receive_range_calibration.md), using a sixteen-clock divider without requiring five labeled training levels |

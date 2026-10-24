@@ -1,7 +1,12 @@
 #ifdef CPPHDL_ADC_CORE
 #include "../adc_core.hpp"
+#ifdef CPPHDL_ADC_COMPACT
+#include "../adc_receive_bank.hpp"
+using Controller = ADCReceiveBankController<13>;
+#else
 #include "../adc_receive.hpp"
 using Controller = ADCReceiveController;
+#endif
 #else
 #include "../adc_feedback.hpp"
 #include "../adc_interleave.hpp"
@@ -78,6 +83,9 @@ static int server(unsigned count) {
     Controller controller;
     unsigned feedback = 0;
     bool launch = false;
+#ifdef CPPHDL_ADC_COMPACT
+    controller.precharge_in = _ASSIGN(false);
+#endif
     controller.enable_in = _ASSIGN(true);
     controller.sample_enable_in = _ASSIGN(launch);
     controller.comparisons_in = _ASSIGN(feedback);
@@ -238,6 +246,9 @@ static int experiment(const std::filesystem::path& destination, bool native, dou
                 voltage(.36), voltage(.84));
 #else
                 voltage(.99), voltage(2.31));
+#endif
+#ifdef CPPHDL_ADC_COMPACT
+        controller->precharge_in = _ASSIGN(false);
 #endif
         controller->enable_in = _ASSIGN(true);
         controller->sample_enable_in = _ASSIGN(!resetting && bool(sim_cpphdl_value(launch)));

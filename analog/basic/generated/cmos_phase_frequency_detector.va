@@ -99,33 +99,33 @@ module cmos_phase_frequency_detector(Vdd, Vss, REF, FEEDBACK, CLEAR, UP, UP_N, D
         I(cpphdl_n281, Vss) <+ cpphdl_channel(V(CLEAR, Vss), V(cpphdl_n281, Vss), 0.01, 0.34999999999999998, 1.0);
         // device 2, IC cmos_phase_frequency_detector, analog/basic/phase_frequency_detector.hpp:43
         I(cpphdl_n281, Vss) <+ 5e-15 * ddt(V(cpphdl_n281, Vss)); // Bench initial voltage = 0.0 V.
-        // device 3, IC IC49, analog/basic/cmos_logic.hpp:15
+        // device 3, IC IC49, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n280, Vss) <+ 5e-15 * ddt(V(cpphdl_n280, Vss)); // Bench initial voltage = 0.0 V.
-        // device 4, IC IC49, analog/basic/cmos_logic.hpp:16
+        // device 4, IC IC49, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n280, Vdd) <+ cpphdl_channel(V(UP, Vdd), V(cpphdl_n280, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 5, IC IC49, analog/basic/cmos_logic.hpp:17
+        // device 5, IC IC49, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n280, Vdd) <+ cpphdl_channel(V(DOWN, Vdd), V(cpphdl_n280, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 6, IC IC49, analog/basic/cmos_logic.hpp:18
+        // device 6, IC IC49, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n280, cpphdl_n277) <+ cpphdl_channel(V(UP, cpphdl_n277), V(cpphdl_n280, cpphdl_n277), 0.01, 0.34999999999999998, 1.0);
-        // device 7, IC IC49, analog/basic/cmos_logic.hpp:19
+        // device 7, IC IC49, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n277, Vss) <+ cpphdl_channel(V(DOWN, Vss), V(cpphdl_n277, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 8, IC IC49, analog/basic/cmos_logic.hpp:20
+        // device 8, IC IC49, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n280, Vss) <+ V(cpphdl_n280, Vss) / 1000000000.0;
-        // device 9, IC IC49, analog/basic/cmos_logic.hpp:21
+        // device 9, IC IC49, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n277, Vss) <+ V(cpphdl_n277, Vss) / 1000000000.0;
-        // device 10, IC IC50, analog/basic/cmos_logic.hpp:15
+        // device 10, IC IC50, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n282, Vss) <+ 5e-15 * ddt(V(cpphdl_n282, Vss)); // Bench initial voltage = 0.0 V.
-        // device 11, IC IC50, analog/basic/cmos_logic.hpp:16
+        // device 11, IC IC50, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n282, Vdd) <+ cpphdl_channel(V(cpphdl_n280, Vdd), V(cpphdl_n282, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 12, IC IC50, analog/basic/cmos_logic.hpp:17
+        // device 12, IC IC50, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n282, Vdd) <+ cpphdl_channel(V(cpphdl_n281, Vdd), V(cpphdl_n282, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 13, IC IC50, analog/basic/cmos_logic.hpp:18
+        // device 13, IC IC50, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n282, cpphdl_n283) <+ cpphdl_channel(V(cpphdl_n280, cpphdl_n283), V(cpphdl_n282, cpphdl_n283), 0.01, 0.34999999999999998, 1.0);
-        // device 14, IC IC50, analog/basic/cmos_logic.hpp:19
+        // device 14, IC IC50, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n283, Vss) <+ cpphdl_channel(V(cpphdl_n281, Vss), V(cpphdl_n283, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 15, IC IC50, analog/basic/cmos_logic.hpp:20
+        // device 15, IC IC50, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n282, Vss) <+ V(cpphdl_n282, Vss) / 1000000000.0;
-        // device 16, IC IC50, analog/basic/cmos_logic.hpp:21
+        // device 16, IC IC50, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n283, Vss) <+ V(cpphdl_n283, Vss) / 1000000000.0;
         // device 17, IC IC2, analog/basic/inverter.hpp:11
         I(cpphdl_n42, Vdd) <+ cpphdl_channel(V(REF, Vdd), V(cpphdl_n42, Vdd), 0.01, 0.34999999999999998, -1.0);
@@ -151,89 +151,89 @@ module cmos_phase_frequency_detector(Vdd, Vss, REF, FEEDBACK, CLEAR, UP, UP_N, D
         I(cpphdl_n55, Vss) <+ cpphdl_channel(V(cpphdl_n38, Vss), V(cpphdl_n55, Vss), 0.01, 0.34999999999999998, 1.0);
         // device 28, IC IC3, analog/basic/cmos_storage.hpp:41
         I(cpphdl_n55, Vss) <+ 5e-15 * ddt(V(cpphdl_n55, Vss)); // Bench initial voltage = 0.0 V.
-        // device 29, IC IC7, analog/basic/cmos_logic.hpp:15
+        // device 29, IC IC7, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n38, Vss) <+ 5e-15 * ddt(V(cpphdl_n38, Vss)); // Bench initial voltage = 0.0 V.
-        // device 30, IC IC7, analog/basic/cmos_logic.hpp:16
+        // device 30, IC IC7, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n38, Vdd) <+ cpphdl_channel(V(cpphdl_n42, Vdd), V(cpphdl_n38, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 31, IC IC7, analog/basic/cmos_logic.hpp:17
+        // device 31, IC IC7, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n38, Vdd) <+ cpphdl_channel(V(cpphdl_n43, Vdd), V(cpphdl_n38, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 32, IC IC7, analog/basic/cmos_logic.hpp:18
+        // device 32, IC IC7, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n38, cpphdl_n45) <+ cpphdl_channel(V(cpphdl_n42, cpphdl_n45), V(cpphdl_n38, cpphdl_n45), 0.01, 0.34999999999999998, 1.0);
-        // device 33, IC IC7, analog/basic/cmos_logic.hpp:19
+        // device 33, IC IC7, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n45, Vss) <+ cpphdl_channel(V(cpphdl_n43, Vss), V(cpphdl_n45, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 34, IC IC7, analog/basic/cmos_logic.hpp:20
+        // device 34, IC IC7, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n38, Vss) <+ V(cpphdl_n38, Vss) / 1000000000.0;
-        // device 35, IC IC7, analog/basic/cmos_logic.hpp:21
+        // device 35, IC IC7, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n45, Vss) <+ V(cpphdl_n45, Vss) / 1000000000.0;
-        // device 36, IC IC8, analog/basic/cmos_logic.hpp:15
+        // device 36, IC IC8, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n66, Vss) <+ 5e-15 * ddt(V(cpphdl_n66, Vss)); // Bench initial voltage = 0.0 V.
-        // device 37, IC IC8, analog/basic/cmos_logic.hpp:16
+        // device 37, IC IC8, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n66, Vdd) <+ cpphdl_channel(V(Vdd, Vdd), V(cpphdl_n66, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 38, IC IC8, analog/basic/cmos_logic.hpp:17
+        // device 38, IC IC8, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n66, Vdd) <+ cpphdl_channel(V(cpphdl_n55, Vdd), V(cpphdl_n66, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 39, IC IC8, analog/basic/cmos_logic.hpp:18
+        // device 39, IC IC8, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n66, cpphdl_n51) <+ cpphdl_channel(V(Vdd, cpphdl_n51), V(cpphdl_n66, cpphdl_n51), 0.01, 0.34999999999999998, 1.0);
-        // device 40, IC IC8, analog/basic/cmos_logic.hpp:19
+        // device 40, IC IC8, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n51, Vss) <+ cpphdl_channel(V(cpphdl_n55, Vss), V(cpphdl_n51, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 41, IC IC8, analog/basic/cmos_logic.hpp:20
+        // device 41, IC IC8, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n66, Vss) <+ V(cpphdl_n66, Vss) / 1000000000.0;
-        // device 42, IC IC8, analog/basic/cmos_logic.hpp:21
+        // device 42, IC IC8, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n51, Vss) <+ V(cpphdl_n51, Vss) / 1000000000.0;
-        // device 43, IC IC9, analog/basic/cmos_logic.hpp:15
+        // device 43, IC IC9, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n72, Vss) <+ 5e-15 * ddt(V(cpphdl_n72, Vss)); // Bench initial voltage = 0.0 V.
-        // device 44, IC IC9, analog/basic/cmos_logic.hpp:16
+        // device 44, IC IC9, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n72, Vdd) <+ cpphdl_channel(V(cpphdl_n54, Vdd), V(cpphdl_n72, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 45, IC IC9, analog/basic/cmos_logic.hpp:17
+        // device 45, IC IC9, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n72, Vdd) <+ cpphdl_channel(V(cpphdl_n55, Vdd), V(cpphdl_n72, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 46, IC IC9, analog/basic/cmos_logic.hpp:18
+        // device 46, IC IC9, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n72, cpphdl_n57) <+ cpphdl_channel(V(cpphdl_n54, cpphdl_n57), V(cpphdl_n72, cpphdl_n57), 0.01, 0.34999999999999998, 1.0);
-        // device 47, IC IC9, analog/basic/cmos_logic.hpp:19
+        // device 47, IC IC9, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n57, Vss) <+ cpphdl_channel(V(cpphdl_n55, Vss), V(cpphdl_n57, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 48, IC IC9, analog/basic/cmos_logic.hpp:20
+        // device 48, IC IC9, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n72, Vss) <+ V(cpphdl_n72, Vss) / 1000000000.0;
-        // device 49, IC IC9, analog/basic/cmos_logic.hpp:21
+        // device 49, IC IC9, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n57, Vss) <+ V(cpphdl_n57, Vss) / 1000000000.0;
-        // device 50, IC IC11, analog/basic/cmos_logic.hpp:15
+        // device 50, IC IC11, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n108, Vss) <+ 5e-15 * ddt(V(cpphdl_n108, Vss)); // Bench initial voltage = 0.0 V.
-        // device 51, IC IC11, analog/basic/cmos_logic.hpp:16
+        // device 51, IC IC11, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n108, Vdd) <+ cpphdl_channel(V(cpphdl_n66, Vdd), V(cpphdl_n108, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 52, IC IC11, analog/basic/cmos_logic.hpp:17
+        // device 52, IC IC11, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n108, Vdd) <+ cpphdl_channel(V(cpphdl_n74, Vdd), V(cpphdl_n108, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 53, IC IC11, analog/basic/cmos_logic.hpp:18
+        // device 53, IC IC11, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n108, cpphdl_n69) <+ cpphdl_channel(V(cpphdl_n66, cpphdl_n69), V(cpphdl_n108, cpphdl_n69), 0.01, 0.34999999999999998, 1.0);
-        // device 54, IC IC11, analog/basic/cmos_logic.hpp:19
+        // device 54, IC IC11, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n69, Vss) <+ cpphdl_channel(V(cpphdl_n74, Vss), V(cpphdl_n69, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 55, IC IC11, analog/basic/cmos_logic.hpp:20
+        // device 55, IC IC11, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n108, Vss) <+ V(cpphdl_n108, Vss) / 1000000000.0;
-        // device 56, IC IC11, analog/basic/cmos_logic.hpp:21
+        // device 56, IC IC11, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n69, Vss) <+ V(cpphdl_n69, Vss) / 1000000000.0;
-        // device 57, IC IC12, analog/basic/cmos_logic.hpp:15
+        // device 57, IC IC12, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n74, Vss) <+ 5e-15 * ddt(V(cpphdl_n74, Vss)); // Bench initial voltage = 0.0 V.
-        // device 58, IC IC12, analog/basic/cmos_logic.hpp:16
+        // device 58, IC IC12, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n74, Vdd) <+ cpphdl_channel(V(cpphdl_n72, Vdd), V(cpphdl_n74, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 59, IC IC12, analog/basic/cmos_logic.hpp:17
+        // device 59, IC IC12, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n74, Vdd) <+ cpphdl_channel(V(cpphdl_n108, Vdd), V(cpphdl_n74, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 60, IC IC12, analog/basic/cmos_logic.hpp:18
+        // device 60, IC IC12, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n74, cpphdl_n75) <+ cpphdl_channel(V(cpphdl_n72, cpphdl_n75), V(cpphdl_n74, cpphdl_n75), 0.01, 0.34999999999999998, 1.0);
-        // device 61, IC IC12, analog/basic/cmos_logic.hpp:19
+        // device 61, IC IC12, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n75, Vss) <+ cpphdl_channel(V(cpphdl_n108, Vss), V(cpphdl_n75, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 62, IC IC12, analog/basic/cmos_logic.hpp:20
+        // device 62, IC IC12, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n74, Vss) <+ V(cpphdl_n74, Vss) / 1000000000.0;
-        // device 63, IC IC12, analog/basic/cmos_logic.hpp:21
+        // device 63, IC IC12, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n75, Vss) <+ V(cpphdl_n75, Vss) / 1000000000.0;
-        // device 64, IC IC10, analog/basic/nand_latch.hpp:34
+        // device 64, IC IC10, analog/basic/nand_latch.hpp:36
         I(cpphdl_n66, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n66, Vss)); // Bench initial voltage = 0.0 V.
-        // device 65, IC IC10, analog/basic/nand_latch.hpp:35
+        // device 65, IC IC10, analog/basic/nand_latch.hpp:37
         I(cpphdl_n72, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n72, Vss)); // Bench initial voltage = 0.0 V.
         // device 66, IC IC13, analog/basic/inverter.hpp:11
         I(cpphdl_n80, Vdd) <+ cpphdl_channel(V(cpphdl_n270, Vdd), V(cpphdl_n80, Vdd), 0.01, 0.34999999999999998, -1.0);
         // device 67, IC IC13, analog/basic/inverter.hpp:12
         I(cpphdl_n80, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(cpphdl_n80, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 68, IC IC10, analog/basic/nand_latch.hpp:56
+        // device 68, IC IC10, analog/basic/nand_latch.hpp:58
         I(cpphdl_n80, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n80, Vss)); // Bench initial voltage = 0.0 V.
-        // device 69, IC IC10, analog/basic/nand_latch.hpp:57
+        // device 69, IC IC10, analog/basic/nand_latch.hpp:59
         I(cpphdl_n108, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(cpphdl_n108, Vss), 0.050000000000000003, 0.34999999999999998, 1.0);
-        // device 70, IC IC10, analog/basic/nand_latch.hpp:58
+        // device 70, IC IC10, analog/basic/nand_latch.hpp:60
         I(cpphdl_n74, Vdd) <+ cpphdl_channel(V(cpphdl_n80, Vdd), V(cpphdl_n74, Vdd), 0.050000000000000003, 0.34999999999999998, -1.0);
         // device 71, IC IC3, analog/basic/cmos_storage.hpp:57
         I(Vdd, Vss) <+ 2.0000000000000002e-15 * ddt(V(Vdd, Vss)); // Bench initial voltage = 0.0 V.
@@ -259,89 +259,89 @@ module cmos_phase_frequency_detector(Vdd, Vss, REF, FEEDBACK, CLEAR, UP, UP_N, D
         I(cpphdl_n115, Vss) <+ cpphdl_channel(V(cpphdl_n98, Vss), V(cpphdl_n115, Vss), 0.01, 0.34999999999999998, 1.0);
         // device 82, IC IC14, analog/basic/cmos_storage.hpp:41
         I(cpphdl_n115, Vss) <+ 5e-15 * ddt(V(cpphdl_n115, Vss)); // Bench initial voltage = 0.0 V.
-        // device 83, IC IC18, analog/basic/cmos_logic.hpp:15
+        // device 83, IC IC18, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n98, Vss) <+ 5e-15 * ddt(V(cpphdl_n98, Vss)); // Bench initial voltage = 0.0 V.
-        // device 84, IC IC18, analog/basic/cmos_logic.hpp:16
+        // device 84, IC IC18, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n98, Vdd) <+ cpphdl_channel(V(REF, Vdd), V(cpphdl_n98, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 85, IC IC18, analog/basic/cmos_logic.hpp:17
+        // device 85, IC IC18, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n98, Vdd) <+ cpphdl_channel(V(cpphdl_n103, Vdd), V(cpphdl_n98, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 86, IC IC18, analog/basic/cmos_logic.hpp:18
+        // device 86, IC IC18, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n98, cpphdl_n105) <+ cpphdl_channel(V(REF, cpphdl_n105), V(cpphdl_n98, cpphdl_n105), 0.01, 0.34999999999999998, 1.0);
-        // device 87, IC IC18, analog/basic/cmos_logic.hpp:19
+        // device 87, IC IC18, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n105, Vss) <+ cpphdl_channel(V(cpphdl_n103, Vss), V(cpphdl_n105, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 88, IC IC18, analog/basic/cmos_logic.hpp:20
+        // device 88, IC IC18, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n98, Vss) <+ V(cpphdl_n98, Vss) / 1000000000.0;
-        // device 89, IC IC18, analog/basic/cmos_logic.hpp:21
+        // device 89, IC IC18, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n105, Vss) <+ V(cpphdl_n105, Vss) / 1000000000.0;
-        // device 90, IC IC19, analog/basic/cmos_logic.hpp:15
+        // device 90, IC IC19, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n126, Vss) <+ 5e-15 * ddt(V(cpphdl_n126, Vss)); // Bench initial voltage = 0.0 V.
-        // device 91, IC IC19, analog/basic/cmos_logic.hpp:16
+        // device 91, IC IC19, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n126, Vdd) <+ cpphdl_channel(V(cpphdl_n108, Vdd), V(cpphdl_n126, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 92, IC IC19, analog/basic/cmos_logic.hpp:17
+        // device 92, IC IC19, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n126, Vdd) <+ cpphdl_channel(V(cpphdl_n115, Vdd), V(cpphdl_n126, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 93, IC IC19, analog/basic/cmos_logic.hpp:18
+        // device 93, IC IC19, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n126, cpphdl_n111) <+ cpphdl_channel(V(cpphdl_n108, cpphdl_n111), V(cpphdl_n126, cpphdl_n111), 0.01, 0.34999999999999998, 1.0);
-        // device 94, IC IC19, analog/basic/cmos_logic.hpp:19
+        // device 94, IC IC19, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n111, Vss) <+ cpphdl_channel(V(cpphdl_n115, Vss), V(cpphdl_n111, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 95, IC IC19, analog/basic/cmos_logic.hpp:20
+        // device 95, IC IC19, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n126, Vss) <+ V(cpphdl_n126, Vss) / 1000000000.0;
-        // device 96, IC IC19, analog/basic/cmos_logic.hpp:21
+        // device 96, IC IC19, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n111, Vss) <+ V(cpphdl_n111, Vss) / 1000000000.0;
-        // device 97, IC IC20, analog/basic/cmos_logic.hpp:15
+        // device 97, IC IC20, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n132, Vss) <+ 5e-15 * ddt(V(cpphdl_n132, Vss)); // Bench initial voltage = 0.0 V.
-        // device 98, IC IC20, analog/basic/cmos_logic.hpp:16
+        // device 98, IC IC20, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n132, Vdd) <+ cpphdl_channel(V(cpphdl_n114, Vdd), V(cpphdl_n132, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 99, IC IC20, analog/basic/cmos_logic.hpp:17
+        // device 99, IC IC20, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n132, Vdd) <+ cpphdl_channel(V(cpphdl_n115, Vdd), V(cpphdl_n132, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 100, IC IC20, analog/basic/cmos_logic.hpp:18
+        // device 100, IC IC20, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n132, cpphdl_n117) <+ cpphdl_channel(V(cpphdl_n114, cpphdl_n117), V(cpphdl_n132, cpphdl_n117), 0.01, 0.34999999999999998, 1.0);
-        // device 101, IC IC20, analog/basic/cmos_logic.hpp:19
+        // device 101, IC IC20, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n117, Vss) <+ cpphdl_channel(V(cpphdl_n115, Vss), V(cpphdl_n117, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 102, IC IC20, analog/basic/cmos_logic.hpp:20
+        // device 102, IC IC20, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n132, Vss) <+ V(cpphdl_n132, Vss) / 1000000000.0;
-        // device 103, IC IC20, analog/basic/cmos_logic.hpp:21
+        // device 103, IC IC20, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n117, Vss) <+ V(cpphdl_n117, Vss) / 1000000000.0;
-        // device 104, IC IC22, analog/basic/cmos_logic.hpp:15
+        // device 104, IC IC22, analog/basic/cmos_logic.hpp:17
         I(UP, Vss) <+ 5e-15 * ddt(V(UP, Vss)); // Bench initial voltage = 0.0 V.
-        // device 105, IC IC22, analog/basic/cmos_logic.hpp:16
+        // device 105, IC IC22, analog/basic/cmos_logic.hpp:18
         I(UP, Vdd) <+ cpphdl_channel(V(cpphdl_n126, Vdd), V(UP, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 106, IC IC22, analog/basic/cmos_logic.hpp:17
+        // device 106, IC IC22, analog/basic/cmos_logic.hpp:19
         I(UP, Vdd) <+ cpphdl_channel(V(UP_N, Vdd), V(UP, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 107, IC IC22, analog/basic/cmos_logic.hpp:18
+        // device 107, IC IC22, analog/basic/cmos_logic.hpp:20
         I(UP, cpphdl_n129) <+ cpphdl_channel(V(cpphdl_n126, cpphdl_n129), V(UP, cpphdl_n129), 0.01, 0.34999999999999998, 1.0);
-        // device 108, IC IC22, analog/basic/cmos_logic.hpp:19
+        // device 108, IC IC22, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n129, Vss) <+ cpphdl_channel(V(UP_N, Vss), V(cpphdl_n129, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 109, IC IC22, analog/basic/cmos_logic.hpp:20
+        // device 109, IC IC22, analog/basic/cmos_logic.hpp:23
         I(UP, Vss) <+ V(UP, Vss) / 1000000000.0;
-        // device 110, IC IC22, analog/basic/cmos_logic.hpp:21
+        // device 110, IC IC22, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n129, Vss) <+ V(cpphdl_n129, Vss) / 1000000000.0;
-        // device 111, IC IC23, analog/basic/cmos_logic.hpp:15
+        // device 111, IC IC23, analog/basic/cmos_logic.hpp:17
         I(UP_N, Vss) <+ 5e-15 * ddt(V(UP_N, Vss)); // Bench initial voltage = 0.0 V.
-        // device 112, IC IC23, analog/basic/cmos_logic.hpp:16
+        // device 112, IC IC23, analog/basic/cmos_logic.hpp:18
         I(UP_N, Vdd) <+ cpphdl_channel(V(cpphdl_n132, Vdd), V(UP_N, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 113, IC IC23, analog/basic/cmos_logic.hpp:17
+        // device 113, IC IC23, analog/basic/cmos_logic.hpp:19
         I(UP_N, Vdd) <+ cpphdl_channel(V(UP, Vdd), V(UP_N, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 114, IC IC23, analog/basic/cmos_logic.hpp:18
+        // device 114, IC IC23, analog/basic/cmos_logic.hpp:20
         I(UP_N, cpphdl_n135) <+ cpphdl_channel(V(cpphdl_n132, cpphdl_n135), V(UP_N, cpphdl_n135), 0.01, 0.34999999999999998, 1.0);
-        // device 115, IC IC23, analog/basic/cmos_logic.hpp:19
+        // device 115, IC IC23, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n135, Vss) <+ cpphdl_channel(V(UP, Vss), V(cpphdl_n135, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 116, IC IC23, analog/basic/cmos_logic.hpp:20
+        // device 116, IC IC23, analog/basic/cmos_logic.hpp:23
         I(UP_N, Vss) <+ V(UP_N, Vss) / 1000000000.0;
-        // device 117, IC IC23, analog/basic/cmos_logic.hpp:21
+        // device 117, IC IC23, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n135, Vss) <+ V(cpphdl_n135, Vss) / 1000000000.0;
-        // device 118, IC IC21, analog/basic/nand_latch.hpp:34
+        // device 118, IC IC21, analog/basic/nand_latch.hpp:36
         I(cpphdl_n126, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n126, Vss)); // Bench initial voltage = 0.0 V.
-        // device 119, IC IC21, analog/basic/nand_latch.hpp:35
+        // device 119, IC IC21, analog/basic/nand_latch.hpp:37
         I(cpphdl_n132, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n132, Vss)); // Bench initial voltage = 0.0 V.
         // device 120, IC IC24, analog/basic/inverter.hpp:11
         I(cpphdl_n140, Vdd) <+ cpphdl_channel(V(cpphdl_n270, Vdd), V(cpphdl_n140, Vdd), 0.01, 0.34999999999999998, -1.0);
         // device 121, IC IC24, analog/basic/inverter.hpp:12
         I(cpphdl_n140, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(cpphdl_n140, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 122, IC IC21, analog/basic/nand_latch.hpp:56
+        // device 122, IC IC21, analog/basic/nand_latch.hpp:58
         I(cpphdl_n140, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n140, Vss)); // Bench initial voltage = 0.0 V.
-        // device 123, IC IC21, analog/basic/nand_latch.hpp:57
+        // device 123, IC IC21, analog/basic/nand_latch.hpp:59
         I(UP, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(UP, Vss), 0.050000000000000003, 0.34999999999999998, 1.0);
-        // device 124, IC IC21, analog/basic/nand_latch.hpp:58
+        // device 124, IC IC21, analog/basic/nand_latch.hpp:60
         I(UP_N, Vdd) <+ cpphdl_channel(V(cpphdl_n140, Vdd), V(UP_N, Vdd), 0.050000000000000003, 0.34999999999999998, -1.0);
         // device 125, IC IC14, analog/basic/cmos_storage.hpp:57
         I(cpphdl_n108, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n108, Vss)); // Bench initial voltage = 0.0 V.
@@ -373,89 +373,89 @@ module cmos_phase_frequency_detector(Vdd, Vss, REF, FEEDBACK, CLEAR, UP, UP_N, D
         I(cpphdl_n186, Vss) <+ cpphdl_channel(V(cpphdl_n169, Vss), V(cpphdl_n186, Vss), 0.01, 0.34999999999999998, 1.0);
         // device 139, IC IC27, analog/basic/cmos_storage.hpp:41
         I(cpphdl_n186, Vss) <+ 5e-15 * ddt(V(cpphdl_n186, Vss)); // Bench initial voltage = 0.0 V.
-        // device 140, IC IC31, analog/basic/cmos_logic.hpp:15
+        // device 140, IC IC31, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n169, Vss) <+ 5e-15 * ddt(V(cpphdl_n169, Vss)); // Bench initial voltage = 0.0 V.
-        // device 141, IC IC31, analog/basic/cmos_logic.hpp:16
+        // device 141, IC IC31, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n169, Vdd) <+ cpphdl_channel(V(cpphdl_n173, Vdd), V(cpphdl_n169, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 142, IC IC31, analog/basic/cmos_logic.hpp:17
+        // device 142, IC IC31, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n169, Vdd) <+ cpphdl_channel(V(cpphdl_n174, Vdd), V(cpphdl_n169, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 143, IC IC31, analog/basic/cmos_logic.hpp:18
+        // device 143, IC IC31, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n169, cpphdl_n176) <+ cpphdl_channel(V(cpphdl_n173, cpphdl_n176), V(cpphdl_n169, cpphdl_n176), 0.01, 0.34999999999999998, 1.0);
-        // device 144, IC IC31, analog/basic/cmos_logic.hpp:19
+        // device 144, IC IC31, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n176, Vss) <+ cpphdl_channel(V(cpphdl_n174, Vss), V(cpphdl_n176, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 145, IC IC31, analog/basic/cmos_logic.hpp:20
+        // device 145, IC IC31, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n169, Vss) <+ V(cpphdl_n169, Vss) / 1000000000.0;
-        // device 146, IC IC31, analog/basic/cmos_logic.hpp:21
+        // device 146, IC IC31, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n176, Vss) <+ V(cpphdl_n176, Vss) / 1000000000.0;
-        // device 147, IC IC32, analog/basic/cmos_logic.hpp:15
+        // device 147, IC IC32, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n197, Vss) <+ 5e-15 * ddt(V(cpphdl_n197, Vss)); // Bench initial voltage = 0.0 V.
-        // device 148, IC IC32, analog/basic/cmos_logic.hpp:16
+        // device 148, IC IC32, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n197, Vdd) <+ cpphdl_channel(V(Vdd, Vdd), V(cpphdl_n197, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 149, IC IC32, analog/basic/cmos_logic.hpp:17
+        // device 149, IC IC32, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n197, Vdd) <+ cpphdl_channel(V(cpphdl_n186, Vdd), V(cpphdl_n197, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 150, IC IC32, analog/basic/cmos_logic.hpp:18
+        // device 150, IC IC32, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n197, cpphdl_n182) <+ cpphdl_channel(V(Vdd, cpphdl_n182), V(cpphdl_n197, cpphdl_n182), 0.01, 0.34999999999999998, 1.0);
-        // device 151, IC IC32, analog/basic/cmos_logic.hpp:19
+        // device 151, IC IC32, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n182, Vss) <+ cpphdl_channel(V(cpphdl_n186, Vss), V(cpphdl_n182, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 152, IC IC32, analog/basic/cmos_logic.hpp:20
+        // device 152, IC IC32, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n197, Vss) <+ V(cpphdl_n197, Vss) / 1000000000.0;
-        // device 153, IC IC32, analog/basic/cmos_logic.hpp:21
+        // device 153, IC IC32, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n182, Vss) <+ V(cpphdl_n182, Vss) / 1000000000.0;
-        // device 154, IC IC33, analog/basic/cmos_logic.hpp:15
+        // device 154, IC IC33, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n203, Vss) <+ 5e-15 * ddt(V(cpphdl_n203, Vss)); // Bench initial voltage = 0.0 V.
-        // device 155, IC IC33, analog/basic/cmos_logic.hpp:16
+        // device 155, IC IC33, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n203, Vdd) <+ cpphdl_channel(V(cpphdl_n185, Vdd), V(cpphdl_n203, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 156, IC IC33, analog/basic/cmos_logic.hpp:17
+        // device 156, IC IC33, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n203, Vdd) <+ cpphdl_channel(V(cpphdl_n186, Vdd), V(cpphdl_n203, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 157, IC IC33, analog/basic/cmos_logic.hpp:18
+        // device 157, IC IC33, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n203, cpphdl_n188) <+ cpphdl_channel(V(cpphdl_n185, cpphdl_n188), V(cpphdl_n203, cpphdl_n188), 0.01, 0.34999999999999998, 1.0);
-        // device 158, IC IC33, analog/basic/cmos_logic.hpp:19
+        // device 158, IC IC33, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n188, Vss) <+ cpphdl_channel(V(cpphdl_n186, Vss), V(cpphdl_n188, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 159, IC IC33, analog/basic/cmos_logic.hpp:20
+        // device 159, IC IC33, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n203, Vss) <+ V(cpphdl_n203, Vss) / 1000000000.0;
-        // device 160, IC IC33, analog/basic/cmos_logic.hpp:21
+        // device 160, IC IC33, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n188, Vss) <+ V(cpphdl_n188, Vss) / 1000000000.0;
-        // device 161, IC IC35, analog/basic/cmos_logic.hpp:15
+        // device 161, IC IC35, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n239, Vss) <+ 5e-15 * ddt(V(cpphdl_n239, Vss)); // Bench initial voltage = 0.0 V.
-        // device 162, IC IC35, analog/basic/cmos_logic.hpp:16
+        // device 162, IC IC35, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n239, Vdd) <+ cpphdl_channel(V(cpphdl_n197, Vdd), V(cpphdl_n239, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 163, IC IC35, analog/basic/cmos_logic.hpp:17
+        // device 163, IC IC35, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n239, Vdd) <+ cpphdl_channel(V(cpphdl_n205, Vdd), V(cpphdl_n239, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 164, IC IC35, analog/basic/cmos_logic.hpp:18
+        // device 164, IC IC35, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n239, cpphdl_n200) <+ cpphdl_channel(V(cpphdl_n197, cpphdl_n200), V(cpphdl_n239, cpphdl_n200), 0.01, 0.34999999999999998, 1.0);
-        // device 165, IC IC35, analog/basic/cmos_logic.hpp:19
+        // device 165, IC IC35, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n200, Vss) <+ cpphdl_channel(V(cpphdl_n205, Vss), V(cpphdl_n200, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 166, IC IC35, analog/basic/cmos_logic.hpp:20
+        // device 166, IC IC35, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n239, Vss) <+ V(cpphdl_n239, Vss) / 1000000000.0;
-        // device 167, IC IC35, analog/basic/cmos_logic.hpp:21
+        // device 167, IC IC35, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n200, Vss) <+ V(cpphdl_n200, Vss) / 1000000000.0;
-        // device 168, IC IC36, analog/basic/cmos_logic.hpp:15
+        // device 168, IC IC36, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n205, Vss) <+ 5e-15 * ddt(V(cpphdl_n205, Vss)); // Bench initial voltage = 0.0 V.
-        // device 169, IC IC36, analog/basic/cmos_logic.hpp:16
+        // device 169, IC IC36, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n205, Vdd) <+ cpphdl_channel(V(cpphdl_n203, Vdd), V(cpphdl_n205, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 170, IC IC36, analog/basic/cmos_logic.hpp:17
+        // device 170, IC IC36, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n205, Vdd) <+ cpphdl_channel(V(cpphdl_n239, Vdd), V(cpphdl_n205, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 171, IC IC36, analog/basic/cmos_logic.hpp:18
+        // device 171, IC IC36, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n205, cpphdl_n206) <+ cpphdl_channel(V(cpphdl_n203, cpphdl_n206), V(cpphdl_n205, cpphdl_n206), 0.01, 0.34999999999999998, 1.0);
-        // device 172, IC IC36, analog/basic/cmos_logic.hpp:19
+        // device 172, IC IC36, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n206, Vss) <+ cpphdl_channel(V(cpphdl_n239, Vss), V(cpphdl_n206, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 173, IC IC36, analog/basic/cmos_logic.hpp:20
+        // device 173, IC IC36, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n205, Vss) <+ V(cpphdl_n205, Vss) / 1000000000.0;
-        // device 174, IC IC36, analog/basic/cmos_logic.hpp:21
+        // device 174, IC IC36, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n206, Vss) <+ V(cpphdl_n206, Vss) / 1000000000.0;
-        // device 175, IC IC34, analog/basic/nand_latch.hpp:34
+        // device 175, IC IC34, analog/basic/nand_latch.hpp:36
         I(cpphdl_n197, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n197, Vss)); // Bench initial voltage = 0.0 V.
-        // device 176, IC IC34, analog/basic/nand_latch.hpp:35
+        // device 176, IC IC34, analog/basic/nand_latch.hpp:37
         I(cpphdl_n203, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n203, Vss)); // Bench initial voltage = 0.0 V.
         // device 177, IC IC37, analog/basic/inverter.hpp:11
         I(cpphdl_n211, Vdd) <+ cpphdl_channel(V(cpphdl_n270, Vdd), V(cpphdl_n211, Vdd), 0.01, 0.34999999999999998, -1.0);
         // device 178, IC IC37, analog/basic/inverter.hpp:12
         I(cpphdl_n211, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(cpphdl_n211, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 179, IC IC34, analog/basic/nand_latch.hpp:56
+        // device 179, IC IC34, analog/basic/nand_latch.hpp:58
         I(cpphdl_n211, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n211, Vss)); // Bench initial voltage = 0.0 V.
-        // device 180, IC IC34, analog/basic/nand_latch.hpp:57
+        // device 180, IC IC34, analog/basic/nand_latch.hpp:59
         I(cpphdl_n239, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(cpphdl_n239, Vss), 0.050000000000000003, 0.34999999999999998, 1.0);
-        // device 181, IC IC34, analog/basic/nand_latch.hpp:58
+        // device 181, IC IC34, analog/basic/nand_latch.hpp:60
         I(cpphdl_n205, Vdd) <+ cpphdl_channel(V(cpphdl_n211, Vdd), V(cpphdl_n205, Vdd), 0.050000000000000003, 0.34999999999999998, -1.0);
         // device 182, IC IC27, analog/basic/cmos_storage.hpp:57
         I(Vdd, Vss) <+ 2.0000000000000002e-15 * ddt(V(Vdd, Vss)); // Bench initial voltage = 0.0 V.
@@ -481,89 +481,89 @@ module cmos_phase_frequency_detector(Vdd, Vss, REF, FEEDBACK, CLEAR, UP, UP_N, D
         I(cpphdl_n246, Vss) <+ cpphdl_channel(V(cpphdl_n229, Vss), V(cpphdl_n246, Vss), 0.01, 0.34999999999999998, 1.0);
         // device 193, IC IC38, analog/basic/cmos_storage.hpp:41
         I(cpphdl_n246, Vss) <+ 5e-15 * ddt(V(cpphdl_n246, Vss)); // Bench initial voltage = 0.0 V.
-        // device 194, IC IC42, analog/basic/cmos_logic.hpp:15
+        // device 194, IC IC42, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n229, Vss) <+ 5e-15 * ddt(V(cpphdl_n229, Vss)); // Bench initial voltage = 0.0 V.
-        // device 195, IC IC42, analog/basic/cmos_logic.hpp:16
+        // device 195, IC IC42, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n229, Vdd) <+ cpphdl_channel(V(FEEDBACK, Vdd), V(cpphdl_n229, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 196, IC IC42, analog/basic/cmos_logic.hpp:17
+        // device 196, IC IC42, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n229, Vdd) <+ cpphdl_channel(V(cpphdl_n234, Vdd), V(cpphdl_n229, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 197, IC IC42, analog/basic/cmos_logic.hpp:18
+        // device 197, IC IC42, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n229, cpphdl_n236) <+ cpphdl_channel(V(FEEDBACK, cpphdl_n236), V(cpphdl_n229, cpphdl_n236), 0.01, 0.34999999999999998, 1.0);
-        // device 198, IC IC42, analog/basic/cmos_logic.hpp:19
+        // device 198, IC IC42, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n236, Vss) <+ cpphdl_channel(V(cpphdl_n234, Vss), V(cpphdl_n236, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 199, IC IC42, analog/basic/cmos_logic.hpp:20
+        // device 199, IC IC42, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n229, Vss) <+ V(cpphdl_n229, Vss) / 1000000000.0;
-        // device 200, IC IC42, analog/basic/cmos_logic.hpp:21
+        // device 200, IC IC42, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n236, Vss) <+ V(cpphdl_n236, Vss) / 1000000000.0;
-        // device 201, IC IC43, analog/basic/cmos_logic.hpp:15
+        // device 201, IC IC43, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n257, Vss) <+ 5e-15 * ddt(V(cpphdl_n257, Vss)); // Bench initial voltage = 0.0 V.
-        // device 202, IC IC43, analog/basic/cmos_logic.hpp:16
+        // device 202, IC IC43, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n257, Vdd) <+ cpphdl_channel(V(cpphdl_n239, Vdd), V(cpphdl_n257, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 203, IC IC43, analog/basic/cmos_logic.hpp:17
+        // device 203, IC IC43, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n257, Vdd) <+ cpphdl_channel(V(cpphdl_n246, Vdd), V(cpphdl_n257, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 204, IC IC43, analog/basic/cmos_logic.hpp:18
+        // device 204, IC IC43, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n257, cpphdl_n242) <+ cpphdl_channel(V(cpphdl_n239, cpphdl_n242), V(cpphdl_n257, cpphdl_n242), 0.01, 0.34999999999999998, 1.0);
-        // device 205, IC IC43, analog/basic/cmos_logic.hpp:19
+        // device 205, IC IC43, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n242, Vss) <+ cpphdl_channel(V(cpphdl_n246, Vss), V(cpphdl_n242, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 206, IC IC43, analog/basic/cmos_logic.hpp:20
+        // device 206, IC IC43, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n257, Vss) <+ V(cpphdl_n257, Vss) / 1000000000.0;
-        // device 207, IC IC43, analog/basic/cmos_logic.hpp:21
+        // device 207, IC IC43, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n242, Vss) <+ V(cpphdl_n242, Vss) / 1000000000.0;
-        // device 208, IC IC44, analog/basic/cmos_logic.hpp:15
+        // device 208, IC IC44, analog/basic/cmos_logic.hpp:17
         I(cpphdl_n263, Vss) <+ 5e-15 * ddt(V(cpphdl_n263, Vss)); // Bench initial voltage = 0.0 V.
-        // device 209, IC IC44, analog/basic/cmos_logic.hpp:16
+        // device 209, IC IC44, analog/basic/cmos_logic.hpp:18
         I(cpphdl_n263, Vdd) <+ cpphdl_channel(V(cpphdl_n245, Vdd), V(cpphdl_n263, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 210, IC IC44, analog/basic/cmos_logic.hpp:17
+        // device 210, IC IC44, analog/basic/cmos_logic.hpp:19
         I(cpphdl_n263, Vdd) <+ cpphdl_channel(V(cpphdl_n246, Vdd), V(cpphdl_n263, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 211, IC IC44, analog/basic/cmos_logic.hpp:18
+        // device 211, IC IC44, analog/basic/cmos_logic.hpp:20
         I(cpphdl_n263, cpphdl_n248) <+ cpphdl_channel(V(cpphdl_n245, cpphdl_n248), V(cpphdl_n263, cpphdl_n248), 0.01, 0.34999999999999998, 1.0);
-        // device 212, IC IC44, analog/basic/cmos_logic.hpp:19
+        // device 212, IC IC44, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n248, Vss) <+ cpphdl_channel(V(cpphdl_n246, Vss), V(cpphdl_n248, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 213, IC IC44, analog/basic/cmos_logic.hpp:20
+        // device 213, IC IC44, analog/basic/cmos_logic.hpp:23
         I(cpphdl_n263, Vss) <+ V(cpphdl_n263, Vss) / 1000000000.0;
-        // device 214, IC IC44, analog/basic/cmos_logic.hpp:21
+        // device 214, IC IC44, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n248, Vss) <+ V(cpphdl_n248, Vss) / 1000000000.0;
-        // device 215, IC IC46, analog/basic/cmos_logic.hpp:15
+        // device 215, IC IC46, analog/basic/cmos_logic.hpp:17
         I(DOWN, Vss) <+ 5e-15 * ddt(V(DOWN, Vss)); // Bench initial voltage = 0.0 V.
-        // device 216, IC IC46, analog/basic/cmos_logic.hpp:16
+        // device 216, IC IC46, analog/basic/cmos_logic.hpp:18
         I(DOWN, Vdd) <+ cpphdl_channel(V(cpphdl_n257, Vdd), V(DOWN, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 217, IC IC46, analog/basic/cmos_logic.hpp:17
+        // device 217, IC IC46, analog/basic/cmos_logic.hpp:19
         I(DOWN, Vdd) <+ cpphdl_channel(V(DOWN_N, Vdd), V(DOWN, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 218, IC IC46, analog/basic/cmos_logic.hpp:18
+        // device 218, IC IC46, analog/basic/cmos_logic.hpp:20
         I(DOWN, cpphdl_n260) <+ cpphdl_channel(V(cpphdl_n257, cpphdl_n260), V(DOWN, cpphdl_n260), 0.01, 0.34999999999999998, 1.0);
-        // device 219, IC IC46, analog/basic/cmos_logic.hpp:19
+        // device 219, IC IC46, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n260, Vss) <+ cpphdl_channel(V(DOWN_N, Vss), V(cpphdl_n260, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 220, IC IC46, analog/basic/cmos_logic.hpp:20
+        // device 220, IC IC46, analog/basic/cmos_logic.hpp:23
         I(DOWN, Vss) <+ V(DOWN, Vss) / 1000000000.0;
-        // device 221, IC IC46, analog/basic/cmos_logic.hpp:21
+        // device 221, IC IC46, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n260, Vss) <+ V(cpphdl_n260, Vss) / 1000000000.0;
-        // device 222, IC IC47, analog/basic/cmos_logic.hpp:15
+        // device 222, IC IC47, analog/basic/cmos_logic.hpp:17
         I(DOWN_N, Vss) <+ 5e-15 * ddt(V(DOWN_N, Vss)); // Bench initial voltage = 0.0 V.
-        // device 223, IC IC47, analog/basic/cmos_logic.hpp:16
+        // device 223, IC IC47, analog/basic/cmos_logic.hpp:18
         I(DOWN_N, Vdd) <+ cpphdl_channel(V(cpphdl_n263, Vdd), V(DOWN_N, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 224, IC IC47, analog/basic/cmos_logic.hpp:17
+        // device 224, IC IC47, analog/basic/cmos_logic.hpp:19
         I(DOWN_N, Vdd) <+ cpphdl_channel(V(DOWN, Vdd), V(DOWN_N, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 225, IC IC47, analog/basic/cmos_logic.hpp:18
+        // device 225, IC IC47, analog/basic/cmos_logic.hpp:20
         I(DOWN_N, cpphdl_n266) <+ cpphdl_channel(V(cpphdl_n263, cpphdl_n266), V(DOWN_N, cpphdl_n266), 0.01, 0.34999999999999998, 1.0);
-        // device 226, IC IC47, analog/basic/cmos_logic.hpp:19
+        // device 226, IC IC47, analog/basic/cmos_logic.hpp:21
         I(cpphdl_n266, Vss) <+ cpphdl_channel(V(DOWN, Vss), V(cpphdl_n266, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 227, IC IC47, analog/basic/cmos_logic.hpp:20
+        // device 227, IC IC47, analog/basic/cmos_logic.hpp:23
         I(DOWN_N, Vss) <+ V(DOWN_N, Vss) / 1000000000.0;
-        // device 228, IC IC47, analog/basic/cmos_logic.hpp:21
+        // device 228, IC IC47, analog/basic/cmos_logic.hpp:24
         I(cpphdl_n266, Vss) <+ V(cpphdl_n266, Vss) / 1000000000.0;
-        // device 229, IC IC45, analog/basic/nand_latch.hpp:34
+        // device 229, IC IC45, analog/basic/nand_latch.hpp:36
         I(cpphdl_n257, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n257, Vss)); // Bench initial voltage = 0.0 V.
-        // device 230, IC IC45, analog/basic/nand_latch.hpp:35
+        // device 230, IC IC45, analog/basic/nand_latch.hpp:37
         I(cpphdl_n263, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n263, Vss)); // Bench initial voltage = 0.0 V.
         // device 231, IC IC48, analog/basic/inverter.hpp:11
         I(cpphdl_n271, Vdd) <+ cpphdl_channel(V(cpphdl_n270, Vdd), V(cpphdl_n271, Vdd), 0.01, 0.34999999999999998, -1.0);
         // device 232, IC IC48, analog/basic/inverter.hpp:12
         I(cpphdl_n271, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(cpphdl_n271, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 233, IC IC45, analog/basic/nand_latch.hpp:56
+        // device 233, IC IC45, analog/basic/nand_latch.hpp:58
         I(cpphdl_n271, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n271, Vss)); // Bench initial voltage = 0.0 V.
-        // device 234, IC IC45, analog/basic/nand_latch.hpp:57
+        // device 234, IC IC45, analog/basic/nand_latch.hpp:59
         I(DOWN, Vss) <+ cpphdl_channel(V(cpphdl_n270, Vss), V(DOWN, Vss), 0.050000000000000003, 0.34999999999999998, 1.0);
-        // device 235, IC IC45, analog/basic/nand_latch.hpp:58
+        // device 235, IC IC45, analog/basic/nand_latch.hpp:60
         I(DOWN_N, Vdd) <+ cpphdl_channel(V(cpphdl_n271, Vdd), V(DOWN_N, Vdd), 0.050000000000000003, 0.34999999999999998, -1.0);
         // device 236, IC IC38, analog/basic/cmos_storage.hpp:57
         I(cpphdl_n239, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n239, Vss)); // Bench initial voltage = 0.0 V.

@@ -24,8 +24,15 @@ BINDINGS = (
     ('history_sink', .021995431832807968, .35, 1, 'sg13_hv_nmos', 150, .45, 4),
 )
 
+# The programmable subclass adds six translators and six physical PMOS trim
+# switches; the main/history sink geometry and shared replica stay unchanged.
+PROGRAMMABLE_BINDINGS = tuple((*entry[:-1], entry[-1] * 22 // 16)
+    if entry[0] in ('logic_input_n', 'logic_input_p', 'logic_pull_down', 'cascode',
+                    'latch', 'gate_buffer_n', 'gate_buffer_p') else entry for entry in BINDINGS)
+PROGRAMMABLE_BINDINGS += (('trim_switch', .02, .7, -1, 'sg13_hv_pmos', 100, .45, 6),)
 
-def contributions(model):
+
+def contributions(model, binding_table=BINDINGS):
     marker = '    analog begin\n'
     if model.count(marker) != 1:
         raise ValueError('expected one generated analog contribution block')
@@ -58,7 +65,7 @@ def contributions(model):
         values = list(map(float, (beta, threshold, polarity)))
         if not all(math.isfinite(value) for value in values):
             raise ValueError('nonfinite channel parameters')
-        matches = [entry for entry in BINDINGS if all(math.isclose(x, y, rel_tol=1e-12, abs_tol=1e-14)
+        matches = [entry for entry in binding_table if all(math.isclose(x, y, rel_tol=1e-12, abs_tol=1e-14)
                     for x, y in zip(values, entry[1:4]))]
         if len(matches) != 1:
             raise ValueError('channel has no unique explicit IHP geometry binding')
@@ -70,22 +77,25 @@ def contributions(model):
     return devices, roles
 
 
-def process_deck(model, original, models, corner):
+def process_deck(model, original, models, corner, *, programmable=False, temperature=27):
     if corner not in ('mos_tt', 'mos_ss', 'mos_ff', 'mos_sf', 'mos_fs'):
         raise ValueError('unknown IHP MOS corner')
-    devices, roles = contributions(model)
-    if roles != Counter({entry[0]: entry[-1] for entry in BINDINGS}):
-        raise ValueError('core transmit circuit no longer has its explicitly sized 218-MOS inventory')
-    if sum(device['kind'] == 'R' for device in devices) != 25:
+    binding_table = PROGRAMMABLE_BINDINGS if programmable else BINDINGS
+    devices, roles = contributions(model, binding_table)
+    if roles != Counter({entry[0]: entry[-1] for entry in binding_table}):
+        raise ValueError('core transmit circuit no longer has its explicitly sized MOS inventory')
+    if sum(device['kind'] == 'R' for device in devices) != (37 if programmable else 25):
         raise ValueError('core transmit passive inventory changed')
     lines = original.splitlines()
     capacitors = [line for line in lines if line.startswith('Cdevice')]
-    if len(capacitors) != 446:
+    if len(capacitors) != (590 if programmable else 446):
         raise ValueError('review changed explicit storage before process qualification')
     if lines.count('.control') != 1 or sum(line.startswith('Ndesign ') for line in lines) != 1:
         raise ValueError('unexpected host experiment interface')
+    if not math.isfinite(temperature) or not -40 <= temperature <= 125:
+        raise ValueError('unsupported transmit temperature')
     deck = [lines[0], f'.lib "{models / "cornerMOSlv.lib"}" {corner}',
-            f'.lib "{models / "cornerMOShv.lib"}" {corner}', '.temp 27']
+            f'.lib "{models / "cornerMOShv.lib"}" {corner}', f'.temp {temperature}']
     for line in lines[1:]:
         if line.startswith(('.model CircuitModel ', 'Ndesign ', 'pre_osdi ')):
             continue

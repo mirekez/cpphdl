@@ -25,6 +25,7 @@ int main(int argc, char** argv) {
         unsigned samples[2]{};
         bool pma = false;
         for (unsigned i = 0; i < 2; ++i) {
+            receiver[i].symbol_enable_in = _ASSIGN(true);
             receiver[i].samples_in = _ASSIGN_I(samples[i]);
             receiver[i].remote_master_in = _ASSIGN_I(i == 1);
             receiver[i].pma_ok_in = _ASSIGN(pma);

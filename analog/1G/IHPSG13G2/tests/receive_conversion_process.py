@@ -46,7 +46,8 @@ def run(args):
         hashes.update(source_dependencies([host], ANALOG.parent, args.cxx,
             ['-std=c++17', '-I' + str(ANALOG.parent / 'include'), '-I' + str(interface)]))
         installation = args.ngspice.resolve().parents[1]
-        paths += [SOURCE.parents[1] / 'xspice_live.py', installation / 'share/ngspice/scripts/spinit']
+        paths += [SOURCE.parents[1] / 'xspice_live.py', SOURCE.parents[1] / 'xspice_bridges.py',
+                  installation / 'share/ngspice/scripts/spinit']
         paths += list((installation / 'lib/ngspice').glob('*.cm'))
         paths += list((interface / 'ngspice').glob('*.h'))
     hashes.update({str(p): digest(p) for p in paths})

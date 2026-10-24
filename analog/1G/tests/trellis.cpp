@@ -123,6 +123,7 @@ int main(int argc, char** argv) {
             dut.metric_in[i] = _ASSIGN_I(metric[i]);
             dut.point_in[i] = _ASSIGN_I(point[i]);
         }
+        dut.symbol_enable_in = _ASSIGN(true);
         dut._assign();
 #endif
         unsigned cycles = 0;
@@ -135,6 +136,7 @@ int main(int argc, char** argv) {
 #ifdef VERILATOR
             dut.clk = 0;
             dut.reset = reset;
+            dut.symbol_enable_in = true;
             dut.start_in = start;
             dut.end_in = end;
             dut.advance_in = advance;

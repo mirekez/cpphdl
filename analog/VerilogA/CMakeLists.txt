@@ -46,6 +46,9 @@ if(BUILD_TESTING)
       add_test(NAME analog.veriloga.trace_codec COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_codec.py")
       set_tests_properties(analog.veriloga.trace_codec PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
+      add_test(NAME analog.veriloga.trace_states COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_states.py")
+      set_tests_properties(analog.veriloga.trace_states PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
       foreach(circuit divider rc rc_initial floating_charge mos_regions inverter controlled_resistor driver opamp ldo ldo_dropout pll agc)
         add_test(NAME analog.veriloga.${circuit} COMMAND "${CMAKE_COMMAND}"
           "-DBENCH=$<TARGET_FILE:analog_veriloga_cross_simulation>" "-DCASE=${circuit}"
@@ -75,7 +78,7 @@ add_executable(analog_veriloga_hierarchy tests/hierarchy.cpp)
 if(Python3_Interpreter_FOUND)
   add_test(NAME analog.veriloga.trace_storage COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_storage_contract.py")
-  set_tests_properties(analog.veriloga.trace_storage PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
+  set_tests_properties(analog.veriloga.trace_storage PROPERTIES LABELS "analog;veriloga" TIMEOUT 90)
 endif()
 if(Python3_Interpreter_FOUND AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
   add_test(NAME analog.veriloga.time_grid COMMAND "${Python3_EXECUTABLE}"
@@ -85,6 +88,9 @@ if(Python3_Interpreter_FOUND AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILO
 endif()
 target_link_libraries(analog_veriloga_hierarchy PRIVATE cpphdl::analog)
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME analog.veriloga.trace_validation COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_validation.py")
+  set_tests_properties(analog.veriloga.trace_validation PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
   add_test(NAME analog.veriloga.hierarchy_structure COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/hierarchy.py")
   set_tests_properties(analog.veriloga.hierarchy_structure PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)

@@ -35,6 +35,7 @@ int main(int argc, char** argv) {
         dut.pma_ok_in = _ASSIGN(pma);
         dut.check_idle_in = _ASSIGN(idle);
         dut.restart_in = _ASSIGN(restart);
+        dut.symbol_enable_in = _ASSIGN(true);
         dut._assign();
 #endif
         std::string line;
@@ -56,6 +57,7 @@ int main(int argc, char** argv) {
 #ifdef VERILATOR
             dut.clk = 0;
             dut.reset = reset;
+            dut.symbol_enable_in = true;
             dut.remote_master_in = master;
             dut.pma_ok_in = pma;
             dut.check_idle_in = idle;
