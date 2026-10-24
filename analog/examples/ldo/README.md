@@ -38,7 +38,8 @@ for the pass-device/error-amplifier/feedback organization.
 From the package root:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build --target analog_ldo
 ./analog/build/analog_ldo analog/out/ldo nominal
 ./analog/build/analog_ldo analog/out/ldo-dropout dropout

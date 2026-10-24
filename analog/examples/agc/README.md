@@ -47,7 +47,8 @@ Our square-wave, low-frequency example is an educational topology, not an RF IC 
 From the package root:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build --target analog_agc
 ./analog/build/analog_agc analog/out/agc nominal
 ./analog/build/analog_agc analog/out/agc-weak weak

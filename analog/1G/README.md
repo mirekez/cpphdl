@@ -120,6 +120,7 @@ Use the existing [OpenVAF/ngspice toolchain](../VerilogA/toolchain.md):
 ```bash
 cd ~/cpphdl
 cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON \
     -DCPPHDL_ANALOG_VERILOGA_TESTS=ON \
     -DOPENVAF_EXECUTABLE="$PWD/analog/out/veriloga-toolchain/openvaf-compatible/openvaf" \
     -DNGSPICE_EXECUTABLE="$PWD/analog/out/veriloga-toolchain/install/bin/ngspice"

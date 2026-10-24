@@ -4,6 +4,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include(CTest)
 endif()
 
+option(CPPHDL_BUILD_ANALOG_TESTS "Build and register analog regression tests (requires BUILD_TESTING)" OFF)
+if(NOT CPPHDL_BUILD_ANALOG_TESTS)
+  # Directory-local override: leave the parent project's digital tests enabled.
+  set(BUILD_TESTING OFF)
+endif()
+
 get_filename_component(CPPHDL_ANALOG_REAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}" REALPATH)
 get_filename_component(CPPHDL_ANALOG_PACKAGE_ROOT "${CPPHDL_ANALOG_REAL_ROOT}/.." ABSOLUTE)
 include("${CPPHDL_ANALOG_PACKAGE_ROOT}/cmake/CpphdlRuntime.cmake")

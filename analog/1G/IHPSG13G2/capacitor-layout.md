@@ -79,7 +79,7 @@ workstation contention without accepting partial rule output.
 From the repository root, after preparing the PDK and KLayout toolchain:
 
 ```sh
-cmake -S analog -B analog/build
+cmake -S analog -B analog/build -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 ctest --test-dir analog/build --output-on-failure \
   -R '^analog[.]1g[.]ihp_capacitor[.]layout$'
 ```

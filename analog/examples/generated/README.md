@@ -35,7 +35,8 @@ preserve the examples' own refined settings, which differ from the smaller-step
 Regenerate everything from the package root:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build --target generate-veriloga -j 4
 ctest --test-dir analog/build -R 'analog.veriloga.generated' --output-on-failure
 ```

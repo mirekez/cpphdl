@@ -54,14 +54,32 @@ analog sensing, loading and charge storage. Include `<cpphdl_analog.h>` and link
 Run the native regression suite without building LLVM or RTL tools:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build -j 4
 ctest --test-dir analog/build --output-on-failure -L analog
 ```
 
-The package build includes analog by default (`CPPHDL_BUILD_ANALOG=ON`). Its
-`check-analog` target builds and runs the same regressions through CTest. See
-[analog/tests](analog/tests/README.md) for coverage and build options.
+The package includes analog and its exporter by default (`CPPHDL_BUILD_ANALOG=ON`),
+but analog tests are **disabled by default**, including in existing build trees.
+Enable them in the package build with:
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON \
+  -DCPPHDL_BUILD_ANALOG=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
+cmake --build build --target check-analog -j 4
+```
+
+Preinstall CMake and a C++20 compiler for standalone native analog tests. Python3
+is needed for script-driven checks; RTL comparisons additionally need Verilator
+and the built `cpphdl` converter. Verilog-A cross-simulator tests need **OpenVAF,
+ngspice built with OSDI support, and Python3**. See the
+[installation instructions](analog/VerilogA/toolchain.md) and
+[test options and prerequisites](analog/tests/README.md).
+`CPPHDL_ANALOG_VERILOGA_TESTS=AUTO` runs comparisons when their tools are found;
+use `ON` to require them, or `OFF` to omit them. None are required just to export
+Verilog-A. `-DCPPHDL_BUILD_ANALOG_TESTS=OFF` disables all analog tests without
+disabling digital tests or the exporter.
 Analog IC classes also export through `cpphdl --verilog-a`; see
 [Verilog-A conversion and independent ngspice comparisons](analog/VerilogA/README.md).
 

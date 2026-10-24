@@ -214,6 +214,7 @@ need OpenVAF, OSDI-enabled ngspice and Python 3 (standard library only):
 
 ```bash
 cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON \
   -DCPPHDL_ANALOG_VERILOGA_TESTS=ON \
   -DOPENVAF_EXECUTABLE=/absolute/path/to/openvaf \
   -DNGSPICE_EXECUTABLE=/absolute/path/to/ngspice

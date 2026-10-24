@@ -55,7 +55,8 @@ Release builds. The framework retains native module ownership through the run.
 From `analog/`:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build build --target analog_mixed_signal -j 4
 ./build/analog_mixed_signal examples/mixed_signal/results
 ```

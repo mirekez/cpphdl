@@ -46,7 +46,8 @@ the CD4046B device.
 From the package root:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build --target analog_pll
 ./analog/build/analog_pll analog/out/pll nominal
 ./analog/build/analog_pll analog/out/pll-loaded loaded
