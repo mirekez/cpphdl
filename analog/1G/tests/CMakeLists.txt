@@ -688,6 +688,11 @@ add_custom_target(check-1g
     analog_1g_adc_analog analog_1g_clock_oscillator analog_1g_reference_clock analog_1g_level_shifter analog_1g_flp_frontend analog_1g_flp_frontend_receiver
     analog_1g_flp_tx analog_1g_flp_rx analog_1g_master_slave analog_1g_negotiation analog_1g_autoneg_link
     analog_1g_pma_control analog_1g_pma_endpoint analog_1g_pma_aligned analog_1g_adc_interleave analog_1g_adc_receive analog_1g_pair_acquisition analog_1g_normalizer analog_1g_receive_calibration analog_1g_pam5_driver USES_TERMINAL)
+add_dependencies(check-1g
+  analog_1g_receive_sample_recovery analog_1g_receive_sample_pcs
+  analog_1g_receive_quality analog_1g_receive_timing_confidence
+  analog_1g_receive_symbol_crossing analog_1g_receive_sample_pcs_qualified
+  analog_1g_receive_earliest_peer)
 if(TARGET analog_1g_adc_array)
   add_dependencies(check-1g analog_1g_adc_array)
 endif()

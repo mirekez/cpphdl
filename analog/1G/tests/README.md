@@ -2,6 +2,9 @@
 
 Run `cmake --build analog/build --target check-1g` from the package root.
 All tests use CTest and have label `1g`. No test downloads a PDK or tools.
+The [2026-10-24 completion audit](audit-2026-10-24.md) records the current
+766-test 1G/repeater inventory, 154 passing rechecked tests, and the remaining
+physical integration and timing blockers. It is not a complete-suite pass.
 See [recorded validation](validation.md) for the measured 87-test run.
 The [hardware and MOS-bias extension](hardware-validation.md) records the newer results.
 The [pair-acquisition regression](../pair_acquisition.md) checks all wiring
