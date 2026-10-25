@@ -456,6 +456,13 @@ not recursively call one another. Comments identify instantiated methods and
 their source locations. The normal converter still handles the containing
 RTL module, its child instance, and port connections.
 
+Synthesis simplifies reconverging branches within each clock region using
+dominator/postdominator analysis. Delayed and pointer-memory schedules treat
+every continuation as an independent entry, and a suspended edge ends its
+region. The optimization therefore removes artificial control dependencies
+between pure helper calls without bypassing memory waits or fault guards.
+True and false edges to the same block remain distinct when only one suspends.
+
 ### Shared Memory Schedule
 
 The fifth `ClockedDelayer` template argument explicitly selects a smaller, slower
@@ -1466,6 +1473,31 @@ use normal concrete specialization packages, not primitive-width syntax.
 Canonical fixed loops in a streaming method are elaborated with constant
 indices; runtime loops continue to require the delayed/memory flow.
 
+## Nonlinear FP32 operations
+
+Include `hls/math/Nonlinear.h` to opt into FP32 division and signed/unsigned
+32-bit integer-to-FP32 conversion. Its integer division and square-root
+implementations use restoring algorithms with the shared RNE/FTZ convention.
+The named `exponential` and `square_root` functions also register HLS overrides;
+native calls retain host standard math. `fp32_exp` uses range reduction and a
+degree-seven approximation, tested to relative error 1e-5 for finite normal
+outputs. It is not a correctly rounded transcendental. `fp32_silu` uses a stable
+negative-exponent expression. Including `Float.h` alone retains the smaller
+add/subtract/multiply policy set.
+
+The exponential polynomial is written as a bounded Horner loop, preserving the
+same sequence of rounded FP32 operations. Delayed/pointer HLS schedules its
+iterations; streaming HLS statically elaborates them into a pipeline. Keeping
+this numerical loop explicit avoids placing the entire polynomial on one
+delayed controller edge. It does not independently pipeline pointer accesses
+or remove the global feedback schedule after retiming.
+
+These functions emit real integer arithmetic logic; they do not assume an
+unspecified external math block. Use the chosen scheduler and actual completion
+signals to account for their latency. A retimed memory FSM still requires the
+admission/commit integration described in `retiming.md`; its gate netlist cannot
+replace a ready/valid memory module without a protocol adapter.
+
 ## Explicit synchronous RAM banks
 
 For modules owning `cpphdl::memory`, clocked lifecycle bodies are emitted inline
@@ -1741,3 +1773,124 @@ Keep request metadata bounded, preserve ready/valid signals under backpressure,
 and track each ping-pong bank's ownership. Independent load, issue, retirement
 and store transitions allow these stages to overlap without changing the
 mathematical C++ operation or its FP32 reduction order.
+
+### Runtime affine maps with independent arithmetic
+
+`hls/MemoryMap.h` provides `ClockedMap<Methods, Reads, Writes, Slots>` for
+independent iterations over a runtime two-dimensional domain. This is an
+explicit reusable gather/compute/scatter lowering interface. It does not make
+an arbitrary OpenMP loop with runtime pointer accesses synthesizable. The
+existing restrictions on automatic OpenMP loop extraction still apply.
+
+Describe each input/output stream with a byte base, row stride, column stride,
+and access size (1, 2, or 4 bytes). An iteration at `(row, column)` accesses
+`base + row * row_stride + column * column_stride`. Strides are unsigned;
+zero input strides permit broadcasting. `rows`, `columns`, and active stream
+counts are command fields. At most 8 input and 8 output streams are supported;
+zero active inputs permit constant generation, but at least one output is
+required. `Slots` is a power of two from 2 through 64 and bounds all buffered
+iterations. No arithmetic latency appears in the controller.
+
+The stateless policy implements
+`MapOutput<Writes> command(MapInput<Reads>, MapInput<Reads>, MapInput<Reads>)`.
+Only the first argument carries data; the other two are zero packets. Its
+`values` array contains the gathered, zero-extended words, and `operation`,
+`parameter`, and row-major `index` provide context. The result contains output
+words, truncated by the configured store size. Keep the math body ordinary
+C++ and use supported bounded OpenMP value loops where useful. The policy is
+compiled through `ClockedPipeline`, so arithmetic retiming cannot lengthen
+the memory controller's feedback interval. Floating-point association remains
+the policy's responsibility; the map does not perform reductions or reassociate
+operations.
+
+For example, a two-input, one-output policy can add `in.values[0]` and
+`in.values[1]`; descriptors then select contiguous, strided, or broadcast
+sources without changing the controller. A paired-output rotation is another
+policy on the same controller. Conversion of a two-byte input to a four-byte
+output belongs in the math policy, not the address engine.
+
+`MemoryMapControl<Reads, Writes, Slots>` exposes the same descriptor interface
+with an external ready/valid arithmetic endpoint. Responses must be ordered,
+with exactly one response for each accepted input. The integrated `ClockedMap`
+owns that endpoint's `ClockedPipeline`. Memory is ordered and **single
+outstanding**: later gathers overlap earlier arithmetic, and completed output
+iterations scatter in row-major order. This version does not issue concurrent
+DRAM requests. Every operand of an iteration is captured before its outputs
+can be stored.
+
+Both the CPU helper `map_descriptor_valid(descriptor)` and the hardware
+admission logic reject empty dimensions, 32-bit address/domain overflow,
+misalignment, overlapping output elements, and unproved cross-iteration
+read/write aliases. They accept separated stream spans, provably disjoint
+subintervals of equal row periods, and exact per-iteration in-place aliases.
+The proof is conservative: a valid but unproved layout must be rearranged or
+handled outside this interface. Overlapping FP16-to-FP32 conversion is not an
+exact in-place alias and is rejected. No memory access occurs for an invalid
+command.
+
+`map_runtime(Methods{}, descriptor, read, write)` executes the same policy in
+ordinary C++ using an OpenMP collapsed row/column loop. It returns `false`
+before invoking either callback when validation fails; otherwise it returns
+`true`. Read callbacks take `(byte_address, size)` and return a zero-extended
+word; write callbacks take `(byte_address, word, size)`. Callbacks must support
+independent concurrent accesses when host OpenMP is enabled. The policy must
+be stateless; packet fields carry per-command context. The helper preserves
+per-iteration math semantics, while the hardware additionally orders stores.
+
+Hardware commands and responses use ready/valid acceptance. Requests remain
+stable through backpressure. On a memory or arithmetic fault, the controller
+stops creating work, drains already exposed/accepted requests, and fences the
+memory adapter before reporting completion. The owner must honor
+`flush_valid_out`/`flush_ready_in` and keep the adapter assigned until the held
+response is acknowledged; `flush_valid_out` remains asserted through that
+acknowledgment. Reset must also reset/drain the connected endpoints. Fault
+codes are 1 for an invalid descriptor, 2 for memory failure, and 3 for an
+arithmetic failure; adapter fence failures are handled by the owning wrapper.
+
+Five profiling bits represent memory transactions, gather, iteration math,
+scatter, and the final fence. Active/progress/wait masks expose overlap and
+stalls. On a successful command with `N = rows * columns`, `R` active reads,
+and `W` active writes, accepted and completed counts must both equal
+`[(R + W) * N, R * N, N, W * N, 1]`. Report these counts and occupancy masks
+alongside total device clocks; a pipeline's standalone initiation interval
+alone does not measure memory-system throughput.
+
+Public source records and helpers in `cpphdl::hls` are exported through the
+same direct-RTL path as application code. Core `cpphdl` bit-vector/container
+implementation records remain compiler primitives. Namespaced module methods
+must be identified by AST declaration kind; class-name substring checks cannot
+distinguish a constructor from `namespace::Class::method`.
+
+The map wrappers carry their input/output packet types as defaulted template
+type arguments. This gives different stream dimensions distinct generated
+module names while numeric parameters such as queue depth remain ordinary SV
+parameters. `tests/memory_map/DimensionTop.cpp` instantiates two different
+packet shapes in one translation unit to check module and package separation.
+
+## Ordered FP32 reductions
+
+An ordered sum has a true feedback dependency. An II=1 adder can accept
+independent additions every clock, but a single accumulator must wait for the
+previous result. Additional buffering overlaps input transforms and memory;
+it cannot remove this dependency. A tree or striped reduction changes FP32
+association and must be an explicit algorithm choice in the C++ reference.
+
+`hls/math/Fp32Add.h` provides `fp32_add_narrow(a, b)` for bit-pattern FP32
+addition with the same RNE, canonical-NaN and exponent-zero flush semantics as
+`fp32_add`. It uses a 32-bit guard/round/sticky datapath and a parallel priority
+encoder for cancellation normalization. The function is ordinary C++, suitable
+for a `ClockedPipeline` value method and `fit_pipeline_retiming`. Select the
+latency from synthesis; do not encode a cycle count in the consuming controller.
+`hls/tests/Fp32AddNarrow.cpp` compares it against the independent original
+implementation across exponent gaps, rounding boundaries and random patterns.
+
+For measured recurrence improvements, compare complete command clocks and
+overlapping load/transform/sum/map/store counters, not just standalone adder
+latency. Check transformed RTL and retimed arithmetic under backpressure, and
+retain the exact sequential C++ sum as the numerical reference.
+
+`hls/math/FloatConvert.h` similarly provides `fp16_to_fp32_narrow` and
+`fp32_from_int_narrow`. They preserve FP16 subnormals/NaN payloads and int32
+round-to-nearest/even respectively, using bounded 32-bit normalization instead
+of a 64-bit shifted significand. `hls/tests/FloatConvertNarrow.cpp` checks all
+FP16 encodings and int32 rounding boundaries against the original primitives.

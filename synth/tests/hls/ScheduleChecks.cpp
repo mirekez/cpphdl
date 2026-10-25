@@ -7,7 +7,7 @@
 using namespace cpphdl::graph;
 using namespace cpphdl::synth;
 static void commandJoins() {
-    for (unsigned test = 0; test < 5; ++test) {
+    for (unsigned test = 0; test < 5; ++test) for(unsigned mode=0;mode<3;++mode) {
         ScheduledDesign d;
         d.symbols["scratch.local"]={32,"private arithmetic",true};
         d.blocks.resize(7); d.resetEntry=0; d.commandEntry=1;
@@ -27,37 +27,108 @@ static void commandJoins() {
             // An omitted false successor is an exit, not an unconditional edge.
             d.blocks[1].no=-1;d.blocks[1].yes=4;
         } else if (test == 4) d.blocks[1].yes=d.blocks[1].no=4;
-        Graph graph;auto ports=exportCombinationalCommand(graph,d,"joins");
+        if(mode) {
+            d.externalMemory=mode==2;
+            d.blocks[0].statements={"booting = 0; phase = 0;"};
+            d.blocks[4].statements.push_back("pending = 1; phase = 0;");
+            if(test==1)d.blocks[3].statements.push_back("pending = 1; phase = 0;");
+        }
+        Graph graph;graph.clockContract=ClockContract::RisingEdgeStep;
+        auto ports=mode?exportScheduledGraph(graph,d,"joins"):exportCombinationalCommand(graph,d,"joins");
         for(auto& node:graph.nodes) if(node.op=="wire") node.op="input";
+        const std::set<std::string> inputs={"reset","command_valid_in","operation_in","index_in","value_in","response_ready_in",
+            "memory_out.ready_out","memory_out.valid_out","memory_out.data_out","memory_out.error_out"};
         for(const auto& [name,bits]:ports)
-            if(name=="operation_in"||name=="index_in"||name=="value_in"||name=="result_out"||name=="fault_out")
-                graph.ports.push_back({name,bits,name.find("_in")!=std::string::npos});
+            if(mode||name=="operation_in"||name=="index_in"||name=="value_in"||name=="result_out"||name=="fault_out")
+                graph.ports.push_back({name,bits,inputs.count(name)!=0});
         graph.optimize();
         if (test==0 || test==4) {
             std::set<size_t> visited;
             std::function<void(Value)> walk=[&](Value value) {
                 for(auto bit:graph.resolved(value)) if(bit>1 && visited.insert(Graph::owner(bit)).second) {
                     const auto& node=graph.nodes[Graph::owner(bit)];
-                    if(node.op=="input" && node.name.find("operation_in")!=std::string::npos)
+                    if((node.op=="input"||node.op=="state") && node.name.find("operation_in")!=std::string::npos)
                         throw std::runtime_error("private helper branch serialized independent command arithmetic");
                     walk(node.left);walk(node.right);walk(node.select);
                 }
             };
-            walk(ports.at("result_out"));
+            auto value=ports.at("result_out");
+            if(mode)for(const auto& state:graph.states)
+                if(graph.resolved(state.bits)==graph.resolved(value)){value=state.next;break;}
+            walk(value);
         }
         for(auto g:{graph,mapGates(graph)}) {
             Evaluate sim(g);
             for(unsigned op=0;op<4;++op) for(unsigned index=0;index<2;++index)
                 for(unsigned value=0;value<32;++value) {
-                    sim.input("operation_in",op);sim.input("index_in",index);sim.input("value_in",value);sim.eval();
+                    if(mode){sim.input("reset",1);sim.tick();sim.input("reset",0);sim.tick();sim.input("command_valid_in",1);}
+                    sim.input("operation_in",op);sim.input("index_in",index);sim.input("value_in",value);
+                    if(mode) {
+                        sim.tick();sim.input("command_valid_in",0);
+                        if(mode==2){sim.input("value_in",value+999);sim.tick();}
+                    } else sim.eval();
                     unsigned answer=value*7,fault=0;
                     if(test==1 && !(op&1)) answer=value+5;
                     if(test==2 && (op&1)) {answer=0;fault=9;}
                     if(test==3 && !(op&1)) answer=0;
                     if(sim.output("result_out")!=answer || sim.output("fault_out")!=fault)
                         throw std::runtime_error("combinational join changed conditional/fault behavior");
+                    if(mode&&bool(sim.output("response_valid_out"))!=(test!=3||bool(op&1)))
+                        throw std::runtime_error("clocked join changed completion behavior");
                 }
         }
+    }
+}
+static void suspendedJoin() {
+    ScheduledDesign d;d.symbols["values.saved"]={32,"saved argument",true};
+    d.clocked.insert("values.saved");
+    d.blocks.resize(5);d.resetEntry=0;d.commandEntry=1;
+    d.blocks[0].statements={"booting = 0; phase = 0;"};
+    d.blocks[1].condition="operation_in & 1";d.blocks[1].yes=2;d.blocks[1].no=3;
+    d.blocks[2].statements={"values.saved = value_in + 1;"};d.blocks[2].yes=4;d.blocks[2].suspend=true;
+    d.blocks[3].statements={"values.saved = value_in + 2;"};d.blocks[3].yes=4;
+    d.blocks[4].statements={"result = values.saved; pending = 1; phase = 0;"};
+    Graph graph;graph.clockContract=ClockContract::RisingEdgeStep;
+    auto ports=exportScheduledGraph(graph,d,"suspended");
+    for(auto& node:graph.nodes)if(node.op=="wire")node.op="input";
+    for(const auto& [name,bits]:ports)
+        graph.ports.push_back({name,bits,name=="reset"||(name.size()>=3&&name.compare(name.size()-3,3,"_in")==0)});
+    for(auto g:{graph,mapGates(graph)}) {
+        Evaluate sim(g);
+        for(unsigned op=0;op<2;++op) {
+            sim.input("reset",1);sim.tick();sim.input("reset",0);sim.tick();
+            sim.input("command_valid_in",1);sim.input("operation_in",op);sim.input("value_in",19);sim.tick();
+            sim.input("command_valid_in",0);sim.input("value_in",999);
+            if(op) {
+                if(sim.output("response_valid_out"))throw std::runtime_error("join crossed a clock suspension");
+                sim.tick();
+            }
+            if(!sim.output("response_valid_out")||sim.output("result_out")!=21-op)
+                throw std::runtime_error("suspended join lost continuation activation or saved data: op="+std::to_string(op)+
+                    " response="+std::to_string(sim.output("response_valid_out"))+" result="+std::to_string(sim.output("result_out")));
+        }
+    }
+}
+static void sameTargetSuspension() {
+    // Both branches target block 1, but only the true edge waits. Numbering
+    // the target before the fork exposes incorrect duplicate-edge accounting.
+    ScheduledDesign d;d.symbols["values.saved"]={32,"saved",true};d.clocked.insert("values.saved");
+    d.blocks.resize(3);d.resetEntry=0;d.commandEntry=2;
+    d.blocks[0].statements={"booting = 0; phase = 0;"};
+    d.blocks[2].statements={"values.saved = value_in;"};d.blocks[2].condition="operation_in & 1";
+    d.blocks[2].yes=d.blocks[2].no=1;d.blocks[2].suspend=true;
+    d.blocks[1].statements={"result = values.saved; pending = 1; phase = 0;"};
+    Graph graph;graph.clockContract=ClockContract::RisingEdgeStep;auto ports=exportScheduledGraph(graph,d,"same_target");
+    for(auto& node:graph.nodes)if(node.op=="wire")node.op="input";
+    for(const auto& [name,bits]:ports)
+        graph.ports.push_back({name,bits,name=="reset"||(name.size()>=3&&name.compare(name.size()-3,3,"_in")==0)});
+    for(auto g:{graph,mapGates(graph)})for(unsigned op=0;op<2;++op) {
+        Evaluate sim(g);sim.input("reset",1);sim.tick();sim.input("reset",0);sim.tick();
+        sim.input("operation_in",op);sim.input("value_in",23);sim.input("command_valid_in",1);sim.tick();
+        sim.input("command_valid_in",0);sim.input("value_in",99);
+        if(bool(sim.output("response_valid_out"))==bool(op))throw std::runtime_error("same-target suspended edge lost its clock contract");
+        if(op)sim.tick();
+        if(!sim.output("response_valid_out")||sim.output("result_out")!=23)throw std::runtime_error("same-target suspension lost data");
     }
 }
 static Graph bankGraph(unsigned capacity, unsigned address, bool dynamic) {
@@ -148,6 +219,8 @@ int main() {
     try {
         bankChecks();
         commandJoins();
+        suspendedJoin();
+        sameTargetSuspension();
         ScheduledDesign d;
         d.symbols["values.counter"]={32,"counter",true};d.clocked.insert("values.counter");
         d.blocks.resize(4);d.resetEntry=0;d.commandEntry=1;

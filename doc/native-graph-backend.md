@@ -172,6 +172,116 @@ is separate from the graph core, so simulation-only helpers are not required by
 the synthesis backend. Eager identity/constant folding and segmented node storage
 remain shared by both consumers.
 
+`Graph::emit(path, chunkSize, threads, hostOverlap, balanceLanes,
+memoizeChunks, memoizeNextWords)` optionally caches pure combinational chunks by all external
+input and state words they read. This requires chunking and rejects host
+effects and mutable RAM. Immutable ROM reads are supported. A chunk executes
+on first use and whenever any dependency changes; otherwise its intermediate
+results remain available. Registers, event detection, output publication and
+validation still run for each evaluation. Cache storage belongs to each model
+instance, including when instances share a worker executor. This changes host
+evaluation work, not hardware clocks or pipeline latency. The default is off.
+`cpp_graph_native_memoization` compares cached and uncached models with one and
+six lanes across clock phases, reset, ROM access and copied state.
+Chunks with at least 32 dependency words gather their masked keys into a
+contiguous array and compare that array with the previous key. Smaller chunks
+retain short-circuit scalar comparisons. Both forms compare every relevant
+bit exactly; no hash or approximate match is used. The regression exercises
+both forms, including a 4,096-bit input and copying populated wide-key caches.
+
+Memoized multi-lane graphs without host overlap adapt dispatch to recent
+activity. Each lane counts nodes recomputed on cache misses. When fewer than
+4,096 nodes changed in the preceding evaluation of the same commit/settle
+phase, the caller executes the same
+independent lane schedules directly; larger updates use the configured worker
+pool again. An increase in activity is therefore evaluated serially once before
+parallel dispatch resumes. Both paths prepare the same inactive register bank
+and publish it only after all lanes finish. This removes worker wakeups during
+small counter updates without skipping a clock, state equation or validation.
+The memoization regression exercises both dispatch paths and their transitions.
+Commit and settle retain separate activity histories: a quiet pre-commit
+evaluation must not force a busy post-commit settle onto the caller.
+Wide output ports are divided into 64-bit sink slices before cone planning.
+The slices may belong to different lanes; each lane writes private pending
+storage and the caller publishes the original port words only after the join
+and validation. A packed vector therefore does not force all its independent
+results onto one worker. With host overlap all observable slices still belong
+to the caller. `cpp_graph_native_wide_ports` checks one 1,025-bit output against
+an independent oracle with six lanes, partial words, copies and all dispatch
+policies. A scalar output of at most 64 bits keeps its original sink granularity.
+For profiling, set `CPPHDL_NATIVE_DISPATCH=auto`, `serial`, or `parallel`
+before constructing a newly emitted memoized multi-lane model. The default is
+`auto`. The override changes host dispatch only, and allows the same compiled
+graph to be compared without changing arithmetic, registers or device clocks.
+Invalid values fail at construction. Each model also exposes
+`__cpphdl_dispatch_policy` for controlled C++ profiling. A shared executor
+can have more workers than one graph needs: generated calls pass their active
+lane count, and only those workers receive commands or participate in the join.
+Workers skipped for many transactions rejoin using independent command stamps.
+Workers and joins spin for at most 64 iterations before sleeping, rather than
+keeping spare cores busy for 4,096 iterations. This bounds dispatch overhead
+on hosts running other simulations or compilers; it does not change the graph
+schedule or its synchronization guarantees.
+
+For independent module instances, outer parallelism can avoid the repeated
+barriers and duplicated fan-in of splitting each instance into worker cones.
+`cpphdl_graph_batch.h` provides a persistent `graph_runtime::Batch` executor:
+
+```cpp
+auto workers = std::make_shared<cpphdl::graph_runtime::Threads>(6, 1);
+cpphdl::graph_runtime::Batch batch(6, workers);
+for (auto& model : models) {
+    model.__cpphdl_threads = workers;
+    model.__cpphdl_dispatch_policy = cpphdl::graph_runtime::DispatchPolicy::Serial;
+}
+// Snapshot each model's inputs before this boundary.
+batch.run(models.size(), [&](std::size_t i) { models[i].step(); });
+// All states and outputs are now published; connected host logic can run.
+```
+
+This example requires memoized multi-lane models exposing the dispatch-policy
+override. Each job owns a different model and runs its inner lanes serially.
+The batch can share their existing executor, avoiding additional worker threads.
+Its configured worker count must fit that executor. Do not dispatch another
+parallel evaluation onto the same executor from inside a batch job.
+
+Static scheduling divides the jobs into contiguous ranges. For uneven job
+costs, pass `Batch::Schedule::Dynamic` and an optional positive job grain.
+Each job runs exactly once, and every job finishes before the caller returns.
+If a job throws, the executor drains the batch and rethrows one captured
+exception; completed state updates are not rolled back. Concurrent callers
+sharing the executor serialize their batches while keeping model storage separate.
+
+The caller must establish independence: jobs cannot access each other's live
+state, output, mutable RAM or callbacks without synchronization. For connected
+RTL instances, snapshot inputs, evaluate independent siblings, join, and only
+then propagate outputs and perform the next required settle phase. Batching
+multiple clocks additionally requires independence across the complete interval;
+ordinary feedback or a shared DRAM controller generally prevents this. The
+executor never removes clocks or invents lookahead. `cpp_graph_native_batch`
+checks distinct clocked models against serial evaluation, both edges, reset,
+copied caches, static/dynamic assignment, simultaneous jobs, exception draining
+and concurrent callers under undefined-behavior sanitization.
+
+The [cross-design benchmark](native-graph-benchmarks.md) compares this outer
+scheduler with serial evaluation and inner graph threading across arithmetic,
+shared logic, mutable memories, pipelines, control and stalled bus traffic.
+It verifies every measured trace against independent scalar state equations
+and reports overhead regressions alongside speedups.
+
+The separate `memoizeNextWords` option (default false) places register next-word
+assembly in the memoized combinational schedule: unchanged scattered input
+bits reuse the assembled word. It requires `memoizeChunks`. This can help large
+scattered register banks but add overhead for small/simple banks, so measure
+before enabling it for a model. Register
+clock/reset conditions and bank publication still execute on every evaluation.
+No state, clock boundary or arithmetic operation is removed by this cache.
+
+Native storage contains only state words referenced by live expressions or
+state writers. Obsolete nodes left by register aliases do not allocate duplicate
+fields, including when retained streaming metadata prevents graph compaction.
+Initialized read-only state remains present in serial and parallel models.
+
 The root may be an `extern` declaration of a module template specialization;
 cpphdl completes its type and instantiates port bindings without constructing
 the simulation hierarchy. Nested module arrays remain hierarchy rather than

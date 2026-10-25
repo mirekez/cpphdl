@@ -33,7 +33,7 @@ class ToolchainChecks(unittest.TestCase):
             probe.assert_not_called()
 
     def test_atomic_library_directory_comes_from_selected_compiler(self):
-        root = Path(self.directory.name)
+        root = Path(self.directory.name).resolve()
         libraries = {}
         for name, directory in (('libstdc++.so', 'cxx runtime'), ('libatomic.so', 'atomic runtime')):
             path = root / directory / name
@@ -55,7 +55,7 @@ class ToolchainChecks(unittest.TestCase):
         self.assertIn('-std=c++23', command)
 
     def test_selected_runtime_precedes_inherited_runtime(self):
-        library = Path(self.directory.name) / 'compiler-runtime' / 'libstdc++.so'
+        library = Path(self.directory.name).resolve() / 'compiler-runtime' / 'libstdc++.so'
         library.parent.mkdir()
         library.touch()
         with patch.dict('os.environ', {'LD_LIBRARY_PATH': '/old/runtime:/application/lib'}), \
@@ -65,6 +65,23 @@ class ToolchainChecks(unittest.TestCase):
         self.assertEqual(paths[0], str(library.parent))
         self.assertEqual(paths[-2:], ['/old/runtime', '/application/lib'])
         self.assertNotIn('LD_LIBRARY_PATH', os.environ)
+
+    def test_symlinked_compiler_library_paths_are_resolved(self):
+        root = Path(self.directory.name).resolve()
+        runtime = root / 'real runtime'
+        runtime.mkdir()
+        for name in ('libstdc++.so', 'libatomic.so'):
+            (runtime / name).touch()
+        alias = root / 'runtime alias'
+        alias.symlink_to(runtime, target_is_directory=True)
+        with patch('subprocess.check_output', side_effect=lambda command, **kwargs:
+                   str(alias / command[1].split('=', 1)[1])):
+            toolchain = TestToolchain('/tools/bin/clang++', '/tools/bin/verilator', root)
+        self.assertEqual(toolchain.library_dirs.count(str(runtime)), 1)
+        self.assertNotIn(str(alias), toolchain.library_dirs)
+        self.assertEqual(toolchain.env['LD_LIBRARY_PATH'].split(':')[0], str(runtime))
+        command = toolchain.command(['/tools/bin/verilator', '--build', 'test.sv'])
+        self.assertIn("-L'" + str(runtime) + "'", command[command.index('-LDFLAGS') + 1])
 
     def test_asan_probe_cached(self):
         with patch.object(self.toolchain, 'probe', return_value=subprocess.CompletedProcess([], 0, '', '')) as probe:

@@ -279,6 +279,11 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSchedulingChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}" --threaded)
     set_tests_properties(cpp_graph_native_threads PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_compiler COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/cpphdl_native_compiler.py"
+        --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/native-compiler-probe")
+    set_tests_properties(cpp_graph_native_compiler PROPERTIES TIMEOUT 60)
     foreach(workload arithmetic ram)
         add_test(NAME cpp_graph_native_scaling_${workload} COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeScalingChecks.py"
@@ -766,6 +771,7 @@ foreach(src ${TEST_SOURCES})
 
     cpphdl_add_host_opt_flags(${target_name})
     target_compile_options(${target_name} PRIVATE "-fno-strict-aliasing")
+    cpphdl_strip_gnu_property_after_build(${target_name})
 
     cpphdl_add_converter_dependency(${target_name})
 

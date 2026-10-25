@@ -54,7 +54,7 @@ analog sensing, loading and charge storage. Include `<cpphdl_analog.h>` and link
 Run the native regression suite without building LLVM or RTL tools:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+cmake -S analog -B analog/build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build -j 4
 ctest --test-dir analog/build --output-on-failure -L analog
@@ -65,7 +65,7 @@ but analog tests are **disabled by default**, including in existing build trees.
 Enable them in the package build with:
 
 ```bash
-cmake -S . -B build -DBUILD_TESTING=ON \
+cmake -S . -B build -G "Unix Makefiles" -DBUILD_TESTING=ON \
   -DCPPHDL_BUILD_ANALOG=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build build --target check-analog -j 4
 ```

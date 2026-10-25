@@ -1,5 +1,13 @@
 #pragma once
 
+#include <cstdlib>
+#include <filesystem>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -328,6 +336,162 @@ inline std::string ToolShellQuote(const std::filesystem::path& path)
     }
     quoted += "'";
     return quoted;
+}
+
+inline std::filesystem::path CpphdlWorkspaceRootFrom(std::string cpp_name)
+{
+    namespace fs = std::filesystem;
+
+    fs::path source = fs::absolute(cpp_name);
+    for (fs::path dir = source.parent_path(); !dir.empty(); dir = dir.parent_path()) {
+        if (fs::exists(dir / "cpphdl" / ".conda")
+            && fs::exists(dir / "cpphdl" / "include" / "cpphdl.h")) {
+            return dir;
+        }
+        if (fs::exists(dir / ".conda")
+            && fs::exists(dir / "include" / "cpphdl.h")) {
+            return dir.parent_path();
+        }
+        if (dir == dir.root_path()) {
+            break;
+        }
+    }
+    return fs::current_path();
+}
+
+inline std::filesystem::path CpphdlCondaPrefix(std::string cpp_name)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path workspace_root = CpphdlWorkspaceRootFrom(cpp_name);
+    const fs::path workspace_cpphdl_conda = workspace_root / "cpphdl" / ".conda";
+    if (fs::exists(workspace_cpphdl_conda / "bin")) {
+        return workspace_cpphdl_conda;
+    }
+
+    const fs::path cpphdl_root = CpphdlSourceRootFrom(cpp_name);
+    const fs::path cpphdl_conda = cpphdl_root / ".conda";
+    if (fs::exists(cpphdl_conda / "bin")) {
+        return cpphdl_conda;
+    }
+
+    return {};
+}
+
+inline std::filesystem::path CpphdlCondaTool(std::string cpp_name, const std::string& tool)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path prefix = CpphdlCondaPrefix(cpp_name);
+    if (!prefix.empty()) {
+        const fs::path path = prefix / "bin" / tool;
+        if (fs::exists(path)) {
+            return path;
+        }
+    }
+    return tool;
+}
+
+inline std::string VerilatorCondaEnvPrefix(std::string cpp_name)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path prefix = CpphdlCondaPrefix(cpp_name);
+    if (prefix.empty()) {
+        return {};
+    }
+
+    std::string env;
+    env += "CONDA_PREFIX=" + ToolShellQuote(prefix);
+    env += " PATH=" + ToolShellQuote(prefix / "bin") + ":$PATH";
+    env += " LD_LIBRARY_PATH=" + ToolShellQuote(prefix / "lib") + ":${LD_LIBRARY_PATH:-} ";
+    return env;
+}
+
+inline std::string CpphdlCondaToolchainArgs(std::string cpp_name)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path prefix = CpphdlCondaPrefix(cpp_name);
+    if (prefix.empty()) {
+        return {};
+    }
+
+    std::string args;
+    args += " --target=x86_64-conda-linux-gnu";
+
+    const fs::path sysroot = prefix / "x86_64-conda-linux-gnu" / "sysroot";
+    if (fs::exists(sysroot)) {
+        args += " --sysroot=" + ToolShellQuote(sysroot);
+    }
+
+    const fs::path clang_root = prefix / "lib" / "clang";
+    if (fs::exists(clang_root)) {
+        fs::path clang_include;
+        for (const fs::directory_entry& entry: fs::directory_iterator(clang_root)) {
+            if (entry.is_directory() && fs::exists(entry.path() / "include")) {
+                clang_include = entry.path() / "include";
+            }
+        }
+        if (!clang_include.empty()) {
+            args += " -isystem " + ToolShellQuote(clang_include);
+        }
+    }
+
+    const fs::path gcc_root = prefix / "lib" / "gcc" / "x86_64-conda-linux-gnu";
+    if (fs::exists(gcc_root)) {
+        fs::path gcc_include;
+        for (const fs::directory_entry& entry: fs::directory_iterator(gcc_root)) {
+            if (entry.is_directory() && fs::exists(entry.path() / "include" / "c++")) {
+                gcc_include = entry.path() / "include" / "c++";
+            }
+        }
+        if (!gcc_include.empty()) {
+            args += " -isystem " + ToolShellQuote(gcc_include);
+            args += " -isystem " + ToolShellQuote(gcc_include / "x86_64-conda-linux-gnu");
+            args += " -isystem " + ToolShellQuote(gcc_include / "backward");
+        }
+    }
+
+    const fs::path sysroot_include = sysroot / "usr" / "include";
+    if (fs::exists(sysroot_include)) {
+        args += " -isystem " + ToolShellQuote(sysroot_include);
+    }
+
+    return args;
+}
+
+inline bool VerilatorBuildInObjDir(std::string cpp_name, std::string folder_name, std::string top_name)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path prefix = CpphdlCondaPrefix(cpp_name);
+    const fs::path make = CpphdlCondaTool(cpp_name, "make");
+    const fs::path cxx = CpphdlCondaTool(cpp_name, "clang++");
+    std::string link = cxx.string();
+    if (!prefix.empty()) {
+        link += " -L" + (prefix / "lib").string();
+    }
+    link += " -static-libstdc++ -static-libgcc";
+
+    std::string command = "cd " + ToolShellQuote(fs::path(folder_name) / "obj_dir") + "; ";
+    command += VerilatorCondaEnvPrefix(cpp_name);
+    command += ToolShellQuote(make);
+    command += " -j4 -f V" + top_name + ".mk";
+    command += " CXX=" + ToolShellQuote(cxx);
+    command += " LINK=" + ToolShellQuote(link);
+    if (SystemEcho(command.c_str()) != 0) {
+        return false;
+    }
+
+    const fs::path objcopy = CpphdlCondaTool(cpp_name, "llvm-objcopy");
+    const fs::path bin = fs::path(folder_name) / "obj_dir" / ("V" + top_name);
+    if (fs::exists(objcopy) && fs::exists(bin)) {
+        std::string strip_command = ToolShellQuote(objcopy);
+        strip_command += " --remove-section=.note.gnu.property " + ToolShellQuote(bin);
+        (void)SystemEcho(strip_command.c_str());
+    }
+    return true;
 }
 
 inline std::string ToolShellQuoteString(const std::string& text)
