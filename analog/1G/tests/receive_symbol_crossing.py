@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from hardware import configure_cleanup, execute, source_dependencies
+from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 
 SOURCE = Path(__file__).resolve()
 ANALOG = SOURCE.parents[2]
@@ -26,6 +26,7 @@ def digest(path):
 def run(args):
     args.work.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=args.work.resolve()))
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     fixture = SOURCE.with_suffix('.cpp')
     entry = ANALOG / '1G/receive_symbol_crossing.cpp'
     hashes = source_dependencies([fixture, entry], ANALOG.parent, args.cxx)
@@ -44,7 +45,7 @@ def run(args):
 
     def command(label, argv):
         with (work / (label + '.log')).open('w') as log:
-            execute(list(map(str, argv)), cwd=work, env=os.environ, stdout=log, stderr=-2,
+            execute(toolchain.command(argv), cwd=work, env=toolchain.env, stdout=log, stderr=-2,
                     check=True, timeout=600)
 
     save()

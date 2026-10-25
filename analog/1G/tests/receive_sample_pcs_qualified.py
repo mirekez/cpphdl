@@ -8,7 +8,7 @@ import re
 import shutil
 import tempfile
 
-from hardware import configure_cleanup, execute, source_dependencies
+from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 from receive_sample_recovery import archive, digest
 from receive_sample_pcs_reference import generate
 from receive_sample_pcs_qualified_trace import audit
@@ -36,6 +36,7 @@ def run(args):
     root = args.work.resolve()
     root.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=root))
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     fixture = SOURCE.with_suffix('.cpp')
     entry = ANALOG / '1G/receive_sample_pcs_qualified.cpp'
     compiler = Path(shutil.which(args.cxx) or args.cxx).resolve()
@@ -60,7 +61,7 @@ def run(args):
 
     def command(label, argv):
         with (work / (label + '.log')).open('w') as log:
-            execute(list(map(str, argv)), cwd=work, env=os.environ, stdout=log, stderr=-2,
+            execute(toolchain.command(argv), cwd=work, env=toolchain.env, stdout=log, stderr=-2,
                     check=True, timeout=3600)
 
     save()

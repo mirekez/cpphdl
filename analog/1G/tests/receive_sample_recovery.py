@@ -11,7 +11,7 @@ import re
 import shutil
 import tempfile
 
-from hardware import configure_cleanup, execute, source_dependencies
+from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 
 SOURCE = Path(__file__).resolve()
 ANALOG = SOURCE.parents[2]
@@ -82,6 +82,7 @@ def archive(path):
 def run(args):
     root = args.work.resolve(); root.mkdir(parents=True,exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-',dir=root))
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     fixture = SOURCE.with_suffix('.cpp'); entry = ANALOG/'1G/receive_sample_recovery.cpp'
     compiler = Path(shutil.which(args.cxx) or args.cxx).resolve()
     tools = [args.native.resolve(),args.converter.resolve(),args.verilator.resolve(),compiler]
@@ -97,7 +98,7 @@ def run(args):
         (work/'checks.json').write_text(payload); (root/'checks.json').write_text(payload)
     def command(label,argv):
         with (work/(label+'.log')).open('w') as log:
-            execute(list(map(str,argv)),cwd=work,env=os.environ,stdout=log,stderr=-2,check=True,timeout=1800)
+            execute(toolchain.command(argv),cwd=work,env=toolchain.env,stdout=log,stderr=-2,check=True,timeout=1800)
     save()
     try:
         command('native',[args.native.resolve(),work/'native.csv'])
