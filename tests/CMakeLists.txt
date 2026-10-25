@@ -27,6 +27,14 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME optimizer_assign_initialization COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/AssignInitializationChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(optimizer_assign_initialization PROPERTIES TIMEOUT 240 LABELS "optimizer")
+    add_test(NAME optimizer_template_port_initializer COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/TemplatePortInitializerChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(optimizer_template_port_initializer PROPERTIES TIMEOUT 240 LABELS "optimizer")
     find_program(CONSTANTS_VERILATOR verilator)
     if(CONSTANTS_VERILATOR)
         add_test(NAME child_clock_sources COMMAND "${Python3_EXECUTABLE}"
@@ -332,6 +340,13 @@ if(Python3_Interpreter_FOUND)
             test_workflow.WorkflowTests.test_specialization_preserves_non_type_parameter_expression_precedence)
         set_tests_properties(hdlcpp_specialization_precedence PROPERTIES TIMEOUT 120
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/hdlcpp/tests/cva6" LABELS "hdlcpp;templates")
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_test(NAME cva6_workflow_helpers COMMAND "${CMAKE_COMMAND}" -E env
+                "CPPHDL_TEST_HDLCPP=$<TARGET_FILE:hdlcpp>" "CPPHDL_TEST_TOOL=$<TARGET_FILE:cpphdl>"
+                "CPPHDL_TEST_CXX=${CMAKE_CXX_COMPILER}" "${Python3_EXECUTABLE}" -B -m unittest
+                discover -s "${CMAKE_SOURCE_DIR}/hdlcpp/tests/cva6" -p "test_*.py")
+            set_tests_properties(cva6_workflow_helpers PROPERTIES TIMEOUT 180 LABELS "cva6;scripts")
+        endif()
         add_test(NAME hdlcpp_wide_select_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/WideSelectChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"

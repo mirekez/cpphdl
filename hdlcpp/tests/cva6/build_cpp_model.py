@@ -81,23 +81,45 @@ class ObjectCache:
         return f'/proc/{os.getpid()}/fd/{descriptor}'
 
 
+def compilation_order(sources, chunks):
+    return sorted(range(len(sources)),
+                  key=lambda index: (index >= 2, sources[index][0] not in chunks, index))
+
+
 def unity_sources(work, instantiations, constructors, canonical_types, batch_size=8, runtime_batch_size=4):
     seen = {'-O0': set(), '-O2': set()}
     groups = {'-O0': [], '-O2': []}
-    for source in instantiations:
-        optimization = '-O0' if source.stem in constructors else '-O2'
-        lines = []
-        for line in source.read_text().splitlines():
-            match = re.match(r'^template (?:void )?(cpphdl_opt_t\d+)::(.+);$', line)
-            if match:
-                key = (canonical_types[match[1]], match[2])
-                if key in seen[optimization]:
-                    continue
-                seen[optimization].add(key)
-            lines.append(line)
-        groups[optimization].append(f'#line 1 "{source.name}"\n' + '\n'.join(lines) + '\n')
+    initialization = []
+    ordered = [source for source in instantiations if source.stem in constructors]
+    ordered += [source for source in instantiations if source.stem not in constructors]
+    for source in ordered:
+        default = '-O0' if source.stem in constructors else '-O2'
+        text = source.read_text()
+        fragments = [(default, text)]
+        declarations = instantiation_declarations(text)
+        if declarations:
+            prefix, members = declarations
+            partitions = {'-O0': [], '-O2': []}
+            for member in members:
+                optimization = '-O2' if member.startswith('template void ') and '::_assign(' not in member else '-O0'
+                partitions[optimization].append(member)
+            fragments = [(optimization, text if len(selected) == len(members) else prefix + '\n'.join(selected) + '\n')
+                         for optimization, selected in partitions.items() if selected]
+        for optimization, fragment in fragments:
+            lines = []
+            for line in fragment.splitlines():
+                match = re.match(r'^template (?:void )?(cpphdl_opt_t\d+)::(.+);$', line)
+                if match:
+                    key = (canonical_types[match[1]], match[2])
+                    if key in seen[optimization]:
+                        continue
+                    seen[optimization].add(key)
+                lines.append(line)
+            destination = initialization if optimization == '-O0' and default != '-O0' else groups[optimization]
+            destination.append(f'#line 1 "{source.name}"\n' + '\n'.join(lines) + '\n')
     result = []
-    for optimization, bodies in groups.items():
+    offsets = {'-O0': 0, '-O2': 0}
+    for optimization, bodies in [('-O0', groups['-O0']), ('-O0', initialization), ('-O2', groups['-O2'])]:
         limit = batch_size if optimization == '-O0' else min(batch_size, runtime_batch_size)
         batches = []
         pending = []
@@ -115,9 +137,10 @@ def unity_sources(work, instantiations, constructors, canonical_types, batch_siz
         if pending:
             batches.append(pending)
         for index, batch in enumerate(batches):
-            source = work / f'unity-{optimization[1:]}-{index}.cpp'
+            source = work / f'unity-{optimization[1:]}-{offsets[optimization] + index}.cpp'
             source.write_text('\n'.join(batch))
             result.append((source, optimization))
+        offsets[optimization] += len(batches)
     return result
 
 
@@ -234,7 +257,7 @@ def main():
     sources = [(work / 'run_cpphdl_testharness.cpp', '-O2'), (runtime, '-O2'),
                *unity_sources(work, instantiations, constructors, dict(zip(aliases, canonical))),
                *((path, '-O2') for path in chunks)]
-    objects = []
+    objects = {}
     dependencies = [*work.rglob('*.h'), *(repo / 'include').rglob('*.h'),
                     *(args.riscv / 'include').rglob('*.h'),
                     *work.glob('run_cpphdl_testharness*.cpp'), Path(args.cxx)]
@@ -252,12 +275,13 @@ def main():
         declarations = instantiation_declarations(pieces[0]) if len(pieces) == 1 else None
         if declarations:
             prefix, members = declarations
-            constructor_members = [member for member in members if not member.startswith('template void ')]
-            if optimization == '-O2' and constructor_members and len(constructor_members) != len(members):
+            initialization_members = [member for member in members if not member.startswith('template void ')
+                                      or '::_assign(' in member]
+            if optimization == '-O2' and initialization_members and len(initialization_members) != len(members):
                 children = []
                 for suffix, child_optimization, body in (
-                        ('constructors', '-O0', constructor_members),
-                        ('cycles', '-O2', [member for member in members if member not in constructor_members])):
+                        ('initialization', '-O0', initialization_members),
+                        ('cycles', '-O2', [member for member in members if member not in initialization_members])):
                     child = source.with_name(source.stem + '-' + suffix + '.cpp')
                     child.write_text(prefix + '\n'.join(body) + '\n')
                     children.extend(compile_source(child, child_optimization, label + '-' + suffix))
@@ -288,14 +312,16 @@ def main():
             cache.split(source, compile_flags, remember=True)
             return compile_halves()
 
-    for index, (source, optimization) in enumerate(sources):
-        objects.extend(compile_source(source, optimization, str(index)))
-        print(f'{args.mode}: compiled {index + 1}/{len(sources)} {source.name}', flush=True)
+    for completed, index in enumerate(compilation_order(sources, chunks), start=1):
+        source, optimization = sources[index]
+        objects[index] = compile_source(source, optimization, str(index))
+        print(f'{args.mode}: compiled {completed}/{len(sources)} {source.name}', flush=True)
     # Concrete CVA6 types produce enormous, highly repetitive ELF symbol tables.
     # Keep completed objects compressed; anonymous linker inputs avoid a second
     # on-disk copy without changing any generated equations or runtime options.
     with ExitStack() as stack:
-        inputs = [cache.materialize(compressed, stack) for compressed in objects]
+        inputs = [cache.materialize(compressed, stack)
+                  for index in range(len(sources)) for compressed in objects[index]]
         run([args.cxx, *flags, *inputs, '-L' + str(args.riscv / 'lib'), '-lfesvr', '-pthread', '-latomic',
              '-Wl,-s', '-o', output / 'run'], 'link')
     (output / 'manifest.json').write_text(json.dumps(dict(mode=args.mode, commands=commands,

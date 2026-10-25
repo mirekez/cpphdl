@@ -475,9 +475,98 @@ std::string sourceText(clang::SourceRange sourceRange,
       .str();
 }
 
+class MemberScope : public clang::RecursiveASTVisitor<MemberScope> {
+public:
+  explicit MemberScope(const clang::CXXMethodDecl *method)
+      : owner(method->getParent()->getCanonicalDecl()) {
+    if (const auto *pattern =
+            method->getParent()->getTemplateInstantiationPattern()) {
+      patternOwner = pattern->getCanonicalDecl();
+    }
+    for (const auto *parameter : method->parameters()) {
+      if (parameter->getIdentifier()) {
+        locals.insert(parameter->getNameAsString());
+      }
+    }
+    TraverseStmt(method->getBody());
+    const bool shadowsField = !locals.empty() && std::any_of(
+        method->getParent()->field_begin(),
+        method->getParent()->field_end(), [&](const clang::FieldDecl *field) {
+          return field->getIdentifier() && locals.contains(field->getNameAsString());
+        });
+    if (!shadowsField) {
+      return;
+    }
+    collectingLocals = false;
+    TraverseStmt(method->getBody());
+  }
+
+  bool VisitVarDecl(clang::VarDecl *declaration) {
+    if (collectingLocals && declaration->getIdentifier()) {
+      locals.insert(declaration->getNameAsString());
+    }
+    return true;
+  }
+
+  bool VisitMemberExpr(clang::MemberExpr *expression) {
+    if (collectingLocals) {
+      return true;
+    }
+    const auto *field =
+        clang::dyn_cast<clang::FieldDecl>(expression->getMemberDecl());
+    if (!field || !locals.contains(field->getNameAsString()) ||
+        (field->getParent()->getCanonicalDecl() != owner &&
+         field->getParent()->getCanonicalDecl() != patternOwner)) {
+      return true;
+    }
+    shadowedFields.insert(field->getNameAsString());
+    const auto location = expression->getMemberLoc();
+    if (expression->isImplicitAccess() && !expression->hasQualifier() &&
+        location.isValid() && !location.isMacroID()) {
+      implicitFields.insert(location.getRawEncoding());
+    }
+    return true;
+  }
+
+  std::string source(const clang::Stmt *statement,
+                     clang::ASTContext &context) const {
+    std::string text = sourceText(statement, context);
+    const auto begin = statement->getBeginLoc();
+    if (text.empty() || begin.isInvalid() || begin.isMacroID()) {
+      return text;
+    }
+    const auto &manager = context.getSourceManager();
+    const auto file = manager.getFileID(begin);
+    const unsigned start = manager.getFileOffset(begin);
+    const size_t length = text.size();
+    for (auto iterator = implicitFields.rbegin();
+         iterator != implicitFields.rend(); ++iterator) {
+      const auto location = clang::SourceLocation::getFromRawEncoding(*iterator);
+      if (manager.getFileID(location) != file) {
+        continue;
+      }
+      const unsigned offset = manager.getFileOffset(location);
+      if (offset >= start && offset - start < length) {
+        text.insert(offset - start, "this->");
+      }
+    }
+    return text;
+  }
+
+  std::set<std::string> shadowedFields;
+
+private:
+  const clang::CXXRecordDecl *owner;
+  const clang::CXXRecordDecl *patternOwner = nullptr;
+  bool collectingLocals = true;
+  std::set<std::string> locals;
+  std::set<unsigned> implicitFields;
+};
+
 std::string astStatementText(const clang::Stmt *statement,
                              clang::ASTContext &context,
-                             const clang::PrintingPolicy &policy) {
+                             const clang::PrintingPolicy &policy,
+                             const MemberScope *scope) {
   if (!statement) {
     return {};
   }
@@ -497,14 +586,14 @@ std::string astStatementText(const clang::Stmt *statement,
             !(nested && nested->isConstexpr())) break;
         active = child;
       }
-      return active ? astStatementText(active, context, policy) : "";
+      return active ? astStatementText(active, context, policy, scope) : "";
     }
   }
   if (const auto *compound = clang::dyn_cast<clang::CompoundStmt>(statement)) {
     std::ostringstream body;
     body << "{\n";
     for (const clang::Stmt *child : compound->body()) {
-      std::string text = astStatementText(child, context, policy);
+      std::string text = astStatementText(child, context, policy, scope);
       // _LAZY_COMB contributes an early-return guard and its clock update.
       // calc_all() evaluates each scheduled node once, so retaining either
       // statement would incorrectly couple optimized evaluation to that guard.
@@ -527,17 +616,33 @@ std::string astStatementText(const clang::Stmt *statement,
       sourceManager.isWrittenInSameFile(
           sourceManager.getSpellingLoc(statementRange.getBegin()),
           sourceManager.getSpellingLoc(statementRange.getEnd()));
-  std::string text =
-      statementInOneFile ? sourceText(statement, context) : std::string{};
+  std::string text = statementInOneFile
+      ? (scope ? scope->source(statement, context) : sourceText(statement, context))
+      : std::string{};
   if (text.empty()) {
     llvm::raw_string_ostream stream(text);
     statement->printPretty(stream, nullptr, policy, 2, "\n", &context);
     stream.flush();
   }
-  // Clang prints dependent template members with an explicit `this->`.
-  // The optimizer rewrites unqualified module members through the concrete
-  // instance, so normalize the printer-added qualification before parsing.
-  replaceText(text, "this->", "");
+  // Normalize printer-added qualification except where AST name resolution
+  // distinguishes a member from a same-named local in another lexical scope.
+  if (!scope || scope->shadowedFields.empty()) {
+    replaceText(text, "this->", "");
+  } else {
+    for (size_t position = 0;
+         (position = text.find("this->", position)) != std::string::npos;) {
+      const size_t begin = skipSpace(text, position + 6);
+      size_t end = begin;
+      while (end < text.size() && identifierPart(text[end])) {
+        ++end;
+      }
+      if (scope->shadowedFields.contains(text.substr(begin, end - begin))) {
+        position = end;
+      } else {
+        text.erase(position, 6);
+      }
+    }
+  }
   if ((clang::isa<clang::Expr>(statement) ||
        clang::isa<clang::ReturnStmt>(statement) ||
        clang::isa<clang::DeclStmt>(statement) ||
@@ -551,12 +656,12 @@ std::string astStatementText(const clang::Stmt *statement,
 }
 
 std::string astCombBody(const clang::Stmt *statement,
-                        clang::ASTContext &context) {
+                        clang::ASTContext &context, const MemberScope *scope) {
   if (!clang::isa_and_nonnull<clang::CompoundStmt>(statement)) {
     return {};
   }
   clang::PrintingPolicy policy(context.getLangOpts());
-  return astStatementText(statement, context, policy);
+  return astStatementText(statement, context, policy, scope);
 }
 
 bool derivesModule(const clang::CXXRecordDecl *record) {
@@ -1654,6 +1759,11 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
       const auto *fieldRecord = field->getType()->getAsCXXRecordDecl();
       const auto* fieldSpecialization =
           clang::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(fieldRecord);
+      // A dependent port alias is classified only after specialization, but
+      // its initializer may exist only in the uninstantiated primary pattern.
+      if (field->getType()->isDependentType() && field->hasInClassInitializer()) {
+        item.initializer = sourceText(field->getInClassInitializer(), context);
+      }
       if (fieldSpecialization && fieldSpecialization->getSpecializedTemplate()
               ->getQualifiedNameAsString() == "cpphdl::function_ref") {
         item.kind = FieldKind::Port;
@@ -2040,6 +2150,11 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     }
     collectClass(parent);
     const std::string methodName = declaration->getNameAsString();
+    std::optional<MemberScope> memberScope;
+    if (methodName != "_assign") {
+      memberScope.emplace(declaration);
+    }
+    const MemberScope *scope = memberScope ? &*memberScope : nullptr;
     const auto bodyRange = declaration->getBody()->getSourceRange();
     const bool crossFileBody =
         bodyRange.isValid() &&
@@ -2052,12 +2167,13 @@ struct Collector : clang::RecursiveASTVisitor<Collector> {
     // those bodies semantically so invalid members in an inactive branch do
     // not become non-dependent errors after flattening into a free function.
     std::string body = instantiatedTemplate
-                           ? astCombBody(declaration->getBody(), context)
+                           ? astCombBody(declaration->getBody(), context, scope)
                            : (crossFileBody
                                   ? std::string{}
-                                  : sourceText(declaration->getBody(), context));
+                                  : (scope ? scope->source(declaration->getBody(), context)
+                                           : sourceText(declaration->getBody(), context)));
     if (body.empty()) {
-      body = astCombBody(declaration->getBody(), context);
+      body = astCombBody(declaration->getBody(), context, scope);
     }
     if (body.empty()) {
       return true;
@@ -2448,7 +2564,30 @@ std::string conjunction(const std::vector<std::string> &expressions) {
   return result;
 }
 
+bool isStorageInitialization(const std::string &line, const ClassInfo &type) {
+  const auto equals = topLevelAssignment(line);
+  if (!equals || !line.ends_with(';')) {
+    return false;
+  }
+  const auto statements = splitTopLevel(line, ';');
+  if (statements.size() != 2 || !statements.back().empty()) {
+    return false;
+  }
+  static const std::regex directField(
+      R"((?:this\s*->\s*)?([A-Za-z_]\w*))");
+  const std::string target = trim(line.substr(0, *equals));
+  std::smatch match;
+  if (!std::regex_match(target, match, directField)) {
+    return false;
+  }
+  const auto field = type.fields.find(match[1].str());
+  return field != type.fields.end() &&
+         (field->second.kind == FieldKind::Other ||
+          field->second.kind == FieldKind::Reg);
+}
+
 std::vector<Assignment> parseAssignments(const std::string &body,
+                                         const ClassInfo &type,
                                          std::string &error) {
   std::vector<Assignment> result;
   std::istringstream input(bodyInterior(body));
@@ -2505,6 +2644,9 @@ std::vector<Assignment> parseAssignments(const std::string &body,
     }
     const auto macro = line.find("_ASSIGN");
     if (macro == std::string::npos) {
+      if (isStorageInitialization(line, type)) {
+        continue;
+      }
       error = "unsupported statement in _assign(): " + line;
       return {};
     }
@@ -2859,7 +3001,6 @@ struct Node {
   bool projectedCombValue = false;
   bool inPlaceComb = false;
   bool memoizableProcedural = false;
-  bool indexedWriteProof = false;
   int visitState = 0;
 };
 
@@ -3826,16 +3967,33 @@ struct CombsOptimizer::Impl {
         output.push_back(input[index++]);
         continue;
       }
-      const size_t start = index++;
+      size_t start = index++;
       while (index < input.size() && identifierPart(input[index])) {
         ++index;
+      }
+      bool explicitMember = false;
+      if (input.substr(start, index - start) == "this") {
+        const size_t arrow = skipSpace(input, index);
+        if (input.compare(arrow, 2, "->") == 0) {
+          const size_t member = skipSpace(input, arrow + 2);
+          size_t end = member;
+          while (end < input.size() && identifierPart(input[end])) {
+            ++end;
+          }
+          if (context.type->fields.contains(input.substr(member, end - member))) {
+            start = member;
+            index = end;
+            explicitMember = true;
+          }
+        }
       }
       const std::string identifier = input.substr(start, index - start);
       const size_t afterIdentifier = skipSpace(input, index);
       const bool qualifiedBefore =
-          start >= 2 && (input.substr(start - 2, 2) == "::" ||
+          !explicitMember && start >= 2 && (input.substr(start - 2, 2) == "::" ||
                          input.substr(start - 2, 2) == "->");
-      const bool memberBefore = start > 0 && input[start - 1] == '.';
+      const bool memberBefore =
+          !explicitMember && start > 0 && input[start - 1] == '.';
       if (l1Scheduling && !qualifiedBefore && !memberBefore &&
           !locals.contains(identifier) &&
           context.type->helperSignatures.contains(identifier) &&
@@ -3865,10 +4023,10 @@ struct CombsOptimizer::Impl {
         }
       }
       const bool forcedField =
-          locals.contains(identifier) &&
+          explicitMember || (locals.contains(identifier) &&
           (input.find(identifier + "._next") != std::string::npos ||
            input.find(identifier + ".strobe(") != std::string::npos ||
-           input.find(identifier + ".apply(") != std::string::npos);
+           input.find(identifier + ".apply(") != std::string::npos));
 
       if (!qualifiedBefore && !memberBefore && identifier == "decltype" &&
           afterIdentifier < input.size() &&
@@ -4755,15 +4913,6 @@ struct CombsOptimizer::Impl {
                        << " unresolved=" << hasUnresolvedInstanceCall(nodes[id].expression) << "\n";
       }
     }
-    if (nodes[id].memoizableProcedural) {
-      const auto storage = nodes[id].instance->type->combStorage.find(nodes[id].name);
-      if (storage != nodes[id].instance->type->combStorage.end()) {
-        const auto proof = nodes[id].instance->type->constantValues.find(
-            "__cpphdl_complete_" + storage->second);
-        nodes[id].indexedWriteProof = proof != nodes[id].instance->type->constantValues.end() &&
-                                     proof->second == 1;
-      }
-    }
     ++preparedNodeCount;
 #if defined(__GLIBC__)
     // Rewriting large generated methods creates short-lived regex and string
@@ -5017,7 +5166,7 @@ struct CombsOptimizer::Impl {
       }
     }
 
-    // Complete indexed writes prove local purity, not phase stability. Do not
+    // Complete writes prove local purity, not phase stability. Do not
     // grant new caching rights through feedback, unresolved calls or imperative
     // work writes; retain the existing settling and demand semantics there.
     std::vector<size_t> unstable(workMutationSeeds.begin(), workMutationSeeds.end());
@@ -5028,7 +5177,7 @@ struct CombsOptimizer::Impl {
       const size_t id = unstable.back();
       unstable.pop_back();
       if (!unstableSeen.insert(id).second) continue;
-      if (nodes[id].indexedWriteProof) {
+      if (nodes[id].memoizableProcedural) {
         nodes[id].memoizableProcedural = false;
         if (std::getenv("CPPHDL_TRACE_COMB_PROOF"))
           llvm::errs() << "comb proof: unstable " << nodes[id].instance->path
@@ -6387,7 +6536,8 @@ struct CombsOptimizer::Impl {
           continue;
         }
         const auto initialized = parseAssignments(
-            "{\n" + name + " = " + field.initializer + ";\n}", parseError);
+            "{\n" + name + " = " + field.initializer + ";\n}",
+            *instance->type, parseError);
         if (!parseError.empty()) {
           error = instance->path + "." + name + ": " + parseError;
           return false;
@@ -6396,7 +6546,8 @@ struct CombsOptimizer::Impl {
                            initialized.end());
       }
       const auto assigned =
-          parseAssignments(bodyText(instance->type->assignBody), parseError);
+          parseAssignments(bodyText(instance->type->assignBody),
+                           *instance->type, parseError);
       if (!parseError.empty()) {
         error = instance->path + ": " + parseError;
         return false;
@@ -6978,7 +7129,8 @@ struct CombsOptimizer::Impl {
     for (Instance *instance : instances) {
       std::string parseError;
       const auto assignments =
-          parseAssignments(bodyText(instance->type->assignBody), parseError);
+          parseAssignments(bodyText(instance->type->assignBody),
+                           *instance->type, parseError);
       if (!parseError.empty()) {
         error = instance->path + ": " + parseError;
         return false;
