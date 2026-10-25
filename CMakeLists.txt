@@ -82,7 +82,7 @@ option(CPPHDL_BUILD_TESTS "Build C++HDL standalone tests" ON)
 option(CPPHDL_BUILD_HLS_TESTS "Build experimental HLS tests (requires Clang and libc++)" ON)
 option(CPPHDL_BUILD_SYNTH_TESTS "Build experimental shared-graph synthesis tests" ON)
 option(CPPHDL_BUILD_TRIBE "Build Tribe CPU models and tests" OFF)
-option(CPPHDL_BUILD_ANALOG "Build analog schemas, mixed-signal examples and regression tests" ON)
+option(CPPHDL_BUILD_ANALOG "Build analog schemas, mixed-signal examples and Verilog-A exporter" ON)
 
 include(CTest)
 

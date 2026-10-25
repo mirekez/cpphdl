@@ -7,7 +7,8 @@
 // Digital receive PCS: an unseeded synchronizer, delimiter recognition, soft
 // branch metrics, terminated trellis decoding and a fixed GMII metadata delay.
 // The PMA supplies four simultaneous, deskewed ADC samples on its recovered
-// symbol clock. Clock alignment to the board reference follows this block.
+// symbol tick through symbol_enable_in. The clock may run faster than symbols;
+// every pipeline stage holds between ticks. Clock alignment follows this block.
 class PCSReceiver : public Module {
     // Three-bit output kind plus eight descrambler bits. Storing the original
     // mostly constant GMII byte in every delay slot wastes registers and makes
@@ -16,7 +17,13 @@ class PCSReceiver : public Module {
     static constexpr unsigned TAG_DEPTH = 37;
 
 public:
+    // Accepted symbol ticks from input metadata to the paired output word.
+    static constexpr unsigned RECEIVE_LATENCY = TAG_DEPTH + 2;
+
     _PORT(u<32>) samples_in;
+    _PORT(bool) symbol_enable_in;
+    // Pulse paired with receive_out, including idle/error words.
+    _PORT(bool) receive_valid_out = _ASSIGN_REG(output_valid);
     _PORT(bool) remote_master_in;
     _PORT(bool) pma_ok_in;
     _PORT(u<10>) receive_out = _ASSIGN_REG(output_reg);
@@ -33,9 +40,10 @@ private:
     reg<u<28>> control_history{};
     reg<logic<TAG_BITS * TAG_DEPTH>> tags{};
     reg<u<10>> output_reg{};
+    reg<u1> output_valid{};
 
-    unsigned decoder_control() {
-        return (unsigned(control_history) >> 21) & 127;
+    unsigned decoder_control(unsigned history) {
+        return (history >> 21) & 127;
     }
 
     unsigned slice(unsigned samples) {
@@ -51,6 +59,10 @@ private:
 
 public:
     void _assign() {
+        sync.symbol_enable_in = _ASSIGN(symbol_enable_in());
+        framer.symbol_enable_in = _ASSIGN(symbol_enable_in());
+        metrics.symbol_enable_in = _ASSIGN(symbol_enable_in());
+        decoder.symbol_enable_in = _ASSIGN(symbol_enable_in());
         sync.symbols_in = _ASSIGN(slice(unsigned(samples_in())));
         sync.remote_master_in = _ASSIGN(remote_master_in());
         sync.pma_ok_in = _ASSIGN(pma_ok_in());
@@ -68,14 +80,16 @@ public:
         metrics.negate_in = _ASSIGN(framer.negate_out());
         metrics.advance_in = _ASSIGN((framer.control_out() & 1) != 0);
         for (unsigned i = 0; i < 8; ++i) {
-            decoder.metric_in[i] =
-                _ASSIGN_I((decoder_control() & 8) ? (((decoder_control() >> 4) & 7) == i ? 0 : 262143)
-                                                : unsigned(metrics.metric_out[i]()));
-            decoder.point_in[i] = _ASSIGN_I((decoder_control() & 8) ? 0 : unsigned(metrics.point_out[i]()));
+            decoder.metric_in[i] = _ASSIGN_I(
+                (decoder_control(unsigned(control_history)) & 8)
+                    ? (((decoder_control(unsigned(control_history)) >> 4) & 7) == i ? 0 : 262143)
+                    : unsigned(metrics.metric_out[i]()));
+            decoder.point_in[i] = _ASSIGN_I(
+                (decoder_control(unsigned(control_history)) & 8) ? 0 : unsigned(metrics.point_out[i]()));
         }
-        decoder.advance_in = _ASSIGN((decoder_control() & 1) != 0);
-        decoder.start_in = _ASSIGN((decoder_control() & 2) != 0);
-        decoder.end_in = _ASSIGN((decoder_control() & 4) != 0);
+        decoder.advance_in = _ASSIGN((decoder_control(unsigned(control_history)) & 1) != 0);
+        decoder.start_in = _ASSIGN((decoder_control(unsigned(control_history)) & 2) != 0);
+        decoder.end_in = _ASSIGN((decoder_control(unsigned(control_history)) & 4) != 0);
         sync._assign();
         framer._assign();
         metrics._assign();
@@ -83,41 +97,44 @@ public:
     }
     void _work(bool reset) {
         unsigned tag, byte, kind, source, encoded;
-        tag = unsigned(tags >> ((TAG_DEPTH - 1) * TAG_BITS)) & 2047;
-        kind = tag & 7;
-        byte = unsigned(decoder.data_out()) ^ (tag >> 3);
-        output_reg._next = kind == 0   ? 0
-                           : kind == 1 ? 0x155
-                           : kind == 2 ? 0x100 | byte
-                           : kind == 3 ? 0x300 | byte
-                           : kind == 4 ? 0x20E
-                           : kind == 5 ? 0x20F
-                           : kind == 6 ? 0x21F
-                                       : 0x300;
-        if ((kind == 2 || kind == 3) && !decoder.valid_out())
-            output_reg._next = 0x300 | byte;
-        source = unsigned(framer.tag_out());
-        kind = (source & 1024)            ? ((source & 512) ? 3 : 2)
-               : (source & 1023) == 0x155 ? 1
-               : (source & 1023) == 0x300 ? 7
-               : (source & 1023) == 0x21F ? 6
-               : (source & 1023) == 0x20F ? 5
-               : (source & 512)           ? 4
-                                          : 0;
-        encoded = kind | (((source >> 11) & 255) << 3);
-        tags._next = (tags << TAG_BITS) | encoded;
-        if (source & 524288) {
-            // SSD2 confirms both preamble octets before either can reach GMII.
-            // Replace the previous provisional tag, preserving fixed latency.
-            logic<TAG_BITS * TAG_DEPTH> previous_mask;
-            previous_mask = 2047;
-            previous_mask = previous_mask << TAG_BITS;
-            tags._next = (tags._next & ~previous_mask) | (logic<TAG_BITS * TAG_DEPTH>(1) << TAG_BITS);
+        output_valid._next = symbol_enable_in() && pma_ok_in();
+        if (symbol_enable_in()) {
+            tag = unsigned(tags >> ((TAG_DEPTH - 1) * TAG_BITS)) & 2047;
+            kind = tag & 7;
+            byte = unsigned(decoder.data_out()) ^ (tag >> 3);
+            output_reg._next = kind == 0   ? 0
+                               : kind == 1 ? 0x155
+                               : kind == 2 ? 0x100 | byte
+                               : kind == 3 ? 0x300 | byte
+                               : kind == 4 ? 0x20E
+                               : kind == 5 ? 0x20F
+                               : kind == 6 ? 0x21F
+                                           : 0x300;
+            if ((kind == 2 || kind == 3) && !decoder.valid_out())
+                output_reg._next = 0x300 | byte;
+            source = unsigned(framer.tag_out());
+            kind = (source & 1024)            ? ((source & 512) ? 3 : 2)
+                   : (source & 1023) == 0x155 ? 1
+                   : (source & 1023) == 0x300 ? 7
+                   : (source & 1023) == 0x21F ? 6
+                   : (source & 1023) == 0x20F ? 5
+                   : (source & 512)           ? 4
+                                              : 0;
+            encoded = kind | (((source >> 11) & 255) << 3);
+            tags._next = (tags << TAG_BITS) | encoded;
+            if (source & 524288) {
+                // SSD2 confirms both preamble octets before either can reach GMII.
+                // Replace the previous provisional tag, preserving fixed latency.
+                logic<TAG_BITS * TAG_DEPTH> previous_mask;
+                previous_mask = 2047;
+                previous_mask = previous_mask << TAG_BITS;
+                tags._next = (tags._next & ~previous_mask) | (logic<TAG_BITS * TAG_DEPTH>(1) << TAG_BITS);
+            }
+            hard_delayed._next = slice(unsigned(samples_in()));
+            samples_delayed._next = samples_in();
+            samples_for_metrics._next = samples_delayed;
+            control_history._next = (control_history << 7) | unsigned(framer.control_out());
         }
-        hard_delayed._next = slice(unsigned(samples_in()));
-        samples_delayed._next = samples_in();
-        samples_for_metrics._next = samples_delayed;
-        control_history._next = (control_history << 7) | unsigned(framer.control_out());
         sync._work(reset);
         framer._work(reset);
         metrics._work(reset);
@@ -128,6 +145,7 @@ public:
             control_history._next = 0;
         }
         if (reset) {
+            output_valid._next = 0;
             hard_delayed._next = 1170;
             samples_delayed._next = 0x80808080;
             samples_for_metrics._next = 0x80808080;
@@ -147,5 +165,6 @@ public:
         control_history.strobe();
         tags.strobe();
         output_reg.strobe();
+        output_valid.strobe();
     }
 };

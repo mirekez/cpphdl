@@ -16,6 +16,8 @@ module PipelinedReceiveFilter (
 ,   output wire fault_out
 ,   output wire[18-1:0] coefficient_out[24]
 );
+    localparam  OUTPUT_LATENCY = 'h6;
+    localparam  UPDATE_LATENCY = 'hA;
 
 
     // regs and combs

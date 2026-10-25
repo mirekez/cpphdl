@@ -106,7 +106,9 @@ remain active and interact throughout integration.
 ## Equation and state substrate
 
 The general substrate is `0 = R(z, x, xdot, u, t)` plus discrete transition/reset maps.
-The initial subset uses dense modified nodal equations and backward Euler. Charge
+The initial subset uses modified nodal equations and backward Euler by default.
+An explicit [BDF2 option](integration.md) provides second-order accepted-state
+history with first-order restarts at discontinuities. Charge
 states have explicit initialization. Known stimulus events preserve
 continuous state while algebraic variables settle; clocked bit next states are
 computed together from the precommit snapshot. Unknown thresholds remain unknown.

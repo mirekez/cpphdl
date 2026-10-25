@@ -214,6 +214,7 @@ need OpenVAF, OSDI-enabled ngspice and Python 3 (standard library only):
 
 ```bash
 cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON \
   -DCPPHDL_ANALOG_VERILOGA_TESTS=ON \
   -DOPENVAF_EXECUTABLE=/absolute/path/to/openvaf \
   -DNGSPICE_EXECUTABLE=/absolute/path/to/ngspice
@@ -265,3 +266,22 @@ capacitors in Verilog-A. This preserves the linear law and initial charge while
 using ngspice's native capacitor implementation for numerically stiff mixed-scale
 experiments. The 10G integrated SFI link uses it for its two 100 nF DC blocks; its
 standalone SFI tests retain complete Verilog-A. Reusable exports are unaffected.
+
+## Large waveform storage
+
+The regression transport stores every emitted row and its printed precision in
+a gzip stream, checks its CRC, and records both the raw and compressed SHA256.
+Equal-time solver states are retained. Compression level 6 reduces disk use;
+it does not reduce sampling or numeric precision.
+
+Set `CPPHDL_ANALOG_TRACE_SCRATCH=/absolute/storage/path` to put compressed
+waveforms on another filesystem. The logical results directory contains a
+symlink; FIFOs, simulator libraries, decks and receipts remain in the results
+directory. Trace normalization rewrites the file on its storage filesystem and
+preserves the logical link. A storage failure fails the run.
+
+Use persistent storage for retained evidence. A `/dev/shm` scratch directory
+is temporary: after a reboot its symlinks are dangling and the corresponding
+simulations must be rerun. A receipt without its checked waveform cannot qualify
+a new comparison. Storage/codec regressions exercise scratch links, exact
+roundtrips and failure handling.

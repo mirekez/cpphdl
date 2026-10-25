@@ -9,6 +9,7 @@ using namespace cpphdl;
 // GMII valid/error semantics. Full-duplex operation does not need CRS/COL.
 class PCSReceiveFramer : public Module {
 public:
+    _PORT(bool) symbol_enable_in;
     _PORT(u<12>) symbols_in;
     _PORT(u<4>) sg_in;
     _PORT(u<4>) sx_in;
@@ -254,7 +255,7 @@ public:
         }
         control_reg._next = control;
         tag_reg._next = tag | (((unsigned(sx_in()) << 4) | unsigned(low_mask_in())) << 11);
-        if (!locked_in() || !pma_ok_in() || reset) {
+        if ((symbol_enable_in() && !locked_in()) || !pma_ok_in() || reset) {
             state._next = 0;
             good_idles._next = 0;
             bad_groups._next = 0;
@@ -264,6 +265,19 @@ public:
             restart_reg._next = 0;
             error_dv._next = 0;
             remote_ok._next = 0;
+        }
+        // Gate stored state, not combinational temporaries, so synthesis
+        // does not build enable muxes for every unrolled arithmetic temporary.
+        if (!symbol_enable_in() && !reset && pma_ok_in()) {
+            state._next = state;
+            good_idles._next = good_idles;
+            bad_groups._next = bad_groups;
+            negate_reg._next = negate_reg;
+            control_reg._next = control_reg;
+            tag_reg._next = tag_reg;
+            restart_reg._next = restart_reg;
+            error_dv._next = error_dv;
+            remote_ok._next = remote_ok;
         }
     }
     void _strobe() {

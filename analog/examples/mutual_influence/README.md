@@ -41,7 +41,8 @@ the underlying wire or signal identity. Component identity appears in the result
 From the `analog/` directory:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build build --target analog_mutual_influence -j 4
 ./build/analog_mutual_influence examples/mutual_influence/results
 ```

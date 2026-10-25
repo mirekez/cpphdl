@@ -93,8 +93,9 @@ ctest --test-dir analog/build -R 'analog\.(sparse_solver|capacitor_loops)' --out
 ```
 
 CMake registers these optional regressions when Eigen 3 is available. Backward
-Euler, fixed regular steps and optional Newton-failure subdivision remain the
-integration method. Sparse factorization does not supply truncation-error
+Euler remains the default; [BDF2](integration.md) is an explicit option. Both
+use a prescribed regular grid with optional Newton-failure subdivision.
+Sparse factorization does not supply truncation-error
 adaptivity or establish long-term clock/ADC accuracy. See
 [Eigen's sparse QR contract](https://libeigen.gitlab.io/eigen/docs-nightly/classEigen_1_1SparseQR.html)
 for its rank threshold and the requirement to check solution accuracy.

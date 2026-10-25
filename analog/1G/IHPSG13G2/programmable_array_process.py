@@ -10,7 +10,12 @@ SLICES = 16
 
 
 def process_deck(model, original, models, corner='mos_tt', temperature=27, count=SLICES, storage=1.5e-12,
-                 host_controls=None):
+                 host_controls=None, dummy_p_width_um=25, charge_defined_nodes=False):
+    cancellation = {25: .005, 30: .006}
+    if dummy_p_width_um not in cancellation:
+        raise ValueError('unsupported PMOS charge-cancellation profile')
+    if type(charge_defined_nodes) is not bool:
+        raise ValueError('charge-defined node profile must be boolean')
     if corner not in ('mos_tt', 'mos_ss', 'mos_ff', 'mos_sf', 'mos_fs') or not -40 <= temperature <= 125:
         raise ValueError('unsupported programmable receiver corner or temperature')
     if count not in (1, 4, 16) or not any(math.isclose(storage, value, rel_tol=1e-12, abs_tol=1e-25)
@@ -85,13 +90,14 @@ def process_deck(model, original, models, corner='mos_tt', temperature=27, count
         ('mos_track_hold.hpp', 4): count, ('strongarm_comparator.hpp', 11): count,
         ('cmos_logic.hpp', 4): 2 * count, ('nand_latch.hpp', 2): count,
         ('inverter.hpp', 2): 14 * count, ('level_down.hpp', 4): count})
-    expected_passives = 39 + 27 * count if host_controls is None else 40 + 26 * count
+    returns = 5 * count if charge_defined_nodes else 0
+    expected_passives = (39 + 27 * count if host_controls is None else 40 + 26 * count) - returns
     if Counter((filename, len(parts)) for (_, filename), parts in groups.items()) != expected or len(passives) != expected_passives:
         raise ValueError('changed programmable receiver device inventory')
     cap_ids = re.findall(r'// Capacitor device (\d+) is stamped once by the SPICE host deck[.]', model)
     capacitors = [line for line in lines if line.startswith('Cdevice')]
     parsed_caps = [re.fullmatch(r'Cdevice(\d+) (?:0|n\d+) (?:0|n\d+) ' + NUMBER + ' IC=' + NUMBER, line) for line in capacitors]
-    if (len(capacitors) != 45 + 60 * count + int(host_controls is not None) or any(match is None for match in parsed_caps)
+    if (len(capacitors) != 45 + (62 if charge_defined_nodes else 60) * count + int(host_controls is not None) or any(match is None for match in parsed_caps)
             or Counter(match[1] for match in parsed_caps) != Counter(cap_ids)
             or any(not math.isfinite(float(match[i])) for match in parsed_caps for i in (2, 3))
             or any(float(match[2]) <= 0 for match in parsed_caps)):
@@ -134,6 +140,18 @@ def process_deck(model, original, models, corner='mos_tt', temperature=27, count
         raise ValueError('changed termination, input isolation or gain-output topology')
     samplers = [parts for (_, filename), parts in groups.items() if filename == 'mos_track_hold.hpp']
     cap_fields = [line.split() for line in capacitors]
+    if charge_defined_nodes:
+        if any(float(part[3]) == 1e9 for part in passives):
+            raise ValueError('provisional gigaohm return remains in charge-defined circuit')
+        for (_, filename), parts in groups.items():
+            if filename == 'cmos_logic.hpp':
+                stack = parts[2]['source']
+                if parts[3]['drain'] != stack:
+                    raise ValueError('changed NAND stack topology')
+                caps = [fields for fields in cap_fields if fields[1:3] == [node(stack), '0']
+                        and math.isclose(float(fields[3]), 10e-15, rel_tol=1e-12)]
+                if len(caps) != 1:
+                    raise ValueError('missing explicit isolated-stack charge')
     if len(set(held + tracks + [gain_output])) != 2 * count + 1:
         raise ValueError('aliased interleaved sampler observations')
     for output, clock in zip(held, tracks):
@@ -173,9 +191,9 @@ def process_deck(model, original, models, corner='mos_tt', temperature=27, count
                 raise ValueError('changed gain output buffer')
             widths = [800]
         elif filename == 'mos_track_hold.hpp':
-            if not match_parameters(parameters, [n(.02), p(.01), n(.01), p(.005)]):
+            if not match_parameters(parameters, [n(.02), p(.01), n(.01), p(cancellation[dummy_p_width_um])]):
                 raise ValueError('changed programmable sampler MOS')
-            widths = [25, 50, 12.5, 25]
+            widths = [25, 50, 12.5, dummy_p_width_um]
         else:
             widths = selections(filename, parameters)
         for part, width in zip(parts, widths):

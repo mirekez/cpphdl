@@ -15,6 +15,7 @@ long _system_clock = -1;
 #endif
 
 #include "receiver_fault_checks.hpp"
+#include "receiver_enable_checks.hpp"
 
 unsigned ethernet_crc(const std::vector<unsigned>& frame) {
     unsigned crc = 0xFFFFFFFF;
@@ -27,6 +28,8 @@ unsigned ethernet_crc(const std::vector<unsigned>& frame) {
 }
 
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--enable")
+        return receiver_enable_checks(argc - 1, argv + 1);
     if (argc > 1 && std::string(argv[1]) == "--faults")
         return receiver_fault_checks(argc - 1, argv + 1);
     try {
@@ -48,6 +51,7 @@ int main(int argc, char** argv) {
         dut.samples_in = _ASSIGN(samples);
         dut.remote_master_in = _ASSIGN(master);
         dut.pma_ok_in = _ASSIGN(pma);
+        dut.symbol_enable_in = _ASSIGN(true);
         dut._assign();
 #endif
         std::string line;
@@ -69,6 +73,7 @@ int main(int argc, char** argv) {
 #ifdef VERILATOR
             dut.clk = 0;
             dut.reset = reset;
+            dut.symbol_enable_in = true;
             dut.remote_master_in = master;
             dut.pma_ok_in = pma;
             dut.samples_in = samples;

@@ -6,6 +6,7 @@ import Predef_pkg::*;
 module PCSTrellisDecoder (
     input wire clk
 ,   input wire reset
+,   input wire symbol_enable_in
 ,   input wire[18-1:0] metric_in[8]
 ,   input wire[6-1:0] point_in[8]
 ,   input wire advance_in
@@ -285,6 +286,24 @@ module PCSTrellisDecoder (
             drain_valid_tmp = 64'h0;
             pending_control_tmp = 64'h0;
             pending_count_tmp = 64'h0;
+        end
+        if (!symbol_enable_in && !reset) begin
+            for (logic[31:0] state = 32'h0;state < 32'h8;state=state+1) begin
+                costs_tmp[state] = costs[state];
+                survivors_tmp[state] = survivors[state];
+                selectors_tmp[state] = selectors[state];
+                selected_bytes_tmp[state] = selected_bytes[state];
+            end
+            count_tmp = count;
+            reachable_tmp = reachable;
+            pending_control_tmp = pending_control;
+            pending_count_tmp = pending_count;
+            data_reg_tmp = data_reg;
+            state_reg_tmp = state_reg;
+            valid_reg_tmp = valid_reg;
+            drain_tmp = drain;
+            drain_left_tmp = drain_left;
+            drain_valid_tmp = drain_valid;
         end
     end
     endtask

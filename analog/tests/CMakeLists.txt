@@ -1,4 +1,8 @@
 add_executable(analog_semantics semantics.cpp)
+add_executable(analog_integration_bdf2 integration_bdf2.cpp)
+target_link_libraries(analog_integration_bdf2 PRIVATE cpphdl::analog)
+add_test(NAME analog.integration_bdf2 COMMAND analog_integration_bdf2)
+set_tests_properties(analog.integration_bdf2 PROPERTIES LABELS "analog;solver" TIMEOUT 90)
 add_executable(analog_linear_accuracy linear_accuracy.cpp)
 target_link_libraries(analog_linear_accuracy PRIVATE cpphdl::analog)
 add_test(NAME analog.linear_accuracy COMMAND analog_linear_accuracy)
@@ -192,6 +196,7 @@ add_custom_target(check-analog
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -L analog
   DEPENDS analog_linear_accuracy analog_nand_latch analog_buffered_nand_latch analog_cmos_storage analog_phase_frequency_detector analog_capacitor_loops analog_veriloga_generate_models analog_veriloga_exporter analog_veriloga_cross_simulation cpphdl-veriloga analog_feedback_refinement analog_trace_requirements analog_semantics analog_cpphdl_interop analog_schmitt_sense analog_continuation analog_digital_ports analog_core_isolation ${analog_example_targets}
   USES_TERMINAL)
+add_dependencies(check-analog analog_integration_bdf2)
 if(TARGET analog_sparse_solver)
   add_dependencies(check-analog analog_sparse_solver analog_sparse_rank analog_capacitor_loops_sparse)
 endif()
@@ -204,9 +209,9 @@ add_dependencies(check-analog analog_differential_source_follower)
 add_dependencies(check-veriloga analog_differential_source_follower)
 add_custom_target(check-analog-transient
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" --output-on-failure -j 2
-    -R "^analog[.](continuation|semantics|trace_requirements|cpphdl_interop|linear_accuracy|schmitt_sense|sparse_solver|sparse_rank)$"
+    -R "^analog[.](integration_bdf2|continuation|semantics|trace_requirements|cpphdl_interop|linear_accuracy|schmitt_sense|sparse_solver|sparse_rank)$"
   DEPENDS analog_continuation analog_semantics analog_trace_requirements analog_cpphdl_interop
-    analog_linear_accuracy analog_schmitt_sense USES_TERMINAL VERBATIM)
+    analog_linear_accuracy analog_schmitt_sense analog_integration_bdf2 USES_TERMINAL VERBATIM)
 if(TARGET analog_sparse_solver)
   add_dependencies(check-analog-transient analog_sparse_solver analog_sparse_rank)
 endif()

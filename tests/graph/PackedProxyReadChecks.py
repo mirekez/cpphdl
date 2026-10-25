@@ -2,6 +2,10 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -14,9 +18,10 @@ def main():
     fixture = Path(__file__).resolve().parent / 'CppGraphPackedProxyRead.cc'
     with tempfile.TemporaryDirectory(prefix='packed-proxy-read-', dir=args.work) as directory:
         work = Path(directory)
+        toolchain = TestToolchain(args.cxx, None, work)
 
         def run(command, rejected=False):
-            result = subprocess.run([str(item) for item in command], cwd=work,
+            result = subprocess.run(toolchain.command(command), cwd=work, env=toolchain.env,
                                     capture_output=True, text=True, timeout=180)
             logs = ''.join(path.read_text()[-4000:] for path in work.rglob('*.log'))
             if rejected:

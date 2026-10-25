@@ -8,7 +8,8 @@ native runtime headers without Python, LLVM, Verilator or synthesis.
 From the package root:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build -j 4
 ctest --test-dir analog/build --output-on-failure -L analog
 ```
@@ -16,7 +17,8 @@ ctest --test-dir analog/build --output-on-failure -L analog
 Or from `analog/`:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build build --target check-analog -j 4
 ```
 
@@ -28,10 +30,12 @@ when switching compilers. To rerun already built tests:
 ctest --test-dir analog/build --output-on-failure -L analog
 ```
 
-The root package also enables `CPPHDL_BUILD_ANALOG` by default. After configuring
-the ordinary cpphdl package build, run:
+Analog tests are opt-in in both standalone and package builds. The root package
+enables `CPPHDL_BUILD_ANALOG` by default, but that alone does not enable tests:
 
 ```bash
+cmake -S . -B build -DBUILD_TESTING=ON \
+  -DCPPHDL_BUILD_ANALOG=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build build --target check-analog -j 4
 ctest --test-dir build --output-on-failure -L analog
 ```
@@ -40,9 +44,39 @@ The standalone analog build is the smallest regression setup. The root package
 configuration still requires its normal Clang/LLVM toolchain even when building
 only analog targets. No external CPU test repositories are needed for analog tests.
 
+## Options and prerequisites
+
+| Option | Default | Purpose |
+|---|---|---|
+| `CPPHDL_BUILD_ANALOG` | `ON` | Package build: include analog library, examples and exporter |
+| `CPPHDL_BUILD_ANALOG_TESTS` | `OFF` | Build/register analog regressions; also requires `BUILD_TESTING=ON` |
+| `CPPHDL_ANALOG_VERILOGA_TESTS` | `AUTO` | With analog tests enabled: `AUTO` detects simulator tools, `ON` requires them, `OFF` skips external comparisons |
+
+Preinstall tools for the flows you intend to run:
+
+- Native C++ tests: CMake 3.20+ and a C++20 compiler. The root package build also
+  needs its normal LLVM/Clang toolchain.
+- Script-driven checks: Python3. Eigen3 enables additional solver tests.
+- Digital RTL comparisons: Verilator and a built `cpphdl` converter
+  (`CPPHDL_1G_CONVERTER` can select its path in a standalone build).
+- Verilog-A comparisons: OpenVAF (or compatible OpenVAF Reloaded), ngspice with
+  **OSDI enabled**, and Python3. A plain ngspice installation may lack OSDI.
+  Follow [the toolchain installation guide](../VerilogA/toolchain.md); select
+  non-PATH installations with `OPENVAF_EXECUTABLE`, `NGSPICE_EXECUTABLE`, and
+  `Python3_EXECUTABLE`.
+- Optional physical implementation tests: the additional PDK/layout tools in
+  [the PDK guide](../pdk/README.md). Full physical flows have separate opt-in flags.
+
+The build does not install these tools. The "cross-simulator tests unavailable"
+message in `AUTO` mode means those comparisons were omitted, not that export
+failed. With `CPPHDL_BUILD_ANALOG_TESTS=OFF`, their detection is skipped entirely.
+`BUILD_TESTING=OFF` disables tests even when the analog option is ON; disabling
+only analog tests leaves the parent project's digital tests enabled.
+
 | CTest group | Coverage |
 |---|---|
 | `analog.semantics` | 41 checks: RC/step refinement, coupled feedback, transistor schemas, loads and shared supply, IC hierarchy/lifetime, active variables, diagnostics, known/unknown events and exact 64-bit arithmetic |
+| `analog.integration_bdf2` | Independent RC/RL/LC, nonlinear MOS and coupled-capacitor solutions; time-step convergence, both Jacobians, event restarts, continuation and rejected-step history |
 | `analog.cpphdl_interop` | 12 checks: both include orders, native/managed old-state barrier, separate clocks, exact 64-bit transfer, retained ownership, unknown inputs/clocks, duplicate/context/null/width errors and unregistered/unbound outputs |
 | `analog.digital_ports` | Digital-only C++17 build with existing lazy ports and native work/strobe state behavior |
 | `analog.trace_requirements` | Completed-trajectory assertions: pass/fail/unknown status, conditional guarantees, freeze/empty callbacks and measurement evidence |

@@ -52,6 +52,8 @@ and recovers complete FCS-checked frames from each solver's voltages.
 | `adc_core.hpp`, `adc_receive.hpp` | [Electrical core-domain decision interfaces and composed calibrated receive stream](adc_receive.md) |
 | `receive_frontend.hpp` | [MOS differential amplifier, shared source follower and core-domain ADC bank](receive_frontend.md); coupled acquisition qualification in progress |
 | `receive_normalizer.hpp` | [Programmable ADC gain/offset normalization](receive_normalizer.md) into the PCS sample convention |
+| `adc_interleaved_bank.hpp` | [Parameterized SAR control](adc_interleaved_bank.md); thirteen slices sustain one result per 4 ns, with a separately verified 0.1296 mm² raw-controller layout |
+| `adc_receive_lane.hpp` | [Precharge, release, conversion and calibration sequence](adc_receive_lane.md); native, RTL and mapped-gate tests; physical analog-control integration remains open |
 | `receive_calibration.hpp` | [Measured training gain and offset](receive_calibration.md), with balanced-label checks and sequential hardware division |
 | `receive_gain_control.hpp` | [Coarse analog gain acquisition](receive_gain_control.md), with settling, bounded sample windows and training-only changes |
 | `receive_range_calibration.hpp` | [Measured-range normalization](receive_range_calibration.md), using a sixteen-clock divider without requiring five labeled training levels |
@@ -65,6 +67,7 @@ and recovers complete FCS-checked frames from each solver's voltages.
 | `receive_timing.hpp` | Fixed-point C++RTL timing controller; noisy closed-loop native/RTL/IHP gate tests; [interface and boundary](timing.md) |
 | `receive_alignment.hpp` | Hardware GMII crossing from a recovered clock to the reference domain, with frame buffering and fault containment |
 | `pair_acquisition.hpp`, `pma_aligned.hpp` | [Cable pair identification/deskew and aligned PMA/PCS](pair_acquisition.md) |
+| `receive_dsp.hpp`, `receive_dsp_pcs.hpp` | [Four-lane cancellation/equalization connected to pair acquisition and PCS](receive_dsp.md); supervised-training interface with independent C++RTL/RTL frame checks |
 | `flp_frontend.hpp` | [MOS link-pulse driver and either-polarity detector](flp_frontend.md) |
 | `pcs.hpp` | Hardware normal/control symbol mapper and master/slave LFSRs |
 | `flp_transmit.hpp`, `flp_receive.hpp`, `master_slave.hpp`, `negotiation.hpp`, `autonegotiation.hpp` | Digital link-pulse timing, role resolution, page exchange/retry and composed negotiation; [interfaces and validation boundaries](negotiation.md) |
@@ -117,6 +120,7 @@ Use the existing [OpenVAF/ngspice toolchain](../VerilogA/toolchain.md):
 ```bash
 cd ~/cpphdl
 cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON \
     -DCPPHDL_ANALOG_VERILOGA_TESTS=ON \
     -DOPENVAF_EXECUTABLE="$PWD/analog/out/veriloga-toolchain/openvaf-compatible/openvaf" \
     -DNGSPICE_EXECUTABLE="$PWD/analog/out/veriloga-toolchain/install/bin/ngspice"

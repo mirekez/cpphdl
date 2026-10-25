@@ -94,7 +94,8 @@ Verilator are not required for this standalone analog build. CTest runs the
 regressions and validates the example outcomes.
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build build -j 4
 ./build/analog_two_transistor_expression examples/two_transistor_expression/results
 ./build/tests/analog_semantics
@@ -119,7 +120,9 @@ The mutual influence example intentionally returns 1; the diagnostics example ch
 
 `cmake --build build --target check-analog` builds and runs the complete CTest suite.
 From the parent package, the same
-target is available in its build tree when `CPPHDL_BUILD_ANALOG=ON` (the default).
+target is available in its build tree when `CPPHDL_BUILD_ANALOG=ON`,
+`BUILD_TESTING=ON` and `CPPHDL_BUILD_ANALOG_TESTS=ON`. Analog tests default to OFF;
+the analog library, examples and Verilog-A exporter remain available without them.
 See [tests/README.md](tests/README.md) for both build modes and coverage.
 
 Reusable circuit definitions live in [basic/](basic/README.md), including the

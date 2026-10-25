@@ -27,7 +27,8 @@ class Refinement(unittest.TestCase):
                 (root / name).write_text('test tool placeholder')
             args = SimpleNamespace(work=root / 'result', pdk=root / 'pdk', bench=root / 'bench',
                 ngspice=root / 'ngspice', cxx='unused', corner='mos_tt', temperature=27,
-                warmup_step=1e-9, codes=[4], fixture_source=runner.SOURCE.with_name('programmable_receive_array.cpp'), initialization='uic')
+                warmup_step=1e-9, codes=[4], fixture_source=runner.SOURCE.with_name('programmable_receive_array.cpp'),
+                initialization='uic', dummy_p_width_um=25, charge_defined_nodes=False)
             rows = ideal_rows()
             for row in rows:
                 row[38] += .021

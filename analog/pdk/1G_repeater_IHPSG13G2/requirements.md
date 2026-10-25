@@ -36,14 +36,19 @@
 
 The `1G/` library contains implemented controllers and electrical circuits.
 The table distinguishes their completed checks from the remaining work for
-complete, integrated physical PHYs:
+complete, integrated physical PHYs. Recorded component results below belong
+to their tested revisions. Current receiver/transmitter candidates and their
+separate acceptance boundaries are tracked in
+[IHP qualification status](../../1G/IHPSG13G2/qualification-status.md).
+In particular, the thirteen-slice cold receiver and the controller that
+includes startup do not inherit the earlier receiver/controller proofs.
 
 | Block | Remaining implementation and evidence |
 | --- | --- |
 | PCS per port | GMII transmit/receive, Sx/Sy/Sg, trellis coding/decoding, framing and unseeded polarity/scrambler acquisition now exist in `1G/`; complete control/error qualification, startup and chip integration remain |
 | Startup | Digital FLP transmit/receive, page arbitration/retry and role resolution have native/RTL/IHP unit tests; composed native/RTL and separate mapped endurance checks pass. Aligned PMA startup/PCS, pair identification, polarity and deskew pass native/RTL/IHP frame and retraining checks. The generic electrical FLP interface passes its separate pulse/decoder checks; continuous physical negotiation and chip integration remain |
 | Receive AFE | Physical hybrids, programmable gain/equalization, 250 MS/s conversion for half-symbol timing observations, noise/linearity/headroom and PVT characterization. The 3 pF parallel-drive receiver passes 32 consecutive closed-loop conversions in C++, Verilog-A and actual PSP, including controller decisions and normalization; its PSP acquisition error is 9.554 mV. Physical control/clock translation, full receiver PVT, gain-loop integration, layout and complete receive-chain integration remain |
-| Receive DSP | Fixed-point FFE/echo/NEXT adaptation and trellis decoding have hardware classes. Composed SAR control and current normalization pass native/RTL/IHP/routed equivalence, 250 MHz setup/hold with 160 fF control-output loads, full DRC and strict transistor LVS in a 500 × 500 µm macro. Filter area/routing, startup-controlled training and receive integration remain |
+| Receive DSP | Four filter lanes connected to pair acquisition and PCS pass independent native/RTL/IHP mapped frame checks; their [measured baseline](../../1G/receive_dsp.md) occupies 2.550 mm² of cell area per receive path and fails the 4 ns cell-timing requirement by 3.13 ns. It still needs external supervised targets and aligned recovered-symbol/local-TX inputs. Composed SAR control and current normalization separately pass native/RTL/IHP/routed equivalence, 250 MHz setup/hold with 160 fF control-output loads, full DRC and strict transistor LVS in a 500 × 500 µm macro. Receiver timing closure, routing, autonomous training and complete receive integration remain |
 | Timing | `1G/receive_alignment.hpp` implements the digital crossing and passes native/RTL/mapped tests; physical receive recovery, reset distribution and routed CDC/MTBF proof remain |
 | TX | The complete sixteen-translator weighted main/history bank passes independent generic flows/comparison and nominal IHP PSP checking with 218 valid-finger MOS devices. Its registered unary controller passes native/RTL/IHP/routed equivalence, setup/hold, DRC and LVS as a standalone macro. PVT/mismatch, analog transistor layout, calibrated standard-qualified amplitude/template and chip integration remain |
 | Chip interface | The common-ground IHP pad/ESD cells, seal ring, fill and connected decoupling pass full standalone padframe DRC and strict-port transistor LVS. Enlarging the opening requires fresh checks. Core routing, power distribution, package/pinout and magnetics integration remain |

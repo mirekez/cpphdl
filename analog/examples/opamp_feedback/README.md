@@ -56,7 +56,8 @@ precision op-amp. See [basic/README.md](../../basic/README.md) for model boundar
 From the `analog/` directory:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build build --target analog_opamp_feedback -j 4
 ./build/analog_opamp_feedback examples/opamp_feedback/results
 ```

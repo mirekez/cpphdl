@@ -130,14 +130,17 @@ implemented bridge and its physical loading and charge-continuity checks.
 
 Elaboration collects device laws and connections. The engine assembles shared
 node-current equations, solves the nonlinear network and integrates capacitor
-state with fixed-step backward Euler. Threshold views and digital events are
+state with backward Euler by default or explicit [BDF2](integration.md).
+Both require time-step refinement; neither provides local-error adaptivity.
+Threshold views and digital events are
 coordinated with that solve. Physical equations are generated from the declared
 devices; there is no automatic topology synthesis from a function name.
 
 From the package root:
 
 ```bash
-cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake -S analog -B analog/build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON
 cmake --build analog/build -j 4
 ctest --test-dir analog/build --output-on-failure -L analog
 ```

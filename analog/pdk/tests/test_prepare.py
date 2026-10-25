@@ -62,7 +62,7 @@ class PrepareTest(unittest.TestCase):
         environment = subprocess.check_output(
             ["bash", "-c", 'source "$1"; printf "%s\\n%s" "$PDK_ROOT" "$PDK"',
              "ihp-test", str(self.destination / "env.sh")], text=True)
-        self.assertEqual(environment, str(self.destination) + "\nihp-sg13g2")
+        self.assertEqual(environment, str(self.destination.resolve()) + "\nihp-sg13g2")
 
     def test_revision_mismatch_preserves_checkout(self):
         self.prepare()

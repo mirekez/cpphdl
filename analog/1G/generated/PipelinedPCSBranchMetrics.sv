@@ -6,6 +6,7 @@ import Predef_pkg::*;
 module PipelinedPCSBranchMetrics (
     input wire clk
 ,   input wire reset
+,   input wire symbol_enable_in
 ,   input wire[32-1:0] samples_in
 ,   input wire[4-1:0] negate_in
 ,   input wire advance_in
@@ -333,6 +334,27 @@ module PipelinedPCSBranchMetrics (
             for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
                 metrics_tmp[i] = 64'h0;
                 points_tmp[i] = 64'h0;
+            end
+        end
+        if (!symbol_enable_in && !reset) begin
+            accepted_tmp = accepted;
+            low_choices_tmp = low_choices;
+            for (logic[31:0] i = 32'h0;i < 32'h14;i=i+1) begin
+                squared_tmp[i] = squared[i];
+            end
+            for (logic[31:0] i = 32'h0;i < 32'hC;i=i+1) begin
+                nearest_tmp[i] = nearest[i];
+            end
+            for (logic[31:0] i = 32'h0;i < 32'h4;i=i+1) begin
+                fixed_costs_tmp[i] = fixed_costs[i];
+            end
+            for (logic[31:0] i = 32'h0;i < 32'h30;i=i+1) begin
+                group_costs_tmp[i] = group_costs[i];
+                group_points_tmp[i] = group_points[i];
+            end
+            for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
+                metrics_tmp[i] = metrics[i];
+                points_tmp[i] = points[i];
             end
         end
     end

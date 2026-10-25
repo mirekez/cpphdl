@@ -16,6 +16,7 @@ public:
     cleared_nand_latch storage;
     capacitance_value input_storage{2e-15}, miller_storage{1e-15};
     capacitance_value intermediate_storage{5e-15}, output_input_storage{8e-15}, output_storage{10e-15};
+    bool weak_returns{true};
 
     void _assign() override {
         input[0].A = SET_N;
@@ -43,6 +44,7 @@ public:
         storage.Q_N = Q_N;
         storage.Vdd = Vdd;
         storage.Vss = Vss;
+        storage.weak_returns = weak_returns;
         storage.elaborate();
     }
 };

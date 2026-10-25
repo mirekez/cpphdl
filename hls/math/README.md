@@ -45,3 +45,13 @@ The original example testbenches remain available for native C++ and Verilator.
 FP32 tests compare 200,000 add/multiply references and all 65,536 FP16 inputs.
 The OpenMP Float regression verifies the policies through native/RTL/retimed
 flows, including +/* reductions, helpers, scratch and neighbor snapshots.
+
+`Nonlinear.h` additionally installs FP32 division and signed/unsigned 32-bit
+integer conversion policies. Its restoring division and square root follow
+RNE/FTZ. `exponential` and `square_root` have named HLS overrides; native calls
+use standard host math. The integer `fp32_exp` uses range reduction and a
+degree-seven polynomial with a tested relative error bound of 2e-5 on finite
+normal outputs. It is not correctly rounded exp. `fp32_silu` uses the stable
+negative-exponent form. Including `Float.h` alone does not install these extra
+operators. Actual math latency depends on the selected HLS scheduler and
+retiming report, and must be integrated through ready/valid protocols.

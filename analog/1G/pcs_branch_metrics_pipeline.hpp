@@ -7,6 +7,8 @@ using namespace cpphdl;
 // sums, and balanced group selection. One observation per clock; bubbles drain.
 class PipelinedPCSBranchMetrics : public Module {
 public:
+    // Hold the entire symbol pipeline between recovered observations.
+    _PORT(bool) symbol_enable_in;
     _PORT(u<32>) samples_in;
     _PORT(u<4>) negate_in;
     _PORT(bool) advance_in;
@@ -254,6 +256,26 @@ public:
             for (unsigned i = 0; i < 8; ++i) {
                 metrics[i]._next = 0;
                 points[i]._next = 0;
+            }
+        }
+        // Gate stored state, not combinational temporaries, so synthesis
+        // does not build enable muxes for every unrolled arithmetic temporary.
+        if (!symbol_enable_in() && !reset) {
+            accepted._next = accepted;
+            low_choices._next = low_choices;
+            for (unsigned i = 0; i < 20; ++i)
+                squared[i]._next = squared[i];
+            for (unsigned i = 0; i < 12; ++i)
+                nearest[i]._next = nearest[i];
+            for (unsigned i = 0; i < 4; ++i)
+                fixed_costs[i]._next = fixed_costs[i];
+            for (unsigned i = 0; i < 48; ++i) {
+                group_costs[i]._next = group_costs[i];
+                group_points[i]._next = group_points[i];
+            }
+            for (unsigned i = 0; i < 8; ++i) {
+                metrics[i]._next = metrics[i];
+                points[i]._next = points[i];
             }
         }
     }

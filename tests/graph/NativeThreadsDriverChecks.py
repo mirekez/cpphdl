@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 p = argparse.ArgumentParser()
 p.add_argument('--cpphdl', required=True)
@@ -11,13 +15,15 @@ p.add_argument('--cxx', required=True)
 args = p.parse_args()
 
 def run(command, success=True):
-    result = subprocess.run(list(map(str, command)), capture_output=True, text=True, timeout=180)
+    result = subprocess.run(toolchain.command(command), env=toolchain.env,
+                            capture_output=True, text=True, timeout=180)
     if (result.returncode == 0) != success:
         raise RuntimeError(result.stdout + result.stderr)
     return result.stdout
 
 with tempfile.TemporaryDirectory(prefix='cpphdl-thread-driver-') as tmp:
     work = Path(tmp)
+    toolchain = TestToolchain(args.cxx, None, work)
     source = work/'graph.cpp'
     source.write_text(r'''
 #include <cpphdl_graph_native.h>

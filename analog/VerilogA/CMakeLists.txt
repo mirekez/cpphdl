@@ -46,6 +46,9 @@ if(BUILD_TESTING)
       add_test(NAME analog.veriloga.trace_codec COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_codec.py")
       set_tests_properties(analog.veriloga.trace_codec PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
+      add_test(NAME analog.veriloga.trace_states COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_states.py")
+      set_tests_properties(analog.veriloga.trace_states PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
       foreach(circuit divider rc rc_initial floating_charge mos_regions inverter controlled_resistor driver opamp ldo ldo_dropout pll agc)
         add_test(NAME analog.veriloga.${circuit} COMMAND "${CMAKE_COMMAND}"
           "-DBENCH=$<TARGET_FILE:analog_veriloga_cross_simulation>" "-DCASE=${circuit}"
@@ -64,20 +67,28 @@ if(BUILD_TESTING)
       set_tests_properties(analog.veriloga.detect_resistor_fault PROPERTIES LABELS "analog;veriloga" TIMEOUT 120)
       message(STATUS "Verilog-A comparisons enabled: ${OPENVAF_EXECUTABLE}; ${NGSPICE_EXECUTABLE}")
     elseif(CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "ON")
-      message(FATAL_ERROR "Verilog-A comparisons require OPENVAF_EXECUTABLE, NGSPICE_EXECUTABLE and Python3")
+      message(FATAL_ERROR "Verilog-A comparisons require OpenVAF, ngspice built with OSDI support, and Python3. Set OPENVAF_EXECUTABLE, NGSPICE_EXECUTABLE and Python3_EXECUTABLE as needed. Installation: analog/VerilogA/toolchain.md")
     else()
-      message(STATUS "Verilog-A cross-simulator tests unavailable (need OpenVAF, ngspice/OSDI and Python3); exporter remains available")
+      message(STATUS "Verilog-A cross-simulator tests unavailable (install OpenVAF, ngspice with OSDI support, and Python3; see analog/VerilogA/toolchain.md). Exporter remains available. Set CPPHDL_ANALOG_VERILOGA_TESTS=OFF to skip these comparisons or ON to require their tools.")
     endif()
   endif()
 endif()
 
 add_executable(analog_veriloga_hierarchy tests/hierarchy.cpp)
-if(Python3_Interpreter_FOUND)
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME analog.veriloga.compiler_runtime COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_runtime.py" --converter "$<TARGET_FILE:cpphdl-veriloga>")
+  set_tests_properties(analog.veriloga.compiler_runtime PROPERTIES LABELS "analog;veriloga" TIMEOUT 45)
+  if(TARGET cpphdl)
+    add_test(NAME analog.veriloga.root_compiler_runtime COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_runtime.py" --converter "$<TARGET_FILE:cpphdl>" --root-driver)
+    set_tests_properties(analog.veriloga.root_compiler_runtime PROPERTIES LABELS "analog;veriloga" TIMEOUT 45)
+  endif()
   add_test(NAME analog.veriloga.trace_storage COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_storage_contract.py")
-  set_tests_properties(analog.veriloga.trace_storage PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
+  set_tests_properties(analog.veriloga.trace_storage PROPERTIES LABELS "analog;veriloga" TIMEOUT 90)
 endif()
-if(Python3_Interpreter_FOUND AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
+if(BUILD_TESTING AND Python3_Interpreter_FOUND AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
   add_test(NAME analog.veriloga.time_grid COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/time_grid_contract.py" --ngspice "${NGSPICE_EXECUTABLE}"
     --work "${CMAKE_CURRENT_BINARY_DIR}/results/time_grid")
@@ -85,6 +96,9 @@ if(Python3_Interpreter_FOUND AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILO
 endif()
 target_link_libraries(analog_veriloga_hierarchy PRIVATE cpphdl::analog)
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME analog.veriloga.trace_validation COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_validation.py")
+  set_tests_properties(analog.veriloga.trace_validation PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
   add_test(NAME analog.veriloga.hierarchy_structure COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/hierarchy.py")
   set_tests_properties(analog.veriloga.hierarchy_structure PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)

@@ -1,6 +1,10 @@
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 find_program(CPPHDL_SYNTH_VERILATOR verilator)
 
+add_test(NAME synth_emitter_toolchain COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ToolchainChecks.py")
+set_tests_properties(synth_emitter_toolchain PROPERTIES TIMEOUT 30)
+
 add_test(NAME synth_auto_scheduler COMMAND "${CMAKE_COMMAND}"
     "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/auto_scheduler"

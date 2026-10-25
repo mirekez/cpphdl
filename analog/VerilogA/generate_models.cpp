@@ -5,6 +5,10 @@
 #include <basic/differential_source_follower.hpp>
 #include <basic/buffered_nand_latch.hpp>
 #include <basic/cascode_opamp.hpp>
+#include <basic/cascode_ota.hpp>
+#include <basic/cascode_voltage_buffer.hpp>
+#include <basic/shunt_voltage_buffer.hpp>
+#include <basic/lead_shunt_voltage_buffer.hpp>
 
 // Reuse the example IC definitions verbatim, without running their testbenches.
 #define main inverter_example_main
@@ -84,6 +88,14 @@ int main(int argc, char** argv) {
         });
         MODEL(opamp, "opamp", PORT(PLUS), PORT(MINUS), PORT(OUT));
         MODEL(cascode_opamp, "cascode_opamp", PORT(PLUS), PORT(MINUS), PORT(OUT),
+              PORT(BIAS_N), PORT(BIAS_P), PORT(TAIL_BIAS));
+        MODEL(cascode_ota, "cascode_ota", PORT(PLUS), PORT(MINUS), PORT(OUT),
+              PORT(BIAS_N), PORT(BIAS_P), PORT(TAIL_BIAS));
+        MODEL(cascode_voltage_buffer, "cascode_voltage_buffer", PORT(IN), PORT(OUT),
+              PORT(BIAS_N), PORT(BIAS_P), PORT(TAIL_BIAS));
+        MODEL(shunt_voltage_buffer, "shunt_voltage_buffer", PORT(IN), PORT(OUT),
+              PORT(BIAS_N), PORT(BIAS_P), PORT(TAIL_BIAS));
+        MODEL(lead_shunt_voltage_buffer, "lead_shunt_voltage_buffer", PORT(IN), PORT(OUT),
               PORT(BIAS_N), PORT(BIAS_P), PORT(TAIL_BIAS));
         MODEL(non_inverting_amplifier, "non_inverting_amplifier", PORT(IN), PORT(OUT));
         MODEL(regulator, "regulator", PORT(REF), PORT(OUT));

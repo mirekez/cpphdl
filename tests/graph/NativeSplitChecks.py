@@ -3,6 +3,10 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -15,6 +19,7 @@ def main():
     fixtures = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory(prefix='native-split-', dir=args.work) as directory:
         work = Path(directory)
+        toolchain = TestToolchain(args.cxx, None, work)
         converter = fixtures.parents[1] / 'hdlcpp/tests/cva6/support/cpphdl/tools/convert_cva6.py'
         specification = importlib.util.spec_from_file_location('split_converter', converter)
         conversion = importlib.util.module_from_spec(specification)
@@ -33,13 +38,13 @@ def main():
             command = [args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
                        '--chunk-size=16', '--split-chunks=4', '--frontend-flag=-I' + str(work / 'dpi'),
                        '--runner', fixture, '--output', output, fixture, '--', *flags]
-            result = subprocess.run([str(item) for item in command], cwd=work,
+            result = subprocess.run(toolchain.command(command), cwd=work, env=toolchain.env,
                                     capture_output=True, text=True, timeout=300)
             if result.returncode:
                 logs = ''.join(path.read_text()[-4000:] for path in output.glob('*.log'))
                 raise AssertionError((name, result.stdout, result.stderr, logs))
             assert list(output.glob('model.part.*.cpp'))
-            result = subprocess.run([str(output / 'run')], cwd=work, capture_output=True,
+            result = subprocess.run([str(output / 'run')], cwd=work, env=toolchain.env, capture_output=True,
                                     text=True, timeout=180)
             assert result.returncode == 0, (name, result.stdout, result.stderr)
             print(result.stdout, end='', flush=True)

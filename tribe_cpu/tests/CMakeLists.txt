@@ -10,6 +10,11 @@ add_test(NAME scripts_RiscvDependencies
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_dependencies.py")
 set_tests_properties(scripts_RiscvDependencies PROPERTIES TIMEOUT 60)
 
+add_test(NAME scripts_RiscvToolchain
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_toolchain.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/toolchain-checks")
+set_tests_properties(scripts_RiscvToolchain PROPERTIES TIMEOUT 120)
+
 add_test(NAME L1Cache_test_lifecycle
     COMMAND "${CMAKE_COMMAND}"
         -DCPPHDL=$<TARGET_FILE:cpphdl>

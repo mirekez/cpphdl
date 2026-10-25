@@ -246,9 +246,11 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
                 scales.push_back(e.hold_basis ? 1 : 1e-3);
             } else {
                 // Integral voltage form avoids C/dt amplification of roundoff for large DC-blocking caps.
-                extra.push_back(v(e.a) - v(e.b) - previous(e.a) + previous(e.b) - dt / e.c * x[e.auxiliary]);
-                // Preserve the usual current accuracy, with a voltage floor above double-precision noise.
-                scales.push_back(std::max(1e-6, dt / e.c * 1e-3));
+                const auto [leading, history] = derivative_weights(dt);
+                const double memory = history == 0 ? 0 : history / leading *
+                    (previous(e.a) - previous(e.b) - node_voltage(older_solution_, e.a) + node_voltage(older_solution_, e.b));
+                extra.push_back(v(e.a) - v(e.b) - previous(e.a) + previous(e.b) - memory - dt / (leading * e.c) * x[e.auxiliary]);
+                scales.push_back(std::max(1e-6, dt / (leading * e.c) * 1e-3));
             }
             break;
         }
@@ -258,7 +260,9 @@ inline std::pair<std::vector<double>, std::vector<double>> simulation::residual(
                 extra.push_back(x[e.auxiliary] - (initial ? e.initial : old[e.auxiliary]));
                 scales.push_back(1e-3);
             } else {
-                extra.push_back(v(e.a) - v(e.b) - e.l * (x[e.auxiliary] - old[e.auxiliary]) / dt);
+                const auto [leading, history] = derivative_weights(dt);
+                const double memory = history == 0 ? 0 : history * (old[e.auxiliary] - older_solution_[e.auxiliary]);
+                extra.push_back(v(e.a) - v(e.b) - e.l * (leading * (x[e.auxiliary] - old[e.auxiliary]) - memory) / dt);
                 scales.push_back(1);
             }
             break;
@@ -344,7 +348,7 @@ inline void simulation::stamp_jacobian(const std::vector<double>& x, double dt, 
                     add(e.auxiliary, e.auxiliary, 1);
                 }
             } else {
-                add(e.auxiliary, e.auxiliary, -dt / e.c);
+                add(e.auxiliary, e.auxiliary, -dt / (derivative_weights(dt).first * e.c));
                 row(e.auxiliary, e.a, 1);
                 row(e.auxiliary, e.b, -1);
             }
@@ -356,7 +360,7 @@ inline void simulation::stamp_jacobian(const std::vector<double>& x, double dt, 
             else {
                 row(e.auxiliary, e.a, 1);
                 row(e.auxiliary, e.b, -1);
-                add(e.auxiliary, e.auxiliary, -e.l / dt);
+                add(e.auxiliary, e.auxiliary, -e.l * derivative_weights(dt).first / dt);
             }
             break;
         case law::transconductor:
@@ -763,12 +767,22 @@ inline void simulation::integrate(duration stop, duration step, bool continuatio
     }
     if (times.size() > 200000)
         throw diagnostic("E_VALUE", "more than 200000 distinct transient events in one integration window");
+    std::vector<double> discontinuities;
+    for (const auto& e : elements)
+        for (const auto& point : e.waveform)
+            discontinuities.push_back(point.first);
+    // Keep event identity even when the segment-end marker wins timestamp
+    // merging. The next advance still needs a first-order restart.
+    for (const auto& item : schedule)
+        if (item.second == 1)
+            discontinuities.push_back(item.first);
+    std::sort(discontinuities.begin(), discontinuities.end());
     double previous_time = start;
     for (std::size_t i = 1; i < times.size(); ++i) {
         double time = times[i].first;
         auto previous = solution_;
         std::vector<bit_value> previous_bits;
-        if (minimum_step.value > 0)
+        if (minimum_step.value > 0 || method == integration_method::bdf2)
             for (const auto& bit : digital)
                 previous_bits.push_back(bit.value);
         stimuli(time, false);
@@ -787,6 +801,7 @@ inline void simulation::integrate(duration stop, duration step, bool continuatio
             --i;
             continue;
         }
+        const auto commits_before = register_commits;
         auto held = solution_;
         stimuli(time, true);
         solution_ = settle(solution_, held, 0, time, true);
@@ -831,6 +846,18 @@ inline void simulation::integrate(duration stop, duration step, bool continuatio
         }
         if (!finished)
             throw diagnostic("E_EVENT_CYCLE", "generated clock delta cycle");
+        older_solution_ = std::move(previous);
+        previous_dt_ = time - previous_time;
+        const double knot_tolerance = std::max(stop.value, 1e-15) * 8 * std::numeric_limits<double>::epsilon();
+        const auto knot = std::lower_bound(discontinuities.begin(), discontinuities.end(), time - knot_tolerance);
+        bool digital_changed = false;
+        if (method == integration_method::bdf2)
+            for (std::size_t bit = 0; bit < previous_bits.size(); ++bit)
+                digital_changed = digital_changed || previous_bits[bit] != digital[bit].value;
+        // Analog sensing can change a physical driver without a register
+        // commit or scheduled source event. Its old derivative is invalid.
+        history_ready_ = !digital_changed && times[i].second != 1 && commits_before == register_commits &&
+            (knot == discontinuities.end() || *knot > time + knot_tolerance);
         record(time);
         previous_time = time;
     }

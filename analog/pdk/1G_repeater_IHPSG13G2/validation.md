@@ -83,7 +83,8 @@ Prepare the tools and PDK as documented in [README](README.md), then:
 
 ```bash
 cd ~/cpphdl
-cmake -S analog -B analog/build -DCPPHDL_REPEATER_PHYSICAL_TESTS=ON \
+cmake -S analog -B analog/build -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON \
+    -DCPPHDL_REPEATER_PHYSICAL_TESTS=ON \
     -DCPPHDL_REPEATER_PHYSICAL_WORK="$PWD/analog/pdk/1G_repeater_IHPSG13G2/results/core"
 cmake --build analog/build --target analog_1g_repeater_core_test
 ctest --test-dir analog/build -R '^analog\.pdk\.1g_repeater\.' --output-on-failure

@@ -1,0 +1,27 @@
+// SIMULATION APPROXIMATION: controlled conductances are not physical MOS devices.
+// Generated from elaborated C++HDL IC purposes; all contributions coexist.
+// Capacitor initialization belongs to the host analysis; declared initial voltages appear below.
+`include "disciplines.vams"
+
+module OneGMDIInputNetwork(Vdd, Vss, P, N, PLUS, MINUS);
+    inout Vdd, Vss, P, N, PLUS, MINUS;
+    electrical Vdd, Vss, P, N, PLUS, MINUS;
+    electrical cpphdl_n7;
+
+    analog begin
+        // device 0, IC OneGMDIInputNetwork, analog/1G/mdi_input_network.hpp:20
+        I(P, PLUS) <+ V(P, PLUS) / 2000.0;
+        // device 1, IC OneGMDIInputNetwork, analog/1G/mdi_input_network.hpp:21
+        I(N, MINUS) <+ V(N, MINUS) / 2000.0;
+        // device 2, IC OneGMDIInputNetwork, analog/1G/mdi_input_network.hpp:22
+        I(Vdd, cpphdl_n7) <+ V(Vdd, cpphdl_n7) / 1000.0;
+        // device 3, IC OneGMDIInputNetwork, analog/1G/mdi_input_network.hpp:23
+        I(cpphdl_n7, Vss) <+ V(cpphdl_n7, Vss) / 1000.0;
+        // device 4, IC OneGMDIInputNetwork, analog/1G/mdi_input_network.hpp:24
+        I(cpphdl_n7, PLUS) <+ V(cpphdl_n7, PLUS) / 330.0;
+        // device 5, IC OneGMDIInputNetwork, analog/1G/mdi_input_network.hpp:25
+        I(cpphdl_n7, MINUS) <+ V(cpphdl_n7, MINUS) / 330.0;
+        // device 6, IC OneGMDIInputNetwork, analog/1G/mdi_input_network.hpp:26
+        I(cpphdl_n7, Vss) <+ 2e-12 * ddt(V(cpphdl_n7, Vss)); // Bench initial voltage = 0.0 V.
+    end
+endmodule

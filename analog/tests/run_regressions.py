@@ -12,7 +12,8 @@ def main():
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
     build = args.build.resolve()
-    configure = ["cmake", "-S", str(root), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON"]
+    configure = ["cmake", "-S", str(root), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release",
+                 "-DBUILD_TESTING=ON", "-DCPPHDL_BUILD_ANALOG_TESTS=ON"]
     if args.cxx:
         configure.append("-DCMAKE_CXX_COMPILER=" + args.cxx)
     subprocess.run(configure, check=True)

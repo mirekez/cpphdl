@@ -49,6 +49,7 @@ public:
         tx.local_receiver_ok_in = _ASSIGN(rx.locked_out() && samples_valid_in() && receiver_quality_in());
         tx.seed_load_in = _ASSIGN(control.state_out() == 0 && enable_in());
         tx.seed_in = _ASSIGN(seed_in());
+        rx.symbol_enable_in = _ASSIGN(true);
         rx.samples_in = _ASSIGN(samples_in());
         rx.remote_master_in = _ASSIGN(!control.master_out());
         rx.pma_ok_in = _ASSIGN(enable_in() && !restart_in() && samples_valid_in());

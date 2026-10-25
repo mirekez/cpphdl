@@ -4,6 +4,20 @@ Keep process-specific cells, their tests and their generated counterparts here.
 Generic PHY topology remains in `1G/`; downloaded foundry data remains in
 [`analog/pdk/IHPSG13G2/`](../../pdk/README.md).
 
+The [cold differential receiver](differential_receive_frontend.md) explains the
+physical reference, class hierarchy, control ports and current electrical limits.
+The [core-controlled receive DAC](core_receive_dac.md) develops its physical
+voltage-domain interface, including shared translator bias and actual ladder
+gate loading. Its unit qualification is separate from closed receiver testing.
+The [connected trial-to-decision path](core_receive_decision.md) adds physical
+evaluation/clear translation, comparator regeneration and the core return.
+Its qualification is in progress.
+
+See [current qualification and area priorities](qualification-status.md) for
+the connected-circuit results, retained failures and remaining chip work.
+[MOS bias storage](mos-storage.md) documents the measured footprint reductions,
+process characterization and the explicit MOSCAP LVS adapter.
+
 Physical analog implementation starts with the [connected MOS layout
 generator](mos-layout.md), the [sampling capacitor layout](capacitor-layout.md)
 and the [routed C++ inverter](inverter-layout.md).
@@ -320,3 +334,17 @@ Placement resume and routed-database resume are mutually exclusive. The latter
 does not establish how the incoming route was produced; its hash identifies
 the concrete implementation being independently checked. Passing this flow
 qualifies the standalone module under its stated contract, not a full PHY chip.
+
+The current differential receiver work is described in
+[differential gain](differential_receive_gain.md), the
+[shared reference](receive_reference.md), and the qualification status above.
+`differential_receive_frontend.hpp` assembles the MDI/preamplifier/ADC hierarchy;
+its analog bank remains a candidate. The preamplifier has separate generic
+and IHP process tests. The smaller digital SAR bank is documented
+[here](../adc_interleaved_bank.md); it has not replaced the analog bank yet.
+Its [physical flow](adc_bank_physical.md) now qualifies the corrected
+360 × 360 µm raw controller through extracted timing, exact routed behavior,
+all 868 DRC categories and strict LVS. The [receive-lane composition](../adc_receive_lane.md)
+adds separately tested digital startup and calibration. Its [own physical flow](adc_lane_physical.md)
+checks the complete composition with explicit control loads and a fresh routed
+trajectory; it does not inherit the raw controller's physical proof.

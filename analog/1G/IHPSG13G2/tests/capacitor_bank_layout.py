@@ -54,12 +54,15 @@ def run(args):
 
     try:
         for label, storage, damage in (('ten_pf', 10e-12, False), ('twenty_pf', 20e-12, False),
+                                       ('fifty_pf', 50e-12, False), ('four_hundred_pf', 400e-12, False),
                                        ('open_top_strap', 10e-12, True)):
             case = work / label
             case.mkdir()
             layout = db.Layout()
             layout.dbu = .001
             top, info = append_mim_bank(layout, args.pdk, 'StorageBank', storage)
+            if storage >= 20e-12 and max(info['width_um'], info['height_um']) / min(info['width_um'], info['height_um']) > 1.5:
+                raise ValueError('large storage bank is not compact')
             if damage:
                 top.shapes(layout.layer(info['terminals']['PLUS']['layer'], 0)).clear()
             gds, netlist = case / 'device.gds', case / 'device.cir'
@@ -83,14 +86,21 @@ def run(args):
                 completion = check_drc_completion(drc_path, technology / 'drc')
                 violations = Counter(item.findtext('category').strip("'") for item in ET.parse(drc_path).getroot().find('items'))
                 density_rules = {'AFil.g', 'GFil.g', 'M1.j', 'M2.j', 'M3.j', 'M4.j', 'M5.j', 'M5.k', 'TM1.c', 'TM1.d', 'TM2.c'}
-                if set(violations) - density_rules:
+                # This large reference is deliberately a negative chip-budget
+                # case. Keep the foundry's global recommended MIM-area failure;
+                # never present it as a fully DRC-clean candidate.
+                over_budget = label == 'four_hundred_pf'
+                if over_budget and violations.get('MIM.gR') != 1:
+                    raise ValueError('oversized MIM bank did not trigger the chip-area rule')
+                if set(violations) - density_rules - ({'MIM.gR'} if over_budget else set()):
                     raise ValueError('local capacitor-bank geometry violation: ' + str(violations))
                 report['cases'][label] = dict(geometry=info, lvs=lvs, drc_completion=completion,
                     local_drc_violations=0, full_drc_pass=not violations, global_density_violations=dict(violations),
+                    expected_chip_mim_budget_failure=over_budget,
                     artifact_sha256={str(p): digest(p) for p in (gds, netlist, lvs_path, drc_path)})
             save()
             print(label + ': pass', flush=True)
-        for value in (0, -1e-12, float('nan'), float('inf'), 161e-12):
+        for value in (0, -1e-12, float('nan'), float('inf'), 513e-12):
             layout = db.Layout()
             layout.dbu = .001
             try:

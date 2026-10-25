@@ -2,6 +2,9 @@
 
 Run `cmake --build analog/build --target check-1g` from the package root.
 All tests use CTest and have label `1g`. No test downloads a PDK or tools.
+The [2026-10-24 completion audit](audit-2026-10-24.md) records the current
+766-test 1G/repeater inventory, 154 passing rechecked tests, and the remaining
+physical integration and timing blockers. It is not a complete-suite pass.
 See [recorded validation](validation.md) for the measured 87-test run.
 The [hardware and MOS-bias extension](hardware-validation.md) records the newer results.
 The [pair-acquisition regression](../pair_acquisition.md) checks all wiring
@@ -41,6 +44,13 @@ acquisition, framer, branch metrics, Viterbi decoder and composed receiver.
 independent integer/transaction oracles; see [their interfaces](../receive_filter.md).
 `receiver.rtl` also runs the separate fault checker against its native, RTL and
 mapped executables, then compares each complete fault trajectory.
+It also replays the 59,456 independent receiver observations with 126,996
+poisoned pause clocks, adjacent valid clocks and 32 resets while disabled.
+`receiver_enable.native` runs this pause contract directly. Every PCS stage,
+including trellis draining and frame tags, advances only on `symbol_enable_in`;
+`receive_valid_out` identifies output words, including idle words. PMA loss
+revokes lock while paused. The enabled receiver needs 4 ns timing because valid
+events can be adjacent; earlier 8 ns physical results do not qualify this path.
 
 `hardware_runner` verifies timeout and CTest termination cleanup, including
 EDA child processes. Generated gate models disable Verilator output grouping
@@ -193,7 +203,7 @@ bit conversion. See the [receiver boundary](../IHPSG13G2/programmable_receive_fr
 performs closed ADC conversion with each flow's own electrical decisions.
 The sixteen-slice case converts two full banks at 250 MS/s after continuous
 warmup. Independent electrical/code checks precede the one-count generic code
-comparison. Six negative/positive contract tests and seven binding tests guard
+comparison. Eight negative/positive contract tests and seven binding tests guard
 cadence, unstable comparator decisions, bad codes, hold drift, supplies and
 exact host-control topology. See the [conversion boundary](../IHPSG13G2/programmable_receive_frontend.md#closed-conversion).
 

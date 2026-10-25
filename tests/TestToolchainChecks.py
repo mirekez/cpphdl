@@ -1,4 +1,5 @@
 """Test build setup without requiring any particular host sanitizer runtime."""
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -53,6 +54,18 @@ class ToolchainChecks(unittest.TestCase):
         self.assertNotIn('-std=c++20', command)
         self.assertIn('-std=c++23', command)
 
+    def test_selected_runtime_precedes_inherited_runtime(self):
+        library = Path(self.directory.name) / 'compiler-runtime' / 'libstdc++.so'
+        library.parent.mkdir()
+        library.touch()
+        with patch.dict('os.environ', {'LD_LIBRARY_PATH': '/old/runtime:/application/lib'}), \
+             patch('subprocess.check_output', return_value=str(library)):
+            toolchain = TestToolchain('/tools/bin/clang++', None, self.directory.name)
+        paths = toolchain.env['LD_LIBRARY_PATH'].split(':')
+        self.assertEqual(paths[0], str(library.parent))
+        self.assertEqual(paths[-2:], ['/old/runtime', '/application/lib'])
+        self.assertNotIn('LD_LIBRARY_PATH', os.environ)
+
     def test_asan_probe_cached(self):
         with patch.object(self.toolchain, 'probe', return_value=subprocess.CompletedProcess([], 0, '', '')) as probe:
             for _ in range(2):
@@ -74,6 +87,31 @@ class ToolchainChecks(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'heap-buffer-overflow'):
                 self.toolchain.sanitizers()
             probe.assert_called_once()
+
+    def test_fallback_rewrites_direct_and_nested_build_commands(self):
+        conflict = subprocess.CompletedProcess([], 1, '',
+            'RTLD_DEEPBIND is incompatible with sanitizer runtime')
+        success = subprocess.CompletedProcess([], 0, '', '')
+        flags = ['-fsanitize=undefined', '-fno-sanitize-recover=all']
+        commands = [
+            ['/tools/bin/clang++', 'test.cc', '-fsanitize=address,undefined', '-o', 'run'],
+            ['cpphdl', '--native-graph', 'test.cc', '--', '-fsanitize=address,undefined'],
+        ]
+        with patch.object(self.toolchain, 'probe', side_effect=[conflict, success]) as probe:
+            for command in commands:
+                rewritten = self.toolchain.command(command)
+                self.assertEqual(rewritten,
+                                 command[:command.index('-fsanitize=address,undefined')] + flags
+                                 + command[command.index('-fsanitize=address,undefined') + 1:])
+                self.assertIn('-fsanitize=address,undefined', command)
+            self.assertEqual(probe.call_count, 2)
+
+    def test_supported_asan_remains_enabled_in_build_commands(self):
+        with patch.object(self.toolchain, 'probe', return_value=
+                          subprocess.CompletedProcess([], 0, '', '')):
+            command = self.toolchain.command(['clang++', '-fsanitize=address,undefined'])
+            self.assertIn('-fsanitize=address,undefined', command)
+            self.assertIn('-fno-sanitize-recover=all', command)
 
     def test_explicit_asan_never_falls_back(self):
         with patch.dict('os.environ', {'CPPHDL_TEST_SANITIZERS': 'address,undefined'}), \

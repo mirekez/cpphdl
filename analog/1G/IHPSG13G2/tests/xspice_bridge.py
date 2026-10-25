@@ -8,15 +8,39 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(SOURCE.parent / 'tests'), str(SOURCE.parents[1] / 'VerilogA')]
+sys.path[:0] = [str(SOURCE), str(SOURCE.parent / 'tests'), str(SOURCE.parents[1] / 'VerilogA')]
 spec = importlib.util.spec_from_file_location('continuous_cpp_controller', SOURCE / 'xspice_live.py')
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 
 class BridgeEvidence(unittest.TestCase):
+    def test_live_controls_keep_the_exported_edge(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            metadata = dict(feedback_low_V=.36, feedback_high_V=.84, period_s=4e-9,
+                decisions=['decision0'], drivers=[dict(slice=0, bit=i, id=i) for i in range(9)])
+            (work / 'live.json').write_text(json.dumps(metadata))
+            args = SimpleNamespace(slices=1, bursts=2, bench=work / 'bench',
+                ngspice=work / 'ngspice', cxx='c++')
+            deck = ''.join(f'Vbit{i} bit{i} 0 PWL(0 1)\n' for i in range(9)) + '.control\nquit\n.endc\n.end\n'
+            with patch.object(bridge, 'execute'), patch.object(bridge, 'headers', return_value=work):
+                for edge in (2e-15, 100e-12):
+                    (work / 'conditions.json').write_text(json.dumps(dict(driver_edge_s=edge)))
+                    bridge.live_flow(args, work, lambda *_: (deck, {}))
+                    output = (work / 'cosim.cir').read_text()
+                    card = next(line for line in output.splitlines() if line.startswith('.model host_output '))
+                    for parameter in ('t_rise', 't_fall'):
+                        value = card.split(parameter + '=')[1].split()[0].rstrip(')')
+                        self.assertEqual(float(value), edge)
+                for edge in (None, True, 0, -1, float('inf'), float('nan'), '2fs'):
+                    (work / 'conditions.json').write_text(json.dumps(dict(driver_edge_s=edge)))
+                    with self.assertRaisesRegex(ValueError, 'exported driver edge'):
+                        bridge.live_flow(args, work, lambda *_: (deck, {}))
+
     def test_bounded_runtime_budget(self):
         self.assertEqual(bridge.simulation_timeout(SimpleNamespace(slices=4)), 3600)
         self.assertEqual(bridge.simulation_timeout(SimpleNamespace(slices=16)), 9600)

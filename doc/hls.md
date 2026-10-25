@@ -1500,3 +1500,244 @@ The primitive's native C++ model uses `cpphdl::memory`. Conversion uses its
 an explicit C++ RTL building block; arbitrary high-level C++ array accesses do
 not automatically acquire this port schedule. Always confirm physical RAM
 usage in the FPGA synthesis report.
+
+## Concurrent Stages Around HLS Kernels
+
+This section describes explicit cache dataflow and its measurement. The
+orchestration guidance applies to the current RTL and HLS interfaces.
+
+### Concurrent orchestration
+
+Use independent loader, operand-delivery, compute, retirement and store stages
+with bounded buffers. In a C++HDL module, stage transition methods can all run
+inside `_work` on the same clock. They read committed state and assign `_next`;
+publish all register and memory changes together in `_strobe`. Calling those
+transition methods in C++ source order does not add hardware clocks between
+them. RAM reads and writes still obey their registered port semantics.
+
+For example, a cache controller can make its hardware concurrency visible as:
+
+```cpp
+// Inside a C++HDL controller; the methods implement next-state equations.
+void _work(bool reset) {
+    // Update child RAM/math modules and handle reset/command admission.
+    // Each transition below reads this edge's committed state.
+    load_stage();
+    retire_stage();
+    issue_stage();
+    store_stage();
+}
+// _strobe publishes every stage's scheduled changes together.
+```
+
+This requires explicit ownership of buffer-valid flags, producer/consumer
+indices and simultaneous update priorities. It is not a new pragma or an
+automatic dataflow transformation of arbitrary sequential C++ methods.
+An ordinary `ClockedMemory<T>::command` still has its scheduled FSM. Splitting
+that method into blocking helper calls does not make them concurrent.
+
+Use `ClockedPipeline` for independent streaming math and retain enough distinct
+accumulator contexts to cover its retimed feedback latency. Keep long arithmetic
+off the memory controller's state-feedback path. A single global delayed
+transaction schedule can otherwise make even simple memory/control operations
+wait for the longest arithmetic path.
+
+### Cache readiness and backpressure
+
+Keep DRAM storage pointer-backed and BRAM storage in member arrays or explicit
+synchronous RAM banks. Give each cache level the same load/issue/retire/store
+contract, with that level's physical capacities, ports and latencies.
+
+A consumer need not wait for an entire panel. It may use a tile when its bank
+and panel identity match the producer's current fill, and all required words
+were committed by earlier clock edges. Ordered responses allow a returned-word
+watermark; out-of-order responses require explicit per-tile completion metadata.
+Never treat the response arriving on the sampling edge as already committed
+RAM data. Do not reuse the bank until all scheduled reads from it are safe.
+
+For a shared memory-command interface, preserve any asserted request until
+acceptance. A newly ready store must not replace a stalled read. Buffer capacity,
+feedback hazards, command backpressure and outstanding-read credits are separate
+conditions and should be visible independently.
+
+### Measure occupancy and useful progress separately
+
+Sample at the actual active compute edge after combinational settling. Record
+stage activity as a bit mask and accumulate an exact-mask histogram. Histogram
+buckets partition elapsed time; stage totals and pairwise intersections overlap
+and must not be added to obtain total clocks.
+
+Record accepted read requests/returned words, operand fetches, MAC issues and
+completions, reductions and accepted stores separately. A nonempty compute
+pipeline can have low issue duty, so maximizing occupied clocks alone is not a
+throughput optimization. Classify waits by the blocked resource and distinguish
+waits hidden by other useful work from exposed waits.
+
+Compare schedules with identical inputs, memory settings and arithmetic order.
+Retain response stability, reset, tails, cache-boundary and memory-error tests.
+Distinguish an ordered delayed-transaction memory test from a DDR timing model.
+Host simulator CPU time is a separate measurement from device-clock occupancy.
+
+### Streamed reductions after matrix output
+
+A reduction that only needs completed matrix values belongs on the output
+stream, after the final K accumulation. It should not force a second external
+memory scan. `hls/math/Maximum.h` provides `MaximumMethods`, which compares FP32 representation bits,
+carries original indices through reductions, preserves first-index ties (including
+signed zeros), and matches sequential argmax's NaN behavior. A branchless final select provides a
+shallow compare/mux path. Stateless helpers can be inherited by RTL modules;
+the converter must preserve their qualified method names.
+
+For a wide memory stream, accumulate independently per lane on accepted beats,
+then merge those lane results through registered tree levels. Mask invalid
+lanes and advance only on ready/valid acceptance. Emit maximum metadata only
+after the entire output column, including every recursive K window, is done.
+Softmax may then consume that maximum and make two source passes: exponential
+sum, then normalization. Keep memory requests independent from exponential and
+division pipelines; their depth must not become the memory FSM's initiation
+interval. A real sum recurrence still needs ordered feedback or explicitly
+partitioned accumulators with a documented numerical association.
+
+#### Constant address arithmetic after HLS lowering
+
+Unsigned division and modulo by a power of two reduce to shifts and masks;
+multiplication reduces to shifted wiring. This also applies when hierarchy
+aliases reveal the constant late, or HLS guards a literal argument with an
+active-state predicate. In the guarded case, retain that predicate on the
+result: the graph defines unsigned division/modulo by zero as zero.
+
+Check the synthesized feedback initiation interval as well as the final clock
+period. A missed constant reduction can introduce a divider and lengthen every
+logical step of a memory controller. Integer address cursors alone cannot cure
+that compiler issue. Signed division has different rounding semantics and is
+not covered by this unsigned rewrite. `tests/graph/PowerOfTwoFoldingChecks.py` covers
+eager/late aliases, gated constants, serialization and mixed operand widths.
+
+#### Child pipeline reset expressions
+
+A direct, unconditional scalar child call such as
+`worker._work(reset || clear_in())` connects that expression to the generated
+child module's synchronous reset. The expression may read parent ports and
+state. The reset parameter's spelling does not matter. This also applies to
+scalar HLS pipeline adapters instantiated in C++ RTL.
+
+The current converter also handles indexed child arrays and named clock
+methods. Conflicting reset bindings and references to process-local variables
+are rejected. Keep reset expressions free of side effects; do not assume that
+conditional lifecycle calls create clock enables. The native/Verilator tests
+in `tests/cdc/ChildResetChecks.py` cover the existing reset-binding contract.
+
+#### Runtime Affine Maps
+
+`hls/MemoryMap.h` provides `ClockedMap<Methods, Reads, Writes, Slots>` for
+independent iterations over a runtime two-dimensional domain. This is an
+explicit reusable gather/compute/scatter lowering interface. It does not make
+an arbitrary OpenMP loop with runtime pointer accesses synthesizable. The
+existing restrictions on automatic OpenMP loop extraction still apply.
+
+Describe each input/output stream with a byte base, row stride, column stride,
+and access size (1, 2, or 4 bytes). An iteration at `(row, column)` accesses
+`base + row * row_stride + column * column_stride`. Strides are unsigned;
+zero input strides permit broadcasting. `rows`, `columns`, and active stream
+counts are command fields. At most 8 input and 8 output streams are supported;
+zero active inputs permit constant generation, but at least one output is
+required. `Slots` is a power of two from 2 through 64 and bounds all buffered
+iterations. No arithmetic latency appears in the controller.
+
+The stateless policy implements
+`MapOutput<Writes> command(MapInput<Reads>, MapInput<Reads>, MapInput<Reads>)`.
+Only the first argument carries data; the other two are zero packets. Its
+`values` array contains the gathered, zero-extended words, and `operation`,
+`parameter`, and row-major `index` provide context. The result contains output
+words, truncated by the configured store size. Keep the math body ordinary
+C++ and use supported bounded OpenMP value loops where useful. The policy is
+compiled through `ClockedPipeline`, so arithmetic retiming cannot lengthen
+the memory controller's feedback interval. Floating-point association remains
+the policy's responsibility; the map does not perform reductions or reassociate
+operations.
+
+For example, a two-input, one-output policy can add `in.values[0]` and
+`in.values[1]`; descriptors then select contiguous, strided, or broadcast
+sources without changing the controller. A paired-output rotation is another
+policy on the same controller. Conversion of a two-byte input to a four-byte
+output belongs in the math policy, not the address engine.
+
+`MemoryMapControl<Reads, Writes, Slots>` exposes the same descriptor interface
+with an external ready/valid arithmetic endpoint. Responses must be ordered,
+with exactly one response for each accepted input. The integrated `ClockedMap`
+owns that endpoint's `ClockedPipeline`. Memory is ordered and **single
+outstanding**: later gathers overlap earlier arithmetic, and completed output
+iterations scatter in row-major order. This version does not issue concurrent
+DRAM requests. Every operand of an iteration is captured before its outputs
+can be stored.
+
+Both the CPU helper `map_descriptor_valid(descriptor)` and the hardware
+admission logic reject empty dimensions, 32-bit address/domain overflow,
+misalignment, overlapping output elements, and unproved cross-iteration
+read/write aliases. They accept separated stream spans, provably disjoint
+subintervals of equal row periods, and exact per-iteration in-place aliases.
+The proof is conservative: a valid but unproved layout must be rearranged or
+handled outside this interface. Overlapping FP16-to-FP32 conversion is not an
+exact in-place alias and is rejected. No memory access occurs for an invalid
+command.
+
+`map_runtime(Methods{}, descriptor, read, write)` executes the same policy in
+ordinary C++ using an OpenMP collapsed row/column loop. It returns `false`
+before invoking either callback when validation fails; otherwise it returns
+`true`. Read callbacks take `(byte_address, size)` and return a zero-extended
+word; write callbacks take `(byte_address, word, size)`. Callbacks must support
+independent concurrent accesses when host OpenMP is enabled. The policy must
+be stateless; packet fields carry per-command context. The helper preserves
+per-iteration math semantics, while the hardware additionally orders stores.
+
+Hardware commands and responses use ready/valid acceptance. Requests remain
+stable through backpressure. On a memory or arithmetic fault, the controller
+stops creating work, drains already exposed/accepted requests, and fences the
+memory adapter before reporting completion. The owner must honor
+`flush_valid_out`/`flush_ready_in` and keep the adapter assigned until the held
+response is acknowledged; `flush_valid_out` remains asserted through that
+acknowledgment. Reset must also reset/drain the connected endpoints. Fault
+codes are 1 for an invalid descriptor, 2 for memory failure, and 3 for an
+arithmetic failure; adapter fence failures are handled by the owning wrapper.
+
+Five profiling bits represent memory transactions, gather, iteration math,
+scatter, and the final fence. Active/progress/wait masks expose overlap and
+stalls. On a successful command with `N = rows * columns`, `R` active reads,
+and `W` active writes, accepted and completed counts must both equal
+`[(R + W) * N, R * N, N, W * N, 1]`. Report these counts and occupancy masks
+alongside total device clocks; a pipeline's standalone initiation interval
+alone does not measure memory-system throughput.
+
+Public source records and helpers in `cpphdl::hls` are exported through the
+same direct-RTL path as application code. Core `cpphdl` bit-vector/container
+implementation records remain compiler primitives. Namespaced module methods
+must be identified by AST declaration kind; class-name substring checks cannot
+distinguish a constructor from `namespace::Class::method`.
+
+The map wrappers carry their input/output packet types as defaulted template
+type arguments. This gives different stream dimensions distinct generated
+module names while numeric parameters such as queue depth remain ordinary SV
+parameters. Instantiating different packet shapes therefore requires distinct
+module and package definitions in the generated design.
+
+### Affine Views and Masked BRAM Gathers
+
+`hls/StridedView.h` defines a byte-addressed `StridedMatrixView` with shape,
+row/column strides, element width, `sub()` and `transpose()`. Its address contract
+matches a normal pointer-backed C++ matrix view. `StridedViewMethods` supplies
+bounded 64-byte beat traversal for FP32 and FP16 input, including sparse and
+broadcast strides. This is an explicit memory-interface building block; it does
+not automatically turn arbitrary pointer loops into burst engines.
+
+`hls/MaskedSynchronousRam.h` supplies a registered one-read/one-write BRAM bank
+with one write enable per 32-bit word. A gather controller can scatter an aligned
+DRAM beat into selected lanes without first reading the BRAM word or writing
+padded operands into DRAM. The ordinary C++ implementation and generated RTL
+both preserve untouched words and use read-before-write semantics. RAM contents
+are not reset: publish tile/context readiness only after every valid operand
+has arrived, and mask invalid edge lanes before arithmetic.
+
+Keep request metadata bounded, preserve ready/valid signals under backpressure,
+and track each ping-pong bank's ownership. Independent load, issue, retirement
+and store transitions allow these stages to overlap without changing the
+mathematical C++ operation or its FP32 reduction order.

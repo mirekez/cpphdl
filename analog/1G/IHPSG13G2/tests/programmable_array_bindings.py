@@ -12,6 +12,8 @@ from programmable_array_process import process_deck
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--bench', type=Path, required=True)
+parser.add_argument('--dummy-p-width-um', type=int, choices=(25, 30), default=25)
+parser.add_argument('--charge-defined-nodes', action='store_true')
 args, remaining = parser.parse_known_args()
 
 
@@ -30,14 +32,15 @@ class Bindings(unittest.TestCase):
 
     def bind(self, model=None, deck=None):
         return process_deck(self.model if model is None else model,
-                            self.original if deck is None else deck, self.work / 'models')
+                            self.original if deck is None else deck, self.work / 'models',
+                            dummy_p_width_um=args.dummy_p_width_um, charge_defined_nodes=args.charge_defined_nodes)
 
     def test_reviewed_geometry_and_body_rails(self):
         deck, inventory = self.bind()
         self.assertEqual(len(inventory), 970)
         self.assertNotIn('CircuitModel', deck)
         sampler_widths = [part['width_um'] for part in inventory if part['source'] == 'mos_track_hold.hpp']
-        self.assertEqual(sampler_widths, [25, 50, 12.5, 25] * 16)
+        self.assertEqual(sampler_widths, [25, 50, 12.5, args.dummy_p_width_um] * 16)
         observations = dict(re.findall(r'let observation(\d+) = v\((n\d+)\)', self.original))
         for part in inventory:
             if part['model'].endswith('_nmos'):
@@ -49,6 +52,17 @@ class Bindings(unittest.TestCase):
         self.assertIn(' / 100.0;', self.model)
         with self.assertRaisesRegex(ValueError, 'resistor'):
             self.bind(model=self.model.replace(' / 100.0;', ' / 110.0;', 1))
+
+    def test_other_dummy_width_cannot_be_bound_to_this_export(self):
+        width = 30 if args.dummy_p_width_um == 25 else 25
+        with self.assertRaisesRegex(ValueError, 'sampler'):
+            process_deck(self.model, self.original, self.work / 'models', dummy_p_width_um=width,
+                         charge_defined_nodes=args.charge_defined_nodes)
+
+    def test_charge_storage_profile_cannot_be_switched(self):
+        with self.assertRaisesRegex(ValueError, 'inventory|storage'):
+            process_deck(self.model, self.original, self.work / 'models', dummy_p_width_um=args.dummy_p_width_um,
+                         charge_defined_nodes=not args.charge_defined_nodes)
 
     def test_input_buffer_cannot_be_disconnected_from_differential_amplifier(self):
         _, inventory = self.bind()
