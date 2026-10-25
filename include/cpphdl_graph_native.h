@@ -825,7 +825,6 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 publishDelta(index);
                 return;
             }
-            rememberPrevious(index);
             if (node.op == "memory_read") {
                 auto memory = number(node.right), word = number(node.select);
                 if (!memory || *memory >= memories.size() || !word || *word >= (memories[*memory].width + 63) / 64 ||
