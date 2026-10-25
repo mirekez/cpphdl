@@ -19,7 +19,9 @@ policy. Tolerance-based inference comparisons must declare summation order.
 `Reduction.h` provides `reduce_rows`, with native OpenMP `+` reduction and an
 HLS balanced FP32 combine tree. OpenMP allows association to differ on CPU.
 `reduce_rows_tree` instead implements a specific recursive pairwise tree shared
-by CPU/HLS, carries odd elements and applies the final +0 identity. `ReductionMethods` is a
+by CPU/HLS, carries odd elements and applies the final +0 identity. The host
+recursive cache path uses this explicit tree only when exporting striped C;
+intermediate cache transfers preserve all partials. `ReductionMethods` is a
 stateless streaming packet adapter around the deterministic tree.
 
 The hardware blocks moved from the examples preserve their original global
@@ -41,7 +43,7 @@ bit-level adder rounds and then flushes, so the underflow boundary is a known
 contract difference. Existing example main functions remain in examples/math,
 not in these library headers.
 
-The original example testbenches remain available for native C++ and Verilator.
+The project compatibility runner checks all four original native examples.
 FP32 tests compare 200,000 add/multiply references and all 65,536 FP16 inputs.
 The OpenMP Float regression verifies the policies through native/RTL/retimed
 flows, including +/* reductions, helpers, scratch and neighbor snapshots.

@@ -40,6 +40,47 @@ class Mapper {
         }
         return a;
     }
+    Value multiply(const Value& a, const Value& b, unsigned width) {
+        // A compression wave reads only the preceding wave. Reusing freshly
+        // generated carries here would recreate a serial partial-sum path.
+        std::vector<Value> rows;
+        for (unsigned shift = 0; shift < width; ++shift) {
+            if (!b[shift]) continue;
+            Value row(width, 0);
+            bool nonzero = false;
+            for (unsigned bit = shift; bit < width; ++bit) {
+                row[bit] = gate("and", a[bit-shift], b[shift]);
+                nonzero |= row[bit] != 0;
+            }
+            if (nonzero) rows.push_back(std::move(row));
+        }
+        while (rows.size() > 2) {
+            std::vector<Value> next;
+            for (size_t i = 0; i < rows.size();) {
+                if (rows.size()-i < 3) {
+                    next.push_back(std::move(rows[i++]));
+                    continue;
+                }
+                Value sum(width, 0), carry(width, 0);
+                for (unsigned bit = 0; bit < width; ++bit) {
+                    Bit x = gate("xor", rows[i][bit], rows[i+1][bit]);
+                    sum[bit] = gate("xor", x, rows[i+2][bit]);
+                    if (bit+1 < width)
+                        carry[bit+1] = gate("or", gate("and", rows[i][bit], rows[i+1][bit]),
+                            gate("and", x, rows[i+2][bit]));
+                }
+                next.push_back(std::move(sum));
+                next.push_back(std::move(carry));
+                i += 3;
+            }
+            rows = std::move(next);
+        }
+        if (rows.empty()) return Value(width, 0);
+        if (rows.size() == 1) return std::move(rows.front());
+        // Propagate carry once, through the final two rows. Dropping overflow
+        // preserves the original modular arithmetic at every result width.
+        return add(std::move(rows[0]), std::move(rows[1]));
+    }
     Bit less(Value a, Value b, bool sign = false) {
         Bit result = 0;
         for (size_t i = 0; i < a.size(); ++i) {
@@ -170,12 +211,7 @@ public:
                 else if (op == "and" || op == "or" || op == "xor") {
                     for (unsigned i = 0; i < width; ++i) result.push_back(gate(op, a[i], b[i]));
                 } else if (op == "mul") {
-                    result = Value(width, 0);
-                    for (unsigned i = 0; i < width; ++i) {
-                        Value row(width, 0);
-                        for (unsigned j = i; j < width; ++j) row[j] = gate("and", a[j - i], b[i]);
-                        result = add(result, row);
-                    }
+                    result = multiply(a, b, width);
                 } else throw std::runtime_error("unsupported gate mapping operation: " + op);
             }
             bind(n, resize(result, width));

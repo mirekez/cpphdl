@@ -144,6 +144,22 @@ int main() {
  });}catch(const std::runtime_error&){threw=true;}
  assert(threw && work.done.load()==2);
  executor.run(&work,lane);assert(work.done.load()==4);
+ // A shared six-worker pool also serves graphs with fewer active lanes.
+ // Alternate subsets so sleeping workers miss epochs, then rejoin safely.
+ cpphdl::graph_runtime::Threads shared(6,6);
+ struct Subset {unsigned active=0;std::array<unsigned,6> visits{};} subset;
+ auto visit=[](void* ptr,auto&,unsigned lane,uint32_t) noexcept {
+  auto& s=*static_cast<Subset*>(ptr);assert(lane<s.active);++s.visits[lane];
+ };
+ std::array<unsigned,6> expected{};
+ for(unsigned i=0;i<4096;++i){subset.active=1+i%6;for(unsigned j=0;j<subset.active;++j)++expected[j];
+  shared.run(&subset,visit,subset.active);assert(subset.visits==expected);}
+ subset.active=2;
+ threw=false;try{shared.run(&subset,visit,2u,[]{throw std::runtime_error("subset");});}
+ catch(const std::runtime_error&){threw=true;}
+ assert(threw);++expected[0];++expected[1];assert(subset.visits==expected);
+ for(unsigned invalid:{0u,7u}){threw=false;try{shared.run(&subset,visit,invalid);}
+  catch(const std::invalid_argument&){threw=true;}assert(threw);}
  std::puts("host overlap and balanced lanes: mixed-width registers, old-state outputs, RAM ordering, validation rollback, host exceptions, copies and worker drain PASS");
 }
 ''')

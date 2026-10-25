@@ -359,7 +359,7 @@ public:
         for (auto n : reachable) {
             const auto& b = d.blocks[n];
             if (b.suspend) continuations.insert(b.yes); else if (b.yes >= 0) ++incoming[b.yes];
-            if (b.no >= 0 && b.no != b.yes) ++incoming[b.no];
+            if (b.no >= 0 && (b.no != b.yes || b.suspend)) ++incoming[b.no];
         }
         std::set<int> todo; for (auto n : reachable) if (!incoming[n]) todo.insert(n);
         Value noFault = inv(env["fault"]), start = both(inv(reset),noFault);
@@ -382,17 +382,20 @@ public:
         // (especially FP helpers with early returns). Find the nearest such
         // fork using dominator and postdominator trees of this acyclic CFG.
         // Keep the current fault guard at the join: faults still suppress all
-        // subsequent effects. Clocked/memory schedules retain their old paths.
+        // subsequent effects. For clocked schedules, cut suspended edges and
+        // add a virtual entry for every independently activated continuation.
+        // A join must never regain activation across a clock/memory wait.
         std::vector<int> joinSource(d.blocks.size(), -1);
-        if (pipeline) {
+        {
             auto degrees = incoming;
             auto queue = todo;
             std::vector<int> order;
             std::vector<std::vector<int>> predecessors(d.blocks.size());
             for (int n : reachable) {
                 const auto& b = d.blocks[n];
-                for (int next : {b.yes, b.no}) if (next >= 0) {
-                    if (!predecessors[next].empty() && predecessors[next].back() == n) continue;
+                for (unsigned edge=0;edge<2;++edge) {
+                    int next=edge?b.no:b.yes;
+                    if(next<0||(!edge&&b.suspend)||(edge&&b.no==b.yes&&!b.suspend))continue;
                     predecessors[next].push_back(n);
                 }
             }
@@ -401,15 +404,20 @@ public:
                 const auto& b = d.blocks[n];
                 for (unsigned edge = 0; edge < 2; ++edge) {
                     int next = edge ? b.no : b.yes;
-                    if (next < 0 || (edge && b.no == b.yes)) continue;
+                    if (next < 0 || (!edge && b.suspend) || (edge && b.no == b.yes && !b.suspend)) continue;
                     if (--degrees[next] == 0) queue.insert(next);
                 }
             }
             if (order.size() != reachable.size())
                 throw std::runtime_error("cycle in combinational command joins");
-            const int exit = d.blocks.size();
+            const int entry = d.blocks.size(), exit = entry+1;
             std::vector<int> dominator(exit + 1, -1), postdominator(exit + 1, -1);
             std::vector<unsigned> depth(exit + 1), postdepth(exit + 1);
+            dominator[entry]=entry;
+            std::set<int> entries;
+            if(!pipeline)entries=continuations;
+            entries.insert(initialize?d.resetEntry:d.commandEntry);
+            for(int n:order)if(entries.count(n)||predecessors[n].empty())predecessors[n].push_back(entry);
             auto common = [](int a, int b, const auto& parent, const auto& level) {
                 while (a != b) {
                     if (level[a] > level[b]) a = parent[a];
@@ -429,12 +437,12 @@ public:
             for (auto i = order.rbegin(); i != order.rend(); ++i) {
                 int n = *i;
                 const auto& b = d.blocks[n];
-                int parent = b.yes < 0 ? exit : b.yes;
+                int parent = b.yes < 0 || b.suspend ? exit : b.yes;
                 if (b.no >= 0) parent = common(parent, b.no, postdominator, postdepth);
                 else if (!b.condition.empty()) parent = exit;
                 postdominator[n] = parent; postdepth[n] = postdepth[parent] + 1;
             }
-            for (int n : order) for (int ancestor = dominator[n]; ancestor != n;) {
+            for (int n : order) for (int ancestor = dominator[n]; ancestor != n && ancestor != entry;) {
                 int cursor = ancestor;
                 while (postdepth[cursor] > postdepth[n]) cursor = postdominator[cursor];
                 if (cursor == n) { joinSource[n] = ancestor; break; }
@@ -459,7 +467,7 @@ public:
                 if (b.suspend) env["phase"] = g.mux(yes,constant(b.yes+1,32),env["phase"]);
                 else { active[b.yes] = either(active[b.yes],yes); if (--incoming[b.yes] == 0) todo.insert(b.yes); }
             }
-            if (b.no >= 0) { active[b.no] = either(active[b.no],both(next,inv(condition))); if(b.no != b.yes && --incoming[b.no] == 0) todo.insert(b.no); }
+            if (b.no >= 0) { active[b.no] = either(active[b.no],both(next,inv(condition))); if((b.no != b.yes || b.suspend) && --incoming[b.no] == 0) todo.insert(b.no); }
         }
         if(visited != reachable.size()) throw std::runtime_error("cycle without a clock boundary in scheduled graph");
         g.currentScope = scope;

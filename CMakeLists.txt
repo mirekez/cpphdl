@@ -173,38 +173,37 @@ function(cpphdl_add_host_opt_flags target)
   endif()
 endfunction()
 
-set(CPPHDL_DISCOVERED_INCLUDE_DIRS "")
-execute_process(
-  COMMAND "${CMAKE_CXX_COMPILER}" -E -x c++ - -v
-  INPUT_FILE /dev/null
-  OUTPUT_VARIABLE CPPHDL_CXX_INCLUDE_PROBE_OUT
-  ERROR_VARIABLE CPPHDL_CXX_INCLUDE_PROBE_ERR
-  RESULT_VARIABLE CPPHDL_CXX_INCLUDE_PROBE_RESULT
-)
-set(CPPHDL_CXX_INCLUDE_PROBE_TEXT "${CPPHDL_CXX_INCLUDE_PROBE_OUT}\n${CPPHDL_CXX_INCLUDE_PROBE_ERR}")
-if(CPPHDL_CXX_INCLUDE_PROBE_RESULT EQUAL 0)
-  string(REPLACE "\r\n" "\n" CPPHDL_CXX_INCLUDE_PROBE_TEXT "${CPPHDL_CXX_INCLUDE_PROBE_TEXT}")
-  string(REPLACE "\r" "\n" CPPHDL_CXX_INCLUDE_PROBE_TEXT "${CPPHDL_CXX_INCLUDE_PROBE_TEXT}")
-  string(REPLACE "\n" ";" CPPHDL_CXX_INCLUDE_PROBE_LINES "${CPPHDL_CXX_INCLUDE_PROBE_TEXT}")
-  set(CPPHDL_IN_ANGLE_INCLUDE_LIST OFF)
-  foreach(CPPHDL_INCLUDE_LINE IN LISTS CPPHDL_CXX_INCLUDE_PROBE_LINES)
-    string(STRIP "${CPPHDL_INCLUDE_LINE}" CPPHDL_INCLUDE_LINE_STRIPPED)
-    if(CPPHDL_INCLUDE_LINE_STRIPPED STREQUAL "#include <...> search starts here:")
-      set(CPPHDL_IN_ANGLE_INCLUDE_LIST ON)
-      continue()
-    endif()
-    if(CPPHDL_INCLUDE_LINE_STRIPPED STREQUAL "End of search list.")
-      set(CPPHDL_IN_ANGLE_INCLUDE_LIST OFF)
-      continue()
-    endif()
-    if(CPPHDL_IN_ANGLE_INCLUDE_LIST AND EXISTS "${CPPHDL_INCLUDE_LINE_STRIPPED}")
-      list(APPEND CPPHDL_DISCOVERED_INCLUDE_DIRS "${CPPHDL_INCLUDE_LINE_STRIPPED}")
-    endif()
-  endforeach()
+find_program(CPPHDL_OBJCOPY
+  NAMES llvm-objcopy llvm-objcopy-21 objcopy
+  HINTS "${CMAKE_SOURCE_DIR}/.conda/bin"
+  NO_DEFAULT_PATH)
+if(NOT CPPHDL_OBJCOPY)
+  find_program(CPPHDL_OBJCOPY NAMES llvm-objcopy llvm-objcopy-21 objcopy)
 endif()
 
-set(CPPHDL_ALL_IMPLICIT_INCLUDE_DIRS ${CPPHDL_DISCOVERED_INCLUDE_DIRS} ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
-list(REMOVE_DUPLICATES CPPHDL_ALL_IMPLICIT_INCLUDE_DIRS)
+function(cpphdl_strip_gnu_property_file file)
+  if(CPPHDL_OBJCOPY)
+    execute_process(
+      COMMAND "${CPPHDL_OBJCOPY}" --remove-section=.note.gnu.property "${file}"
+      RESULT_VARIABLE strip_result
+      OUTPUT_VARIABLE strip_output
+      ERROR_VARIABLE strip_error)
+    if(NOT strip_result EQUAL 0)
+      string(STRIP "${strip_output}\n${strip_error}" strip_message)
+      message(STATUS "Could not remove .note.gnu.property from ${file}: ${strip_message}")
+    endif()
+  endif()
+endfunction()
+
+function(cpphdl_strip_gnu_property_after_build target)
+  if(CPPHDL_OBJCOPY)
+    add_custom_command(
+      TARGET ${target}
+      POST_BUILD
+      COMMAND "${CPPHDL_OBJCOPY}" --remove-section=.note.gnu.property "$<TARGET_FILE:${target}>"
+      VERBATIM)
+  endif()
+endfunction()
 
 set(CPPHDL_TOOLCHAIN_ARG_LIST "")
 set(CPPHDL_TOOLCHAIN_ARGS "")
@@ -252,6 +251,7 @@ int main()
     set(${out_var} FALSE PARENT_SCOPE)
     return()
   endif()
+  cpphdl_strip_gnu_property_file("${test_dir}/llvm_runtime_check")
 
   execute_process(
     COMMAND "${test_dir}/llvm_runtime_check"
@@ -417,6 +417,7 @@ if(CPPHDL_USING_FETCHED_LLVM)
   add_dependencies(cpphdl clangAST)
 endif()
 cpphdl_link_stdcxxexp_if_available(cpphdl)
+cpphdl_strip_gnu_property_after_build(cpphdl)
 
 function(cpphdl_add_converter_dependency target)
   # POST_BUILD conversion runs only when the owning executable links. Make a
