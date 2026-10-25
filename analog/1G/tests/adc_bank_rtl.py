@@ -11,7 +11,7 @@ import tempfile
 SOURCE = Path(__file__).resolve()
 ANALOG = SOURCE.parents[2]
 sys.path.insert(0, str(SOURCE.parent))
-from hardware import configure_cleanup, execute, source_dependencies
+from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 
 
 def digest(path):
@@ -22,6 +22,7 @@ def run(args):
     root = args.work.resolve()
     root.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=root))
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     paths = [SOURCE, SOURCE.with_name('adc_bank.cpp'), args.native.resolve(), args.converter.resolve(), args.verilator.resolve()]
     hashes = source_dependencies([SOURCE.with_name('adc_bank.cpp')], ANALOG.parent, args.cxx,
         ['-std=c++17', '-I' + str(ANALOG.parent / 'include')])
@@ -36,7 +37,7 @@ def run(args):
 
     def command(label, argv):
         with (work / (label + '.log')).open('w') as log:
-            execute(list(map(str, argv)), cwd=work, env=os.environ, stdout=log, stderr=-2, check=True, timeout=600)
+            execute(toolchain.command(argv), cwd=work, env=toolchain.env, stdout=log, stderr=-2, check=True, timeout=600)
 
     save()
     try:

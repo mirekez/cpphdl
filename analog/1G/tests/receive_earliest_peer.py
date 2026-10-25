@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import sys
-from hardware import configure_cleanup, execute, source_dependencies
+from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 from receive_sample_recovery import archive, digest
 
 SOURCE = Path(__file__).resolve()
@@ -18,6 +18,7 @@ from trace_storage import capture_trace
 def run(args):
     args.work.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=args.work.resolve()))
+    toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     fixture, entry = SOURCE.with_suffix('.cpp'), ANALOG / '1G/receive_sample_pcs_qualified.cpp'
     hashes = source_dependencies([fixture, entry], ANALOG.parent, args.cxx)
     paths = [SOURCE, SOURCE.with_name('hardware.py'), SOURCE.with_name('receive_sample_recovery.py'),
@@ -37,7 +38,7 @@ def run(args):
 
     def command(label, argv):
         with (work / (label + '.log')).open('w') as log:
-            execute(list(map(str, argv)), cwd=work, env=os.environ, stdout=log, stderr=-2, check=True, timeout=1800)
+            execute(toolchain.command(argv), cwd=work, env=toolchain.env, stdout=log, stderr=-2, check=True, timeout=1800)
 
     save()
     try:

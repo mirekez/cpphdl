@@ -112,7 +112,7 @@ class Storage(unittest.TestCase):
             with patch.dict(os.environ, {'CPPHDL_ANALOG_TRACE_SCRATCH': scratch}):
                 with trace_storage.capture_trace(source) as capture:
                     self.assertTrue(capture.path.is_symlink())
-                    self.assertEqual(capture.path.resolve().parent, Path(scratch))
+                    self.assertEqual(capture.path.resolve().parent, Path(scratch).resolve())
                     with source.open('wb') as producer:
                         producer.write(data)
             self.assertFalse(source.exists())
@@ -133,7 +133,7 @@ class Storage(unittest.TestCase):
                 self.assertEqual(source.read_bytes(), b'complete original state')
                 archive, metadata = trace_storage.archive_trace(source)
             self.assertTrue(archive.is_symlink())
-            self.assertEqual(archive.resolve().parent, Path(scratch))
+            self.assertEqual(archive.resolve().parent, Path(scratch).resolve())
             with gzip.open(archive, 'rb') as stream:
                 self.assertEqual(stream.read(), b'complete original state')
 

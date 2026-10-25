@@ -13,6 +13,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
 from graph_clocks import add_clock_arguments, clock_arguments
 
 
+def emitter_environment(compiler, timeout):
+    """Run the generated host executable with its compiler's runtime libraries."""
+    env = os.environ.copy()
+    directories = []
+    for name in ('libstdc++.so', 'libgcc_s.so.1'):
+        library = subprocess.check_output(
+            [compiler, '-print-file-name=' + name], text=True, timeout=timeout).strip()
+        if library and Path(library).is_file():
+            directory = str(Path(library).resolve().parent)
+            if directory not in directories:
+                directories.append(directory)
+    if directories:
+        inherited = env.get('LD_LIBRARY_PATH', '')
+        env['LD_LIBRARY_PATH'] = ':'.join(directories + ([inherited] if inherited else []))
+    return env
+
+
 def main():
     arguments = sys.argv[1:]
     flags = []
@@ -66,14 +83,17 @@ def main():
         def save():
             (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 
-        def run(command, label, cwd=output):
+        def run(command, label, cwd=output, env=None):
             command = list(map(str, command))
             manifest['commands'].append(command)
             save()
             with (output / (label + '.log')).open('w') as log:
-                result = subprocess.run(command, cwd=cwd, stdout=log, stderr=log, timeout=args.tool_timeout)
+                result = subprocess.run(command, cwd=cwd, stdout=log, stderr=log,
+                                        timeout=args.tool_timeout, env=env)
             if result.returncode:
-                raise RuntimeError(f'{label} failed: see {output / (label + ".log")}')
+                path = output / (label + '.log')
+                detail = path.read_text(errors='replace')[-8192:]
+                raise RuntimeError(f'{label} failed: see {path}\n{detail}')
 
         manifest['graph_frontend'] = 'C++ RTL with automatic AST Clocked scheduling -> C++HDL graph'
         run([cpphdl, '--lower-synthesis-graph', source, output / 'graph.cc', args.top, *clocks,
@@ -83,7 +103,8 @@ def main():
              root / 'synth/Verilog.cpp', root / 'synth/Mapping.cpp', root / 'synth/timing.cpp', root / 'synth/retiming.cpp', '-o', output / 'emit'], 'compile-emitter')
         run([output / 'emit', output / 'operations.v', args.module, output / 'timing.json',
              output / 'retimed_graph.cc', args.retiming or 'none', str(args.clock_period_ns or 0),
-             args.retime_module, str(args.delay_scale)], 'emit')
+             args.retime_module, str(args.delay_scale)], 'emit',
+            env=emitter_environment(compiler, args.tool_timeout))
         manifest['timing'] = json.loads((output / 'timing.json').read_text())
         boxes = {box['module'] for box in manifest['timing']['keep_boxes']}
         external = {box['module'] for box in manifest['timing']['external_blackboxes']}
@@ -104,7 +125,7 @@ def main():
         save()
         print(output / 'gates.v')
         return 0
-    except (OSError, RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+    except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as error:
         manifest.update(status='failed', error=str(error))
         if output.is_dir():
             (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

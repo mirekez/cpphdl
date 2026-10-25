@@ -20,7 +20,7 @@ class DRCReuse(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.work = Path(self.temporary.name)
+        self.work = Path(self.temporary.name).resolve()
         self.pdk = self.work / 'pdk'
         revision = self.pdk / '.cpphdl/revision.txt'
         revision.parent.mkdir(parents=True)

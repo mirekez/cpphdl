@@ -76,6 +76,14 @@ endif()
 
 add_executable(analog_veriloga_hierarchy tests/hierarchy.cpp)
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME analog.veriloga.compiler_runtime COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_runtime.py" --converter "$<TARGET_FILE:cpphdl-veriloga>")
+  set_tests_properties(analog.veriloga.compiler_runtime PROPERTIES LABELS "analog;veriloga" TIMEOUT 45)
+  if(TARGET cpphdl)
+    add_test(NAME analog.veriloga.root_compiler_runtime COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_runtime.py" --converter "$<TARGET_FILE:cpphdl>" --root-driver)
+    set_tests_properties(analog.veriloga.root_compiler_runtime PROPERTIES LABELS "analog;veriloga" TIMEOUT 45)
+  endif()
   add_test(NAME analog.veriloga.trace_storage COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_storage_contract.py")
   set_tests_properties(analog.veriloga.trace_storage PROPERTIES LABELS "analog;veriloga" TIMEOUT 90)

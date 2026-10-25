@@ -16,12 +16,19 @@ class ReuseChipyardTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
+        physical = self.base / 'physical'
+        physical.mkdir()
+        linked = self.base / 'linked'
+        linked.symlink_to(physical.resolve(), target_is_directory=True)
+        # Exercise the same path aliasing as hosts with /tmp -> /home/tmp.
+        self.base = linked
         self.product = self.base / 'cpphdl/firtool'
         self.product.mkdir(parents=True)
         shutil.copy2(SCRIPT, self.product / SCRIPT.name)
         self.source = self.base / 'existing chipyard'
         (self.source / 'sims/verilator').mkdir(parents=True)
         (self.source / 'build.sbt').write_text('local changes\n')
+        subprocess.run(['git', '-C', str(self.source), 'init', '-q'], check=True)
         configure_product(self.product, self.source)
         prefix = self.source / '.conda-env/riscv-tools'
         for name in ('lib/libfesvr.a', 'bin/riscv64-unknown-elf-gcc'):
@@ -48,7 +55,7 @@ class ReuseChipyardTest(unittest.TestCase):
             result = self.run_bootstrap()
             self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.product / 'chipyard').is_symlink())
-        self.assertEqual((self.product / 'chipyard').resolve(), self.source)
+        self.assertEqual((self.product / 'chipyard').resolve(), self.source.resolve())
         self.assertEqual(self.marker.read_text(), 'prepared environment\n')
         self.assertEqual((self.source / 'build.sbt').read_text(), 'local changes\n')
         self.assertEqual(len(self.log.read_text().splitlines()), 4)
@@ -86,7 +93,7 @@ class ReuseChipyardTest(unittest.TestCase):
         link = self.product / 'chipyard'
         link.symlink_to(other)
         self.assertNotEqual(self.run_bootstrap().returncode, 0)
-        self.assertEqual(link.resolve(), other)
+        self.assertEqual(link.resolve(), other.resolve())
         self.assertFalse(self.log.exists())
 
     def test_wrong_revision_is_rejected_without_checkout_or_build(self):

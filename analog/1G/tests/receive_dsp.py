@@ -24,7 +24,7 @@ def run(args):
     module = 'ReceiveDSPPCS' if args.pcs else 'ReceiveDSP'
     fixture = SOURCE.with_name(stem + '.cpp')
     entry = ANALOG / ('1G/' + stem + '.cpp')
-    compiler = Path(shutil.which(args.cxx) or args.cxx).resolve()
+    compiler = Path(shutil.which(args.cxx) or args.cxx).absolute()
     tools = [args.native.resolve(), args.converter.resolve(), args.verilator.resolve(), compiler]
     verilator_bin = args.verilator.resolve().with_name('verilator_bin')
     if verilator_bin.is_file():

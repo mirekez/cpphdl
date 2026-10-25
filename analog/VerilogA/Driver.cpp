@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -11,6 +12,7 @@
 #include <string_view>
 #include <vector>
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -67,7 +69,8 @@ bool type_expression(std::string_view value) {
     return true;
 }
 #if !defined(_WIN32)
-int execute(const std::vector<std::string>& arguments) {
+int execute(const std::vector<std::string>& arguments,
+            const std::filesystem::path& output = {}, const std::string& library_path = {}) {
     std::vector<char*> argv;
     for (const auto& argument : arguments)
         argv.push_back(const_cast<char*>(argument.c_str()));
@@ -76,6 +79,14 @@ int execute(const std::vector<std::string>& arguments) {
     if (process < 0)
         throw std::runtime_error("cannot start compiler: " + std::string(std::strerror(errno)));
     if (process == 0) {
+        if (!output.empty()) {
+            int descriptor = open(output.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+            if (descriptor < 0 || dup2(descriptor, STDOUT_FILENO) < 0)
+                _exit(126);
+            close(descriptor);
+        }
+        if (!library_path.empty() && setenv("LD_LIBRARY_PATH", library_path.c_str(), 1) != 0)
+            _exit(126);
         execvp(argv[0], argv.data());
         std::cerr << "cannot execute " << arguments.front() << ": " << std::strerror(errno) << '\n';
         _exit(127);
@@ -219,7 +230,26 @@ int run(int argc, const char* const* argv) {
         int status = execute(command);
         if (status != 0)
             return status;
-        status = execute({executable.string()});
+        // The selected compiler may be newer than the host's default runtime.
+        // Set the elaborator's environment only, leaving this process unchanged.
+        std::string library_path;
+        auto runtime_file = temporary.path / "runtime-path.txt";
+        for (const char* library : {"libstdc++.so", "libgcc_s.so.1"}) {
+            status = execute({compiler, std::string("-print-file-name=") + library}, runtime_file);
+            if (status != 0)
+                return status;
+            std::ifstream runtime(runtime_file);
+            std::string path;
+            std::getline(runtime, path);
+            if (!path.empty() && std::filesystem::is_regular_file(path)) {
+                if (!library_path.empty()) library_path += ':';
+                library_path += std::filesystem::canonical(path).parent_path().string();
+            }
+        }
+        if (!library_path.empty())
+            if (const char* inherited = std::getenv("LD_LIBRARY_PATH"); inherited && *inherited)
+                library_path += std::string(":") + inherited;
+        status = execute({executable.string()}, {}, library_path);
         if (status != 0)
             return status;
         std::filesystem::create_directories(destination.parent_path());

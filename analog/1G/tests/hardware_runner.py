@@ -2,6 +2,7 @@
 """Timeouts must stop EDA grandchildren rather than leave orphan compilers."""
 from pathlib import Path
 import hashlib
+import importlib
 import json
 import os
 import shlex
@@ -23,6 +24,52 @@ import receive_gain_control_cells
 
 
 class CompilerRuntimeSelection(unittest.TestCase):
+    def test_qualification_runners_keep_cpp_driver_and_runtime(self):
+        names = ('receive_sample_recovery', 'receive_dsp', 'receive_sample_pcs',
+                 'receive_sample_pcs_qualified', 'receive_quality', 'receive_timing_confidence',
+                 'receive_symbol_crossing', 'receive_earliest_peer', 'adc_bank_rtl',
+                 'adc_receive_bank_rtl', 'adc_startup', 'adc_receive_lane')
+
+        class ReachedExecution(Exception):
+            pass
+
+        for name in names:
+            with self.subTest(runner=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                compiler = root / 'clang++'
+                backend = root / 'clang-21'
+                backend.touch()
+                compiler.symlink_to(backend)
+                library = root / 'runtime' / 'libstdc++.so'
+                library.parent.mkdir()
+                library.touch()
+                args = SimpleNamespace(work=root / 'work', cxx=str(compiler),
+                    native=root / 'native', converter=root / 'converter',
+                    verilator=root / 'verilator', pcs=False, tools=None, pdk=None,
+                    rtl_binary=None)
+                runner = importlib.import_module(name)
+                instances = []
+
+                def toolchain(cxx, verilator, work):
+                    self.assertEqual(str(cxx), str(compiler))
+                    instance = hardware.TestToolchain(cxx, verilator, work)
+                    instances.append(instance)
+                    return instance
+
+                def execute(command, **options):
+                    self.assertEqual(len(instances), 1)
+                    self.assertIs(options['env'], instances[0].env)
+                    self.assertIn(str(library.parent), options['env']['LD_LIBRARY_PATH'].split(':'))
+                    raise ReachedExecution()
+
+                with patch.object(runner, 'TestToolchain', side_effect=toolchain), \
+                     patch.object(runner, 'source_dependencies', return_value={}), \
+                     patch.object(runner, 'digest', return_value='fixture'), \
+                     patch.object(runner, 'execute', side_effect=execute), \
+                     patch('subprocess.check_output', return_value=str(library)):
+                    with self.assertRaises(ReachedExecution):
+                        runner.run(args)
+
     def assert_runtime(self, commands, compiler, library, verilator, module):
         builds = [(command, env) for command, env in commands if command[0] == str(verilator)]
         self.assertEqual(len(builds), 1)
@@ -39,7 +86,7 @@ class CompilerRuntimeSelection(unittest.TestCase):
 
     def check_runner(self, runner, case, module, mapped):
         with tempfile.TemporaryDirectory(prefix='compiler runtime ') as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             compiler = str(root / 'compiler prefix/bin/clang++')
             library = root / 'runtime libraries/libstdc++.so'
             library.parent.mkdir()
@@ -98,7 +145,7 @@ class CompilerRuntimeSelection(unittest.TestCase):
     def test_pattern_cpp_rtl_and_mapped_use_selected_runtime(self):
         for flow in ('cpp', 'rtl', 'mapped'):
             with self.subTest(flow=flow), tempfile.TemporaryDirectory(prefix='pattern runtime ') as temporary:
-                root = Path(temporary)
+                root = Path(temporary).resolve()
                 args = SimpleNamespace(flow=flow, work=root / 'work', cxx=str(root / 'compiler/bin/clang++'),
                                        bench=root / 'bench', converter=root / 'cpphdl',
                                        verilator=None if flow == 'cpp' else root / 'verilator',
@@ -144,7 +191,7 @@ class CompilerRuntimeSelection(unittest.TestCase):
 
     def test_repaired_cells_use_selected_runtime(self):
         with tempfile.TemporaryDirectory(prefix='repaired runtime ') as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             module = 'ReceiveAnalogGainControl'
             mapped = root / 'mapped'
             mapped.mkdir()
@@ -213,7 +260,7 @@ class EDAMemoryBudget(unittest.TestCase):
 class DependencyEvidence(unittest.TestCase):
     def test_active_macro_includes_and_spaces(self):
         with tempfile.TemporaryDirectory(prefix='cpphdl dependency test ') as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             source = root / 'module.cpp'
             active = root / 'active header.hpp'
             nested = root / 'nested.hpp'
@@ -234,7 +281,7 @@ class DependencyEvidence(unittest.TestCase):
 class TimingEvidence(unittest.TestCase):
     def test_changed_source_cannot_reuse_gate_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             library = root / 'pdk/ihp-sg13g2/libs.ref/sg13g2_stdcell'
             mapped = root / 'mapped.v'
             for path in (mapped, library / 'lef/sg13g2_tech.lef', library / 'lef/sg13g2_stdcell.lef',
@@ -255,7 +302,7 @@ class TimingEvidence(unittest.TestCase):
 
     def test_stale_or_failed_functional_proof_cannot_qualify_timing(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             library = root / 'pdk/ihp-sg13g2/libs.ref/sg13g2_stdcell'
             for path in (root / 'mapped.v', library / 'lef/sg13g2_tech.lef',
                          library / 'lef/sg13g2_stdcell.lef', library / 'lib/sg13g2_stdcell_slow_1p08V_125C.lib'):

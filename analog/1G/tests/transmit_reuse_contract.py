@@ -13,7 +13,7 @@ from transmit_driver import digest
 
 class ReuseTest(unittest.TestCase):
     def fixture(self, directory):
-        root = Path(directory)
+        root = Path(directory).resolve()
         original, current = root / 'original', root / 'current'
         original.mkdir()
         current.mkdir()

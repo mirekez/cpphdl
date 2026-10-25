@@ -3,9 +3,11 @@ import argparse
 import os
 from pathlib import Path
 import statistics
+import shlex
 import subprocess
 import tempfile
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from TestToolchain import TestToolchain
@@ -23,11 +25,24 @@ def main():
     source = Path(__file__).with_name('NativeScaling.cc')
     args.work.mkdir(parents=True, exist_ok=True)
 
-    def run(command):
-        result = subprocess.run(toolchain.command(command), env=toolchain.env,
-                                text=True, capture_output=True, timeout=240)
+    def run(stage, command):
+        command = toolchain.command(command)
+        print(f'{args.workload}: {stage}: {shlex.join(command)}', flush=True)
+        start = time.monotonic()
+        try:
+            result = subprocess.run(command, env=toolchain.env,
+                                    text=True, capture_output=True, timeout=240)
+        except subprocess.TimeoutExpired as error:
+            print(f'{args.workload}: {stage} exceeded 240 seconds', flush=True)
+            for output in (error.stdout, error.stderr):
+                if output:
+                    print(output.decode(errors='replace') if isinstance(output, bytes) else output,
+                          flush=True)
+            raise
+        print(f'{args.workload}: {stage}: {time.monotonic() - start:.2f}s', flush=True)
         if result.returncode:
-            raise RuntimeError(result.stdout + result.stderr)
+            raise RuntimeError(f'{stage} exited with status {result.returncode}:\n'
+                               + result.stdout + result.stderr)
         return result.stdout
 
     with tempfile.TemporaryDirectory(prefix=args.workload + '-', dir=args.work) as directory:
@@ -35,10 +50,10 @@ def main():
         toolchain = TestToolchain(args.cxx, None, work)
         flags = [args.cxx, '-std=c++23', '-I' + str(root / 'include'),
                  '-DSCALING_MEMORY=' + str(int(args.workload == 'ram'))]
-        run([*flags, '-O1', '-DSCALING_EMIT', source, '-o', work / 'emit'])
-        run([work / 'emit', work])
-        run([*flags, '-O2', '-pthread', '-I' + str(work), source, '-o', work / 'check'])
-        output = run([work / 'check'])
+        run('compile emitter', [*flags, '-O1', '-DSCALING_EMIT', source, '-o', work / 'emit'])
+        run('generate models', [work / 'emit', work])
+        run('compile models', [*flags, '-O2', '-pthread', '-I' + str(work), source, '-o', work / 'check'])
+        output = run('check and measure', [work / 'check'])
         print(output, end='')
         samples = {lanes: [] for lanes in range(1, 3)}
         checksums = set()
