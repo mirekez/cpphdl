@@ -342,6 +342,17 @@ non-exact data. Parallel array access does not infer multiported BRAM or DDR.
 See [the OpenMP examples](../hls/examples/openmp/README.md) for the complete
 supported contract, native/RTL/gate-level tests, and commands.
 
+Bounded runtime subscripts within a fixed array may also use an unsigned
+`index % extent` or a constant nonnegative mask, such as `index & 15`.
+For example, different lanes may update `partial[row][column % 32]` when
+`row` is the lane index. The ownership checker conservatively considers every
+possible column and still rejects overlapping writes or cross-lane read/write
+dependencies. Signed remainder, unbounded indices, pointer accesses and masks
+that can exceed the array remain rejected. Proof enumeration is capped at
+1,048,576 addresses per parallel region. This is an alias-safety extension;
+it does not create BRAM ports, remove feedback dependencies, or overlap
+transactions in a `ClockedMemory` wrapper. See the `RowContexts` OpenMP example.
+
 ## Delayed Class Instantiation
 
 An ordinary class can be a clocked member of an RTL module:
@@ -1894,3 +1905,22 @@ retain the exact sequential C++ sum as the numerical reference.
 round-to-nearest/even respectively, using bounded 32-bit normalization instead
 of a 64-bit shifted significand. `hls/tests/FloatConvertNarrow.cpp` checks all
 FP16 encodings and int32 rounding boundaries against the original primitives.
+
+### Affine bulk transfers
+
+`hls/MatrixTransfer.h` provides a C++ RTL memory stage for copying an affine
+matrix view between disjoint external-memory regions. Its command supplies
+rows, columns, byte addresses and independent source/destination row and
+column strides. Input is FP16 or FP32; output is FP32. It copies real elements
+only, preserving destination gaps with byte enables. It does not infer a cache
+or replace pointer accesses automatically.
+
+The stage uses a 32×32 transpose buffer in 32 synchronous member RAM banks.
+It reads along the contiguous source axis and writes along the contiguous
+destination axis, queues up to 64 in-order read responses, and holds stalled
+requests stable. Noncontiguous views fall back to one element per beat.
+Loading and draining each tile are sequential; read requests and responses
+are overlapped within loading. A caller must fence accepted external writes
+when the surrounding memory controller permits delayed write visibility.
+FP16 conversion reuses `math::FloatConvertMethods::from_half`; the free
+`fp16_to_fp32_narrow` wrapper remains available to software and HLS methods.

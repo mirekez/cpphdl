@@ -6,7 +6,11 @@ set(reasons "constant integers" "shared scalar write" "cross-lane read/write dep
     "supported defaults" "constant integers" "overflows" "fixed arrays" "pure helper"
     "cross-lane read/write dependence" "bound automatic variable"
     "arithmetic value parameters" "FP32" "recursive pure helpers"
-    "outside the fixed array" "disjoint array writes" "before reading")
+    "outside the fixed array" "disjoint array writes" "before reading"
+    "cross-lane read/write dependence" "disjoint array writes"
+    "outside the fixed array" "bounded static affine" "bounded static affine"
+    "address budget" "bounded static affine"
+    "cross-lane read/write dependence" "cross-lane read/write dependence")
 list(GET reasons ${CASE} reason)
 file(REMOVE_RECURSE "${WORK}/generated")
 file(MAKE_DIRECTORY "${WORK}")

@@ -174,18 +174,54 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     std::map<Root, std::map<Address, unsigned>> writers;
     struct Read { Root root; Address address; unsigned lane; };
     std::vector<Read> reads;
+    uint64_t enumeratedAddresses = 0;
+    std::function<void(const Stmt*)> memory;
     auto access = [&](const Expr* expr, const StaticIntegers& values) {
         Root root;
-        Address address;
+        std::vector<Address> addresses(1);
         expr = strip(expr);
         while (auto* sub = dyn_cast<ArraySubscriptExpr>(expr)) {
             auto* array = ctx.getAsConstantArrayType(strip(sub->getBase())->getType());
             if (!array) unsupported("parallel memory accesses require fixed arrays, not pointers");
             auto i = staticInteger(ctx, sub->getIdx(), values);
-            if (!i) unsupported("parallel array indices must be bounded static affine expressions");
-            if (*i < 0 || uint64_t(*i) >= array->getSize().getLimitedValue())
+            int64_t low = 0, high = 0;
+            if (i) low = high = *i;
+            else {
+                // A runtime column inside a statically lane-owned row is safe
+                // when its entire domain is bounded. Enumerate a conservative
+                // superset, then use the SAME ownership/dependence checks as
+                // static indices. Do not assume two dynamic expressions are
+                // equal or distinct; shifted in-place neighbors still reject.
+                auto* binary = dyn_cast<BinaryOperator>(strip(sub->getIdx()));
+                std::optional<int64_t> bound;
+                if (binary && !sub->getIdx()->HasSideEffects(ctx)) {
+                    auto right = staticInteger(ctx, binary->getRHS(), values);
+                    if (binary->getOpcode() == BO_Rem &&
+                        binary->getLHS()->getType()->isUnsignedIntegerType() && right && *right > 0)
+                        bound = *right - 1;
+                    if (binary->getOpcode() == BO_And) {
+                        auto left = staticInteger(ctx, binary->getLHS(), values);
+                        if (right && *right >= 0) bound = *right;
+                        else if (left && *left >= 0) bound = *left;
+                    }
+                }
+                if (!bound) unsupported("parallel array indices must be bounded static affine expressions");
+                high = *bound;
+            }
+            if (low < 0 || uint64_t(high) >= array->getSize().getLimitedValue())
                 unsupported("parallel array index is outside the fixed array");
-            address.push_back(*i);expr = strip(sub->getBase());
+            // A bounded selector may itself load shared state. Those reads
+            // participate in lane ownership just like the selected element.
+            memory(sub->getIdx());
+            uint64_t size = uint64_t(high - low) + 1;
+            if (size > 1048576 || addresses.size() > 1048576 / size)
+                unsupported("parallel bounded array proof exceeds address budget");
+            std::vector<Address> expanded;
+            expanded.reserve(addresses.size() * size);
+            for (const auto& address : addresses) for (uint64_t offset = 0; offset < size; ++offset) {
+                auto next = address; next.push_back(low + int64_t(offset)); expanded.push_back(std::move(next));
+            }
+            addresses = std::move(expanded);expr = strip(sub->getBase());
         }
         while (auto* member = dyn_cast<MemberExpr>(expr)) {
             root.push_back(member->getMemberDecl());expr=strip(member->getBase());
@@ -195,11 +231,13 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
         else unsupported("parallel array roots require distinct fixed value objects");
         if(root.empty() || !root.front() || !root.front()->getType().getNonReferenceType()->isArrayType())
             unsupported("parallel memory accesses require fixed arrays, not pointers");
-        return std::make_pair(root, address);
+        enumeratedAddresses += addresses.size();
+        if (enumeratedAddresses > 1048576)
+            unsupported("parallel bounded array proof exceeds address budget");
+        return std::make_pair(root, addresses);
     };
     StaticIntegers values = inherited;
     unsigned lane = 0;
-    std::function<void(const Stmt*)> memory;
     auto write = [&](const Expr* target, bool read) {
         target = strip(target);
         if (auto* ref = dyn_cast<DeclRefExpr>(target)) {
@@ -207,11 +245,13 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
             if (!local.count(ref->getDecl()) && !independent.count(ref->getDecl()))
                 unsupported("shared scalar write needs a reduction or private clause");
         } else if (auto* sub = dyn_cast<ArraySubscriptExpr>(target)) {
-            auto [root,address] = access(sub,values);
+            auto [root,addresses] = access(sub,values);
             if (!local.count(root.back())) {
-                auto [owner,fresh] = writers[root].emplace(address,lane);
-                if (!fresh && owner->second!=lane) unsupported("cannot prove disjoint array writes");
-                if (read) reads.push_back({root,address,lane});
+                for (const auto& address : addresses) {
+                    auto [owner,fresh] = writers[root].emplace(address,lane);
+                    if (!fresh && owner->second!=lane) unsupported("cannot prove disjoint array writes");
+                    if (read) reads.push_back({root,address,lane});
+                }
             }
         } else unsupported("unsupported parallel write target");
     };
@@ -243,8 +283,8 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
         }
         if (auto* unary=dyn_cast<UnaryOperator>(stmt); unary && unary->isIncrementDecrementOp()) {write(unary->getSubExpr(),true);return;}
         if (auto* sub=dyn_cast<ArraySubscriptExpr>(stmt)) {
-            auto [root,address]=access(sub,values);
-            if (!local.count(root.back())) reads.push_back({root,address,lane});
+            auto [root,addresses]=access(sub,values);
+            if (!local.count(root.back())) for (const auto& address : addresses) reads.push_back({root,address,lane});
             return;
         }
         for(auto* child:stmt->children()) memory(child);

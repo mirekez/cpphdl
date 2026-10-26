@@ -466,13 +466,33 @@ if(Python3_Interpreter_FOUND)
             set_tests_properties(graph_undriven_variable PROPERTIES TIMEOUT 480
                 ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
             foreach(fixture SymbolicArithmetic ProjectionCarrier ConstPackedRom BlockingHold ExhaustiveSwitch DynamicStructIndex NarrowArithmeticCast TypedefRam IndexedWord)
-                add_test(NAME hdlcpp_${fixture} COMMAND "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/${fixture}Checks.py"
-                    --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
-                    --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
-                    --work "${CMAKE_CURRENT_BINARY_DIR}/${fixture}")
-                set_tests_properties(hdlcpp_${fixture} PROPERTIES TIMEOUT 480
-                    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+                set(cases all)
+                if(fixture STREQUAL "TypedefRam")
+                    set(cases local package full odd)
+                elseif(fixture STREQUAL "IndexedWord")
+                    set(cases 9 32 64 65 128 256)
+                endif()
+                foreach(case IN LISTS cases)
+                    set(test_name hdlcpp_${fixture})
+                    set(test_work "${CMAKE_CURRENT_BINARY_DIR}/${fixture}")
+                    set(case_args)
+                    if(NOT case STREQUAL "all")
+                        string(APPEND test_name _${case})
+                        set(test_work "${CMAKE_CURRENT_BINARY_DIR}/${test_name}")
+                        if(fixture STREQUAL "IndexedWord")
+                            set(case_args --width ${case})
+                        else()
+                            set(case_args --case ${case})
+                        endif()
+                    endif()
+                    add_test(NAME ${test_name} COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/${fixture}Checks.py"
+                        --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
+                        --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_NETLIST_VERILATOR}"
+                        --work "${test_work}" ${case_args})
+                    set_tests_properties(${test_name} PROPERTIES TIMEOUT 480
+                        ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+                endforeach()
             endforeach()
         endif()
         add_test(NAME wide_slice_matrix_verilator COMMAND "${Python3_EXECUTABLE}"

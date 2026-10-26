@@ -1,8 +1,11 @@
 import argparse
-import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -15,14 +18,15 @@ def main():
     fixtures = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory(prefix='projection-carrier-', dir=args.work) as directory:
         work = Path(directory)
-        environment = os.environ.copy()
+        tools = TestToolchain(args.cxx, args.verilator, work)
+        environment = tools.env.copy()
         environment['HDLCPP_APPEND_FINAL_MODULE_TRAITS'] = str(work / 'final.tsv')
         traits = work / 'traits.tsv'
         traits.write_text('ProjectionCarrierChild\toutput_field.req_o.ar_valid\n')
         environment['HDLCPP_MODULE_TRAITS'] = str(traits)
 
         def run(command):
-            result = subprocess.run([str(item) for item in command], cwd=work, env=environment,
+            result = subprocess.run(tools.command(command), cwd=work, env=environment,
                                     capture_output=True, text=True, timeout=180)
             if result.returncode:
                 logs = ''.join(path.read_text()[-3000:] for path in work.rglob('*.log'))

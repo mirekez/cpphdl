@@ -34,21 +34,28 @@ if(HLS_VERILATOR)
         set_tests_properties(hls_narrow_math_pipeline_${flow} PROPERTIES TIMEOUT 300 LABELS "hls;math")
     endforeach()
 endif()
-foreach(top BankedRamTop RamPrimitiveTop)
+foreach(top BankedRamTop RamPrimitiveTop MatrixTransferTop)
+    set(ram_top ${top})
     if(top STREQUAL "BankedRamTop")
         set(ram_source hls/examples/dram/BankedRam.cpp)
+    elseif(top STREQUAL "MatrixTransferTop")
+        set(ram_source hls/tests/MatrixTransfer.cpp)
+        set(ram_top cpphdl_hls_MatrixTransfer)
     else()
         set(ram_source hls/tests/RamPrimitive.cpp)
     endif()
     set(ram_flows native)
     if(HLS_VERILATOR)
-        list(APPEND ram_flows rtl gates)
+        list(APPEND ram_flows rtl)
+        if(NOT top STREQUAL "MatrixTransferTop")
+            list(APPEND ram_flows gates)
+        endif()
     endif()
     foreach(flow IN LISTS ram_flows)
         add_test(NAME hls_${top}_${flow} COMMAND "${CMAKE_COMMAND}"
             "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/${top}-${flow}"
-            "-DVERILATOR=${HLS_VERILATOR}" "-DSOURCE=${ram_source}" "-DTOP=${top}" "-DFLOW=${flow}"
+            "-DVERILATOR=${HLS_VERILATOR}" "-DSOURCE=${ram_source}" "-DTOP=${ram_top}" "-DFLOW=${flow}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/Ram.cmake")
         set_tests_properties(hls_${top}_${flow} PROPERTIES TIMEOUT 300 LABELS "hls;memory")
     endforeach()
@@ -204,7 +211,7 @@ add_subdirectory(../examples/net "${CMAKE_BINARY_DIR}/hls/examples/net")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
-foreach(case RANGE 0 26)
+foreach(case RANGE 0 35)
     add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"

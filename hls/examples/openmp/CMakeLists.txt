@@ -1,5 +1,5 @@
 find_program(OPENMP_GXX NAMES g++)
-foreach(example ParallelFor Reduction Collapse Private Boundaries Tree StateLanes Float Wide StaticConditions)
+foreach(example ParallelFor Reduction Collapse Private Boundaries Tree StateLanes Float Wide StaticConditions RowContexts)
     set(flows native)
     if(HLS_VERILATOR)
         list(APPEND flows rtl gates)
