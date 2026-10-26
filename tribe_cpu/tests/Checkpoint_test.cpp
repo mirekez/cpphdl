@@ -137,6 +137,13 @@ static bool validate_checkpoint_uart_log(const std::filesystem::path& path, cons
     if (got != expected) {
         std::print("checkpoint UART output mismatch: got {} bytes, expected {} bytes\n",
             got.size(), expected.size());
+        size_t offset = 0;
+        while (offset < got.size() && offset < expected.size() && got[offset] == expected[offset]) {
+            ++offset;
+        }
+        std::print("first mismatch at byte {}: got {}, expected {}\n", offset,
+            offset < got.size() ? int(static_cast<unsigned char>(got[offset])) : -1,
+            offset < expected.size() ? int(static_cast<unsigned char>(expected[offset])) : -1);
         if (got.find("FAIL\n") != std::string::npos) {
             std::print("checkpoint ISR reported FAIL; PLIC claim loop or PRBS echo broke\n");
         }
@@ -200,8 +207,11 @@ static bool run_checkpoint_cpp(bool debug)
     const std::string input = checkpoint_prbs_input();
     const std::string ready_marker = "READY\n";
     const std::string expected_text = ready_marker + input + "PLIC0\nDONE\n";
-    const std::vector<uint64_t> save_cycles = {300, 1200, 3000, 7000, 13000, 22000};
+    const std::vector<uint64_t> save_cycles = {
+        300, 301, 1200, 1201, 3000, 3001, 7000, 7001, 13000, 13001, 22000, 22001
+    };
     std::string previous_checkpoint;
+    long previous_saved_clock = 0;
 
     if (!write_file(expected, expected_text)) {
         return false;
@@ -215,6 +225,15 @@ static bool run_checkpoint_cpp(bool debug)
     ScopedEnv scripted_uart_delay("TRIBE_UART_INPUT_CHAR_DELAY", "37");
     ScopedEnv checkpoint_script_delay("TRIBE_CHECKPOINT_UART_SCRIPT_DELAY", "1");
     ScopedEnv checkpoint_uart_fifo("TRIBE_CHECKPOINT_UART_RX_FIFO", "1");
+
+    const bool uninterrupted = run_checkpoint_segment(debug, elf, expected,
+        "", "", 0, false, false, CHECKPOINT_ISR_MAX_CYCLES);
+    const bool uninterrupted_output = validate_checkpoint_uart_log(
+        std::filesystem::current_path() / "out.txt", expected_text);
+    if (!uninterrupted || !uninterrupted_output) {
+        std::print("uninterrupted checkpoint control run failed\n");
+        return false;
+    }
 
     // Scenario: a kernel-style supervisor trap handler services UART RX via
     // PLIC supervisor external interrupts while the testbench repeatedly saves and
@@ -234,14 +253,25 @@ static bool run_checkpoint_cpp(bool debug)
             std::print("checkpoint file was not created: {}\n", checkpoint.string());
             return false;
         }
+        if (i != 0) {
+            const auto elapsed = save_cycles[i] - save_cycles[i - 1];
+            const auto expected_phase = (uint64_t(previous_saved_clock) + elapsed) % CPU_CLK_MULTIPLIER;
+            const auto restored_phase = uint64_t(_system_clock) % CPU_CLK_MULTIPLIER;
+            if (restored_phase != expected_phase) {
+                std::print("checkpoint restore changed CPU/L2 phase at cycle {}: got {}, expected {}\n",
+                    save_cycles[i], restored_phase, expected_phase);
+                return false;
+            }
+        }
+        previous_saved_clock = _system_clock;
         previous_checkpoint = checkpoint.string();
     }
 
-    if (!run_checkpoint_segment(debug, elf, expected,
-            previous_checkpoint, "", 0, true, false, CHECKPOINT_ISR_MAX_CYCLES)) {
-        return false;
-    }
-    return validate_checkpoint_uart_log(std::filesystem::current_path() / "out.txt", expected_text);
+    const bool completed = run_checkpoint_segment(debug, elf, expected,
+        previous_checkpoint, "", 0, true, false, CHECKPOINT_ISR_MAX_CYCLES);
+    const bool correct_output = validate_checkpoint_uart_log(
+        std::filesystem::current_path() / "out.txt", expected_text);
+    return completed && correct_output;
 }
 
 static bool run_checkpoint_verilator(bool debug,
