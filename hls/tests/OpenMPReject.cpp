@@ -119,6 +119,28 @@ struct OpenMPRejectedMethods {
         uint32_t cells[4][8]{};
 #pragma omp simd
         for(unsigned row=0;row<4;++row)cells[row][index]=value;
+#elif OPENMP_REJECT == 32
+        uint32_t cells[2][1048577];
+#pragma omp simd
+        for (unsigned row = 0; row < 2; ++row) cells[row][index % 1048577] = value;
+#elif OPENMP_REJECT == 33
+        uint32_t cells[4][8]{};
+#pragma omp simd
+        for (unsigned row = 0; row < 4; ++row) cells[row][index++ & 7] = value;
+#elif OPENMP_REJECT == 34
+        uint32_t cells[4][8]{}, columns[4]{};
+#pragma omp simd
+        for (unsigned row = 0; row < 4; ++row) {
+            cells[row][columns[(row + 1) % 4] & 7] = value;
+            columns[row] = index;
+        }
+#elif OPENMP_REJECT == 35
+        uint32_t cells[4][8]{}, columns[4]{};
+#pragma omp simd
+        for (unsigned row = 0; row < 4; ++row) {
+            values[row] = cells[row][columns[(row + 1) % 4] % 8];
+            columns[row] = index;
+        }
 #endif
         return sum ^ values[0] ^ scratch;
     }

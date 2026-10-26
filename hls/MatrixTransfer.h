@@ -55,6 +55,7 @@ private:
     }
     bool& banks_comb_func() {
         uint32_t ignored,meta,r,c,count,offset,index,raw;
+        r=0;c=0;index=0;raw=0;
         ignored=address_comb_func();
         banks_comb=true;
         return_comb=state==1&&m_readdatavalid_in()&&(pending!=0||(m_read_out()&&!m_waitrequest_in()));
@@ -77,6 +78,7 @@ private:
     }
     Beat& data_comb_func() {
         uint32_t r,c,index,meta,count,offset;
+        r=0;c=0;index=0;
         for(uint32_t i=0;i<32;++i)read_data_comb[i]=uint32_t(bank[i].data_out()[0]);
         data_comb=0;meta=uint32_t(store_meta);count=(meta>>10)&63;offset=(meta>>16)&63;
         for(uint32_t lane=0;lane<16;++lane)if(lane<count) {

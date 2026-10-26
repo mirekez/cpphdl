@@ -1,9 +1,13 @@
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -11,16 +15,21 @@ def main():
     for name in ("hdlcpp", "cpphdl", "cxx", "verilator"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--case", choices=("all", "local", "package", "full", "odd"), default="all")
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
+    results = args.work / "results.json"
+    temporary = tempfile.TemporaryDirectory(prefix="typedef-ram-", dir=args.work)
+    args.work = Path(temporary.name)
     fixtures = Path(__file__).resolve().parent
-    environment = {name: value for name, value in os.environ.items()
+    tools = TestToolchain(args.cxx, args.verilator, args.work)
+    environment = {name: value for name, value in tools.env.items()
                    if not name.startswith(("HDLCPP_", "CPPHDL_", "CVA6_"))}
     records = []
     node_counts = {}
 
     def run(command, directory, label, env=environment):
-        result = subprocess.run([str(item) for item in command], cwd=directory, env=env,
+        result = subprocess.run(tools.command(command), cwd=directory, env=env,
                                 capture_output=True, text=True, timeout=180)
         (directory / (label + ".log")).write_text(result.stdout + result.stderr)
         if result.returncode:
@@ -29,7 +38,10 @@ def main():
         return result.stdout
 
     for package_row, full_write in ((False, False), (True, False), (False, True)):
-        directory = args.work / ("full" if full_write else "package" if package_row else "local")
+        case = "full" if full_write else "package" if package_row else "local"
+        if args.case not in ("all", case):
+            continue
+        directory = args.work / case
         directory.mkdir(exist_ok=True)
         defines = ["-DPACKAGE_ROW"] if package_row else []
         if full_write:
@@ -98,6 +110,10 @@ def main():
                 print(json.dumps(record), flush=True)
             assert len(checksums) == 1, records
 
+    if args.case not in ("all", "odd"):
+        results.write_text(json.dumps(records, indent=2) + "\n")
+        return
+
     directory = args.work / "odd-width"
     directory.mkdir(exist_ok=True)
     run([args.hdlcpp, fixtures / "TypedefRam.sv"], directory, "convert")
@@ -127,7 +143,7 @@ def main():
     run([args.hdlcpp, fixtures / "TypedefBlockingBank.sv"], directory, "convert-blocking-bank")
     blocking_bank = (directory / "generated/TypedefBlockingBank.h").read_text()
     assert "memory<" not in blocking_bank, "blocking writes must remain immediately visible"
-    (args.work / "results.json").write_text(json.dumps(records, indent=2) + "\n")
+    results.write_text(json.dumps(records, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -175,6 +175,7 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     struct Read { Root root; Address address; unsigned lane; };
     std::vector<Read> reads;
     uint64_t enumeratedAddresses = 0;
+    std::function<void(const Stmt*)> memory;
     auto access = [&](const Expr* expr, const StaticIntegers& values) {
         Root root;
         std::vector<Address> addresses(1);
@@ -209,6 +210,9 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
             }
             if (low < 0 || uint64_t(high) >= array->getSize().getLimitedValue())
                 unsupported("parallel array index is outside the fixed array");
+            // A bounded selector may itself load shared state. Those reads
+            // participate in lane ownership just like the selected element.
+            memory(sub->getIdx());
             uint64_t size = uint64_t(high - low) + 1;
             if (size > 1048576 || addresses.size() > 1048576 / size)
                 unsupported("parallel bounded array proof exceeds address budget");
@@ -234,7 +238,6 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     };
     StaticIntegers values = inherited;
     unsigned lane = 0;
-    std::function<void(const Stmt*)> memory;
     auto write = [&](const Expr* target, bool read) {
         target = strip(target);
         if (auto* ref = dyn_cast<DeclRefExpr>(target)) {

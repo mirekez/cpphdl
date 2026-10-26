@@ -104,8 +104,13 @@ int main() {
             if (!reset) {
                 if (inputReady() != advance || outputValid() != occupied.back())
                     throw std::runtime_error("pipeline throughput/latency mismatch");
-                if (occupied.back() && (result() != expected.back() || fault()))
+                if (occupied.back() && (result() != expected.back() || fault())) {
+                    std::fprintf(stderr, "result=%016llx expected=%016llx fault=%u latency=%u\n",
+                                 static_cast<unsigned long long>(result()),
+                                 static_cast<unsigned long long>(expected.back()),
+                                 unsigned(fault()), unsigned(PIPELINE_LATENCY));
                     throw std::runtime_error("pipeline lost or misaligned data/tag under stalls");
+                }
                 if (occupied.back() && ready) ++delivered;
             }
             if (reset) { occupied.fill(false); expected.fill(0); reference = PipelineMethods{}; }

@@ -4,6 +4,12 @@ hdlcpp=$1
 include_dir=$2
 cxx=$3
 verilator=${4:-}
+link_flags=()
+atomic=$("$cxx" -print-file-name=libatomic.so)
+if [[ -f "$atomic" ]]; then
+    library_dir=$(cd "$(dirname "$atomic")" && pwd)
+    link_flags=(-LDFLAGS "-L$library_dir -Wl,-rpath,$library_dir")
+fi
 source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -25,7 +31,7 @@ for optimization in -O0 -O2; do
 done
 if [[ -n "$verilator" ]]; then
     for mode in 1 2; do
-        "$verilator" --cc --exe --top-module expression_helpers -Wno-fatal \
+        "$verilator" --cc --exe --top-module expression_helpers -Wno-fatal "${link_flags[@]}" \
             -GMode="$mode" -CFLAGS "-DUSE_VERILATOR -DTEST_MODE=$mode" \
             --Mdir "$work/reference-$mode" "$source_dir/expression_helpers.sv" \
             "$source_dir/expression_helpers.cpp"

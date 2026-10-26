@@ -2,6 +2,10 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -9,14 +13,16 @@ def main():
     for name in ('hdlcpp', 'cpphdl', 'cxx', 'verilator'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--width', type=int, choices=(9, 32, 64, 65, 128, 256))
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     fixtures = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory(prefix='indexed-word-', dir=args.work) as directory:
         work = Path(directory)
+        tools = TestToolchain(args.cxx, args.verilator, work)
 
         def run(command):
-            result = subprocess.run(list(map(str, command)), cwd=work, capture_output=True,
+            result = subprocess.run(tools.command(command), cwd=work, env=tools.env, capture_output=True,
                                     text=True, timeout=240)
             if result.returncode:
                 logs = ''.join(path.read_text(errors='replace')[-3000:] for path in work.rglob('*.log'))
@@ -26,7 +32,7 @@ def main():
         rtl = fixtures / 'IndexedWord.sv'
         runner = fixtures / 'IndexedWordRun.cc'
         run([args.hdlcpp, rtl])
-        for width in (9, 32, 64, 65, 128, 256):
+        for width in ((args.width,) if args.width is not None else (9, 32, 64, 65, 128, 256)):
             flags = ['-std=c++23', '-O2', '-I' + str(fixtures.parents[1] / 'include'),
                      '-I' + str(work), '-DINDEX_WIDTH=' + str(width)]
             ordinary = work / ('ordinary-' + str(width))

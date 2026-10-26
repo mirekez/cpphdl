@@ -18,6 +18,7 @@ Verilog with Verilator. No OpenMP runtime is embedded in the hardware.
 | `Wide.cpp` | 224-bit typed records, math namespace templates, SV keywords, array aliases, loop declarations and two concurrent workers |
 | `Grid.cpp` | 64x64 (4,096) lanes with a balanced reduction; native/RTL structural scaling |
 | `StateLanes.cpp` | Eight disjoint persistent history registers and read-after-write within each lane |
+| `RowContexts.cpp` | Per-row dynamic columns bounded by modulo/masks, including shared read-only index arrays |
 
 ## Build and Test
 
@@ -54,6 +55,11 @@ uses that latency in the same testbench. It checks II=1 and the estimated timing
 target; the arithmetic-lane case also requires added pipeline stages. These
 estimates are not FPGA timing closure.
 
+The gate-test runner disables DFG optimization specifically for Verilator 5.050:
+that release incorrectly folds a shared XOR cone in `RowContexts` to zero.
+The same netlist passes with `-fno-dfg`; all data, backpressure, II=1 and timing
+checks remain enabled. Other Verilator versions use their default optimizations.
+
 ## Hardware Contract
 
 - Supported directives: `parallel for`, `parallel for simd`, and `simd`.
@@ -75,6 +81,9 @@ estimates are not FPGA timing closure.
   and constant guards that prove lane separation. Array reads/writes are checked for bounds and
   cross-lane dependencies. These small arrays become direct wires/values, not
   automatically multiported RAM. Larger lane counts cost more arithmetic area.
+  Unsigned dynamic indices bounded by `% constant` or a nonnegative constant
+  mask are also accepted when all possible addresses prove lane separation.
+  Reads used to compute an index participate in the same dependency checks.
 - `schedule(static[, constant_chunk])`, `shared`, `default(shared)`, and
   `default(none)` are supported. Host scheduling does not change lane allocation.
 - Runtime bounds, dynamic scheduling, tasks, atomics, critical sections,
