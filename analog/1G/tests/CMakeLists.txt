@@ -108,7 +108,7 @@ set_tests_properties(analog.1g.pair_training.generated PROPERTIES LABELS "analog
 add_test(NAME analog.1g.hardware_runner COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/hardware_runner.py")
 set_tests_properties(analog.1g.hardware_runner PROPERTIES LABELS "analog;1g;hardware" TIMEOUT 30)
-if(EXISTS "${CPPHDL_1G_CONVERTER}")
+if(one_g_converter_dependency OR EXISTS "${CPPHDL_1G_CONVERTER}")
   add_test(NAME analog.1g.rtl_catalog COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/rtl_catalog.py")
   set_tests_properties(analog.1g.rtl_catalog PROPERTIES LABELS "analog;1g;hardware;rtl" TIMEOUT 30)
@@ -117,7 +117,8 @@ if(EXISTS "${CPPHDL_1G_CONVERTER}")
     list(APPEND catalog_lint_args --verilator "${ONE_G_VERILATOR}")
   endif()
   add_test(NAME analog.1g.generated_rtl COMMAND "${Python3_EXECUTABLE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../generate_rtl.py" --converter "${CPPHDL_1G_CONVERTER}" --check ${catalog_lint_args})
+    "${CMAKE_CURRENT_SOURCE_DIR}/../generate_rtl.py" --converter "${one_g_converter_command}"
+    --output "${CPPHDL_ANALOG_GENERATED_ROOT}/1G/generated" --check ${catalog_lint_args})
   set_tests_properties(analog.1g.generated_rtl PROPERTIES LABELS "analog;1g;hardware;rtl" TIMEOUT 1800)
 endif()
 add_executable(analog_1g_receive_sample_recovery receive_sample_recovery.cpp)
@@ -885,12 +886,14 @@ set_tests_properties(analog.1g.algorithms PROPERTIES LABELS "analog;1g;cpp" TIME
 add_test(NAME analog.1g.generated COMMAND "${CMAKE_COMMAND}"
   "-DGENERATOR=$<TARGET_FILE:analog_1g_generate>" "-DROOT=${CPPHDL_ANALOG_PACKAGE_ROOT}"
   "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/.." "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/generated"
+  "-DCATALOG=${CPPHDL_ANALOG_GENERATED_ROOT}/1G"
   -P "${CMAKE_CURRENT_SOURCE_DIR}/Generated.cmake")
 set_tests_properties(analog.1g.generated PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 60)
 if(OPENVAF_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
   add_test(NAME analog.1g.generated_compile COMMAND "${CMAKE_COMMAND}"
     "-DGENERATOR=$<TARGET_FILE:analog_1g_generate>" "-DROOT=${CPPHDL_ANALOG_PACKAGE_ROOT}"
     "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/.." "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/generated-compile"
+    "-DCATALOG=${CPPHDL_ANALOG_GENERATED_ROOT}/1G"
     "-DDRIVER=$<TARGET_FILE:cpphdl-veriloga>"
     "-DOPENVAF=${OPENVAF_EXECUTABLE}" "-DPYTHON=${Python3_EXECUTABLE}" -P "${CMAKE_CURRENT_SOURCE_DIR}/Generated.cmake")
   set_tests_properties(analog.1g.generated_compile PROPERTIES LABELS "analog;1g;veriloga" TIMEOUT 3600 RUN_SERIAL TRUE)

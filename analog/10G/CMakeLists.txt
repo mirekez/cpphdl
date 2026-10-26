@@ -1,7 +1,7 @@
 add_executable(analog_10g_generate generate.cpp)
 target_link_libraries(analog_10g_generate PRIVATE cpphdl::analog)
 add_custom_target(generate-10g-veriloga
-  COMMAND analog_10g_generate "${CPPHDL_ANALOG_PACKAGE_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}"
+  COMMAND analog_10g_generate "${CPPHDL_ANALOG_PACKAGE_ROOT}" "${CPPHDL_ANALOG_GENERATED_ROOT}/10G"
   DEPENDS analog_10g_generate VERBATIM USES_TERMINAL)
 if(TARGET generate-veriloga)
   add_dependencies(generate-veriloga generate-10g-veriloga)

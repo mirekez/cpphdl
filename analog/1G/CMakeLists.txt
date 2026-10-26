@@ -2,11 +2,24 @@ add_executable(analog_1g_mdi_input_network tests/mdi_input_network.cpp)
 target_link_libraries(analog_1g_mdi_input_network PRIVATE cpphdl::analog)
 add_executable(analog_1g_generate generate.cpp)
 target_link_libraries(analog_1g_generate PRIVATE cpphdl::analog)
-set(CPPHDL_1G_CONVERTER "${CPPHDL_ANALOG_PACKAGE_ROOT}/build/cpphdl" CACHE FILEPATH "C++HDL hardware converter")
+if(TARGET cpphdl)
+  set(one_g_default_converter "${CMAKE_BINARY_DIR}/cpphdl")
+else()
+  set(one_g_default_converter "${CPPHDL_ANALOG_PACKAGE_ROOT}/build/cpphdl")
+endif()
+set(CPPHDL_1G_CONVERTER "${one_g_default_converter}" CACHE FILEPATH "C++HDL hardware converter")
+set(one_g_converter_command "${CPPHDL_1G_CONVERTER}")
+set(one_g_converter_dependency)
+if(TARGET cpphdl AND CPPHDL_1G_CONVERTER STREQUAL one_g_default_converter)
+  set(one_g_converter_command "$<TARGET_FILE:cpphdl>")
+  set(one_g_converter_dependency cpphdl)
+endif()
 if(Python3_Interpreter_FOUND)
   add_custom_target(generate-1g-rtl
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_rtl.py"
-      --converter "${CPPHDL_1G_CONVERTER}"
+      --converter "${one_g_converter_command}"
+      --output "${CPPHDL_ANALOG_GENERATED_ROOT}/1G/generated"
+    DEPENDS ${one_g_converter_dependency}
     VERBATIM USES_TERMINAL)
 endif()
 add_executable(analog_1g_bench tests/bench.cpp)
@@ -58,7 +71,7 @@ target_link_libraries(analog_1g_process_fixed PRIVATE cpphdl::runtime)
 add_executable(analog_1g_pcs_waveform tests/pcs_waveform.cpp)
 target_link_libraries(analog_1g_pcs_waveform PRIVATE cpphdl::runtime)
 add_custom_target(generate-1g-veriloga
-  COMMAND analog_1g_generate "${CPPHDL_ANALOG_PACKAGE_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}"
+  COMMAND analog_1g_generate "${CPPHDL_ANALOG_PACKAGE_ROOT}" "${CPPHDL_ANALOG_GENERATED_ROOT}/1G"
   DEPENDS analog_1g_generate VERBATIM USES_TERMINAL)
 if(TARGET generate-veriloga)
   add_dependencies(generate-veriloga generate-1g-veriloga)
