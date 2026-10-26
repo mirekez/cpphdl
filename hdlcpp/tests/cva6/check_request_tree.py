@@ -33,11 +33,17 @@ def main():
     parser.add_argument("--replay-source", help="original instance path, relative to the full root")
     parser.add_argument("--complete-arbiter", action="store_true",
                         help="exercise CVA6's complete 103-bit R arbiter, not just req_nodes")
+    parser.add_argument("--ordinary", action="store_true",
+                        help="also check the complete arbiter without comb optimization")
+    parser.add_argument("--native-packed", action="store_true", default=True,
+                        help="compatibility option: native packed storage is now the C++20+ default")
     parser.add_argument("--cva6-metadata", type=Path,
                         help="reuse production conversion metadata from a regenerated CVA6 model")
     parser.add_argument("--regfile", action="store_true", help="exercise CVA6's complete integer register file")
     parser.add_argument("--regfile-trace", type=Path, help="replay captured matmul register-file inputs and check against full-CVA6 reads")
     args = parser.parse_args()
+    if args.ordinary and not args.complete_arbiter:
+        parser.error("--ordinary currently requires --complete-arbiter")
     if args.replay_context and (not args.mode or not args.replay_source):
         parser.error("--replay-context requires --mode and --replay-source")
     if args.replay_source and not args.replay_context:
@@ -114,7 +120,7 @@ def main():
     hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
     (output / "inputs-sha256.json").write_text(json.dumps(hashes, indent=2) + "\n")
     (output / "environment.json").write_text(json.dumps(dict(
-        compiler=args.cxx, optimization=optimization,
+        compiler=args.cxx, optimization=optimization, native_packed=args.native_packed,
         settings={name: value for name, value in environment.items()
                   if name.startswith(("HDLCPP_", "CPPHDL_")) or name == "MAKEFLAGS"}), indent=2) + "\n")
     commands = []
@@ -157,6 +163,12 @@ def main():
              *rtl, fixtures / native_runner],
             build, "build-verilator")
         executables = {"verilator": verilated / ("V" + top)}
+        if args.ordinary:
+            executable = build / "ordinary"
+            run([args.cxx, "-std=c++23", optimization, "-DNDEBUG", "-w", *macro.split(),
+                 "-DUSE_ORDINARY", "-I" + str(repo / "include"), "-I" + str(output),
+                 output / runner, "-lstdc++exp", "-o", executable], build, "build-ordinary")
+            executables["ordinary"] = executable
         for mode in ([args.mode] if args.mode else ["optimize-combs", "optimize-combs-l1"]):
             generated = build / mode
             generated.mkdir(exist_ok=True)

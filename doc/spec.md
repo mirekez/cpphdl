@@ -571,6 +571,14 @@ array3D<2, 3, 4, u8, true> packed_volume;
 
 The packed flag selects C++ storage behavior; it is not a blanket instruction to emit an unpacked SV declaration. In particular, array fields inside packed struct packages and `_PORT(array<N, TYPE>)` ports are emitted as packed SV dimensions. Native C arrays such as `TYPE values[COUNT]` and `_PORT(TYPE) values_in[COUNT]` express unpacked dimensions for module signals/ports. See `tests/templates/TemplateArrayPortMember.cpp` and `tests/datatypes/ArrayPacked.cpp` / `ArrayUnpacked.cpp` for the supported mappings.
 
+In C++20 and newer, packed arrays of compiler-proved aggregate types use native
+element storage by default. This applies equally to ordinary execution and
+`--optimize-combs`; no layout macro, special include order, or generated build
+configuration is required. Packed serialization remains available through
+`pack()` and `bits()`. Untagged/custom types keep the generic packed storage;
+C++17 retains its existing representation. Rebuild all model and caller objects
+after this runtime update, and regenerate older comb collections.
+
 ### memory`<TYPE, ROW_SIZE, DEPTH>`
 
 &nbsp;&nbsp;&nbsp;&nbsp;The *memory`<>`* type stores `DEPTH` rows of `ROW_SIZE` elements of `TYPE`. Assigning a row queues a write; reads see committed storage until `apply()`. The required number of hardware read/write ports depends on the RTL access pattern and the synthesis flow.

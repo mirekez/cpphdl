@@ -12,10 +12,35 @@ import unittest
 from unittest.mock import patch
 
 import cva6_workflow as workflow
-from build_cpp_model import ObjectCache, collection_cache_key, compiler_address_space, instantiation_declarations, unity_sources
+from build_cpp_model import ObjectCache, collection_cache_key, compilation_order, compiler_address_space, compiler_environment, instantiation_declarations, unity_sources
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_comparison_modes_keep_reference_and_deduplicate(self):
+        self.assertEqual(workflow.comparison_modes(), list(workflow.MODES))
+        self.assertEqual(workflow.comparison_modes(['cpphdl-native-graph', 'cpphdl-optimize-combs',
+                                                   'cpphdl-native-graph']),
+                         ['verilator', 'cpphdl-optimize-combs', 'cpphdl-native-graph'])
+
+    def test_comparison_rejects_reference_only_before_creating_workspace(self):
+        with tempfile.TemporaryDirectory(prefix='cva6-modes-', dir='/tmp') as directory:
+            root = Path(directory) / 'unused'
+            result = subprocess.run([workflow.SUPPORT / '.compare.sh', '--work-root', root,
+                                     '--modes', 'verilator'], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('at least one C++HDL backend', result.stderr)
+            self.assertFalse(root.exists())
+
+    def test_comb_chunks_compile_before_templates_without_reordering_sources(self):
+        sources = [(Path(name), '-O2') for name in
+                   ('harness.cpp', 'runtime.cpp', 'constructor.cpp', 'cycles.cpp',
+                    'comb0.cpp', 'comb1.cpp')]
+        original = list(sources)
+        self.assertEqual(compilation_order(sources, [sources[4][0], sources[5][0]]),
+                         [0, 1, 4, 5, 2, 3])
+        self.assertEqual(sources, original)
+        self.assertEqual(compilation_order(sources, []), list(range(len(sources))))
+
     def arguments(self, root):
         return argparse.Namespace(work_root=root, cpu=None, cpus4=None, force=False,
                                   timeout=30, keep_build_files=False, keep_traces=False,
@@ -28,7 +53,7 @@ class WorkflowTests(unittest.TestCase):
     def test_wrappers_forward_arguments_and_work_from_another_directory(self):
         expected = {
             '.build_cva6.sh': ['prepare'], '.build_cva6_hdlcpp.sh': ['convert'],
-            '.build_all.sh': ['build-all'], '.compare.sh': ['compare'],
+            '.build_all.sh': ['build-all'], '.compare.sh': ['compare', '--trials', '1'],
         }
         for mode in workflow.MODES:
             suffix = 'cpphdl' if mode == 'cpphdl' else mode
@@ -172,8 +197,8 @@ class WorkflowTests(unittest.TestCase):
                 paths.append(path)
             groups = unity_sources(root, paths, set(),
                                    dict(cpphdl_opt_t0='Cell1', cpphdl_opt_t1='Cell1', cpphdl_opt_t2='Cell2'))
-            self.assertEqual(len(groups), 1)
-            text = groups[0][0].read_text()
+            self.assertEqual([optimization for _, optimization in groups], ['-O0', '-O2'])
+            text = '\n'.join(source.read_text() for source, _ in groups)
             self.assertNotIn('template cpphdl_opt_t1::Cell()', text)
             self.assertNotIn('template void cpphdl_opt_t1::_work(bool)', text)
             self.assertIn('template void cpphdl_opt_t1::_work()', text)
@@ -183,9 +208,51 @@ class WorkflowTests(unittest.TestCase):
                 main.write_text('#include "types.h"\nint main() { Cell<1> first; Cell<2> second;\n'
                                 'first._work(false); first._work(); second._work(false);\n'
                                 'return first.value != 4 || second.value != 2; }\n')
-                subprocess.run([os.environ['CPPHDL_TEST_CXX'], '-std=c++23', '-O2', groups[0][0],
+                subprocess.run([os.environ['CPPHDL_TEST_CXX'], '-std=c++23', '-O2', *(source for source, _ in groups),
                                 main, '-o', root / 'run'], check=True, timeout=60)
                 subprocess.run([root / 'run'], check=True)
+
+    def test_unity_separates_binding_initialization_from_hot_cycle_methods(self):
+        with tempfile.TemporaryDirectory(prefix='cva6-binding-phases-', dir='/tmp') as directory:
+            root = Path(directory)
+            (root / 'types.h').write_text('#pragma once\ntemplate<int Tag> struct Cell {\n'
+                'int value; Cell(): value(1) {} void _assign() { value = 7; }\n'
+                'void _work(bool) { value += Tag; } void _strobe() { value += 3; } };\n'
+                'using cpphdl_opt_t0 = Cell<2>;\n')
+            source = root / 'mixed.cpp'
+            source.write_text('#include "types.h"\n'
+                'template cpphdl_opt_t0::Cell();\ntemplate void cpphdl_opt_t0::_assign();\n'
+                'template void cpphdl_opt_t0::_work(bool);\ntemplate void cpphdl_opt_t0::_strobe();\n')
+            groups = unity_sources(root, [source], set(), {'cpphdl_opt_t0': 'Cell2'})
+            bodies = {optimization: path.read_text() for path, optimization in groups}
+            self.assertIn('::Cell()', bodies['-O0'])
+            self.assertIn('::_assign()', bodies['-O0'])
+            self.assertNotIn('::_work(', bodies['-O0'])
+            self.assertNotIn('::_strobe(', bodies['-O0'])
+            self.assertIn('::_work(bool)', bodies['-O2'])
+            self.assertIn('::_strobe()', bodies['-O2'])
+            self.assertNotIn('::_assign(', bodies['-O2'])
+            if os.environ.get('CPPHDL_TEST_CXX'):
+                objects = []
+                for index, (path, optimization) in enumerate(groups):
+                    target = root / f'{index}.o'
+                    subprocess.run([os.environ['CPPHDL_TEST_CXX'], '-std=c++23', optimization,
+                                    '-c', path, '-o', target], check=True)
+                    objects.append(target)
+                main = root / 'main.cpp'
+                main.write_text('#include "types.h"\nint main() { cpphdl_opt_t0 cell;\n'
+                    'cell._assign(); cell._work(false); cell._strobe(); return cell.value != 12; }\n')
+                subprocess.run([os.environ['CPPHDL_TEST_CXX'], '-std=c++23', '-O2', main, *objects,
+                                '-o', root / 'run'], check=True)
+                subprocess.run([root / 'run'], check=True)
+            primary = root / 'primary.cpp'
+            primary.write_text('#include "types.h"\ntemplate cpphdl_opt_t0::Cell();\n')
+            baseline = unity_sources(root, [primary], {'primary'}, {'cpphdl_opt_t0': 'Cell2'})
+            constructor_body = baseline[0][0].read_text()
+            resumed = unity_sources(root, [source, primary], {'primary'}, {'cpphdl_opt_t0': 'Cell2'})
+            self.assertEqual(resumed[0][0].read_text(), constructor_body)
+            self.assertEqual('\n'.join(path.read_text() for path, _ in resumed)
+                             .count('template cpphdl_opt_t0::Cell();'), 1)
 
     def test_failed_command_is_recorded_and_propagated(self):
         with tempfile.TemporaryDirectory(prefix='cva6-command-', dir='/tmp') as directory:
@@ -218,6 +285,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertIsNone(compiler_address_space(Path('unity-O0-0.cpp'), '-O0', 1))
         self.assertEqual(compiler_address_space(Path('unity-O2-0.cpp'), '-O2', 1), 4_000_000_000)
         self.assertIsNone(compiler_address_space(Path('unity-runtime.cpp'), '-O2', 0))
+
+    def test_compiler_allocator_defaults_do_not_change_runner_environment(self):
+        with patch.dict(os.environ, {'PATH': '/bin'}, clear=True):
+            environment = compiler_environment()
+            self.assertEqual(environment['MALLOC_ARENA_MAX'], '1')
+            self.assertEqual(environment['MALLOC_TRIM_THRESHOLD_'], '0')
+            self.assertEqual(environment['MALLOC_MMAP_THRESHOLD_'], '65536')
+            self.assertEqual(dict(os.environ), {'PATH': '/bin'})
+        with patch.dict(os.environ, {'MALLOC_ARENA_MAX': '2'}, clear=True):
+            self.assertEqual(compiler_environment()['MALLOC_ARENA_MAX'], '2')
 
     @unittest.skipUnless(os.environ.get('CPPHDL_TEST_HDLCPP') and os.environ.get('CPPHDL_TEST_CXX'),
                          'set CPPHDL_TEST_HDLCPP and CPPHDL_TEST_CXX for specialization regression')

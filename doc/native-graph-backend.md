@@ -292,8 +292,8 @@ objects. Direct writes to current register state remain rejected.
 Packed `cpphdl::array<..., true>::bits(high, low)` uses the same lowering,
 including nested arrays and packed-struct field offsets, without interpreting
 the library's `.data` or element storage. Constant slices support wide values;
-dynamic slices remain limited to 64-bit receivers. This works with either
-the default layout or `CPPHDL_NATIVE_PACKED`.
+dynamic slices remain limited to 64-bit receivers. Compiler-proved aggregates
+use native element storage by default in C++20+; no layout flag is required.
 
 Nonempty concatenations accept temporary `logic<0>` operands, including
 zero-count `repeat()` results produced by hdlcpp for parameterized sign extension.

@@ -9,8 +9,16 @@ link_options=()
 build_root="$(mktemp -d)"
 trap 'rm -rf "$build_root"' EXIT
 for mode in --optimize-combs --optimize-combs-l1; do
-    generated="$build_root/${mode#--}"
-    "$cpphdl" "$mode" SpecializedCombRoot --generated-dir="$generated" \
+  for collection in direct serialized; do
+    generated="$build_root/${mode#--}/$collection"
+    load_options=()
+    if [[ "$collection" == serialized ]]; then
+        metadata="$build_root/${mode#--}.bin"
+        "$cpphdl" "$mode" SpecializedCombRoot --optimize-combs-collect="$metadata" \
+            "$source_dir/SpecializedCombSeed.cc" -- -std=c++23 -w -I"$include_dir" -I"$source_dir"
+        load_options+=(--optimize-combs-load="$metadata")
+    fi
+    "$cpphdl" "$mode" SpecializedCombRoot "${load_options[@]}" --generated-dir="$generated" \
         "$source_dir/SpecializedCombSeed.cc" -- -std=c++23 -w -I"$include_dir" -I"$source_dir"
     # Selected assignments must not regain discarded branches. The scoped
     # getter still needs Width and its destructor must run before the next read.
@@ -26,4 +34,5 @@ for mode in --optimize-combs --optimize-combs-l1; do
             "$source_dir/SpecializedCombRun.cc" "$generated"/*.cpp "${link_options[@]}" -o "$generated/run"
         "$generated/run"
     done
+  done
 done

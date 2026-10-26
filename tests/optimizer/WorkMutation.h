@@ -25,6 +25,22 @@ class WorkMutationRoot : public cpphdl::Module
 public:
     WorkMutationLeaf leaf;
     cpphdl::logic<8> value = 0;
+    cpphdl::logic<8> before = 0;
+    cpphdl::logic<8> after = 0;
+
+    cpphdl::logic<8>& procedural_comb_func()
+    {
+        procedural_comb = 0;
+        procedural_comb = value;
+        return procedural_comb;
+    }
+
+    cpphdl::logic<8>& forwarded_comb_func()
+    {
+        forwarded_comb = 0;
+        forwarded_comb = procedural_comb_func();
+        return forwarded_comb;
+    }
 
     cpphdl::logic<8>& value_comb_func()
     {
@@ -38,10 +54,15 @@ public:
 
     void _work(bool reset)
     {
+        value = 1;
+        before = forwarded_comb_func();
         update_during_work(value);
+        after = forwarded_comb_func();
         leaf._work(reset);
     }
 
 private:
     cpphdl::logic<8> value_comb = 0;
+    cpphdl::logic<8> procedural_comb = 0;
+    cpphdl::logic<8> forwarded_comb = 0;
 };

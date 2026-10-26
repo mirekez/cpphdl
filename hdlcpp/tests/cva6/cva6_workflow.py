@@ -158,6 +158,11 @@ def checked(command, directory, log, timeout=3600, environment=None):
     return report
 
 
+def comparison_modes(requested=None):
+    selected = set(MODES if requested is None else requested) | {'verilator'}
+    return [mode for mode in MODES if mode in selected]
+
+
 class Workflow:
     def __init__(self, args):
         self.args = args
@@ -395,14 +400,15 @@ class Workflow:
     def compare(self):
         results = {}
         failed = False
-        for mode in MODES:
+        modes = comparison_modes(getattr(self.args, 'modes', None))
+        for mode in modes:
             try:
                 results[mode] = dict(build=self.build(mode))
             except (RuntimeError, OSError, ValueError) as error:
                 results[mode] = dict(error=str(error))
                 print(f'{mode}: {error}', file=sys.stderr, flush=True)
                 failed = True
-        for mode in MODES[1:]:
+        for mode in modes[1:]:
             if 'error' in results[mode] or 'error' in results['verilator']:
                 continue
             output = self.root / 'comparisons' / mode
@@ -428,7 +434,7 @@ class Workflow:
                 self.clean_traces(output)
         save(self.root / 'comparison.json', dict(elf=str(self.elf), results=results, passed=not failed))
         print('\nMode                                  Build (s)    Median work (s)   Cycles    Result')
-        for mode in MODES:
+        for mode in modes:
             value = results[mode]
             build = f"{value['build']['seconds']:.3f}" if 'build' in value else '-'
             if value.get('build', {}).get('cached'):
@@ -462,11 +468,17 @@ def main():
     parser.add_argument('--timeout', type=float, default=14400)
     parser.add_argument('--cpu', type=int)
     parser.add_argument('--cpus4')
+    parser.add_argument('--modes', nargs='+', choices=MODES,
+                        help='compare only these backends; Verilator is always included')
     args = parser.parse_args()
     if args.trials < 1 or args.max_cycles <= 10 or args.timeout <= 0:
         parser.error('use positive trials/timeout and more than 10 cycles')
     if (args.action in ('build', 'run')) != (args.mode is not None):
         parser.error('build/run require a mode; other actions do not take one')
+    if args.modes is not None and args.action != 'compare':
+        parser.error('--modes requires compare')
+    if args.modes is not None and not set(args.modes) - {'verilator'}:
+        parser.error('--modes requires at least one C++HDL backend to compare')
     workflow = Workflow(args)
     workflow.root.mkdir(parents=True, exist_ok=True)
     marker = workflow.root / '.cva6-workspace'

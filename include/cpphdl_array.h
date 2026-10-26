@@ -692,13 +692,11 @@ struct array<COUNT, TYPE, true> : public bitops<logic<COUNT * detail::array_pack
     }
 };
 
-#if defined(CPPHDL_NATIVE_PACKED)
-#if __cplusplus < 202002L
-#error "CPPHDL_NATIVE_PACKED requires C++20 or later"
-#endif
+#if __cplusplus >= 202002L
 // The generated aggregate's logical bit layout is independent of its storage.
 // Keep elements addressable and serialize only at bit-vector boundaries, not
-// on every field access. Opt-in is an ABI choice and must match in every TU.
+// on every field access. Use one layout for all C++20+ consumers, independent
+// of optimizer options or header inclusion order.
 template<size_t COUNT, typename TYPE>
 requires detail::native_packed_element<TYPE>::value
 struct array<COUNT, TYPE, true>

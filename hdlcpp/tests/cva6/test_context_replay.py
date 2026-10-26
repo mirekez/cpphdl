@@ -7,14 +7,10 @@ import tempfile
 import unittest
 
 from capture_bus import instrument_requests
-from check_context_replay import file_hash, native_layout_flags, verify_manifest
+from check_context_replay import file_hash, verify_manifest
 
 
 class ContextReplayTests(unittest.TestCase):
-    def test_native_layout_is_explicit(self):
-        self.assertEqual(native_layout_flags(False), [])
-        self.assertEqual(native_layout_flags(True), ["-DCPPHDL_NATIVE_PACKED"])
-
     def test_observer_preserves_producer(self):
         name = "ariane_testharness__DOT__i_axi_xbar__DOT__slv_reqs"
         source = f"#include <cstdint>\nvoid producer() {{\n    VlWide<24>/*747:0*/ {name};\n    produce();\n}}\n"

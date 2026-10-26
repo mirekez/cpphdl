@@ -21,6 +21,7 @@ struct MethodGen {
     // the procedural value they consume has been produced.
     std::vector<std::string> deferredContinuousBody;
     std::vector<std::string> continuousWriteProof;
+    std::vector<std::string> continuousLoopHeaders;
     bool continuousWriteProofValid = true;
     bool continuousBodyAppended = false;
     std::set<std::string> localNames;
