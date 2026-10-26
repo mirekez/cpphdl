@@ -4,7 +4,8 @@
 namespace cpphdl::hls::math {
 // Parallel priority encoder: propagate the highest set bit downward, then
 // encode its one-hot boundary. No serial count increments are needed.
-inline uint32_t fp32_leading_bit(uint32_t value) {
+struct Fp32BitMethods {
+static uint32_t leading_bit(uint32_t value) {
     value|=value>>1;value|=value>>2;value|=value>>4;
     value|=value>>8;value|=value>>16;
     uint32_t one=value^(value>>1);
@@ -13,6 +14,10 @@ inline uint32_t fp32_leading_bit(uint32_t value) {
            (uint32_t((one&0xf0f0f0f0u)!=0)<<2)|
            (uint32_t((one&0xccccccccu)!=0)<<1)|
             uint32_t((one&0xaaaaaaaau)!=0);
+}
+};
+inline uint32_t fp32_leading_bit(uint32_t value) {
+    return Fp32BitMethods::leading_bit(value);
 }
 // A significand with guard, round and sticky bits fits in 27 bits; its sum
 // fits in 28. Keep alignment, cancellation and rounding in a 32-bit datapath.

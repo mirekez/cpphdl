@@ -100,6 +100,25 @@ struct OpenMPRejectedMethods {
 #pragma omp simd private(uninitialized) reduction(+:total)
         for(int i=0;i<4;++i)total+=uninitialized;
         sum=uint32_t(total);
+#elif OPENMP_REJECT == 27
+        uint32_t cells[4][8]{};
+#pragma omp simd
+        for(unsigned row=0;row<4;++row)cells[row][index&7]=cells[(row+1)%4][index&7];
+#elif OPENMP_REJECT == 28
+#pragma omp simd
+        for(unsigned lane=0;lane<4;++lane)values[(index+lane)&7]=value;
+#elif OPENMP_REJECT == 29
+        uint32_t cells[4][8]{};
+#pragma omp simd
+        for(unsigned row=0;row<4;++row)cells[row][index&15]=value;
+#elif OPENMP_REJECT == 30
+        uint32_t cells[4][8]{};
+#pragma omp simd
+        for(unsigned row=0;row<4;++row)cells[row][int32_t(index)%8]=value;
+#elif OPENMP_REJECT == 31
+        uint32_t cells[4][8]{};
+#pragma omp simd
+        for(unsigned row=0;row<4;++row)cells[row][index]=value;
 #endif
         return sum ^ values[0] ^ scratch;
     }

@@ -165,3 +165,11 @@ add_test(NAME hdlcpp_test_structs COMMAND test_structs)
 foreach(test_target test_combs test_modules test_structs)
     target_compile_options(${test_target} PRIVATE -UNDEBUG)
 endforeach()
+
+if(Python3_Interpreter_FOUND)
+    add_test(NAME hdlcpp_native_returns COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NativeReturnChecks.py"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/native-returns")
+    set_tests_properties(hdlcpp_native_returns PROPERTIES TIMEOUT 300)
+endif()

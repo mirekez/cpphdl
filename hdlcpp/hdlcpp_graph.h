@@ -77,7 +77,7 @@ class Lowering {
     Value memoryRead(const ValueSymbol& symbol, Value index, bool signedIndex=false) {
         auto identity=ram.at(&symbol);
         auto address=memoryAddress(symbol,std::move(index),signedIndex);
-        graph.memoryAccesses.push_back({identity,address,both(memoryActive,processEnable),sequentialProcess});
+        graph.memoryAccesses.push_back({identity,address,both(active,both(memoryActive,processEnable)),sequentialProcess});
         Value result;
         for(unsigned offset=0;offset<graph.memories[identity].width;offset+=64) {
             auto part=graph.add("memory_read",std::min(64u,graph.memories[identity].width-offset),address,
@@ -396,12 +396,14 @@ class Lowering {
             for (auto argument : call.arguments()) args.push_back(expr(*argument));
             auto savedCurrent = current, savedPending = pending;
             auto savedLocals = locals, savedWritten = written;
-            auto savedActive = active, savedReturn = returned;
+            auto savedActive = active, savedReturn = returned, savedMemoryActive = memoryActive;
             bool savedFunction = inFunction;
             auto savedControlDepth = controlDepth;
             auto outerUndefined=std::move(undefinedFunctionStorage);undefinedFunctionStorage.clear();
             controlDepth = 0;
-            current.clear(); pending.clear(); locals.clear(); written.clear(); active={1}; returned.clear(); inFunction=true;
+            current.clear(); pending.clear(); locals.clear(); written.clear(); active={1};
+            returned=Value(width(function.returnValVar->getType()),0); inFunction=true;
+            memoryActive=both(savedMemoryActive,savedActive);
             for (size_t index = 0; index < args.size(); ++index) {
                 current[function.getArguments()[index]] = args[index]; locals.insert(function.getArguments()[index]);
             }
@@ -414,7 +416,9 @@ class Lowering {
                     fail("function writes observable module storage",expression.sourceRange);
                 for(auto bit:signal(*symbol))if(bit>1)undefinedFunctionStorage.insert(Graph::owner(bit));
             }
-            auto result = returned.empty() ? current.at(function.returnValVar) : returned;
+            // Explicit returns capture their value when reached. Only paths still
+            // active at function end use an implicit assignment to its name.
+            auto result = graph.mux(active,current.at(function.returnValVar),returned);
             std::set<size_t> visited;
             std::function<void(Bit)> checkDefined=[&](Bit raw) {
                 auto bit=graph.resolve(raw);if(bit<2)return;auto owner=Graph::owner(bit);
@@ -425,7 +429,7 @@ class Lowering {
             for(auto bit:result)checkDefined(bit);
             undefinedFunctionStorage=std::move(outerUndefined);
             current=std::move(savedCurrent); pending=std::move(savedPending); locals=std::move(savedLocals); written=std::move(savedWritten);
-            active=savedActive; returned=savedReturn; inFunction=savedFunction;
+            active=savedActive; returned=savedReturn; memoryActive=savedMemoryActive; inFunction=savedFunction;
             controlDepth=savedControlDepth;
             --callDepth;
             return result;
@@ -463,7 +467,11 @@ class Lowering {
             if(nonblocking&&inTask&&locals.count(&symbol))fail("task-local nonblocking storage is not supported",target.sourceRange);
             auto& environment = nonblocking ? pending : current;
             auto old = environment.count(&symbol) ? environment.at(&symbol) : read(symbol);
-            environment[&symbol] = graph.mux(both(active,guard),resize(value,old.size()),old);
+            // Function environments are private SSA temporaries. Updating them on
+            // a returned path is harmless: that path's result was captured.
+            // Guarding them by the live mask would introduce false reads of
+            // uninitialized temporaries after an earlier conditional return.
+            environment[&symbol] = graph.mux(both(inFunction?Value{1}:active,guard),resize(value,old.size()),old);
             written.insert(&symbol);
             return;
         }
@@ -528,17 +536,19 @@ class Lowering {
         // The latter retains a false read of the old output even with an else,
         // inventing a latch and defeating a static dependency schedule.
         auto before = current, beforePending = pending;
-        auto outerActive=memoryActive;
+        auto outerActive=memoryActive, beforeLive=active, beforeReturn=returned;
         ++controlDepth;
         memoryActive=both(outerActive,condition);
         statement(yes);
         auto yesValues = current, yesPending = pending;
-        current = before; pending = beforePending;
+        auto yesLive=active,yesReturn=returned;
+        current = before; pending = beforePending;active=beforeLive;returned=beforeReturn;
         memoryActive=both(outerActive,invert(condition));
         if (no) statement(*no);
         memoryActive=outerActive;
         --controlDepth;
         merge(condition,yesValues,yesPending);
+        if(inFunction){active=graph.mux(condition,yesLive,active);returned=graph.mux(condition,yesReturn,returned);}
     }
     void merge(Value condition, const Environment& yes, const Environment& yesPending) {
         auto combine = [&](Environment& destination, const Environment& source, bool nba) {
@@ -556,7 +566,9 @@ class Lowering {
         combine(current,yes,false);
     }
     void statement(const Statement& stmt) {
-        if (inFunction && !returned.empty()) fail("statements after function return unsupported",stmt.sourceRange);
+        // Unreachable statements (including subsequent loop iterations)
+        // have no effects and need not be lowered.
+        if(inFunction && number(active)==std::optional<uint64_t>(0))return;
         using S = StatementKind;
         switch(stmt.kind) {
         case S::Empty: return;
@@ -579,7 +591,7 @@ class Lowering {
             if (cases.condition != CaseStatementCondition::Normal) fail("wildcard case unsupported",stmt.sourceRange);
             auto value = expr(cases.expr);
             auto before = current, beforePending = pending;
-            auto outerActive=memoryActive;
+            auto outerActive=memoryActive,beforeLive=active,beforeReturn=returned;
             ++controlDepth;
             std::vector<Value> conditions;
             for (auto& item : cases.items) {
@@ -593,14 +605,21 @@ class Lowering {
             if (cases.defaultCase) statement(*cases.defaultCase);
             for (size_t index = cases.items.size(); index > 0; --index) {
                 auto otherwise = current, otherwisePending = pending;
-                current = before; pending = beforePending;
+                auto otherwiseLive=active,otherwiseReturn=returned;
+                current = before; pending = beforePending;active=beforeLive;returned=beforeReturn;
                 Value earlier{0};
                 for(size_t previous=0;previous+1<index;++previous)earlier=either(earlier,conditions[previous]);
                 memoryActive=both(outerActive,both(conditions[index-1],invert(earlier)));
                 statement(*cases.items[index-1].stmt);
                 auto selected = current, selectedPending = pending;
+                auto selectedLive=active,selectedReturn=returned;
                 current = std::move(otherwise); pending = std::move(otherwisePending);
+                active=otherwiseLive;returned=otherwiseReturn;
                 merge(conditions[index-1],selected,selectedPending);
+                if(inFunction) {
+                    active=graph.mux(conditions[index-1],selectedLive,active);
+                    returned=graph.mux(conditions[index-1],selectedReturn,returned);
+                }
             }
             memoryActive=outerActive;
             --controlDepth;
@@ -626,9 +645,11 @@ class Lowering {
             fail("for loop limit exceeded",stmt.sourceRange);
         }
         case S::Return: {
-            if (!inFunction || controlDepth) fail("conditional early return unsupported",stmt.sourceRange);
+            if (!inFunction) fail("return outside value function unsupported",stmt.sourceRange);
             auto value = stmt.as<ReturnStatement>().expr;
-            if (!value) fail("void return unsupported"); returned = expr(*value); return;
+            if (!value) fail("void return unsupported");
+            returned=graph.mux(active,resize(expr(*value),returned.size()),returned);
+            active={0};return;
         }
         default: fail("unsupported statement " + std::string(toString(stmt.kind)),stmt.sourceRange);
         }
