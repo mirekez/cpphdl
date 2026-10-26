@@ -52,6 +52,7 @@ if [[ -n "${CONDA_PREFIX:-}" ]]; then
     "--with-boost=${CONDA_PREFIX}"
     "--with-boost-libdir=${CONDA_PREFIX}/lib"
   )
+  export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 fi
 
 ensure_dependency() {
@@ -98,9 +99,13 @@ ensure_dependency spike "${REPO_URL}" "${REPO_DIR}" spike_main/spike.cc
 mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}"
 
-if [[ ! -f Makefile ]]; then
-  ../configure "${SPIKE_CONFIGURE_ARGS[@]}"
+if [[ -f Makefile && -f spike ]] &&
+   ! "${PYTHON_BIN}" "${SCRIPT_DIR}/scripts/riscv_dependencies.py" check-spike "${BUILD_DIR}/spike"; then
+  echo "Rebuilding cached Spike because its runtime dependencies are unavailable"
+  make clean
 fi
+# Refresh the prefix and Boost search paths after environment changes.
+../configure "${SPIKE_CONFIGURE_ARGS[@]}"
 
 make -j"$(nproc)"
 make install
@@ -109,6 +114,7 @@ if [[ ! -x "${PREFIX}/bin/spike" ]]; then
   echo "error: spike was not installed at ${PREFIX}/bin/spike" >&2
   exit 1
 fi
+"${PYTHON_BIN}" "${SCRIPT_DIR}/scripts/riscv_dependencies.py" check-spike "${PREFIX}/bin/spike"
 
 ensure_dependency riscv-tests "${RISCV_TESTS_REPO_URL}" "${RISCV_TESTS_DIR}" isa
 

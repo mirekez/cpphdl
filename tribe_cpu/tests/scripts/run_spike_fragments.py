@@ -10,6 +10,7 @@ import subprocess
 import sys
 import textwrap
 
+from riscv_dependencies import prepare_spike_runtime
 
 SKIP = 77
 MMIO_OUT = "0x11223344"
@@ -585,6 +586,11 @@ def main(argv: list[str]) -> int:
     if missing:
         print("SKIP: missing external tool(s): " + ", ".join(missing))
         return SKIP
+    try:
+        prepare_spike_runtime(os.environ, spike)
+    except RuntimeError as error:
+        print(f"ERROR: {error}")
+        return 1
 
     backend = os.environ.get("TRIBE_SPIKE_FRAGMENTS_BACKEND", "cpphdl")
     if backend not in ("cpphdl", "verilator"):
