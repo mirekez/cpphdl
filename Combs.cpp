@@ -3038,7 +3038,7 @@ struct CombsOptimizer::Impl {
       bodies.add(info.workBody);
       bodies.add(info.strobeBody);
     }
-    writer.text("cpphdl-combs-collection-v5");
+    writer.text("cpphdl-combs-collection-v6");
     writer.number(bodies.bodies.size());
     for (const std::string *body : bodies.bodies) {
       writer.text(*body);
@@ -3061,10 +3061,9 @@ struct CombsOptimizer::Impl {
   bool loadCollection(const std::string &path) {
     CollectionReader reader(path);
     const auto version = reader.text();
-    if (version != "cpphdl-combs-collection-v4" &&
-        version != "cpphdl-combs-collection-v5") {
+    if (version != "cpphdl-combs-collection-v6") {
       llvm::errs() << "cpphdl --optimize-combs: invalid collection " << path
-                   << "\n";
+                   << "; recollect with the current runtime layout\n";
       return false;
     }
     const uint64_t bodyCount = reader.number();
@@ -3090,8 +3089,7 @@ struct CombsOptimizer::Impl {
     std::string largestClass;
     for (uint64_t index = 0; index < classCount && reader; ++index) {
       auto name = reader.text();
-      auto info = readClassInfo(reader, bodies,
-                                version == "cpphdl-combs-collection-v5");
+      auto info = readClassInfo(reader, bodies, true);
       size_t classBytes = info.name.size() + info.templateBase.size() +
                           info.header.size();
       const auto addMapBytes = [&classBytes](const auto &values) {
@@ -3159,8 +3157,7 @@ struct CombsOptimizer::Impl {
     for (const auto &[path, indexes] : needed) {
       CollectionReader reader(path);
       const auto version = reader.text();
-      if (version != "cpphdl-combs-collection-v4" &&
-          version != "cpphdl-combs-collection-v5") {
+      if (version != "cpphdl-combs-collection-v6") {
         error = "invalid deferred collection " + path;
         return false;
       }
@@ -3994,7 +3991,10 @@ struct CombsOptimizer::Impl {
                          input.substr(start - 2, 2) == "->");
       const bool memberBefore =
           !explicitMember && start > 0 && input[start - 1] == '.';
-      if (l1Scheduling && !qualifiedBefore && !memberBefore &&
+      // Outlined expressions still read comb producers. Both schedulers must
+      // see those dependencies; an ordinary member call can read stale storage
+      // and bypass the optimized producer/cache even when C++ later inlines it.
+      if (!qualifiedBefore && !memberBefore &&
           !locals.contains(identifier) &&
           context.type->helperSignatures.contains(identifier) &&
           afterIdentifier < input.size() && input[afterIdentifier] == '(' &&

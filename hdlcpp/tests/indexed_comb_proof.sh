@@ -8,7 +8,7 @@ source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
-HDLCPP_NOCACHE_COMB_METHODS=copied_o_comb,partial_o_comb,cyclic_comb,prefix_comb,dynamic_o_comb \
+HDLCPP_NOCACHE_COMB_METHODS=copied_o_comb,partial_o_comb,cyclic_comb,prefix_comb,dynamic_o_comb,tree_comb \
     "$hdlcpp" "$source_dir/indexed_comb_proof.sv"
 ! grep -q '__cpphdl_complete_dynamic_o_comb' generated/indexed_comb_proof.h
 ! grep -q '__cpphdl_complete_cyclic_comb' generated/indexed_comb_proof.h
@@ -25,6 +25,7 @@ if [[ -n "$cpphdl" ]]; then
         CPPHDL_TRACE_COMB_PROOF=1 "$cpphdl" "$mode" ProofModel --generated-dir="$output" \
             "$work/seed.cpp" -- -std=c++23 -w -I"$include_dir" -I"$work" > optimize.log 2>&1
         grep -q 'copied_o_comb_func complete=1 memoizable=1' optimize.log
+        grep -q 'tree_comb_func complete=1 memoizable=1' optimize.log
         for optimization in -O0 -O2; do
             "$cxx" -std=c++23 "$optimization" -g0 -fno-access-control -DCPPHDL_TEST_OPTIMIZED \
                 -I"$include_dir" -I. -I"$output" "$source_dir/indexed_comb_proof.cpp" \

@@ -637,6 +637,37 @@ static void testPackedTreeCombAliasesPreserveLoopDependency()
     });
 }
 
+static void testContinuousSiblingLoopFusion()
+{
+    const std::vector<std::string> headers = {
+        "if constexpr (Enabled) {", "for (unsigned level = 0; level < 4; ++level) {",
+        "for (unsigned node = 0; node < (1u << level); ++node) {"
+    };
+    std::vector<std::string> body = {headers[0], headers[1], headers[2], "left = parent;", "}", "}", "}",
+                                     headers[0], headers[1], headers[2], "right = parent;", "}", "}", "}"};
+    hdlcpp::fuseContinuousLoopPrefix(body, 7, headers, headers);
+    expectVector(body, {headers[0], headers[1], headers[2], "left = parent;", "right = parent;", "}", "}", "}"});
+
+    const std::string step = "if (!__proof.step()) return false;";
+    std::vector<std::string> proof = {headers[0], headers[1], step, headers[2], step, "__proof.write(left);", "}", "}", "}",
+                                      headers[0], headers[1], step, headers[2], step, "__proof.write(right);", "}", "}", "}"};
+    hdlcpp::fuseContinuousLoopPrefix(proof, 9, headers, headers, true);
+    expectVector(proof, {headers[0], headers[1], step, headers[2], step, "__proof.write(left);",
+                         "__proof.write(right);", "}", "}", "}"});
+
+    auto untouched = body;
+    hdlcpp::fuseContinuousLoopPrefix(body, 4, headers, headers);
+    expectVector(body, untouched);
+    hdlcpp::fuseContinuousLoopPrefix(body, 4, {}, headers);
+    expectVector(body, untouched);
+
+    const std::vector<std::string> descending = {headers[0], "for (unsigned level = 4; level-- > 0;) {"};
+    body = {headers[0], headers[1], "first;", "}", "}",
+            descending[0], descending[1], "second;", "}", "}"};
+    hdlcpp::fuseContinuousLoopPrefix(body, 5, {headers[0], headers[1]}, descending);
+    expectVector(body, {headers[0], headers[1], "first;", "}", descending[1], "second;", "}", "}"});
+}
+
 static void testSwitchLabelsSurviveTargetExtraction()
 {
     std::vector<std::string> lines = {
@@ -789,6 +820,7 @@ int main()
     testProjectedArrayFieldKeepsGeneratedUpdateAndUsedLocalDeclaration();
     testScopedPackedFieldProjection();
     testPackedTreeCombAliasesPreserveLoopDependency();
+    testContinuousSiblingLoopFusion();
     testSwitchLabelsSurviveTargetExtraction();
     testSlicedSwitchDoesNotRetainHandshakeDependency();
     return 0;

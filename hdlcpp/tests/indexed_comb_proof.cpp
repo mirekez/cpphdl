@@ -12,6 +12,7 @@ struct CheckProof : indexed_comb_proof<Width> {
     static_assert(indexed_comb_proof<Width>::__cpphdl_complete_copied_o_comb);
     static_assert(!indexed_comb_proof<Width>::__cpphdl_complete_partial_o_comb);
     static_assert(indexed_comb_proof<Width>::__cpphdl_complete_prefix_comb);
+    static_assert(indexed_comb_proof<Width>::__cpphdl_complete_tree_comb);
 };
 
 int main()
@@ -38,8 +39,18 @@ int main()
             parity ^= (value >> bit) & 1;
             prefix |= parity << bit;
         }
+        unsigned tree = value & 1;
+        for (unsigned level = 0; level < 3; ++level) {
+            for (unsigned node = 0; node < (1u << level); ++node) {
+                const unsigned parent = (tree >> ((1u << level) - 1 + node)) & 1;
+                const unsigned child = (1u << (level + 1)) - 1 + 2 * node;
+                tree |= (parent ^ ((value >> (level + 1)) & 1)) << child;
+                tree |= (parent ^ ((value >> (level + 2)) & 1)) << (child + 1);
+            }
+        }
         if (uint64_t(model.copied_o_out()) != value ||
-            uint64_t(model.prefix_o_out()) != prefix) return 1;
+            uint64_t(model.prefix_o_out()) != prefix ||
+            uint64_t(model.tree_o_out()) != tree) return 1;
     }
     std::puts("indexed comb proof: 256 input patterns passed");
 }

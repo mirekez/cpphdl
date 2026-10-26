@@ -30,11 +30,11 @@ duplicate, wrong-mode, wrong-module and completely unmatched contexts fail.
 
 ## Native aggregate storage
 
-Add `--native-packed` to `check_context_replay.py` to enable the generated
-aggregate representation. The script passes `-DCPPHDL_NATIVE_PACKED` to both
-cpphdl analysis and every C++ model/driver translation unit. Reusing a build
-with a different layout setting is rejected. This does not remove replay
-context, skip repeated inputs, or replace any RTL block.
+Native aggregate representation is now the C++20+ runtime default, including
+ordinary execution, comb optimization, and native-graph analysis. No macro or
+special include order is needed. `--native-packed` remains a no-op compatibility
+argument. Previously cached legacy-layout builds must be rebuilt. This does not
+remove replay context, skip repeated inputs, or replace any RTL block.
 
 hdlcpp marks non-union structs whose fields have known logical layouts.
 cpphdl's runtime then stores eligible packed arrays as addressable elements,
@@ -43,10 +43,10 @@ names, bit offsets and widths before copying fields directly; incompatible
 layouts and custom packers retain pack/unpack conversion. Metadata inherited
 by a derived class is not a proof of that class's layout.
 
-The flag is an explicit C++ ABI choice (C++20 or newer). Rebuild all generated
-sources and callers together; native aggregate arrays expose `pack()` for
+Rebuild all generated sources and callers together after this runtime update;
+native aggregate arrays expose `pack()` for
 serialized bits rather than the legacy `.data.bytes` representation. Ordinary
-untagged arrays and the default, flag-free C++17 runtime are unchanged. There
+untagged arrays and the C++17 runtime are unchanged. There
 are no CVA6-specific type allowlists or handwritten hardware implementations.
 
 This is **not a serialized complete schedule**. Module parameters and source
@@ -168,5 +168,24 @@ call graphs (the final automatic `.callgrind` dump is not the work interval);
 `*-symbols.json` exposes exclusive costs and call edges without requiring a GUI.
 Samples assigned to an evaluator include its inlined arithmetic and helpers:
 they are **not** a measurement of pure scheduler or timestamp-check overhead.
+
+The same profiler supports the complete arbiter from `check_request_tree.py`:
+
+```sh
+python3 -B hdlcpp/tests/cva6/profile_context_replay.py \
+  --cpphdl /tmp/arbiter/11/optimize-combs/run \
+  --verilator /tmp/arbiter/11/verilator/VArbiterBench \
+  --trace /tmp/arbiter/11/verilator-vectors.bin --arbiter-cycles 100000 \
+  --output /tmp/arbiter-profile --cpu 2 --sample-repeats 50 \
+  --valgrind /usr/bin/valgrind
+```
+
+Here `--trace` supplies 20,000 reference vectors, not a bus trace. Both runners
+check all vectors outside the timer and then execute the same pseudorandom
+workload. `--arbiter-cycles` sets the timed work for ordinary timing and
+Callgrind; sampling multiplies it by `--sample-repeats`. Counts normalize to
+timed cycles, not to the number of reference vectors. Run experiments serially:
+another profiler or benchmark pinned to the same CPU invalidates wall-time
+comparisons even when all correctness checks pass.
 Estimated category nanoseconds use uninstrumented time and sample proportions;
 never compare only percentages across implementations with different runtimes.

@@ -853,6 +853,34 @@ inline std::vector<std::string> dependencyOrderedContinuousLoopHeaders(
     return ordered;
 }
 
+inline void fuseContinuousLoopPrefix(std::vector<std::string>& body, size_t next,
+                                     const std::vector<std::string>& previousHeaders,
+                                     const std::vector<std::string>& headers,
+                                     bool proof = false)
+{
+    size_t shared = 0;
+    size_t prefixLines = 0;
+    while (shared < previousHeaders.size() && shared < headers.size() &&
+           previousHeaders[shared] == headers[shared]) {
+        if (next + prefixLines >= body.size() || body[next + prefixLines] != headers[shared]) return;
+        ++prefixLines;
+        if (proof && trimCombText(headers[shared]).rfind("for", 0) == 0) {
+            if (next + prefixLines >= body.size() ||
+                body[next + prefixLines] != "if (!__proof.step()) return false;") return;
+            ++prefixLines;
+        }
+        ++shared;
+    }
+    if (shared == 0 || next < shared) return;
+    for (size_t index = next - shared; index < next; ++index) {
+        if (trimCombText(body[index]) != "}") return;
+    }
+    // These are adjacent, pure continuous equations under identical generate
+    // controls, not procedural loops. Evaluate sibling equations at each level
+    // before advancing, so later levels see both parents from this call.
+    body.erase(body.begin() + next - shared, body.begin() + next + prefixLines);
+}
+
 inline bool hasRetainedCombBody(const std::string& header,
                                 const std::vector<std::string>& body)
 {

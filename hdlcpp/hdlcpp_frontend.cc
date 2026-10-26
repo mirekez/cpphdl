@@ -4796,6 +4796,13 @@
         }
         target.combAssignedVars.insert(base);
 
+        const auto deferredStart = method->deferredContinuousBody.size();
+        const auto bodyStart = method->body.size();
+        const auto proofStart = method->continuousWriteProof.size();
+        const bool pureContinuous = method->body.empty() || method->body == method->deferredContinuousBody;
+        const auto orderedHeaders = hdlcpp::dependencyOrderedContinuousLoopHeaders(
+            loopHeaders, base, dependencyLhs.empty() ? lhs : dependencyLhs,
+            dependencyRhs.empty() ? rhs : dependencyRhs);
         if (!writeProof || retType.rfind("logic<", 0) != 0) {
             method->continuousWriteProofValid = false;
         }
@@ -4998,6 +5005,22 @@
         }
         else {
             appendContinuousLine(bodyLhs + " = " + finalRhs + ";");
+        }
+        const bool scopedDeclarations = std::any_of(target.assignLines.begin(), target.assignLines.end(),
+            [&](const auto& line) { return trim(line).rfind("static constexpr ", 0) == 0; });
+        if (pureContinuous && method->continuousWriteProofValid && !scopedDeclarations &&
+            !target.seqAssignedVars.count(base)) {
+            hdlcpp::fuseContinuousLoopPrefix(method->deferredContinuousBody, deferredStart,
+                                            method->continuousLoopHeaders, orderedHeaders);
+            if (method->continuousBodyAppended)
+                hdlcpp::fuseContinuousLoopPrefix(method->body, bodyStart,
+                                                method->continuousLoopHeaders, orderedHeaders);
+            hdlcpp::fuseContinuousLoopPrefix(method->continuousWriteProof, proofStart,
+                                            method->continuousLoopHeaders, orderedHeaders, true);
+            method->continuousLoopHeaders = orderedHeaders;
+        }
+        else {
+            method->continuousLoopHeaders.clear();
         }
     }
 

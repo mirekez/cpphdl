@@ -172,6 +172,14 @@ def compiler_address_space(source, optimization, piece_count):
     return None
 
 
+def compiler_environment():
+    environment = dict(os.environ)
+    for name, value in (('MALLOC_ARENA_MAX', '1'), ('MALLOC_TRIM_THRESHOLD_', '0'),
+                        ('MALLOC_MMAP_THRESHOLD_', '65536')):
+        environment.setdefault(name, value)
+    return environment
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('ordinary', 'output', 'riscv'):
@@ -301,6 +309,7 @@ def main():
             return compile_halves()
         try:
             run([args.cxx, *compile_flags, '-c', source, '-o', target], 'compile-' + label,
+                environment=compiler_environment(),
                 address_space=compiler_address_space(source, optimization, len(pieces)))
             return [cache.store(source, compile_flags, target)]
         except RuntimeError:

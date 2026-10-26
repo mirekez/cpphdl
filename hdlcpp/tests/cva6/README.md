@@ -71,6 +71,11 @@ Content-keyed partition checkpoints avoid repeating failed large batches when
 an interrupted build resumes. Constructor units retain the stage's address-space
 limit; multi-source constructor batches and optimized batches have a stricter
 local limit and split before exhausting the host's available RAM.
+Compiler subprocesses default to one glibc allocation arena, immediate heap
+trimming, and a 64 KiB mmap threshold so freed large allocations can return to
+the OS. Explicit allocator environment settings take precedence. These settings
+do not alter compiler optimization flags, generated model semantics, or the
+simulation runner's environment; the existing RAM safety guard remains enabled.
 If one generated unit still exceeds that bound, partitioning continues at
 explicit member-instantiation boundaries. Mixed singleton units separate
 construction (`-O0`) from cycle methods (`-O2`), rather than optimizing large
@@ -120,6 +125,14 @@ trials of the slow default runtime, use `--trials 5 --timeout 21600`: validation
 plus five timed runs can exceed the normal four-hour stage timeout. One trial
 matches the full comparison qualification below; it is not a multi-trial median.
 Four-thread timings must not be pinned to a single CPU.
+To compare only the original RTL, comb optimization, and one-thread native graph:
+
+```sh
+./.compare.sh --modes verilator cpphdl-optimize-combs cpphdl-native-graph
+```
+
+The default still covers all five backends. A selected comparison always includes
+Verilator and retains the same output, cycle, and commit-stream equivalence checks.
 The native build verifies the emitted lane count, rather than labeling a
 silently reduced graph as four-threaded. DPI calls and their dependent cones
 stay on the caller lane; independent pure cones execute in worker lanes.
@@ -329,3 +342,50 @@ python3 -B compare_matmul.py \
 Choose an allowed CPU instead of 2 if necessary. The qualification run wrapped
 this command in the workflow's RAM/disk/timeout guard. `.compare.sh` remains the
 guarded entry point for building and comparing all five modes.
+
+## Native-packed default qualification (2026-10-25)
+
+Fresh ordinary HDLCPP conversion completed with zero failures. Native packed
+aggregate storage is now the common C++20+ runtime default, without per-mode
+layout macros or special header inclusion order. After rebuilding, this full
+three-backend comparison passed:
+
+```sh
+./.compare.sh --work-root /tmp/cpphdl-cva6-1000 \
+  --modes verilator cpphdl-optimize-combs cpphdl-native-graph \
+  --trials 1 --timeout 21600
+```
+
+| Mode | Simulation work (s) | Total cycles | Result |
+| --- | ---: | ---: | --- |
+| Original Verilator | 8.029921 | 396,778 | PASS |
+| Only `--optimize-combs` | 1832.095888 | 396,778 | PASS |
+| Native graph, one thread | 4.608362 | 396,778 | PASS |
+
+These are one-trial work times, excluding build and setup, pinned to CPU 2.
+The table follows `.compare.sh`: its Verilator row comes from the comb pair;
+the separate native-graph pair measured Verilator at 7.559071 seconds.
+Both candidates match all 297,074 ordered integer commits and the same
+32x32 matmul checksum `0xd687fdc5`, with 396,768 work cycles plus 10 reset
+cycles. Original Verilator retains trace formatting; candidate commit logging
+is enabled only during separate validation. This is not a trace-free simulator
+kernel comparison.
+
+Comb work time is 29.6% below the historical 2603.161349-second result, but
+still 228.16 times its paired Verilator time. That historical reduction covers
+the helper-dependency, continuous-loop fusion, and native-storage changes
+together; it does not isolate the storage change. The small arbiter improvement
+must not be extrapolated to the entire CPU.
+
+The first comb build stopped at the RAM safety guard. A compiler-only allocator
+retry compiled the failed root binding unit within the guard, and the resumed
+build reused verified object/collection checkpoints. It completed in
+10504.504 seconds with peak sampled process-group RSS of 4,204,892,160 bytes;
+this is not a cold-build time. The original Verilator and native-graph builds
+took 249.184 and 238.278 seconds, respectively, and were verified cached builds
+on the final comparison retry. No handwritten hardware replacement was used.
+Temporary build objects and validated traces were removed automatically.
+
+Reports: `<work-root>/comparison.json` and
+`<work-root>/comparisons/{cpphdl-optimize-combs,cpphdl-native-graph}/comparison.json`.
+The shared ELF SHA-256 is unchanged from the preceding qualification.

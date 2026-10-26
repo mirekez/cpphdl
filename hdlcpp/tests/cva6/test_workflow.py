@@ -12,10 +12,25 @@ import unittest
 from unittest.mock import patch
 
 import cva6_workflow as workflow
-from build_cpp_model import ObjectCache, collection_cache_key, compilation_order, compiler_address_space, instantiation_declarations, unity_sources
+from build_cpp_model import ObjectCache, collection_cache_key, compilation_order, compiler_address_space, compiler_environment, instantiation_declarations, unity_sources
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_comparison_modes_keep_reference_and_deduplicate(self):
+        self.assertEqual(workflow.comparison_modes(), list(workflow.MODES))
+        self.assertEqual(workflow.comparison_modes(['cpphdl-native-graph', 'cpphdl-optimize-combs',
+                                                   'cpphdl-native-graph']),
+                         ['verilator', 'cpphdl-optimize-combs', 'cpphdl-native-graph'])
+
+    def test_comparison_rejects_reference_only_before_creating_workspace(self):
+        with tempfile.TemporaryDirectory(prefix='cva6-modes-', dir='/tmp') as directory:
+            root = Path(directory) / 'unused'
+            result = subprocess.run([workflow.SUPPORT / '.compare.sh', '--work-root', root,
+                                     '--modes', 'verilator'], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('at least one C++HDL backend', result.stderr)
+            self.assertFalse(root.exists())
+
     def test_comb_chunks_compile_before_templates_without_reordering_sources(self):
         sources = [(Path(name), '-O2') for name in
                    ('harness.cpp', 'runtime.cpp', 'constructor.cpp', 'cycles.cpp',
@@ -270,6 +285,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertIsNone(compiler_address_space(Path('unity-O0-0.cpp'), '-O0', 1))
         self.assertEqual(compiler_address_space(Path('unity-O2-0.cpp'), '-O2', 1), 4_000_000_000)
         self.assertIsNone(compiler_address_space(Path('unity-runtime.cpp'), '-O2', 0))
+
+    def test_compiler_allocator_defaults_do_not_change_runner_environment(self):
+        with patch.dict(os.environ, {'PATH': '/bin'}, clear=True):
+            environment = compiler_environment()
+            self.assertEqual(environment['MALLOC_ARENA_MAX'], '1')
+            self.assertEqual(environment['MALLOC_TRIM_THRESHOLD_'], '0')
+            self.assertEqual(environment['MALLOC_MMAP_THRESHOLD_'], '65536')
+            self.assertEqual(dict(os.environ), {'PATH': '/bin'})
+        with patch.dict(os.environ, {'MALLOC_ARENA_MAX': '2'}, clear=True):
+            self.assertEqual(compiler_environment()['MALLOC_ARENA_MAX'], '2')
 
     @unittest.skipUnless(os.environ.get('CPPHDL_TEST_HDLCPP') and os.environ.get('CPPHDL_TEST_CXX'),
                          'set CPPHDL_TEST_HDLCPP and CPPHDL_TEST_CXX for specialization regression')
