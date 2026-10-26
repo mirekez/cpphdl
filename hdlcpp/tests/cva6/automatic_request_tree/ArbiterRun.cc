@@ -2,7 +2,9 @@
 #include "VArbiterBench.h"
 #else
 #include "ArbiterRoot.h"
+#ifndef USE_ORDINARY
 #include "ArbiterRoot_optimized_combs.h"
+#endif
 long _system_clock = 0;
 #endif
 #include <array>
@@ -83,11 +85,19 @@ public:
         model.ready = ready;
         model.requests = requests;
         model.payload = payload;
+#ifdef USE_ORDINARY
+        model._work(!reset_n);
+#else
         calc_all(model, !reset_n);
+#endif
         Output result{uint64_t(model.grants), uint64_t(model.valid), uint64_t(model.index),
                       uint64_t(model.id), uint64_t(model.data), uint64_t(model.resp),
                       uint64_t(model.last), uint64_t(model.user)};
+#ifdef USE_ORDINARY
+        model._strobe();
+#else
         commit_optimized_regs(model);
+#endif
         ++_system_clock;
 #endif
         return result;

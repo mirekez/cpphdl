@@ -7,6 +7,33 @@ set_target_properties(hls_fp32_math PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQU
 target_compile_options(hls_fp32_math PRIVATE -ffp-contract=off)
 add_dependencies(hls_tests hls_fp32_math)
 add_test(NAME hls_fp32_math COMMAND hls_fp32_math)
+add_executable(hls_fp32_add_narrow Fp32AddNarrow.cpp)
+target_include_directories(hls_fp32_add_narrow PRIVATE "${CMAKE_SOURCE_DIR}")
+set_target_properties(hls_fp32_add_narrow PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_dependencies(hls_tests hls_fp32_add_narrow)
+add_test(NAME hls_fp32_add_narrow COMMAND hls_fp32_add_narrow)
+add_executable(hls_float_convert_narrow FloatConvertNarrow.cpp)
+target_include_directories(hls_float_convert_narrow PRIVATE "${CMAKE_SOURCE_DIR}")
+set_target_properties(hls_float_convert_narrow PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_dependencies(hls_tests hls_float_convert_narrow)
+add_test(NAME hls_float_convert_narrow COMMAND hls_float_convert_narrow)
+add_hls_native(hls_narrow_math_pipeline NarrowMathPipeline.cpp PIPELINE_STAGES=3)
+add_test(NAME hls_narrow_math_pipeline_native COMMAND "${HLS_NATIVE_BINARY}")
+if(HLS_VERILATOR)
+    foreach(flow rtl gates)
+        set(narrow_synth OFF)
+        if(flow STREQUAL "gates")
+            set(narrow_synth ON)
+        endif()
+        add_test(NAME hls_narrow_math_pipeline_${flow} COMMAND "${CMAKE_COMMAND}"
+            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/narrow-math-${flow}" -DSTAGES=3
+            "-DSYNTH=${narrow_synth}" -DSOURCE=NarrowMathPipeline.cpp
+            "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
+        set_tests_properties(hls_narrow_math_pipeline_${flow} PROPERTIES TIMEOUT 300 LABELS "hls;math")
+    endforeach()
+endif()
 foreach(top BankedRamTop RamPrimitiveTop)
     if(top STREQUAL "BankedRamTop")
         set(ram_source hls/examples/dram/BankedRam.cpp)

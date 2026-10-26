@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 
+from riscv_dependencies import prepare_spike_runtime
 
 SKIP = 77
 REPO = "https://github.com/riscv-software-src/riscv-tests.git"
@@ -62,6 +63,11 @@ def main(argv: list[str]) -> int:
     if missing:
         print("SKIP: missing external tool(s): " + ", ".join(missing))
         return SKIP
+    try:
+        prepare_spike_runtime(env)
+    except RuntimeError as error:
+        print(f"ERROR: {error}")
+        return 1
     if not tribe.exists():
         print(f"SKIP: Tribe binary not found: {tribe}")
         return SKIP

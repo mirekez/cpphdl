@@ -10,6 +10,16 @@ from profile_context_replay import callgrind_report, parse_result, sample_report
 
 
 class ProfileParserTests(unittest.TestCase):
+    def test_arbiter_result_requires_equivalent_checked_work(self):
+        output = "seconds=0.500000000 checksum=0123456789abcdef cycles=100000 checked=20000\n"
+        self.assertEqual(parse_result(output, 100000, 20000, arbiter=True)["seconds"], 0.5)
+        for invalid in ("", output + output, output.replace("100000", "99999"),
+                        output.replace("checked=20000", "checked=1")):
+            with self.subTest(output=invalid), self.assertRaises(ValueError):
+                parse_result(invalid, 100000, 20000, arbiter=True)
+        with self.assertRaises(ValueError):
+            parse_result(output, 100000, 20000)
+
     def test_result_requires_equivalent_checked_work(self):
         output = "seconds=1.500000000 cycles=92528 checked=46264 checksum=0123456789abcdef\n"
         self.assertEqual(parse_result(output, 92528, 46264)["seconds"], 1.5)

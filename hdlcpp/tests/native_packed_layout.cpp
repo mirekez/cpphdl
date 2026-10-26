@@ -28,6 +28,13 @@ int main()
 {
     using Row = cpphdl::array<3, First, true>;
     using Matrix = cpphdl::array<2, Row, true>;
+#if __cplusplus >= 202002L
+    static_assert(std::is_same_v<decltype(std::declval<Row&>()[0]), First&>);
+    static_assert(std::is_same_v<decltype(std::declval<const Row&>()[0]), const First&>);
+    static_assert(std::is_same_v<decltype(std::declval<Matrix&>()[0]), Row&>);
+#else
+    static_assert(!std::is_reference_v<decltype(std::declval<Row&>()[0])>);
+#endif
     static_assert(cpphdl::type_width<decltype(std::declval<Matrix&>().bits(105, 62))>() == 408);
     cpphdl::array<3, Words, true> defaultWords{};
     assert(defaultWords.pack() == cpphdl::logic<123>{});
@@ -78,7 +85,7 @@ int main()
         matrix.bits(130, 87) = matrix.bits(105, 62);
         input.bits(130, 87) = snapshot;
         assert(matrix.pack() == input);
-#ifdef CPPHDL_NATIVE_PACKED
+#if __cplusplus >= 202002L
         const Matrix other = cpphdl::logic<408>(pattern);
         assert(cpphdl::pack_value<408>(matrix & other) == (input & other.pack()));
         assert(cpphdl::pack_value<408>(matrix | other) == (input | other.pack()));

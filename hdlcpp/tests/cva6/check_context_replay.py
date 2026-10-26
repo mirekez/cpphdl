@@ -24,10 +24,6 @@ def verify_manifest(path):
             raise RuntimeError("replay input or executable changed: " + filename)
 
 
-def native_layout_flags(enabled):
-    return ["-DCPPHDL_NATIVE_PACKED"] if enabled else []
-
-
 def main():
     repo = Path(__file__).resolve().parents[3]
     fixtures = Path(__file__).with_name("context_replay")
@@ -45,8 +41,8 @@ def main():
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--reuse-build", action="store_true")
-    parser.add_argument("--native-packed", action="store_true",
-                        help="store compiler-proved packed aggregates as native fields (C++ ABI change)")
+    parser.add_argument("--native-packed", action="store_true", default=True,
+                        help="compatibility option: native packed storage is now the C++20+ default")
     parser.add_argument("--native-graph", action="store_true",
                         help="lower freshly converted ordinary C++ rather than the legacy L1 callback backend")
     parser.add_argument("--chunk-size", type=int, default=512)
@@ -79,7 +75,6 @@ def main():
     else:
         layout_manifest.write_text(json.dumps(args.native_packed) + "\n")
         backend_manifest.write_text(json.dumps(args.native_graph) + "\n")
-    layout_flags = native_layout_flags(args.native_packed)
 
     def run(command, label, cwd=output):
         command = list(map(str, command))
@@ -142,7 +137,7 @@ def main():
             seed.write_text('#include "XbarRoot.h"\nextern XbarBench<> cpphdl_top;\n')
             run([args.cpphdl.resolve(), '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
                  '--chunk-size=' + str(args.chunk_size), '--output', output / 'graph',
-                 '--frontend-flag=-I' + str(output), *['--frontend-flag=' + flag for flag in layout_flags],
+                 '--frontend-flag=-I' + str(output),
                  '--runner', output / 'BusRun.cc', seed, '--', '-DUSE_CPP_GRAPH', '-DNDEBUG'], 'cpp-native-graph')
         else:
             run([args.hdlcpp.resolve(), "--optimize", output / "XbarElaborate.cc"], "elaborate")
@@ -151,7 +146,7 @@ def main():
             run([args.cpphdl.resolve(), "--optimize-combs-l1", "XbarRoot", "--generated-dir=" + str(optimized),
                  "--replay-context=" + str(args.context.resolve()), "--replay-source=i_axi_xbar", "--replay-target=dut.dut",
                  "--replay-export=" + str(output / "replay-context.txt"), output / "XbarSeed.cc", "--", "-std=c++23", "-w",
-                 "-I" + str(repo / "include"), *layout_flags], "optimize")
+                 "-I" + str(repo / "include")], "optimize")
         native = output / "verilator"
         # Match the production Verilator frontend flags, separately from C++ -O2.
         run([args.verilator, "-O3", "--unroll-count", "256", "--vpi", "--threads-dpi", "none", "--no-timing",
@@ -161,7 +156,7 @@ def main():
         objects = output / "objects"
         objects.mkdir(exist_ok=True)
         flags = [args.cxx, "-std=c++23", "-O2", "-DNDEBUG", "-w", "-I" + str(repo / "include"),
-                 "-I" + str(output), "-I" + str(optimized), *layout_flags]
+                 "-I" + str(output), "-I" + str(optimized)]
         sources = [] if args.native_graph else [output / "BusRun.cc", *sorted(optimized.glob("*.cpp"))]
         commands.extend(dict(command=[*flags, "-c", str(path), "-o", str(objects / (path.stem + ".o"))],
                              cwd=str(output)) for path in sources)

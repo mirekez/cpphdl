@@ -7,8 +7,22 @@ module indexed_comb_proof #(
     output logic [Width-1:0] partial_o,
     output logic [Width-1:0] cyclic_o,
     output logic [Width-1:0] prefix_o,
-    output logic [Width-1:0] dynamic_o
+    output logic [Width-1:0] dynamic_o,
+    output logic [14:0] tree_o
 );
+    logic [14:0] tree;
+    if (Width > 0) begin
+        assign tree[0] = data_i[0];
+        for (genvar level = 0; level < 3; level++) begin
+            for (genvar node = 0; node < (1 << level); node++) begin
+                assign tree[(1 << (level+1))-1 + 2*node] =
+                    tree[(1 << level)-1 + node] ^ data_i[(level+1)%Width];
+                assign tree[(1 << (level+1))-1 + 2*node+1] =
+                    tree[(1 << level)-1 + node] ^ data_i[(level+2)%Width];
+            end
+        end
+    end
+    assign tree_o = tree;
     logic [Width-1:0] cyclic;
     logic [Width-1:0] prefix;
     for (genvar bit_index = 0; bit_index < Width; bit_index++) begin

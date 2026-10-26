@@ -1,4 +1,4 @@
-"""Compare checked BusRun binaries without rebuilding or timing compilation."""
+"""Compare checked bus or arbiter binaries without rebuilding or timing compilation."""
 
 import argparse
 from bisect import bisect_right
@@ -14,6 +14,7 @@ import subprocess
 
 
 RESULT = re.compile(r"seconds=([\d.]+) cycles=(\d+) checked=(\d+) checksum=([0-9a-f]{16})")
+ARBITER_RESULT = re.compile(r"seconds=([\d.]+) checksum=([0-9a-f]{16}) cycles=(\d+) checked=(\d+)")
 
 
 def file_hash(path):
@@ -21,11 +22,14 @@ def file_hash(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def parse_result(output, cycles, checked):
-    matches = RESULT.findall(output)
+def parse_result(output, cycles, checked, arbiter=False):
+    matches = (ARBITER_RESULT if arbiter else RESULT).findall(output)
     if len(matches) != 1:
-        raise ValueError("expected exactly one successful BusRun result")
-    seconds, actual_cycles, actual_checked, checksum = matches[0]
+        raise ValueError("expected exactly one successful benchmark result")
+    if arbiter:
+        seconds, checksum, actual_cycles, actual_checked = matches[0]
+    else:
+        seconds, actual_cycles, actual_checked, checksum = matches[0]
     if int(actual_cycles) != cycles or int(actual_checked) != checked or float(seconds) <= 0:
         raise ValueError("incomplete replay or invalid work time")
     return dict(seconds=float(seconds), cycles=cycles, checked=checked, checksum=checksum)
@@ -39,7 +43,7 @@ def category(name):
         return "cpphdl scheduled work (including inlined logic)"
     if "optimized_combs_strobe" in name or "commit_optimized_regs" in name:
         return "cpphdl register commit"
-    if "VXbarBench___024root" in name:
+    if "VXbarBench___024root" in name or "VArbiterBench___024root" in name:
         return "Verilator generated model"
     if "cpphdl::" in name or "::pack(" in name or "::operator=<" in name:
         return "out-of-line datatype/conversion helpers"
@@ -168,6 +172,8 @@ def main():
     parser.add_argument("--cpphdl", type=Path, required=True)
     parser.add_argument("--verilator", type=Path, required=True)
     parser.add_argument("--trace", type=Path, required=True)
+    parser.add_argument("--arbiter-cycles", type=int,
+                        help="profile ArbiterRun with this many cycles; --trace supplies its reference vectors")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--cpu", type=int, default=2)
     parser.add_argument("--trials", type=int, default=5)
@@ -179,6 +185,8 @@ def main():
     args = parser.parse_args()
     if args.trials < 1 or args.sample_repeats < 1 or any(not 1000 <= interval <= 999999 for interval in args.intervals_us):
         parser.error("positive repeat/trial counts and sampling intervals >= 1000 us required")
+    if args.arbiter_cycles is not None and args.arbiter_cycles < 1:
+        parser.error("--arbiter-cycles must be positive")
     args.output = args.output.resolve()
     repository = Path(__file__).resolve().parents[3]
     if args.output.is_relative_to(repository):
@@ -186,9 +194,15 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     trace = args.trace.resolve()
     size = trace.stat().st_size
-    if not size or size % 800:
+    if args.arbiter_cycles is not None:
+        if size != 20000 * 64:
+            parser.error("expected 20000 eight-field arbiter reference vectors")
+        checked = 20000
+    elif not size or size % 800:
         parser.error("expected a nonempty 800-byte-record bus trace")
-    checked = size // 800
+    else:
+        checked = size // 800
+    cycles = args.arbiter_cycles if args.arbiter_cycles is not None else checked
     binaries = dict(verilator=args.verilator.resolve(), cpphdl=args.cpphdl.resolve())
     main_ranges = {}
     for model, binary in binaries.items():
@@ -229,8 +243,9 @@ def main():
             command += [args.valgrind.resolve(), "--tool=callgrind", "--instr-atstart=no",
                         "--cache-sim=yes", "--branch-sim=yes",
                         "--callgrind-out-file=" + str(prefix.with_suffix(".callgrind"))]
-        command += [binaries[model], trace, repeats]
-        return parse_result(run(command, name, extra), repeats * checked, checked)
+        command += [binaries[model], trace, repeats * cycles if args.arbiter_cycles is not None else repeats]
+        return parse_result(run(command, name, extra), repeats * cycles, checked,
+                            arbiter=args.arbiter_cycles is not None)
 
     save("inputs.json", inputs)
     save("environment.json", dict(uname=list(os.uname()), affinity=sorted(os.sched_getaffinity(0)),
@@ -291,14 +306,14 @@ def main():
                     counts[function["category"]] += function["samples"]
         total = sum(counts.values())
         summary[model] = dict(median_seconds=median, min_seconds=min(times), max_seconds=max(times),
-                              ns_per_cycle=median * 1e9 / checked, samples=total,
+                              ns_per_cycle=median * 1e9 / cycles, samples=total,
                               categories=[dict(name=name, samples=count, percent=100 * count / total,
-                                               estimated_ns_per_cycle=median * 1e9 / checked * count / total)
+                                               estimated_ns_per_cycle=median * 1e9 / cycles * count / total)
                                           for name, count in counts.most_common()])
         for row in results["callgrind"]:
             if row["model"] == model:
                 summary[model]["callgrind_per_cycle"] = {
-                    event: count / checked for event, count in row["profile"]["totals"].items()}
+                    event: count / cycles for event, count in row["profile"]["totals"].items()}
     for path, digest in inputs.items():
         if file_hash(path) != digest:
             raise RuntimeError("input changed during profiling: " + path)

@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 
+from riscv_dependencies import prepare_spike_runtime
 
 SKIP = 77
 REPO = "https://github.com/google/riscv-dv.git"
@@ -271,6 +272,12 @@ def main(argv: list[str]) -> int:
         )
     )
     env.setdefault("RISCV", riscv_home)
+    if shutil.which("spike", path=env["PATH"]):
+        try:
+            prepare_spike_runtime(env)
+        except RuntimeError as error:
+            print(f"ERROR: {error}")
+            return 1
     pydeps = repo_root / "build" / "pydeps"
     pydeps.mkdir(parents=True, exist_ok=True)
     env["PYTHONPATH"] = str(pydeps) + os.pathsep + env.get("PYTHONPATH", "")
