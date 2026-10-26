@@ -1,3 +1,89 @@
+add_test(NAME analog.1g.ihp_reference_clock.placement_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_placement.py")
+set_tests_properties(analog.1g.ihp_reference_clock.placement_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;clock" TIMEOUT 30)
+
+add_custom_target(prepare-ihp-extraction
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_magic.py"
+    --destination "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-toolchain"
+  COMMENT "Build pinned Magic for IHP analog parasitic extraction")
+add_custom_target(prepare-ihp-extraction-sidewall
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_magic.py"
+    --destination "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-sidewall"
+    --clip-tile-area --full-sidewall
+  COMMENT "Build isolated Magic candidate with bounded tile area and full sidewall coefficients")
+set(CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-sidewall/install/bin/magic"
+  CACHE FILEPATH "Magic candidate for the independent sidewall coefficient oracle")
+if(EXISTS "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_extraction.sidewall
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/magic_sidewall.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/sidewall_coefficients")
+  set_tests_properties(analog.1g.ihp_extraction.sidewall PROPERTIES
+    LABELS "analog;1g;ihp;physical;extraction" TIMEOUT 300)
+endif()
+add_custom_target(prepare-ihp-field-solver
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_fastercap.py"
+    --destination "${CPPHDL_ANALOG_REAL_ROOT}/out/fastercap-toolchain"
+  COMMENT "Prepare pinned local FasterCap for independent capacitance calibration")
+add_custom_target(prepare-ihp-field-solver-source
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_fastercap_source.py"
+    --destination "${CPPHDL_ANALOG_REAL_ROOT}/out/fastercap-source-build"
+  COMMENT "Build pinned FasterCap with the per-block disk offset correction")
+set(CPPHDL_IHP_FIELD_SOURCE_PREPARATION "" CACHE FILEPATH "Corrected FasterCap source-build preparation receipt")
+if(CPPHDL_IHP_FIELD_SOURCE_PREPARATION)
+  add_test(NAME analog.1g.ihp_extraction.field_solver_disk COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/field_solver_disk.py"
+    --preparation "${CPPHDL_IHP_FIELD_SOURCE_PREPARATION}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/field_solver_disk")
+  set_tests_properties(analog.1g.ihp_extraction.field_solver_disk PROPERTIES
+    LABELS "analog;1g;ihp;physical" TIMEOUT 2500)
+endif()
+set(CPPHDL_IHP_FIELD_SOLVER_PREPARATION "" CACHE FILEPATH "Pinned FasterCap preparation receipt")
+add_test(NAME analog.1g.ihp_extraction.field_matrix_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/field_matrix.py")
+set_tests_properties(analog.1g.ihp_extraction.field_matrix_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+if(CPPHDL_IHP_FIELD_SOLVER_PREPARATION)
+  add_test(NAME analog.1g.ihp_extraction.field_solver COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/field_solver.py"
+    --preparation "${CPPHDL_IHP_FIELD_SOLVER_PREPARATION}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/field_solver")
+  set_tests_properties(analog.1g.ihp_extraction.field_solver PROPERTIES
+    LABELS "analog;1g;ihp;physical" TIMEOUT 800)
+endif()
+add_test(NAME analog.1g.ihp_extraction.capacitance_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/extraction_capacitance.py")
+add_test(NAME analog.1g.ihp_extraction.wire_reduction COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/reduce_extracted_wires.py")
+set_tests_properties(analog.1g.ihp_extraction.wire_reduction PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_extraction.connected_capacitors COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/extracted_connections.py")
+set_tests_properties(analog.1g.ihp_extraction.connected_capacitors PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_extraction.resistor_body_connections COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/resistor_body_extraction.py")
+set_tests_properties(analog.1g.ihp_extraction.resistor_body_connections PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_processing_clock_oscillator.acquisition_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/oscillator_acquisition_window_guards.py")
+set_tests_properties(analog.1g.ihp_processing_clock_oscillator.acquisition_guards PROPERTIES
+  LABELS "analog;1g;ihp;clock;physical" TIMEOUT 60)
+set_tests_properties(analog.1g.ihp_extraction.capacitance_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_processing_clock_gate.pex_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_gate_pex_guards.py")
+set_tests_properties(analog.1g.ihp_processing_clock_gate.pex_guards PROPERTIES
+  LABELS "analog;1g;ihp;clock;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_processing_clock.physical_input_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_physical.py")
+add_test(NAME analog.1g.ihp_processing_clock.crossing_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_crossings.py")
+set_tests_properties(analog.1g.ihp_processing_clock.crossing_guards PROPERTIES
+  LABELS "analog;1g;ihp;clock;physical" TIMEOUT 30)
+set_tests_properties(analog.1g.ihp_processing_clock.physical_input_guards PROPERTIES
+  LABELS "analog;1g;ihp;clock;physical" TIMEOUT 30)
 add_test(NAME analog.1g.ihp_receive.load_profiles COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_profiles.py")
 add_test(NAME analog.1g.ihp_adc_lane.interface_timing_guards COMMAND "${Python3_EXECUTABLE}"
@@ -20,6 +106,165 @@ add_test(NAME analog.1g.ihp_receive.dc_surface_guards COMMAND "${Python3_EXECUTA
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_dc_surface.py")
 set_tests_properties(analog.1g.ihp_receive.dc_surface_guards PROPERTIES LABELS "analog;1g;ihp;frontend" TIMEOUT 30)
 set(CPPHDL_IHP_PDK_ROOT "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2" CACHE PATH "Prepared IHP SG13G2 checkout")
+add_test(NAME analog.1g.ihp_flow_control.crossing_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/flow_control_crossings.py")
+set_tests_properties(analog.1g.ihp_flow_control.crossing_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;flow-control" TIMEOUT 30)
+if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+   AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.ref/sg13g2_stdcell/lef/sg13g2_stdcell.lef")
+  add_test(NAME analog.1g.ihp_flow_control.clock_loads COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/flow_control_clock_loads.py"
+    --pdk "${CPPHDL_IHP_PDK_ROOT}"
+    --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/flow_control_clock_loads")
+  set_tests_properties(analog.1g.ihp_flow_control.clock_loads PROPERTIES
+    LABELS "analog;1g;ihp;physical;flow-control" TIMEOUT 90)
+endif()
+set(CPPHDL_1G_FLOW_CONTROL_ROUTED_PROOF "" CACHE FILEPATH "Qualified routed SRAM/control timing and replay receipt")
+set(CPPHDL_1G_FLOW_CONTROL_CELL_PROOF "" CACHE FILEPATH "Mapped SRAM/control proof used for routing")
+if(CPPHDL_1G_FLOW_CONTROL_ROUTED_PROOF AND CPPHDL_1G_FLOW_CONTROL_CELL_PROOF)
+  add_test(NAME analog.1g.ihp_flow_control.crossings COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/flow_control_crossings.py"
+    --routed "${CPPHDL_1G_FLOW_CONTROL_ROUTED_PROOF}"
+    --cells "${CPPHDL_1G_FLOW_CONTROL_CELL_PROOF}"
+    --pdk "${CPPHDL_IHP_PDK_ROOT}"
+    --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+    --yosys "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/flow_control_fifo_crossings")
+  set_tests_properties(analog.1g.ihp_flow_control.crossings PROPERTIES
+    LABELS "analog;1g;ihp;physical;flow-control" TIMEOUT 900)
+endif()
+set(CPPHDL_IHP_MAGIC_EXECUTABLE "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-toolchain/install/bin/magic"
+  CACHE FILEPATH "Pinned Magic executable for analog extraction")
+if(EXISTS "${CPPHDL_IHP_MAGIC_EXECUTABLE}" AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_extraction.mim COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/analog_extraction.py"
+    --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_MAGIC_EXECUTABLE}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/analog_extraction")
+  set_tests_properties(analog.1g.ihp_extraction.mim PROPERTIES
+    LABELS "analog;1g;ihp;physical" TIMEOUT 300)
+endif()
+add_test(NAME analog.1g.ihp_extraction.tile_area COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/magic_tile_area.py")
+set_tests_properties(analog.1g.ihp_extraction.tile_area PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+set(CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION "" CACHE PATH "Exactly replayed routed ProcessingClockControl implementation for extracted crossing checks")
+if(NGSPICE_EXECUTABLE)
+  add_test(NAME analog.1g.ihp_extraction.resistor_body
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/resistor_body_model.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/resistor_body_model")
+  set_tests_properties(analog.1g.ihp_extraction.resistor_body PROPERTIES
+    LABELS "analog;1g;ihp;physical;psp" TIMEOUT 300)
+endif()
+set(CPPHDL_1G_PROCESSING_GATE_EXTRACTION "" CACHE PATH "Conserved ProcessingClockGate extraction for PSP corner tests")
+set(CPPHDL_1G_PROCESSING_GATE_LAYOUT_PROOF "" CACHE FILEPATH "LVS/local-DRC proof for the physical admission gate")
+set(CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF "" CACHE FILEPATH "LVS/local-DRC proof for the protected processing oscillator")
+set(CPPHDL_1G_PROCESSING_OSCILLATOR_EXTRACTION "" CACHE PATH "Conserved oscillator extraction for physical clock tests")
+if(CPPHDL_1G_PROCESSING_GATE_EXTRACTION AND CPPHDL_1G_PROCESSING_GATE_LAYOUT_PROOF AND
+   CPPHDL_1G_PROCESSING_OSCILLATOR_EXTRACTION AND CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF AND
+   NGSPICE_EXECUTABLE AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  foreach(mode IN ITEMS startup complete)
+    set(delivery_options)
+    if(mode STREQUAL "startup")
+      list(APPEND delivery_options --startup-only)
+    endif()
+    add_test(NAME analog.1g.ihp_processing_clock_delivery.extracted_${mode}
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_extracted_delivery.py"
+        --oscillator "${CPPHDL_1G_PROCESSING_OSCILLATOR_EXTRACTION}"
+        --oscillator-layout "${CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF}"
+        --gate "${CPPHDL_1G_PROCESSING_GATE_EXTRACTION}"
+        --gate-layout "${CPPHDL_1G_PROCESSING_GATE_LAYOUT_PROOF}"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+        --cxx "${CMAKE_CXX_COMPILER}" ${delivery_options}
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_extracted_${mode}")
+    set_tests_properties(analog.1g.ihp_processing_clock_delivery.extracted_${mode} PROPERTIES
+      LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT 43800 RESOURCE_LOCK one_g_closed_adc_memory)
+  endforeach()
+endif()
+if(CPPHDL_1G_PROCESSING_OSCILLATOR_EXTRACTION AND CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF AND
+   NGSPICE_EXECUTABLE AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_processing_clock_oscillator.extracted
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_oscillator_extracted.py"
+      --extraction "${CPPHDL_1G_PROCESSING_OSCILLATOR_EXTRACTION}"
+      --layout-proof "${CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF}"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_oscillator_extracted")
+  set_tests_properties(analog.1g.ihp_processing_clock_oscillator.extracted PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT 14600 RESOURCE_LOCK one_g_closed_adc_memory)
+  add_test(NAME analog.1g.ihp_processing_clock_oscillator.extracted_acquisition
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_oscillator_extracted.py"
+      --acquisition-window
+      --extraction "${CPPHDL_1G_PROCESSING_OSCILLATOR_EXTRACTION}"
+      --layout-proof "${CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF}"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_oscillator_extracted_acquisition")
+  set_tests_properties(analog.1g.ihp_processing_clock_oscillator.extracted_acquisition PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT 14600 RESOURCE_LOCK one_g_closed_adc_memory)
+endif()
+if(CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF AND NGSPICE_EXECUTABLE AND
+   EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_processing_clock_oscillator.physical_devices
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_oscillator_physical_devices.py"
+      --layout-proof "${CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF}"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_oscillator_physical_devices")
+  set_tests_properties(analog.1g.ihp_processing_clock_oscillator.physical_devices PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT 11000 RESOURCE_LOCK one_g_closed_adc_memory)
+endif()
+if(CPPHDL_1G_PROCESSING_GATE_EXTRACTION AND CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION AND
+   NGSPICE_EXECUTABLE AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_processing_clock_gate.extracted
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_gate_extracted.py"
+      --extraction "${CPPHDL_1G_PROCESSING_GATE_EXTRACTION}"
+      --physical "${CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION}"
+      --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_gate>"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_gate_extracted")
+  set_tests_properties(analog.1g.ihp_processing_clock_gate.extracted PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT 7500 RESOURCE_LOCK one_g_closed_adc_memory)
+  add_test(NAME analog.1g.ihp_processing_clock_gate.extracted_charge
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_gate_extracted_charge.py"
+      --extraction "${CPPHDL_1G_PROCESSING_GATE_EXTRACTION}"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_gate_extracted_charge")
+  set_tests_properties(analog.1g.ihp_processing_clock_gate.extracted_charge PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT 7500 RESOURCE_LOCK one_g_closed_adc_memory)
+endif()
+if(CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION AND
+   EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_processing_clock.crossings COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/processing_clock_crossings.py"
+    --implementation "${CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION}"
+    --work-root "${CMAKE_CURRENT_BINARY_DIR}/tests/processing_clock_crossings"
+    --pdk "${CPPHDL_IHP_PDK_ROOT}"
+    --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+  set_tests_properties(analog.1g.ihp_processing_clock.crossings PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical" TIMEOUT 180)
+endif()
+if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad" AND
+   EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.ref/sg13g2_stdcell")
+  add_test(NAME analog.1g.ihp_processing_clock.clock_tree COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_tree.py"
+    --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")
+  set_tests_properties(analog.1g.ihp_processing_clock.clock_tree PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical" TIMEOUT 120)
+  add_test(NAME analog.1g.ihp_processing_clock.output_logic COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_output.py"
+    --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")
+  set_tests_properties(analog.1g.ihp_processing_clock.output_logic PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical" TIMEOUT 120)
+endif()
+add_test(NAME analog.1g.ihp_processing_clock_delivery.compact_trace COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/compact_trace.py")
+set_tests_properties(analog.1g.ihp_processing_clock_delivery.compact_trace PROPERTIES
+  LABELS "analog;1g;ihp;clock" TIMEOUT 30)
 add_test(NAME analog.1g.ihp_area.evidence_guards COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/mapped_area.py")
 set_tests_properties(analog.1g.ihp_area.evidence_guards PROPERTIES LABELS "analog;1g;ihp;area" TIMEOUT 30)
@@ -74,6 +319,201 @@ if(CPPHDL_1G_CLOCK_TRANSLATOR_PROOF)
 endif()
 
 if(Eigen3_FOUND)
+  add_executable(analog_1g_ihp_processing_clock_oscillator tests/processing_clock_oscillator.cpp)
+  target_link_libraries(analog_1g_ihp_processing_clock_oscillator PRIVATE cpphdl::analog Eigen3::Eigen)
+  add_dependencies(check-1g analog_1g_ihp_processing_clock_oscillator)
+  add_dependencies(check-analog analog_1g_ihp_processing_clock_oscillator)
+  add_executable(analog_1g_ihp_processing_clock_closed tests/processing_clock_closed.cpp)
+  add_executable(analog_1g_ihp_processing_clock_delivery tests/processing_clock_delivery.cpp)
+  add_test(NAME analog.1g.ihp_processing_clock_delivery.guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_delivery_guards.py")
+  set_tests_properties(analog.1g.ihp_processing_clock_delivery.guards PROPERTIES
+    LABELS "analog;1g;ihp;clock" TIMEOUT 60)
+  target_link_libraries(analog_1g_ihp_processing_clock_delivery PRIVATE cpphdl::analog Eigen3::Eigen)
+  add_dependencies(check-1g analog_1g_ihp_processing_clock_delivery)
+  add_dependencies(check-analog analog_1g_ihp_processing_clock_delivery)
+  add_executable(analog_1g_ihp_processing_clock_gate tests/processing_clock_gate.cpp)
+  target_link_libraries(analog_1g_ihp_processing_clock_gate PRIVATE cpphdl::analog Eigen3::Eigen)
+  add_dependencies(check-1g analog_1g_ihp_processing_clock_gate)
+  add_dependencies(check-analog analog_1g_ihp_processing_clock_gate)
+  target_link_libraries(analog_1g_ihp_processing_clock_closed PRIVATE cpphdl::analog Eigen3::Eigen)
+  add_dependencies(check-1g analog_1g_ihp_processing_clock_closed)
+  add_dependencies(check-analog analog_1g_ihp_processing_clock_closed)
+  add_executable(analog_1g_ihp_reference_clock_generator tests/reference_clock_generator.cpp)
+  add_executable(analog_1g_ihp_reference_clock_layout_export tests/reference_clock_layout_export.cpp)
+  target_link_libraries(analog_1g_ihp_reference_clock_layout_export PRIVATE cpphdl::analog)
+  target_link_libraries(analog_1g_ihp_reference_clock_generator PRIVATE cpphdl::analog Eigen3::Eigen)
+  add_dependencies(check-1g analog_1g_ihp_reference_clock_generator)
+  add_dependencies(check-analog analog_1g_ihp_reference_clock_generator)
+  add_test(NAME analog.1g.ihp_reference_clock.guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_guards.py"
+    --bench "$<TARGET_FILE:analog_1g_ihp_reference_clock_generator>")
+  set_tests_properties(analog.1g.ihp_reference_clock.guards PROPERTIES
+    LABELS "analog;1g;ihp;clock" TIMEOUT 120)
+  add_test(NAME analog.1g.ihp_processing_clock.guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_guards.py"
+    --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_closed>" --pdk "${CPPHDL_IHP_PDK_ROOT}")
+  set_tests_properties(analog.1g.ihp_processing_clock.guards PROPERTIES
+    LABELS "analog;1g;ihp;clock" TIMEOUT 120)
+  add_test(NAME analog.1g.ihp_processing_clock.compare_guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_compare_guards.py")
+  set_tests_properties(analog.1g.ihp_processing_clock.compare_guards PROPERTIES
+    LABELS "analog;1g;ihp;clock" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_processing_clock_closed.compare_guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_closed_compare_guards.py")
+  set_tests_properties(analog.1g.ihp_processing_clock_closed.compare_guards PROPERTIES
+    LABELS "analog;1g;ihp;clock" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_processing_clock_gate.guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_gate_guards.py")
+  set_tests_properties(analog.1g.ihp_processing_clock_gate.guards PROPERTIES
+    LABELS "analog;1g;ihp;clock" TIMEOUT 30)
+  if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE AND
+     EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib")
+    add_test(NAME analog.1g.ihp_processing_clock_interface.guards COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_interface.py" --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_processing_clock_interface.guards PROPERTIES
+      LABELS "analog;1g;ihp;clock" TIMEOUT 30)
+    if(CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION)
+      add_test(NAME analog.1g.ihp_processing_clock_interface.psp COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/processing_clock_interface.py"
+        --physical "${CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION}"
+        --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_gate>" --pdk "${CPPHDL_IHP_PDK_ROOT}"
+        --ngspice "${NGSPICE_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_interface")
+      set_tests_properties(analog.1g.ihp_processing_clock_interface.psp PROPERTIES
+        LABELS "analog;1g;ihp;clock;psp" TIMEOUT 2400 RESOURCE_LOCK one_g_clock_simulation)
+      add_test(NAME analog.1g.ihp_processing_clock_interface.handoff COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/processing_clock_interface.py" --registered
+        --physical "${CPPHDL_1G_PROCESSING_CLOCK_IMPLEMENTATION}"
+        --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_gate>" --pdk "${CPPHDL_IHP_PDK_ROOT}"
+        --ngspice "${NGSPICE_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_handoff")
+      set_tests_properties(analog.1g.ihp_processing_clock_interface.handoff PROPERTIES
+        LABELS "analog;1g;ihp;clock;psp" TIMEOUT 2400 RESOURCE_LOCK one_g_clock_simulation)
+    endif()
+    add_test(NAME analog.1g.ihp_processing_clock_gate.electrical COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_gate.py"
+      --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_gate>" --pdk "${CPPHDL_IHP_PDK_ROOT}"
+      --ngspice "${NGSPICE_EXECUTABLE}" --openvaf "${OPENVAF_EXECUTABLE}"
+      --cxx "${CMAKE_CXX_COMPILER}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_gate")
+    set_tests_properties(analog.1g.ihp_processing_clock_gate.electrical PROPERTIES
+      LABELS "analog;1g;ihp;clock;cpp;veriloga;psp" TIMEOUT 3600 RESOURCE_LOCK one_g_clock_simulation
+      FIXTURES_SETUP one_g_processing_gate_proof)
+    add_test(NAME analog.1g.ihp_processing_clock.input_charge COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/processing_clock_input_charge.py"
+      --gate-proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_gate/checks.json"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_input_charge")
+    set_tests_properties(analog.1g.ihp_processing_clock.input_charge PROPERTIES
+      LABELS "analog;1g;ihp;clock;psp" TIMEOUT 4200 RESOURCE_LOCK one_g_clock_simulation
+      FIXTURES_REQUIRED one_g_processing_gate_proof)
+  endif()
+  add_test(NAME analog.1g.ihp_processing_clock_limits.guards COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_limits_guards.py")
+  set_tests_properties(analog.1g.ihp_processing_clock_limits.guards PROPERTIES
+    LABELS "analog;1g;ihp;clock" TIMEOUT 30)
+  if(NGSPICE_EXECUTABLE AND
+     EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib")
+    add_test(NAME analog.1g.ihp_processing_clock_limits.psp COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_limits.py"
+      --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_oscillator>"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+      --cxx "${CMAKE_CXX_COMPILER}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_limits")
+    set_tests_properties(analog.1g.ihp_processing_clock_limits.psp PROPERTIES
+      LABELS "analog;1g;ihp;clock;psp" TIMEOUT 21600 RESOURCE_LOCK one_g_clock_simulation)
+  endif()
+  foreach(clock_flow cpp veriloga psp)
+    if(clock_flow STREQUAL "cpp" OR
+       (clock_flow STREQUAL "veriloga" AND OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE) OR
+       (clock_flow STREQUAL "psp" AND NGSPICE_EXECUTABLE AND
+        EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib"))
+      set(clock_tools)
+      if(NGSPICE_EXECUTABLE)
+        list(APPEND clock_tools --ngspice "${NGSPICE_EXECUTABLE}")
+      endif()
+      if(OPENVAF_EXECUTABLE)
+        list(APPEND clock_tools --openvaf "${OPENVAF_EXECUTABLE}")
+      endif()
+      add_test(NAME analog.1g.ihp_reference_clock.${clock_flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_generator.py"
+        --bench "$<TARGET_FILE:analog_1g_ihp_reference_clock_generator>" --flow "${clock_flow}"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}" ${clock_tools}
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_${clock_flow}")
+      set_tests_properties(analog.1g.ihp_reference_clock.${clock_flow} PROPERTIES
+        LABELS "analog;1g;ihp;clock;${clock_flow}" TIMEOUT 10800 RESOURCE_LOCK one_g_clock_simulation)
+      add_test(NAME analog.1g.ihp_processing_clock.${clock_flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_oscillator.py"
+        --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_oscillator>" --flow "${clock_flow}"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}" ${clock_tools}
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_${clock_flow}")
+      set_tests_properties(analog.1g.ihp_processing_clock.${clock_flow} PROPERTIES
+        LABELS "analog;1g;ihp;clock;${clock_flow}" TIMEOUT 14400 RESOURCE_LOCK one_g_clock_simulation)
+      add_test(NAME analog.1g.ihp_processing_clock_closed.${clock_flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_closed.py"
+        --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_closed>" --flow "${clock_flow}"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}" ${clock_tools}
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_closed_${clock_flow}")
+      set_tests_properties(analog.1g.ihp_processing_clock_closed.${clock_flow} PROPERTIES
+        LABELS "analog;1g;ihp;clock;${clock_flow}" TIMEOUT 45000 RESOURCE_LOCK one_g_clock_simulation)
+      add_test(NAME analog.1g.ihp_processing_clock_delivery.${clock_flow} COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_delivery.py"
+        --bench "$<TARGET_FILE:analog_1g_ihp_processing_clock_delivery>" --flow "${clock_flow}"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}" ${clock_tools}
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_delivery_${clock_flow}")
+      set_tests_properties(analog.1g.ihp_processing_clock_delivery.${clock_flow} PROPERTIES
+        LABELS "analog;1g;ihp;clock;${clock_flow}" TIMEOUT 45000 RESOURCE_LOCK one_g_clock_simulation)
+    endif()
+  endforeach()
+  if(TEST analog.1g.ihp_reference_clock.cpp AND TEST analog.1g.ihp_reference_clock.veriloga)
+    set_tests_properties(analog.1g.ihp_reference_clock.cpp PROPERTIES FIXTURES_SETUP one_g_ihp_clock_cpp)
+    set_tests_properties(analog.1g.ihp_reference_clock.veriloga PROPERTIES FIXTURES_SETUP one_g_ihp_clock_va)
+    add_test(NAME analog.1g.ihp_reference_clock.compare COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_compare.py"
+      --cpp "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_cpp/checks.json"
+      --veriloga "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_veriloga/checks.json"
+      --output "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_compare/checks.json")
+    set_tests_properties(analog.1g.ihp_reference_clock.compare PROPERTIES
+      LABELS "analog;1g;ihp;clock;veriloga" TIMEOUT 120
+      FIXTURES_REQUIRED "one_g_ihp_clock_cpp;one_g_ihp_clock_va")
+  endif()
+  if(TEST analog.1g.ihp_processing_clock.cpp AND TEST analog.1g.ihp_processing_clock.veriloga)
+    set_tests_properties(analog.1g.ihp_processing_clock.cpp PROPERTIES FIXTURES_SETUP one_g_ihp_processing_cpp)
+    set_tests_properties(analog.1g.ihp_processing_clock.veriloga PROPERTIES FIXTURES_SETUP one_g_ihp_processing_va)
+    add_test(NAME analog.1g.ihp_processing_clock.compare COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_compare.py"
+      --cpp "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_cpp/checks.json"
+      --veriloga "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_veriloga/checks.json"
+      --output "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_compare/checks.json")
+    set_tests_properties(analog.1g.ihp_processing_clock.compare PROPERTIES
+      LABELS "analog;1g;ihp;clock;veriloga" TIMEOUT 120
+      FIXTURES_REQUIRED "one_g_ihp_processing_cpp;one_g_ihp_processing_va")
+  endif()
+  if(TEST analog.1g.ihp_processing_clock_closed.cpp AND TEST analog.1g.ihp_processing_clock_closed.veriloga)
+    set_tests_properties(analog.1g.ihp_processing_clock_closed.cpp PROPERTIES FIXTURES_SETUP one_g_ihp_processing_closed_cpp)
+    set_tests_properties(analog.1g.ihp_processing_clock_closed.veriloga PROPERTIES FIXTURES_SETUP one_g_ihp_processing_closed_va)
+    add_test(NAME analog.1g.ihp_processing_clock_closed.compare COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_closed_compare.py"
+      --cpp "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_closed_cpp/checks.json"
+      --veriloga "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_closed_veriloga/checks.json"
+      --output "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_closed_compare/checks.json")
+    set_tests_properties(analog.1g.ihp_processing_clock_closed.compare PROPERTIES
+      LABELS "analog;1g;ihp;clock;veriloga" TIMEOUT 180
+      FIXTURES_REQUIRED "one_g_ihp_processing_closed_cpp;one_g_ihp_processing_closed_va")
+  endif()
+  if(TEST analog.1g.ihp_processing_clock_delivery.cpp AND TEST analog.1g.ihp_processing_clock_delivery.veriloga)
+    set_tests_properties(analog.1g.ihp_processing_clock_delivery.cpp PROPERTIES FIXTURES_SETUP one_g_ihp_processing_delivery_cpp)
+    set_tests_properties(analog.1g.ihp_processing_clock_delivery.veriloga PROPERTIES FIXTURES_SETUP one_g_ihp_processing_delivery_va)
+    add_test(NAME analog.1g.ihp_processing_clock_delivery.compare COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_delivery_compare.py"
+      --cpp "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_delivery_cpp/checks.json"
+      --veriloga "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_delivery_veriloga/checks.json"
+      --output "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_delivery_compare/checks.json")
+    set_tests_properties(analog.1g.ihp_processing_clock_delivery.compare PROPERTIES
+      LABELS "analog;1g;ihp;clock;veriloga" TIMEOUT 45000
+      FIXTURES_REQUIRED "one_g_ihp_processing_delivery_cpp;one_g_ihp_processing_delivery_va")
+  endif()
   add_executable(analog_1g_ihp_programmable_receive_conversion tests/programmable_receive_conversion.cpp)
   target_link_libraries(analog_1g_ihp_programmable_receive_conversion PRIVATE cpphdl::analog Eigen3::Eigen)
   add_executable(analog_1g_ihp_wideband_receive_conversion tests/wideband_receive_conversion.cpp)
@@ -241,6 +681,72 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
       --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
       --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/capacitor_layout")
   set_tests_properties(analog.1g.ihp_capacitor.layout PROPERTIES LABELS "analog;1g;ihp;geometry;area" TIMEOUT 1200)
+  add_test(NAME analog.1g.ihp_capacitor.small_layout
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capacitor_layout.py"
+      --small --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/capacitor_small_layout")
+  set_tests_properties(analog.1g.ihp_capacitor.small_layout PROPERTIES LABELS "analog;1g;ihp;geometry;clock" TIMEOUT 1200)
+  add_test(NAME analog.1g.ihp_processing_clock_gate.layout
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_gate_layout.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_gate_layout")
+  set_tests_properties(analog.1g.ihp_processing_clock_gate.layout PROPERTIES LABELS "analog;1g;ihp;geometry;clock" TIMEOUT 1800)
+  add_test(NAME analog.1g.ihp_processing_clock_oscillator.passive_layout
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/oscillator_passive_layout.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/oscillator_passive_layout")
+  set_tests_properties(analog.1g.ihp_processing_clock_oscillator.passive_layout PROPERTIES
+    LABELS "analog;1g;ihp;geometry;clock" TIMEOUT 1800)
+  add_test(NAME analog.1g.ihp_processing_clock_oscillator.layout
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_oscillator_layout.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_oscillator_layout")
+  set_tests_properties(analog.1g.ihp_processing_clock_oscillator.layout PROPERTIES
+    LABELS "analog;1g;ihp;geometry;clock" TIMEOUT 2400)
+  if(TARGET analog_1g_ihp_reference_clock_layout_export)
+    add_test(NAME analog.1g.ihp_reference_clock.layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_layout.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_reference_clock_layout_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_layout")
+    set_tests_properties(analog.1g.ihp_reference_clock.layout PROPERTIES
+      LABELS "analog;1g;ihp;geometry;clock" TIMEOUT 7200 FIXTURES_SETUP one_g_reference_clock_layout)
+  endif()
+  add_test(NAME analog.1g.ihp_reference_clock.lvs_view
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lvs_view.py")
+  set_tests_properties(analog.1g.ihp_reference_clock.lvs_view PROPERTIES
+    LABELS "analog;1g;ihp;geometry;clock" TIMEOUT 60)
+  if(TARGET analog_1g_ihp_reference_clock_layout_export AND NGSPICE_EXECUTABLE)
+    add_test(NAME analog.1g.ihp_reference_clock.extracted_bindings
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_extracted_bindings.py")
+    set_tests_properties(analog.1g.ihp_reference_clock.extracted_bindings PROPERTIES
+      LABELS "analog;1g;ihp;physical;clock" TIMEOUT 30)
+    if(EXISTS "${CPPHDL_IHP_MAGIC_EXECUTABLE}")
+      add_test(NAME analog.1g.ihp_reference_clock.extracted
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_extracted.py"
+          --layout-proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_layout/checks.json"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_reference_clock_layout_export>"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+          --magic "${CPPHDL_IHP_MAGIC_EXECUTABLE}"
+          --cxx "${CMAKE_CXX_COMPILER}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_extracted")
+      set_tests_properties(analog.1g.ihp_reference_clock.extracted PROPERTIES
+        LABELS "analog;1g;ihp;physical;clock;psp" TIMEOUT 12600
+        FIXTURES_REQUIRED one_g_reference_clock_layout)
+    endif()
+    add_test(NAME analog.1g.ihp_reference_clock.physical_devices
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_physical_devices.py"
+        --layout-proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_layout/checks.json"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_reference_clock_layout_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${NGSPICE_EXECUTABLE}"
+        --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_physical_devices")
+    set_tests_properties(analog.1g.ihp_reference_clock.physical_devices PROPERTIES
+      LABELS "analog;1g;ihp;physical;clock;psp" TIMEOUT 7500
+      FIXTURES_REQUIRED one_g_reference_clock_layout)
+  endif()
   add_test(NAME analog.1g.ihp_capacitor_bank.layout
     COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capacitor_bank_layout.py"
       --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
@@ -400,6 +906,20 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
   endforeach()
   option(CPPHDL_1G_PHYSICAL_TESTS "Run full standalone receive DSP/timing GDS regressions" OFF)
   if(CPPHDL_1G_PHYSICAL_TESTS)
+    if(TEST analog.1g.processing_clock_control.cells)
+      set_tests_properties(analog.1g.processing_clock_control.cells PROPERTIES
+        FIXTURES_SETUP one_g_processing_clock_control_cells)
+      add_test(NAME analog.1g.ihp_processing_clock.physical
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/processing_clock_physical.py"
+          --native-proof "${CMAKE_CURRENT_BINARY_DIR}/../tests/hardware/processing_clock_control/checks.json"
+          --cell-proof "${CMAKE_CURRENT_BINARY_DIR}/../tests/hardware/processing_clock_control_cells/checks.json"
+          --work-root "${CMAKE_CURRENT_BINARY_DIR}/tests/physical/processing_clock_control"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --verilator "${ONE_G_VERILATOR}" --cxx "${CMAKE_CXX_COMPILER}")
+      set_tests_properties(analog.1g.ihp_processing_clock.physical PROPERTIES
+        LABELS "analog;1g;ihp;clock;physical" RUN_SERIAL TRUE TIMEOUT 14400
+        FIXTURES_REQUIRED one_g_processing_clock_control_cells)
+    endif()
     foreach(block filter timing normalizer pam5_driver adc_receive)
       set(physical_timeout 14400)
       if(block STREQUAL "filter")

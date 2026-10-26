@@ -55,6 +55,19 @@ if(Python3_Interpreter_FOUND)
       --work "${CMAKE_CURRENT_BINARY_DIR}/padframe")
     set_tests_properties(analog.pdk.1g_repeater.padframe PROPERTIES LABELS "analog;pdk;repeater;padframe" TIMEOUT 120)
     if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+      add_test(NAME analog.pdk.1g_repeater.routing_rc_margin COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/routing_rc_margin.py" --pdk "${repeater_pdk}"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")
+      set_tests_properties(analog.pdk.1g_repeater.routing_rc_margin PROPERTIES LABELS "analog;pdk;repeater;timing" TIMEOUT 45)
+      add_test(NAME analog.pdk.1g_repeater.finish_timing COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/finish_timing.py" --pdk "${repeater_pdk}"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")
+      set_tests_properties(analog.pdk.1g_repeater.finish_timing PROPERTIES LABELS "analog;pdk;repeater;timing" TIMEOUT 45)
+      add_test(NAME analog.pdk.1g_repeater.finish_clock_timing COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/finish_timing.py" --pdk "${repeater_pdk}"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --clock-finish "${CPPHDL_ANALOG_REAL_ROOT}/1G/IHPSG13G2/processing_clock_finish.tcl")
+      set_tests_properties(analog.pdk.1g_repeater.finish_clock_timing PROPERTIES LABELS "analog;pdk;repeater;timing" TIMEOUT 45)
       add_test(NAME analog.pdk.1g_repeater.antenna_inputs COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/antenna_inputs.py" --pdk "${repeater_pdk}"
         --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")

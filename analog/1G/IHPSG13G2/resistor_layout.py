@@ -14,7 +14,7 @@ def append_rppd(layout, pdk, name, resistance_Ohm, width_um=2):
     choice and never treats its nominal resistance as a PVT guarantee.
     """
     if (not all(math.isfinite(v) for v in (resistance_Ohm, width_um))
-            or resistance_Ohm <= 0 or not 2 <= width_um <= 100
+            or resistance_Ohm <= 0 or not .5 <= width_um <= 100
             or abs(width_um * 100 - round(width_um * 100)) > 1e-8
             or not math.isclose(layout.dbu, .001) or layout.cell(name) is not None):
         raise ValueError('unsupported resistor, width, database unit or cell name')

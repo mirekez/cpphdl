@@ -4,9 +4,27 @@
 square dimensions from requested storage using the PDK's own area, perimeter
 and linewidth calculation, then rounds upwards on the 10 nm parameter grid.
 It checks that the resulting nominal capacitance meets the request within 1%.
-Supported requests start at 10 fF. The rounded result must meet the PDK's
+For small storage, an adjacent rectangular grid point is also tried when
+square rounding would exceed 1%. Both dimensions must meet the pinned PDK's
+1.14 µm minimum. The rounded result must meet the PDK's
 8 pF nominal maximum and maximum plate area; an exact 8 pF request is rejected
 because the next upward grid point exceeds that maximum. Unsupported requests fail explicitly.
+
+`capacitor_series_layout.append_mim_series` implements the clock gate's 2 fF
+storage with two legal MIM devices. Each has a 1.57 × 1.58 µm plate and
+4.0219 fF PCell nominal storage; their series equivalent is 2.01095 fF.
+An actual Metal5–TopVia1–TopMetal1 route connects the internal junction.
+The complete pair occupies 29.3012 µm² before surrounding circuit routing.
+The isolated pair, 4 fF and 8 fF capacitors pass strict LVS and local DRC.
+Removing the junction via fails LVS even with both capacitors and their
+terminal labels intact. Minimum-density failures remain recorded separately.
+
+This is a physical nominal-capacitance construction, not an ideal replacement:
+the floating junction has parasitic coupling and leakage, and the process
+model need not equal the PCell nominal formula. The connected clock gate
+requires process-model and extracted-circuit simulation with both devices.
+Run `analog.1g.ihp_capacitor.small_layout` for these geometry checks. The
+original sampling-storage CTest also passes after extending the sizing helper.
 
 The capacitor's `PLUS` terminal is its contacted TopMetal1 plate. `MINUS` is
 its Metal5 bottom plate. Both have real conductor geometry, pin shapes and

@@ -11,6 +11,8 @@ remainder fill reached only 33.45%, below the PDK's 35% minimum.
 Their routed Metal4 needs remainder fill too: the pinned pattern grid alone
 reached 34.822%, below the same minimum.
 Exclusion rules are unchanged.
+The sparse reference PLL uses 1 um on every metal layer: the digital receive
+module's 0.6 um setting exceeded the 60% Metal2/3 maximum in its open regions.
 This does not add a sealring or claim a complete die.
 """
 import os
@@ -35,7 +37,7 @@ for group in ("ActGatP", "Metal", "TopMetal"):
             raise RuntimeError("PDK Active/Poly fill calls changed")
         macro.text = "deep\n" + macro.text.replace(".fill(", ".flatten.fill(")
     if group == "Metal":
-        receive_module = os.environ.get("REPEATER_TOP", "RepeaterCore") != "RepeaterCore"
+        receive_module = os.environ.get("REPEATER_TOP", "RepeaterCore") not in ("RepeaterCore", "ReferenceClockGenerator")
         def spacing(match):
             distance = 0.6 if receive_module and match[2] in ("2", "3") else 1.0
             if os.environ.get("REPEATER_TOP") in ("ReceiveSampleNormalizer", "ADCReceiveController",

@@ -258,20 +258,39 @@ private:
     }
 
     unsigned add_metric(unsigned path, unsigned branch) {
-        // Carry-select groups keep metric addition off a 21-bit ripple path.
-        u<8> low, middle0, middle1;
-        u<7> high0, high1;
-        unsigned carry0, carry1;
-        low = (path & 127) + (branch & 127);
-        middle0 = ((path >> 7) & 127) + ((branch >> 7) & 127);
-        middle1 = ((path >> 7) & 127) + ((branch >> 7) & 127) + 1;
-        high0 = (path >> 14) + (branch >> 14);
-        high1 = (path >> 14) + (branch >> 14) + 1;
-        carry0 = (unsigned(low) >> 7) & 1;
-        carry1 = ((carry0 ? unsigned(middle1) : unsigned(middle0)) >> 7) & 1;
-        return (unsigned(low) & 127) |
-               (((carry0 ? unsigned(middle1) : unsigned(middle0)) & 127) << 7) |
-               ((carry1 ? unsigned(high1) : unsigned(high0)) << 14);
+        // Parallel prefix carries compute the exact 21-bit modular sum.
+        unsigned initial, propagate, generate;
+        initial = path ^ branch;
+        propagate = initial;
+        generate = path & branch;
+        for (unsigned shift = 1; shift < 21; shift = shift * 2) {
+            generate = generate | (propagate & (generate << shift));
+            propagate = propagate & (propagate << shift);
+        }
+        return (initial ^ (generate << 1)) & 2097151;
+    }
+
+    bool branch_better(unsigned a, unsigned b, unsigned c, unsigned d,
+                       bool candidate_valid, bool current_valid) {
+        // Carry-save reduction of a + b - c - d, followed by one prefix sum.
+        // The 21-bit circular bound is the same as for candidate metrics.
+        unsigned x, y, z, sum, carry;
+        x = a;
+        y = b;
+        z = ~c;
+        sum = x ^ y ^ z;
+        carry = ((x & y) | (x & z) | (y & z)) << 1;
+        x = sum;
+        y = carry;
+        z = ~d;
+        sum = x ^ y ^ z;
+        carry = ((x & y) | (x & z) | (y & z)) << 1;
+        x = sum;
+        y = carry;
+        z = 2;
+        sum = x ^ y ^ z;
+        carry = ((x & y) | (x & z) | (y & z)) << 1;
+        return candidate_valid && (!current_valid || ((add_metric(sum, carry) >> 20) & 1) != 0);
     }
 
 public:
@@ -279,18 +298,21 @@ public:
     void _work(bool reset) {
         unsigned next_cost[8];
         logic<DEPTH * 8> next_survivor[8];
-        unsigned candidates[4], candidate_bytes[4];
+        unsigned candidates[4], candidate_bytes[4], branch[4];
         bool candidate_valid[4];
         unsigned cost2[2], state2[2];
-        bool valid2[2];
+        bool valid2[2], outranks[64], is_best;
         logic<DEPTH * 8> pending, byte_mask, scheduled_byte;
         u<DEPTH - 1> pending_valid;
         unsigned subset, best_state, sd6, sd7, winning_byte, next_reachable;
         unsigned predecessor;
-        bool win01, win02, win03, win12, win13, win23, choose1, choose2, choose3;
+        bool win01, win02, win03, win12, win13, win23, choose0, choose1, choose2, choose3;
         u<2> winner;
         // The converter emits a clocked task. Initialize every temporary on
         // every invocation so a held input cannot infer persistent task storage.
+        is_best = false;
+        for (unsigned i = 0; i < 64; ++i)
+            outranks[i] = false;
         subset = 0;
         best_state = 0;
         sd6 = 0;
@@ -307,11 +329,13 @@ public:
         win12 = false;
         win13 = false;
         win23 = false;
+        choose0 = false;
         choose1 = false;
         choose2 = false;
         choose3 = false;
         for (unsigned i = 0; i < 4; ++i) {
             candidates[i] = 0;
+            branch[i] = 0;
             candidate_bytes[i] = 0;
             candidate_valid[i] = false;
         }
@@ -349,6 +373,7 @@ public:
                     sd6 = ((destination >> 1) ^ predecessor) & 1;
                     sd7 = ((destination >> 2) ^ (predecessor >> 1)) & 1;
                     subset = sd6 * 4 + sd7 * 2 + (destination & 1);
+                    branch[choice] = unsigned(metric_in[subset]());
                     candidates[choice] = add_metric(unsigned(costs[(destination & 1) * 4 + choice]),
                                                     unsigned(metric_in[subset]()));
                     candidate_valid[choice] = ((unsigned(reachable) >> ((destination & 1) * 4 + choice)) & 1) != 0;
@@ -356,17 +381,33 @@ public:
                 }
                 // Six comparisons run in parallel. The extra comparators
                 // remove a second serial comparison from the metric recurrence.
-                win01 = better(candidates[1], candidates[0], candidate_valid[1], candidate_valid[0]);
-                win02 = better(candidates[2], candidates[0], candidate_valid[2], candidate_valid[0]);
-                win03 = better(candidates[3], candidates[0], candidate_valid[3], candidate_valid[0]);
-                win12 = better(candidates[2], candidates[1], candidate_valid[2], candidate_valid[1]);
-                win13 = better(candidates[3], candidates[1], candidate_valid[3], candidate_valid[1]);
-                win23 = better(candidates[3], candidates[2], candidate_valid[3], candidate_valid[2]);
+                win01 = branch_better(unsigned(costs[(destination & 1) * 4 + 1]), branch[1],
+                                      unsigned(costs[(destination & 1) * 4 + 0]), branch[0],
+                                      candidate_valid[1], candidate_valid[0]);
+                win02 = branch_better(unsigned(costs[(destination & 1) * 4 + 2]), branch[2],
+                                      unsigned(costs[(destination & 1) * 4 + 0]), branch[0],
+                                      candidate_valid[2], candidate_valid[0]);
+                win03 = branch_better(unsigned(costs[(destination & 1) * 4 + 3]), branch[3],
+                                      unsigned(costs[(destination & 1) * 4 + 0]), branch[0],
+                                      candidate_valid[3], candidate_valid[0]);
+                win12 = branch_better(unsigned(costs[(destination & 1) * 4 + 2]), branch[2],
+                                      unsigned(costs[(destination & 1) * 4 + 1]), branch[1],
+                                      candidate_valid[2], candidate_valid[1]);
+                win13 = branch_better(unsigned(costs[(destination & 1) * 4 + 3]), branch[3],
+                                      unsigned(costs[(destination & 1) * 4 + 1]), branch[1],
+                                      candidate_valid[3], candidate_valid[1]);
+                win23 = branch_better(unsigned(costs[(destination & 1) * 4 + 3]), branch[3],
+                                      unsigned(costs[(destination & 1) * 4 + 2]), branch[2],
+                                      candidate_valid[3], candidate_valid[2]);
                 choose1 = win01 && !win12 && !win13;
                 choose2 = win02 && win12 && !win23;
                 choose3 = win03 && win13 && win23;
                 winner = (choose1 || choose3 ? 1 : 0) | (choose2 || choose3 ? 2 : 0);
-                next_cost[destination] = candidates[unsigned(winner)];
+                choose0 = !win01 && !win02 && !win03;
+                next_cost[destination] = (candidates[0] & (0 - unsigned(choose0))) |
+                                         (candidates[1] & (0 - unsigned(choose1))) |
+                                         (candidates[2] & (0 - unsigned(choose2))) |
+                                         (candidates[3] & (0 - unsigned(choose3)));
                 winning_byte = candidate_bytes[unsigned(winner)];
                 if (candidate_valid[unsigned(winner)])
                     next_reachable = next_reachable | (1 << destination);
@@ -391,29 +432,27 @@ public:
                     unsigned(selected_bytes[destination]);
                 survivors[destination]._next = next_survivor[destination];
             }
-            // Six parallel comparisons choose each quartet. One final compare
-            // joins the quartets: two serial comparison levels rather than
-            // three, without the area of all 28 pairwise eight-state tests.
-            for (unsigned group = 0; group < 2; ++group) {
-                for (unsigned choice = 0; choice < 4; ++choice) {
-                    candidates[choice] = unsigned(costs[group * 4 + choice]);
-                    candidate_valid[choice] = ((reachable >> (group * 4 + choice)) & 1) != 0;
+            // Compare each unordered pair once; lowest state wins a tie.
+            // No selected-cost mux or second comparator lies on this path.
+            for (unsigned i = 0; i < 8; ++i) {
+                for (unsigned j = 0; j < 8; ++j) {
+                    if (i < j)
+                        outranks[i * 8 + j] = better(unsigned(costs[j]), unsigned(costs[i]),
+                            ((reachable >> j) & 1) != 0, ((reachable >> i) & 1) != 0);
                 }
-                win01 = better(candidates[1], candidates[0], candidate_valid[1], candidate_valid[0]);
-                win02 = better(candidates[2], candidates[0], candidate_valid[2], candidate_valid[0]);
-                win03 = better(candidates[3], candidates[0], candidate_valid[3], candidate_valid[0]);
-                win12 = better(candidates[2], candidates[1], candidate_valid[2], candidate_valid[1]);
-                win13 = better(candidates[3], candidates[1], candidate_valid[3], candidate_valid[1]);
-                win23 = better(candidates[3], candidates[2], candidate_valid[3], candidate_valid[2]);
-                choose1 = win01 && !win12 && !win13;
-                choose2 = win02 && win12 && !win23;
-                choose3 = win03 && win13 && win23;
-                winner = (choose1 || choose3 ? 1 : 0) | (choose2 || choose3 ? 2 : 0);
-                cost2[group] = candidates[unsigned(winner)];
-                state2[group] = group * 4 + unsigned(winner);
-                valid2[group] = ((reachable >> (group * 4)) & 15) != 0;
             }
-            best_state = better(cost2[1], cost2[0], valid2[1], valid2[0]) ? state2[1] : state2[0];
+            best_state = 0;
+            for (unsigned i = 0; i < 8; ++i) {
+                is_best = ((reachable >> i) & 1) != 0;
+                for (unsigned j = 0; j < 8; ++j) {
+                    if (j < i)
+                        is_best = is_best && outranks[j * 8 + i];
+                    if (j > i)
+                        is_best = is_best && !outranks[i * 8 + j];
+                }
+                if (is_best)
+                    best_state = best_state | i;
+            }
             if (pending_count >= DEPTH - 1 || drain_left == 0) {
                 valid_reg._next = pending_count >= DEPTH - 1;
                 data_reg._next = unsigned(next_survivor[best_state] >> ((DEPTH - 1) * 8));

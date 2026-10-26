@@ -13,7 +13,7 @@ import zlib
 from transmit_reference import Reference
 
 
-LATENCY = 39
+LATENCY = 42
 
 
 def generate(path):

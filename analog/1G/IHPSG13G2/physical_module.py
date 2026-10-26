@@ -22,8 +22,32 @@ from lvs_disconnected_ports import prepare as prepare_disconnected_lvs
 from hardware import configure_cleanup, execute
 from stream import stream
 from route_checkpoints import retain_route_snapshots
+from processing_clock_constraints import constraints as processing_clock_constraints
 
 MODULES = {
+    'ProcessingClockControl': dict(case='processing_clock_control', die=280,
+                                   harness='processing_clock_control.cpp', fixture=None, defines='',
+                                   period=1.25, reference_period=8, clock_distance=280,
+                                   clock_branch_distance=1, capacitance_limit=.1,
+                                   ready_output_load=.08,
+                                   preparation_capacitance=.08, optimization_capacitance=.1,
+                                   optimization_fanout=8, final_hold_margin=.08,
+                                   route_setup_margin=.15, route_cap_margin=5,
+                                   routing_capacitance_margin=2.5,
+                                   final_network_repair=True, split_routing=True),
+    'PCSReceiver': dict(case='receiver', die=1600, harness='receiver.cpp',
+                        fixture='receiver-vectors.txt', defines='', period=1000 / 136,
+                        clock_distance=400, clock_branch_distance=1, capacitance_limit=.1,
+                        preparation_capacitance=.03, optimization_capacitance=.06,
+                        final_hold_margin=.15,
+                        pre_route_setup_margin=.35,
+                        final_network_repair=True,
+                        route_setup_margin=.35, route_cap_margin=30,
+                        route_transition_target=.2, routing_capacitance_margin=2.5,
+                        large=True, replay_timeout=900,
+                        timing_driven_placement=True, placement_density=.6,
+                        additional_checks=[('faults', 'receiver-fault-vectors.txt', 'cpp_fault_trace.csv'),
+                                           ('enable', 'receiver-vectors.txt', 'cpp_enable_trace.csv')]),
     'ReceiveFilter': dict(case='filter_datapath', die=1100, harness='filter_datapath.cpp',
                          fixture='filter-vectors.txt', defines='', clock_distance=275,
                          clock_branch_distance=1, capacitance_limit=.1,
@@ -131,6 +155,7 @@ def import_placement(origin, work, top, constraints):
     if not inputs:
         raise ValueError('placement checkpoint lacks input provenance')
     allowed = {SOURCE / 'physical_module.py', COMMON / 'tool_process.py', COMMON / 'route_extract.tcl',
+               COMMON / 'finish_timing.tcl', COMMON / 'detail_route.tcl',
                COMMON / 'route_checkpoints.py', COMMON / 'fill_core.py', COMMON / 'fill_remainder.py',
                COMMON / 'stream.py', COMMON / 'antenna_inputs.tcl'}
     changed = {}
@@ -144,7 +169,7 @@ def import_placement(origin, work, top, constraints):
             # These drivers or routing-only files cannot alter the saved
             # placement. Their new hashes are recorded and every downstream
             # route/function/timing/DRC/LVS check runs again.
-            scope = ('routing-only' if path.name in ('route_extract.tcl', 'route_checkpoints.py', 'antenna_inputs.tcl') else
+            scope = ('routing-only' if path.name in ('route_extract.tcl', 'finish_timing.tcl', 'detail_route.tcl', 'route_checkpoints.py', 'antenna_inputs.tcl') else
                      'postroute geometry' if path.name in ('fill_core.py', 'fill_remainder.py', 'stream.py') else
                      'driver/resourcing')
             changed[name] = dict(placement_sha256=expected, resume_sha256=actual, scope=scope)
@@ -168,6 +193,12 @@ def import_placement(origin, work, top, constraints):
 def implement(args):
     top = getattr(args, 'module', 'ReceiveFilter')
     module_spec = dict(MODULES[top])
+    bounded_clock = getattr(args, 'bounded_clock_run', False)
+    if bounded_clock and top != 'ProcessingClockControl':
+        raise ValueError('bounded concurrent execution is limited to the small clock controller')
+    limiter = shutil.which('prlimit') if bounded_clock else None
+    if bounded_clock and limiter is None:
+        raise ValueError('bounded controller execution requires prlimit')
     die_size = getattr(args, 'die_size', None)
     if die_size is not None:
         if (isinstance(die_size, bool) or not isinstance(die_size, (int, float)) or
@@ -184,6 +215,9 @@ def implement(args):
     if not math.isfinite(transition) or transition <= 0:
         raise ValueError('maximum accepted transition must be finite and positive')
     routed_checkpoint = getattr(args, 'resume_routed_database', None)
+    placement_only = getattr(args, 'placement_only', False)
+    if placement_only and routed_checkpoint is not None:
+        raise ValueError('placement-only mode cannot consume a routed database')
     if routed_checkpoint is not None and getattr(args, 'resume_placement', None) is not None:
         raise ValueError('choose either a placement checkpoint or a routed database')
     work, mapped = args.work.resolve(), args.mapped_work.resolve()
@@ -194,18 +228,33 @@ def implement(args):
                   scope='standalone digital receive module; not an AFE, PHY or repeater chip', stages=[],
                   drc_workers=workers, route_threads=route_threads,
                   route_optimization=dict(transition_target_ns=module_spec.get('route_transition_target', .3),
+                                          pre_route_setup_margin_ns=module_spec.get('pre_route_setup_margin', 0),
+                                          final_hold_margin_ns=module_spec.get('final_hold_margin', 0),
                                           setup_margin_ns=module_spec.get('route_setup_margin', 0),
-                                          capacitance_margin_percent=module_spec.get('route_cap_margin', 10)),
+                                          capacitance_margin_percent=module_spec.get('route_cap_margin', 10),
+                                          wire_capacitance_factor=module_spec.get('routing_capacitance_margin', 1)),
                   clock_tree=dict(buffer_distance_um=module_spec['clock_distance'],
                                   branch_buffer_min_distance_um=module_spec['clock_branch_distance'],
                                   sink_cluster_size=4, sink_cluster_max_diameter_um=40),
+                  placement_policy=dict(timing_driven=module_spec.get('timing_driven_placement', False),
+                                        target_density=module_spec.get('placement_density', .65)),
                   constraints=dict(die_size_um=module_spec['die'], period_ns=module_spec.get('period', 8), clock_uncertainty_ns=.1, input_output_delay_ns=.4,
                                    optimization_transition_ns=.3, accepted_transition_ns=transition,
-                                   optimization_fanout=4, accepted_fanout=8,
+                                   optimization_fanout=module_spec.get('optimization_fanout', 4), accepted_fanout=8,
                                    preparation_capacitance_pf=module_spec.get('preparation_capacitance', .01),
                                    optimization_capacitance_pf=module_spec.get('optimization_capacitance', .03),
                                    analog_control_load_pf=module_spec.get('analog_control_load', .005),
                                    accepted_capacitance_pf=module_spec['capacitance_limit']))
+
+    if bounded_clock:
+        report['bounded_execution'] = dict(address_space_per_process_bytes=1 << 30,
+                                           build_workers=1, shared_memory_slot=False)
+    if top == 'ProcessingClockControl':
+        report['scope'] = ('standalone clock-controller macro, local setup/hold and physical checks; '
+                           'excludes CDC/reset-release qualification and the electrical clock tree')
+        report['constraints']['reference_period_ns'] = module_spec['reference_period']
+        report['constraints']['cross_domain_timing'] = 'excluded'
+        report['constraints']['ready_output_load_pf'] = module_spec['ready_output_load']
 
     def save():
         (work / 'physical_module.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -217,24 +266,41 @@ def implement(args):
                        REPEATER_CLOCK_BRANCH_DISTANCE=str(module_spec['clock_branch_distance']),
                        REPEATER_MAX_CAPACITANCE=str(module_spec['capacitance_limit']),
                        REPEATER_MAX_TRANSITION=str(transition),
+                       REPEATER_OPTIMIZATION_FANOUT=str(module_spec.get('optimization_fanout', 4)),
+                       REPEATER_TIMING_DRIVEN_PLACEMENT=str(int(module_spec.get('timing_driven_placement', False))),
+                       REPEATER_PLACEMENT_DENSITY=str(module_spec.get('placement_density', .65)),
+                       REPEATER_CLOCK_REPAIR_SCRIPT=str(SOURCE / 'processing_clock_tree.tcl') if top == 'ProcessingClockControl' else '',
+                       REPEATER_LOGIC_REPAIR_SCRIPT=str(SOURCE / 'processing_clock_output.tcl') if top == 'ProcessingClockControl' else '',
+                       REPEATER_FINAL_TIMING_SCRIPT=str(SOURCE / 'processing_clock_finish.tcl') if top == 'ProcessingClockControl' else '',
                        REPEATER_PREPARATION_CAPACITANCE=str(module_spec.get('preparation_capacitance', .01)),
                        REPEATER_OPTIMIZATION_CAPACITANCE=str(module_spec.get('optimization_capacitance', .03)),
                        REPEATER_OUTPUT_BUFFER_CELL=module_spec.get('output_buffer_cell', ''),
                        REPEATER_ROUTE_SETUP_MARGIN=str(module_spec.get('route_setup_margin', 0)),
                        REPEATER_ROUTE_TRANSITION_TARGET=str(module_spec.get('route_transition_target', .3)),
                        REPEATER_ROUTE_CAP_MARGIN=str(module_spec.get('route_cap_margin', 10)),
+                       REPEATER_ROUTING_CAPACITANCE_MARGIN=str(module_spec.get('routing_capacitance_margin', 1)),
                        REPEATER_ROUTE_THREADS=str(route_threads),
+                       REPEATER_PRE_ROUTE_SETUP_MARGIN=str(module_spec.get('pre_route_setup_margin', 0)),
+                       REPEATER_TIMING_PREPARED='0',
+                       REPEATER_FINAL_NETWORK_REPAIR=str(int(module_spec.get('final_network_repair', False))),
+                       REPEATER_FINAL_HOLD_MARGIN=str(module_spec.get('final_hold_margin', 0)),
                        REPEATER_ADC_COMPARISON_PORTS=str(module_spec.get('comparison_ports', 16 if top == 'ADCReceiveController' else 0)),
                        REPEATER_CONSTRAINTS=str(work / 'constraints.sdc'))
     environment['PATH'] = str(args.tools.resolve() / 'bin') + os.pathsep + environment.get('PATH', '')
 
     def stage(name, command, timeout=600, fatal=True):
+        if bounded_clock:
+            # This 1,500-cell macro can use otherwise idle CPU beside the large
+            # receiver. A hard address-space limit makes excess usage fail the
+            # small run instead of exhausting the machine's routing memory.
+            command = [limiter, '--as=' + str(1 << 30), '--', *command]
         started = time.monotonic()
         print(name, flush=True)
         with (work / (name + '.log')).open('w') as log:
-            with retain_route_snapshots(work) if name == 'route-extract' else nullcontext():
+            with retain_route_snapshots(work) if name in ('route-extract', 'detailed-route') else nullcontext():
                 result = execute([str(x) for x in command], cwd=work, env=environment,
-                                 stdout=log, stderr=-2, timeout=timeout)
+                                 stdout=log, stderr=-2, timeout=timeout,
+                                 memory_exclusive=False if bounded_clock else None)
         report['stages'].append(dict(name=name, command=[str(x) for x in command], returncode=result.returncode,
                                      seconds=round(time.monotonic() - started, 3)))
         save()
@@ -272,6 +338,9 @@ def implement(args):
             input_names += ('mapped_interface.sv',)
         if module_spec['fixture'] is not None:
             input_names += (module_spec['fixture'],)
+        for _, fixture_name, trace_name in module_spec.get('additional_checks', []):
+            input_names += (fixture_name, trace_name)
+        input_names = tuple(dict.fromkeys(input_names))
         for name in input_names:
             shutil.copyfile(mapped / name, work / name)
         report['retained_input_paths'] = {str(mapped / name): str(work / name) for name in input_names}
@@ -289,14 +358,21 @@ def implement(args):
             resolved = path.resolve()
             report['input_sha256'][str(resolved)] = digest(resolved)
         for path in (SOURCE / 'physical_module.py',
-                     SOURCE / 'extract_routed.tcl',
+                     SOURCE / 'extract_routed.tcl', SOURCE / 'processing_clock_constraints.py',
+                     SOURCE / 'processing_clock_tree.tcl',
+                     SOURCE / 'processing_clock_output.tcl',
+                     SOURCE / 'processing_clock_finish.tcl',
                      SOURCE.parent / 'tests' / module_spec['harness'], COMMON / 'place_route.tcl',
-                     COMMON / 'route_extract.tcl', COMMON / 'antenna_inputs.tcl', COMMON / 'stream.py',
+                     COMMON / 'route_extract.tcl', COMMON / 'finish_timing.tcl', COMMON / 'detail_route.tcl',
+                     COMMON / 'routing_rc_margin.tcl',
+                     COMMON / 'antenna_inputs.tcl', COMMON / 'stream.py',
                      COMMON / 'route_checkpoints.py',
                      COMMON / 'clean_empty_nets.tcl', COMMON / 'tool_process.py',
                      COMMON / 'route_tech.py', COMMON / 'fill_core.py', COMMON / 'fill_remainder.py', COMMON / 'checks.py',
                      SOURCE.parent / 'tests/hardware.py'):
             report['input_sha256'][str(path)] = digest(path)
+        if bounded_clock:
+            report['input_sha256'][str(Path(limiter).resolve())] = digest(Path(limiter).resolve())
         tech = pdk / 'ihp-sg13g2/libs.tech/klayout/tech'
         lvs_runner = tech / 'lvs/run_lvs.py'
         if module_spec.get('disconnected_ports'):
@@ -329,6 +405,10 @@ set_input_transition 0.1 [all_inputs]
 set_output_delay 0.4 -clock sample_clock [all_outputs]
 set_load 0.005 [all_outputs]
 ''')
+        if top == 'ProcessingClockControl':
+            (work / 'constraints.sdc').write_text(processing_clock_constraints(
+                module_spec['reference_period'], module_spec['period'],
+                ready_output_load_pf=module_spec['ready_output_load']))
         if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)):
             with (work / 'constraints.sdc').open('a') as constraints:
                 patterns = module_spec.get('analog_control_patterns', 'trial_out* acquire_out* convert_out*')
@@ -360,11 +440,49 @@ set_load {module_spec['analog_control_load']} $analog_controls
             stage('place-clock-tree', [tools / 'bin/openroad', '-no_init', '-exit', COMMON / 'place_route.tcl'], timeout=1800)
         if routed_checkpoint is None:
             report['placement_checkpoint_sha256'] = {name: digest(work / name) for name in ('placed.odb', 'placed.sdc')}
+            if placement_only:
+                # Retain a reproducible optimization checkpoint without calling
+                # estimated placement timing a routed or layout qualification.
+                estimate = {}
+                for filename, kind in (('placed_setup.rpt', 'max'), ('placed_hold.rpt', 'min')):
+                    values = re.findall(r'worst slack ' + kind + r'\s+([-+\deE.]+)', (work / filename).read_text())
+                    if len(values) != 1 or not math.isfinite(float(values[0])):
+                        raise ValueError('missing placement slack: ' + filename)
+                    estimate[kind + '_slack_ns'] = float(values[0])
+                changed = changed_inputs(report['input_sha256'], report['retained_input_paths'])
+                if changed:
+                    raise ValueError('placement inputs changed: ' + ', '.join(changed))
+                report.update(status='placement_checkpoint_only', placement_estimate=estimate)
+                save()
+                return 0
             save()
-            environment['REPEATER_STAGE'] = 'route'
-            stage('route-extract', [tools / 'bin/openroad', '-no_init', '-exit', COMMON / 'place_route.tcl'],
-                  timeout=43200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else
-                          5400 if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)) else 1800)
+            if module_spec.get('pre_route_setup_margin', 0) > 0:
+                # Placement RC updates and global-route RC updates must not
+                # share an OpenROAD estimator instance. Preserve both inputs.
+                environment['REPEATER_STAGE'] = 'prepare_route'
+                stage('prepare-route-timing', [tools / 'bin/openroad', '-no_init', '-exit',
+                                               COMMON / 'route_extract.tcl'], timeout=1800)
+                report['pre_route_checkpoint_sha256'] = {
+                    name: digest(work / name) for name in ('pre_route.odb', 'pre_route.sdc')}
+                save()
+                environment['REPEATER_TIMING_PREPARED'] = '1'
+            if module_spec.get('large') or module_spec.get('split_routing'):
+                environment['REPEATER_STAGE'] = 'global_route'
+                stage('global-route-timing', [tools / 'bin/openroad', '-no_init', '-exit',
+                                              COMMON / 'route_extract.tcl'], timeout=43200)
+                report['global_checkpoint_sha256'] = {
+                    name: digest(work / name) for name in ('global_repaired.odb', 'global_repaired.sdc')}
+                save()
+                stage('detailed-route', [tools / 'bin/openroad', '-no_init', '-exit',
+                                         COMMON / 'detail_route.tcl'], timeout=43200)
+                shutil.copyfile(work / 'core.odb', work / 'routed_checkpoint.odb')
+                stage('extract-routed', [tools / 'bin/openroad', '-no_init', '-exit',
+                                         SOURCE / 'extract_routed.tcl'], timeout=1800)
+            else:
+                environment['REPEATER_STAGE'] = 'route'
+                stage('route-extract', [tools / 'bin/openroad', '-no_init', '-exit', COMMON / 'place_route.tcl'],
+                      timeout=43200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else
+                              5400 if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)) else 1800)
         # The exact independent oracle runs again on the routed netlist, using
         # the real Liberty-derived cell functions, before layout qualification.
         postroute_sources = [work / 'postroute.v']
@@ -383,16 +501,27 @@ set_load {module_spec['analog_control_load']} $analog_controls
             postroute_sources = [work / 'postroute_flat.v', work / 'postroute_interface.sv']
         stage('postroute-build', [args.verilator, '--cc', '--exe', '--build', '--no-skip-identical',
               '--flatten', '--output-groups', '0', '--output-split', '10000', '--output-split-cfuncs', '500',
-              '-j', '2', '--top-module', top, '-Wno-fatal', '--Mdir', work / 'postroute_obj',
+              '-j', '1' if bounded_clock else '2', '--top-module', top, '-Wno-fatal', '--Mdir', work / 'postroute_obj',
               '-CFLAGS', '-DVERILATOR -DMAPPED -std=c++17' + module_spec['defines'], *postroute_sources,
               work / 'cells.v', SOURCE.parent / 'tests' / module_spec['harness'], '-MAKEFLAGS',
               'CXX=' + args.cxx + ' LINK=' + args.cxx + ' OPT_FAST=-O0 OPT_SLOW=-O0'],
-              timeout=1800 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else 900)
+              timeout=1800 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') or module_spec.get('large') else 900)
         arguments = module_spec.get('arguments', []) if module_spec['fixture'] is None else [work / module_spec['fixture']]
+        # The receiver's pause/reset replay includes 127,188 held clocks in
+        # the complete routed gate model. Bound runtime without truncating it.
+        replay_timeout = module_spec.get('replay_timeout', 180)
         stage('postroute-vectors', [work / 'postroute_obj' / ('V' + top), *arguments,
-                                   work / 'postroute_trace.csv'], timeout=180)
+                                   work / 'postroute_trace.csv'], timeout=replay_timeout)
         if digest(work / 'postroute_trace.csv') != digest(work / 'cpp_trace.csv'):
             raise ValueError('native and postroute module trajectories differ')
+        report['additional_postroute_checks'] = {}
+        for mode, fixture_name, trace_name in module_spec.get('additional_checks', []):
+            trace = work / ('postroute_' + mode + '_trace.csv')
+            stage('postroute-' + mode, [work / 'postroute_obj' / ('V' + top),
+                                       '--' + mode, work / fixture_name, trace], timeout=replay_timeout)
+            if digest(trace) != digest(work / trace_name):
+                raise ValueError('native and postroute ' + mode + ' trajectories differ')
+            report['additional_postroute_checks'][mode] = dict(native_exact=True, sha256=digest(trace))
         report['native_postroute_exact'] = True
         report['artifact_sha256'] = {name: digest(work / name) for name in
                                      ('postroute.v', 'core.cdl', 'core.spef', 'core.def')}
@@ -404,12 +533,12 @@ set_load {module_spec['analog_control_load']} $analog_controls
         report['stream'] = stream(pdk, work, top)
         stage('fill', [tools / 'bin/klayout', '-zz', '-r', COMMON / 'fill_core.py', '-rd',
                        'output_file=' + str(work / 'module_filled.gds'), work / 'repeater_core_unfilled.gds'],
-              timeout=7200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else 1800)
+              timeout=7200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') or module_spec.get('large') else 1800)
         try:
             stage('drc', [pdk_python, tech / 'drc/run_drc.py', '--path', work / 'module_filled.gds',
                           '--topcell', top, '--run_dir', work / 'drc', '--mp', str(workers),
                           '--density_thr', str(workers), '--antenna'],
-                  timeout=7200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else 3600, fatal=False)
+                  timeout=7200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') or module_spec.get('large') else 3600, fatal=False)
             report['drc'] = check_drc(work / f'drc/module_filled_{top}_full.lyrdb', tech / 'drc')
         except Exception as error:
             failures.append('drc: ' + str(error))
@@ -418,7 +547,7 @@ set_load {module_spec['analog_control_load']} $analog_controls
         try:
             stage('lvs', [pdk_python, lvs_runner, '--layout', work / 'module_filled.gds',
                           '--netlist', work / 'lvs.cir', '--topcell', top, '--run_mode', 'deep', '--run_dir', work / 'lvs'],
-                  timeout=3600 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else 1800, fatal=False)
+                  timeout=3600 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') or module_spec.get('large') else 1800, fatal=False)
             report['lvs'] = check_lvs(work / 'lvs/module_filled.lvsdb', top, ports)
             report['artifact_sha256']['lvs/module_filled.lvsdb'] = digest(work / 'lvs/module_filled.lvsdb')
             if module_spec.get('disconnected_ports'):
@@ -453,6 +582,10 @@ if __name__ == '__main__':
     configure_cleanup()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--module', choices=MODULES, default='ReceiveFilter')
+    parser.add_argument('--bounded-clock-run', action='store_true',
+                        help='only the small clock controller: one build worker and 1 GiB per-process address-space cap')
+    parser.add_argument('--placement-only', action='store_true',
+                        help='retain placement/CTS for optimization; performs no routed or layout qualification')
     parser.add_argument('--die-size', type=float, help='override square macro die side in micrometres')
     parser.add_argument('--mapped-work', type=Path, default=ANALOG / 'build/1G/tests/hardware/filter_datapath')
     parser.add_argument('--work', type=Path, default=SOURCE / 'results/receive_filter')

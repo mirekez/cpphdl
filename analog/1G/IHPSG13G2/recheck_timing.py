@@ -13,6 +13,7 @@ sys.path.insert(0, str(SOURCE))
 from checks import check_timing
 from tool_process import configure_cleanup, execute
 from physical_module import MODULES, digest
+from processing_clock_constraints import constraints as processing_clock_constraints
 
 
 def timing_contract(evidence):
@@ -28,6 +29,16 @@ def timing_contract(evidence):
     if evidence.get('top') not in MODULES:
         raise ValueError('unknown module timing interface')
     module = MODULES[evidence['top']]
+    if evidence['top'] == 'ProcessingClockControl':
+        if constraints.get('cross_domain_timing') != 'excluded' or 'reference_period_ns' not in constraints:
+            raise ValueError('original clock-domain constraints are incomplete')
+        script = processing_clock_constraints(constraints['reference_period_ns'], constraints['period_ns'],
+            constraints['clock_uncertainty_ns'], constraints['input_output_delay_ns'],
+            constraints.get('ready_output_load_pf', constraints['analog_control_load_pf']))
+        script += f"set_max_transition {constraints['accepted_transition_ns']} [current_design]\n"
+        script += f"set_max_fanout {constraints['accepted_fanout']} [current_design]\n"
+        script += f"set_max_capacitance {constraints['accepted_capacitance_pf']} [current_design]\n"
+        return constraints.copy(), script
     if evidence['top'] == 'ADCReceiveController' or module.get('array_interface', False):
         patterns = module.get('analog_control_patterns', 'trial_out* acquire_out* convert_out*')
         count = module.get('analog_control_ports', 160)

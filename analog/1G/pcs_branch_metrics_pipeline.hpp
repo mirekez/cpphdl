@@ -3,8 +3,9 @@
 
 using namespace cpphdl;
 
-// Four registered stages: squared distances, coordinate choices, 4D group
-// sums, and balanced group selection. One observation per clock; bubbles drain.
+// Six registered stages: squared distances, coordinate choices, pair sums,
+// 4D sums, pair winners and final selection. Exact metrics retain every bit.
+// One observation per clock; bubbles drain and disabled symbol ticks hold.
 class PipelinedPCSBranchMetrics : public Module {
 public:
     // Hold the entire symbol pipeline between recovered observations.
@@ -14,14 +15,19 @@ public:
     _PORT(bool) advance_in;
     _PORT(u<18>) metric_out[8];
     _PORT(u<6>) point_out[8];
-    _PORT(bool) valid_out = _ASSIGN((accepted & 8) != 0);
+    _PORT(bool) valid_out = _ASSIGN((accepted & 32) != 0);
 
 private:
     reg<u<16>> squared[20]{}, nearest[12]{}, fixed_costs[4]{};
     reg<u<12>> low_choices{};
+    reg<u<17>> left_sums[48]{}, right_sums[48]{};
+    reg<u<6>> sum_points[48]{};
     reg<u<18>> group_costs[48]{}, metrics[8]{};
     reg<u<6>> group_points[48]{}, points[8]{};
-    reg<u<4>> accepted{};
+    reg<u<18>> pair_costs[24]{};
+    reg<u<6>> pair_points[24]{};
+    reg<u<6>> accepted{};
+    reg<u<4>> polarity{};
 
     // Same six Cartesian groups as the functional reference. Independent unit
     // checks enumerate the complete IEEE tables, rather than using this table.
@@ -148,15 +154,12 @@ public:
     void _work(bool reset) {
         int sample, difference;
         u<8> distance;
-        u<17> left_sum, right_sum;
         unsigned choices, packed, fixed, level, point, bit_index;
         unsigned coordinates[4], pair_cost[3], pair_point[3], left_cost, left_point;
         bool choose_right;
         sample = 0;
         difference = 0;
         distance = 0;
-        left_sum = 0;
-        right_sum = 0;
         choices = 0;
         packed = 0;
         fixed = 0;
@@ -174,10 +177,11 @@ public:
         }
         accepted._next = (unsigned(accepted) << 1) | (advance_in() ? 1 : 0);
         if (advance_in()) {
+            polarity._next = negate_in();
             for (unsigned lane = 0; lane < 4; ++lane) {
                 sample = int((unsigned(samples_in()) >> (8 * lane)) & 255) - 128;
-                if ((negate_in() >> lane) & 1)
-                    sample = -sample;
+                // (-sample - level)^2 == (sample + level)^2. Apply polarity
+                // by reversing the stored level costs in the next stage.
                 for (unsigned code = 0; code < 5; ++code) {
                     difference = sample - (int(code) - 2) * 32;
                     distance = unsigned(difference < 0 ? -difference : difference);
@@ -187,11 +191,16 @@ public:
         }
         if ((accepted & 1) != 0) {
             for (unsigned lane = 0; lane < 4; ++lane) {
-                fixed_costs[lane]._next = squared[lane * 5 + 4];
+                fixed_costs[lane]._next = ((polarity >> lane) & 1) ? squared[lane * 5] : squared[lane * 5 + 4];
                 for (unsigned pair = 0; pair < 3; ++pair) {
                     choose_right = squared[lane * 5 + pair] < squared[lane * 5 + pair + 2];
                     nearest[lane * 3 + pair]._next =
                         choose_right ? squared[lane * 5 + pair] : squared[lane * 5 + pair + 2];
+                    if ((polarity >> lane) & 1) {
+                        choose_right = squared[lane * 5 + 4 - pair] < squared[lane * 5 + 2 - pair];
+                        nearest[lane * 3 + pair]._next = choose_right ? squared[lane * 5 + 4 - pair]
+                                                                      : squared[lane * 5 + 2 - pair];
+                    }
                     if (choose_right)
                         choices = choices | (1 << (lane * 3 + pair));
                 }
@@ -215,22 +224,35 @@ public:
                             bit_index = bit_index + 1;
                         }
                     }
-                    left_sum = coordinates[0] + coordinates[1];
-                    right_sum = coordinates[2] + coordinates[3];
-                    group_costs[subset * 6 + group]._next = unsigned(left_sum) + unsigned(right_sum);
-                    group_points[subset * 6 + group]._next = point;
+                    left_sums[subset * 6 + group]._next = coordinates[0] + coordinates[1];
+                    right_sums[subset * 6 + group]._next = coordinates[2] + coordinates[3];
+                    sum_points[subset * 6 + group]._next = point;
                 }
             }
         }
         if ((accepted & 4) != 0) {
+            for (unsigned i = 0; i < 48; ++i) {
+                group_costs[i]._next = unsigned(left_sums[i]) + unsigned(right_sums[i]);
+                group_points[i]._next = sum_points[i];
+            }
+        }
+        if ((accepted & 8) != 0) {
             for (unsigned subset = 0; subset < 8; ++subset) {
                 for (unsigned pair = 0; pair < 3; ++pair) {
                     choose_right = less(unsigned(group_costs[subset * 6 + 2 * pair + 1]),
                                         unsigned(group_costs[subset * 6 + 2 * pair]));
-                    pair_cost[pair] = choose_right ? unsigned(group_costs[subset * 6 + 2 * pair + 1])
-                                                   : unsigned(group_costs[subset * 6 + 2 * pair]);
-                    pair_point[pair] = choose_right ? unsigned(group_points[subset * 6 + 2 * pair + 1])
-                                                    : unsigned(group_points[subset * 6 + 2 * pair]);
+                    pair_costs[subset * 3 + pair]._next = choose_right ? unsigned(group_costs[subset * 6 + 2 * pair + 1])
+                                                                     : unsigned(group_costs[subset * 6 + 2 * pair]);
+                    pair_points[subset * 3 + pair]._next = choose_right ? unsigned(group_points[subset * 6 + 2 * pair + 1])
+                                                                      : unsigned(group_points[subset * 6 + 2 * pair]);
+                }
+            }
+        }
+        if ((accepted & 16) != 0) {
+            for (unsigned subset = 0; subset < 8; ++subset) {
+                for (unsigned pair = 0; pair < 3; ++pair) {
+                    pair_cost[pair] = unsigned(pair_costs[subset * 3 + pair]);
+                    pair_point[pair] = unsigned(pair_points[subset * 3 + pair]);
                 }
                 choose_right = less(pair_cost[1], pair_cost[0]);
                 left_cost = choose_right ? pair_cost[1] : pair_cost[0];
@@ -241,6 +263,7 @@ public:
             }
         }
         if (reset) {
+            polarity._next = 0;
             accepted._next = 0;
             low_choices._next = 0;
             for (unsigned i = 0; i < 20; ++i)
@@ -250,8 +273,15 @@ public:
             for (unsigned i = 0; i < 4; ++i)
                 fixed_costs[i]._next = 0;
             for (unsigned i = 0; i < 48; ++i) {
+                left_sums[i]._next = 0;
+                right_sums[i]._next = 0;
+                sum_points[i]._next = 0;
                 group_costs[i]._next = 0;
                 group_points[i]._next = 0;
+            }
+            for (unsigned i = 0; i < 24; ++i) {
+                pair_costs[i]._next = 0;
+                pair_points[i]._next = 0;
             }
             for (unsigned i = 0; i < 8; ++i) {
                 metrics[i]._next = 0;
@@ -261,6 +291,7 @@ public:
         // Gate stored state, not combinational temporaries, so synthesis
         // does not build enable muxes for every unrolled arithmetic temporary.
         if (!symbol_enable_in() && !reset) {
+            polarity._next = polarity;
             accepted._next = accepted;
             low_choices._next = low_choices;
             for (unsigned i = 0; i < 20; ++i)
@@ -270,8 +301,15 @@ public:
             for (unsigned i = 0; i < 4; ++i)
                 fixed_costs[i]._next = fixed_costs[i];
             for (unsigned i = 0; i < 48; ++i) {
+                left_sums[i]._next = left_sums[i];
+                right_sums[i]._next = right_sums[i];
+                sum_points[i]._next = sum_points[i];
                 group_costs[i]._next = group_costs[i];
                 group_points[i]._next = group_points[i];
+            }
+            for (unsigned i = 0; i < 24; ++i) {
+                pair_costs[i]._next = pair_costs[i];
+                pair_points[i]._next = pair_points[i];
             }
             for (unsigned i = 0; i < 8; ++i) {
                 metrics[i]._next = metrics[i];
@@ -281,6 +319,7 @@ public:
     }
 
     void _strobe() {
+        polarity.strobe();
         accepted.strobe();
         low_choices.strobe();
         for (unsigned i = 0; i < 20; ++i)
@@ -290,8 +329,15 @@ public:
         for (unsigned i = 0; i < 4; ++i)
             fixed_costs[i].strobe();
         for (unsigned i = 0; i < 48; ++i) {
+            left_sums[i].strobe();
+            right_sums[i].strobe();
+            sum_points[i].strobe();
             group_costs[i].strobe();
             group_points[i].strobe();
+        }
+        for (unsigned i = 0; i < 24; ++i) {
+            pair_costs[i].strobe();
+            pair_points[i].strobe();
         }
         for (unsigned i = 0; i < 8; ++i) {
             metrics[i].strobe();

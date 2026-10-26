@@ -37,6 +37,7 @@ def run(args):
     tracked += [p for p in pcell.rglob('*') if p.is_file() and p.suffix in ('.py', '.json')]
     hashes = {str(p): digest(p) for p in tracked}
     report = dict(status='running', cases={}, full_chip_drc=False, source_sha256=hashes,
+        selected_cases=args.case or ['all'],
         scope='strict-port transistor/tap LVS and complete local DRC tables; unfilled global density remains failing')
     destination = work / 'checks.json'
 
@@ -50,14 +51,19 @@ def run(args):
                                              ('sample_n', 5, 25, False), ('sample_p', 5, 50, False),
                                              ('dummy_n', 2, 12.5, False), ('dummy_p', 5, 25, False),
                                              ('pmos', 4, 40, False), ('lv_nmos', 4, 40, False),
-                                             ('lv_pmos', 4, 40, False), ('open_gate', 4, 40, True)):
+                                             ('lv_pmos', 4, 40, False),
+                                             ('lv_narrow_n', 1, 1, False), ('lv_narrow_p', 1, 1, False),
+                                             ('open_gate', 4, 40, True)):
+            if args.case and label not in args.case:
+                continue
             case = work / label
             case.mkdir(exist_ok=True)
             layout = db.Layout()
             layout.dbu = .001
             make = {'pmos': append_hv_pmos, 'sample_p': append_hv_pmos,
                     'dummy_p': append_hv_pmos, 'lv_nmos': append_lv_nmos,
-                    'lv_pmos': append_lv_pmos}.get(label, append_hv_nmos)
+                    'lv_pmos': append_lv_pmos, 'lv_narrow_n': append_lv_nmos,
+                    'lv_narrow_p': append_lv_pmos}.get(label, append_hv_nmos)
             top, info = make(layout, args.pdk, 'RoutedMOS', width, .13 if label.startswith('lv_') else .45, fingers)
             if damage:
                 # Open the last physical gate connection while keeping all
@@ -122,4 +128,6 @@ if __name__ == '__main__':
     parser.add_argument('--pdk', type=Path, required=True)
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--case', action='append', choices=('one', 'four', 'sample_n', 'sample_p',
+        'dummy_n', 'dummy_p', 'pmos', 'lv_nmos', 'lv_pmos', 'lv_narrow_n', 'lv_narrow_p', 'open_gate'))
     run(parser.parse_args())

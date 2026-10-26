@@ -56,7 +56,8 @@ def run(args):
 
     try:
         for label, value, width, damage in (('line_100', 100, 20, False), ('bias_2500', 2500, 2, False),
-                ('bias_100k', 100000, 2, False), ('open_contacts', 2500, 2, True)):
+                ('bias_100k', 100000, 2, False), ('clock_10k', 10000, .5, False),
+                ('clock_20k', 20000, .5, False), ('open_contacts', 2500, 2, True)):
             case = work / label
             case.mkdir()
             layout = db.Layout()
@@ -111,7 +112,7 @@ def run(args):
             save()
             print(label + ': pass', flush=True)
         for value, width in ((0, 2), (-1, 2), (float('nan'), 2), (float('inf'), 2),
-                             (100, 1), (100, 2.005), (1e9, 2)):
+                             (100, .49), (100, 2.005), (1e9, 2)):
             layout = db.Layout()
             layout.dbu = .001
             try:

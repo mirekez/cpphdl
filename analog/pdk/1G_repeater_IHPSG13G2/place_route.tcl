@@ -14,6 +14,20 @@ if {[info exists ::env(REPEATER_TOP)]} {
     set constraints $::env(REPEATER_CONSTRAINTS)
 }
 set_thread_count 2
+set optimization_fanout 4
+set placement_density 0.65
+set placement_options {}
+if {[info exists ::env(REPEATER_PLACEMENT_DENSITY)]} {
+    set placement_density $::env(REPEATER_PLACEMENT_DENSITY)
+}
+if {[info exists ::env(REPEATER_TIMING_DRIVEN_PLACEMENT)] && $::env(REPEATER_TIMING_DRIVEN_PLACEMENT) == "1"} {
+    # Cluster the receiver's late arithmetic paths before CTS and routing.
+    # The floorplan must leave space for congestion-driven spreading.
+    set placement_options {-timing_driven -routability_driven -timing_driven_net_weight_max 5 -timing_driven_nets_percentage 20}
+}
+if {[info exists ::env(REPEATER_OPTIMIZATION_FANOUT)]} {
+    set optimization_fanout $::env(REPEATER_OPTIMIZATION_FANOUT)
+}
 read_lef "$work/route_tech.lef"
 read_lef "$libroot/lef/sg13g2_stdcell.lef"
 define_corners slow fast
@@ -22,6 +36,14 @@ read_liberty -corner fast "$libroot/lib/sg13g2_stdcell_fast_1p32V_m40C.lib"
 read_verilog "$work/mapped.v"
 link_design $design_top
 read_sdc $constraints
+set setup_repair_options {}
+if {$design_top == "ProcessingClockControl"} {
+    set setup_repair_options {-skip_buffering -skip_buffer_removal}
+}
+if {[info exists ::env(REPEATER_LOGIC_REPAIR_SCRIPT)] && $::env(REPEATER_LOGIC_REPAIR_SCRIPT) != ""} {
+    source $::env(REPEATER_LOGIC_REPAIR_SCRIPT)
+    prepare_processing_clock_output
+}
 initialize_floorplan -die_area [list 0 0 $die_size $die_size] \
     -core_area [list 20 20 [expr {$die_size - 20}] [expr {$die_size - 20}]] -site CoreSite
 make_tracks
@@ -44,7 +66,7 @@ if {[info exists ::env(REPEATER_OUTPUT_BUFFER_CELL)] && $::env(REPEATER_OUTPUT_B
 }
 if {$design_top != "RepeaterCore"} {
     set_placement_padding -global -left 1 -right 1
-    set_max_fanout 4 [current_design]
+    set_max_fanout $optimization_fanout [current_design]
     set preparation_capacitance 0.01
     set optimization_capacitance 0.03
     if {[info exists ::env(REPEATER_PREPARATION_CAPACITANCE)]} {
@@ -54,7 +76,7 @@ if {$design_top != "RepeaterCore"} {
     set_max_capacitance $preparation_capacitance [current_design]
     set_max_transition 0.3 [current_design]
     repair_design -pre_placement
-    global_placement -density 0.65
+    global_placement -density $placement_density {*}$placement_options
     # Use a physical interconnect budget after cell-only fanout preparation.
     # Individual Liberty pin limits still apply when they are more restrictive.
     set_max_capacitance $optimization_capacitance [current_design]
@@ -81,15 +103,20 @@ if {$design_top != "RepeaterCore"} {
 if {$design_top != "RepeaterCore"} {
     set_propagated_clock [all_clocks]
 }
+if {[info exists ::env(REPEATER_CLOCK_REPAIR_SCRIPT)] && $::env(REPEATER_CLOCK_REPAIR_SCRIPT) != ""} {
+    source $::env(REPEATER_CLOCK_REPAIR_SCRIPT)
+    repair_processing_clock_tree
+    detailed_placement
+}
 estimate_parasitics -placement
 repair_design
 if {$design_top != "RepeaterCore"} {
     # Newly inserted clock/tie/data buffers need a global placement update.
     # Legalizing them directly can spread them far from the loads they serve.
-    global_placement -incremental -density 0.65
+    global_placement -incremental -density $placement_density {*}$placement_options
     detailed_placement
     estimate_parasitics -placement
-    repair_timing -setup -max_iterations 100
+    repair_timing -setup -max_iterations 100 {*}$setup_repair_options
     detailed_placement
     estimate_parasitics -placement
     repair_timing -hold -max_iterations 100
@@ -104,6 +131,16 @@ if {$design_top != "RepeaterCore"} {
     # Retain the real placement for path diagnosis even when routing fails.
     # Estimated wire delays here are distinct from the extracted final reports.
     estimate_parasitics -placement
+    if {[info exists ::env(REPEATER_FINAL_HOLD_MARGIN)] && $::env(REPEATER_FINAL_HOLD_MARGIN) > 0} {
+        # Drive-strength repair can shorten previously repaired hold paths.
+        # Insert physical delay after that repair, preserving setup constraints.
+        repair_timing -hold -hold_margin $::env(REPEATER_FINAL_HOLD_MARGIN) -max_iterations 100
+        # Spend the placement padding reserved for late buffers. Site legality
+        # and the subsequent complete PDK DRC still constrain actual geometry.
+        set_placement_padding -global -left 0 -right 0
+        detailed_placement
+        estimate_parasitics -placement
+    }
     report_checks -path_delay min_max -format full_clock_expanded -digits 9 > "$work/placed_timing.rpt"
     report_worst_slack -max -digits 9 > "$work/placed_setup.rpt"
     report_worst_slack -min -digits 9 > "$work/placed_hold.rpt"
@@ -120,7 +157,7 @@ if {$design_top != "RepeaterCore"} {
         error "placed module violates slew/capacitance/fanout; inspect placed_electrical.rpt"
     }
     set_max_transition 0.3 [current_design]
-    set_max_fanout 4 [current_design]
+    set_max_fanout $optimization_fanout [current_design]
     set_max_capacitance $optimization_capacitance [current_design]
     global_connect
     write_db "$work/placed.odb"
@@ -152,7 +189,7 @@ if {$design_top != "RepeaterCore"} {
     detailed_placement
     global_route -end_incremental
     estimate_parasitics -global_routing
-    repair_timing -setup -max_iterations 100
+    repair_timing -setup -max_iterations 100 {*}$setup_repair_options
     repair_timing -hold -hold_margin 0.05 -max_iterations 100
     global_route -start_incremental
     detailed_placement
