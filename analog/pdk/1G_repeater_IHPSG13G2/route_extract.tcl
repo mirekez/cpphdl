@@ -29,6 +29,12 @@ set input_database placed
 if {[info exists ::env(REPEATER_TIMING_PREPARED)] && $::env(REPEATER_TIMING_PREPARED) == "1"} {
     set input_database pre_route
 }
+set resized_checkpoint 0
+if {[info exists ::env(REPEATER_RESIZED_GLOBAL)] && $::env(REPEATER_RESIZED_GLOBAL) == "1"} {
+    if {$::env(REPEATER_TOP) != "PCSReceiver"} { error "resized checkpoint is receiver-only" }
+    set input_database resized_global
+    set resized_checkpoint 1
+}
 read_db "$work/$input_database.odb"
 read_sdc "$work/$input_database.sdc"
 set_wire_rc -signal -layer Metal3
@@ -43,6 +49,11 @@ set_propagated_clock [all_clocks]
 add_global_connection -net VDD -inst_pattern .* -pin_pattern VDD -power
 add_global_connection -net VSS -inst_pattern .* -pin_pattern VSS -ground
 global_connect
+if {[info exists ::env(REPEATER_CLOCK_NDR_POLICY)] && $::env(REPEATER_CLOCK_NDR_POLICY) == "none"} {
+    if {$::env(REPEATER_TOP) != "PCSReceiver"} { error "clock NDR recovery is receiver-only" }
+    source $::env(REPEATER_CLOCK_NDR_SCRIPT)
+    remove_receiver_clock_ndr [sta::find_all_clk_nets] "$work/${input_database}_clock_ndr_recovery.csv"
+}
 if {[info exists ::env(REPEATER_STAGE)] && $::env(REPEATER_STAGE) == "prepare_route"} {
     # Hold legalization can move a marginal setup path below zero. Build
     # setup reserve in the saved placement before routed loads are introduced.
@@ -73,23 +84,25 @@ set_routing_layers -signal Metal2-Metal5 -clock Metal3-Metal5
 set_global_routing_layer_adjustment Metal2-Metal5 0.30
 global_route -guide_file "$work/core.guide"
 estimate_parasitics -global_routing
-repair_design -slew_margin 20 -cap_margin $cap_margin
-# The large receiver can change tens of thousands of nets in this repair.
-# Retain the legalized topology before routing it, and rebuild its routes
-# instead of carrying a large incremental dirty-net set into the router.
-# Other modules retain the incremental path used by their qualified flows.
-if {[info exists ::env(REPEATER_TOP)] && $::env(REPEATER_TOP) == "PCSReceiver"} {
-    detailed_placement
-    global_connect
-    write_db "$work/resized_global.odb"
-    write_sdc "$work/resized_global.sdc"
-    puts "CPPHDL: receiver resized network checkpoint saved; rebuilding global routes"
-    flush stdout
-    global_route -guide_file "$work/core.guide" -verbose
-} else {
-    global_route -start_incremental
-    detailed_placement
-    global_route -end_incremental
+if {!$resized_checkpoint} {
+    repair_design -slew_margin 20 -cap_margin $cap_margin
+    # The large receiver can change tens of thousands of nets in this repair.
+    # Retain the legalized topology before routing it, and rebuild its routes
+    # instead of carrying a large incremental dirty-net set into the router.
+    # Other modules retain the incremental path used by their qualified flows.
+    if {[info exists ::env(REPEATER_TOP)] && $::env(REPEATER_TOP) == "PCSReceiver"} {
+        detailed_placement
+        global_connect
+        write_db "$work/resized_global.odb"
+        write_sdc "$work/resized_global.sdc"
+        puts "CPPHDL: receiver resized network checkpoint saved; rebuilding global routes"
+        flush stdout
+        global_route -guide_file "$work/core.guide" -verbose
+    } else {
+        global_route -start_incremental
+        detailed_placement
+        global_route -end_incremental
+    }
 }
 estimate_parasitics -global_routing
 repair_timing -setup -setup_margin $setup_margin -max_iterations 100 {*}$setup_repair_options

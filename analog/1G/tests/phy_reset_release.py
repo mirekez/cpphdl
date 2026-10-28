@@ -5,6 +5,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import tempfile
 
 from hardware import configure_cleanup, execute, source_dependencies
@@ -14,8 +15,11 @@ ANALOG = SOURCE.parents[2]
 
 
 def digest(path):
+    value = hashlib.sha256()
     with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        for block in iter(lambda: stream.read(1 << 20), b''):
+            value.update(block)
+    return value.hexdigest()
 
 
 def run(args):
@@ -41,6 +45,7 @@ def run(args):
     def save():
         text = json.dumps(report, indent=2) + '\n'
         (work / 'checks.json').write_text(text)
+        (work / 'hardware_checks.json').write_text(text)
         (args.work / 'checks.json').write_text(text)
 
     def command(label, argv, bounded=True):
@@ -122,7 +127,10 @@ write_verilog -noattr {work}/cells.v
             raise ValueError('native/RTL/IHP reset trajectories differ')
         if any(digest(p) != value for p, value in hashes.items()):
             raise ValueError('reset qualification sources changed')
+        # The physical flow replays this exact native trajectory after routing.
+        shutil.copyfile(work / 'native.csv', work / 'cpp_trace.csv')
         report.update(status='pass', module=top, schedules=schedules, events=events, cell_inventory=dict(inventory),
+            native_rtl_exact=True, native_mapped_exact=True, mapped_sha256=digest(work / 'mapped.v'),
             trace_sha256=traces, artifact_sha256={str(p): digest(p) for p in [*rtl, work / 'mapped.v', work / 'mapped.json']})
         print(f'PASS {top}: native/RTL/IHP cells, {events} exact events')
     except BaseException as error:

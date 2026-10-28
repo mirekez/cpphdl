@@ -25,10 +25,13 @@ from hardware import source_dependencies
 from input_charge import verify_files
 from tool_process import execute, configure_cleanup, memory_slot
 from trace_storage import capture_trace
+from reserved_trace import capture_reserved_trace
 from xspice_live import headers
 
 
 def run(args):
+    if args.simulation_timeout <= 0 or args.trace_capacity_mib <= 0:
+        raise ValueError('simulation timeout and reserved trace capacity must be positive')
     hashes = {}
     for directory, proof_path, ports, count, gds_name in (
             (args.oscillator, args.oscillator_layout, PORTS, 294, 'oscillator.gds'),
@@ -54,12 +57,15 @@ def run(args):
     files = [SOURCE, args.ngspice.resolve(),
         SOURCE.with_name('processing_clock_delivery.py'), SOURCE.with_name('processing_clock_closed.py'),
         ANALOG / 'VerilogA/compact_trace.py', ANALOG / 'VerilogA/compare.py', ANALOG / 'VerilogA/trace_storage.py',
+        ANALOG / 'VerilogA/reserved_trace.py',
         ANALOG / '1G/tests/hardware.py', ANALOG / 'pdk/1G_repeater_IHPSG13G2/tool_process.py']
     files += [SOURCE.parents[1] / name for name in ('extracted_clock_delivery.py',
         'oscillator_extracted_process.py', 'resistor_body_extraction.py', 'resistor_body_model.py',
         'extracted_connections.py', 'reduce_extracted_wires.py', 'input_charge.py', 'xspice_live.py')]
     files += list(models.rglob('*.lib')) + list(models.rglob('*.spice'))
     hashes.update({str(p): digest(p) for p in files})
+    if args.input_identity is not None:
+        hashes[str(args.input_identity.resolve())] = digest(args.input_identity)
     args.work.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=args.work.resolve()))
     report = dict(status='running', work=str(work), source_sha256=hashes,
@@ -88,6 +94,13 @@ def run(args):
         command('host-build', [args.cxx, '-std=c++17', '-O1', '-fPIC', '-shared',
             '-I' + str(ANALOG.parent / 'include'), '-I' + str(headers(args.ngspice)),
             str(host), '-o', str(work / 'controller.so')], 120)
+        if args.input_identity is not None:
+            identity = json.loads(args.input_identity.read_text())['generated_inputs']
+            expected = {Path(path).name: item['sha256'] for path, item in identity.items()}
+            if set(expected) != {'closed.cir', 'controller.so'} or any(
+                    digest(work / name) != value for name, value in expected.items()):
+                raise ValueError('regenerated circuit/controller differs from the recorded experiment')
+            report['generated_input_identity'] = expected
         save()
         # Preserve every output byte without needing space for both a raw
         # multi-gigabyte trace and its archive at the end of the simulation.
@@ -95,17 +108,28 @@ def run(args):
         # startup-only run fits the smaller limit.
         simulation_memory = (1 if args.startup_only else 3) << 30
         report['simulation_memory_limit_bytes'] = simulation_memory
+        report['simulation_timeout_s'] = 1800 if args.startup_only else args.simulation_timeout
+        report['reserved_trace_capacity_bytes'] = 0 if args.startup_only else args.trace_capacity_mib << 20
+        report['stage'] = 'waiting_for_memory_slot'
         save()
-        with capture_trace(work / 'spice.dat') as capture:
-            command('ngspice', ['prlimit', '--as=' + str(simulation_memory), '--', str(args.ngspice.resolve()), '-b', 'closed.cir'],
-                    1800 if args.startup_only else 43200)
-        report['trace_storage'] = capture.metadata
-        save()
-        # Large full-resolution checking serializes with routing and other
-        # checkers, while the simulator itself has the explicit bound above.
-        with memory_slot(['extracted-clock-checker'], exclusive=True):
+        # Final wrdata allocation grows much larger than the integration's
+        # resident vectors. Reserve memory for simulation, export and checking
+        # together so this peak cannot kill a concurrent router. Reserve real
+        # output blocks before starting the long transient, not at its end.
+        with memory_slot(['extracted-clock-complete-run'], exclusive=not args.startup_only):
+            capture_context = (capture_trace(work / 'spice.dat') if args.startup_only else
+                               capture_reserved_trace(work / 'spice.dat', args.trace_capacity_mib << 20))
+            with capture_context as capture:
+                report['stage'] = 'transient'
+                save()
+                command('ngspice', ['prlimit', '--as=' + str(simulation_memory), '--', str(args.ngspice.resolve()), '-b', 'closed.cir'],
+                        report['simulation_timeout_s'])
+            report['trace_storage'] = capture.metadata
+            report['stage'] = 'electrical'
+            save()
             resource.setrlimit(resource.RLIMIT_AS, (3 << 30, 3 << 30))
             qualify_trace(work, args, report)
+        report['stage'] = 'complete'
         verify_files(hashes)
         for name in ('closed.cir', 'controller.so', 'events.csv', 'spice.dat.gz'):
             report.setdefault('artifact_sha256', {})[str(work / name)] = digest(work / name)
@@ -151,4 +175,10 @@ if __name__ == '__main__':
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--cxx', default='/usr/bin/c++')
     parser.add_argument('--startup-only', action='store_true')
+    parser.add_argument('--simulation-timeout', type=int, default=86400,
+        help='wall-clock budget for the unchanged full 64 us transient (seconds)')
+    parser.add_argument('--trace-capacity-mib', type=int, default=1792,
+        help='disk blocks reserved before the full transient, released after compressed output')
+    parser.add_argument('--input-identity', type=Path,
+        help='optional recorded closed.cir/controller.so identities required before a resource-only rerun')
     run(parser.parse_args())

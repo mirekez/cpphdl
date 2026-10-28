@@ -198,20 +198,19 @@ def create_reference_clock(pdk, source, hierarchy):
 
     layout, top, info = create_row('ReferenceClockGenerator', PORTS, parts,
                                  order_parts=order_parts, priority_nets=sensitive)
-    # LV and HV NMOS share the p-substrate. Preserve each real guard contact;
-    # connect its substrate side to the same internal net as the LV devices.
+    # The row builder binds both LV and HV NMOS to the shared substrate.
+    # Check that binding here without adding a second substrate terminal.
     shared = []
     for component in info['components']:
         if component['kind'] == 'mos' and component['geometry']['model'] == 'sg13_hv_nmos':
             name = component['name']
             original = component['geometry']['schematic']
             definition = re.sub(r'\bbody\b', 'SUB', original.replace(' D G S B\n', ' D G S B SUB\n'))
-            if info['schematic'].count(original) != 1:
+            if info['schematic'].count(definition) != 1:
                 raise ValueError('ambiguous HV substrate definition')
-            info['schematic'] = info['schematic'].replace(original, definition)
-            info['schematic'], count = re.subn(r'^(X\d+ .*) ' + re.escape(name) + r'$',
-                r'\1 PSUB ' + name, info['schematic'], flags=re.M)
-            if count != 1:
+            instances = re.findall(r'^X\d+ .* PSUB ' + re.escape(name) + r'$',
+                                   info['schematic'], flags=re.M)
+            if len(instances) != 1:
                 raise ValueError('ambiguous HV substrate instance')
             shared.append(name)
     info['common_hv_substrate'] = shared

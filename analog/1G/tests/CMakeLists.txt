@@ -183,6 +183,10 @@ foreach(reset_case IN ITEMS phy_reset_release phy_reset_control)
       --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${reset_case}")
     set_tests_properties(analog.1g.${reset_case}.cells PROPERTIES
       LABELS "analog;1g;hardware;rtl;ihp;clock" TIMEOUT 1200)
+    if(reset_case STREQUAL "phy_reset_control")
+      set_tests_properties(analog.1g.${reset_case}.cells PROPERTIES
+        FIXTURES_SETUP one_g_phy_reset_control_cells)
+    endif()
   endif()
 endforeach()
 

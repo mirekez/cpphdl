@@ -20,7 +20,13 @@ proc split_flow_signal_loads {report pass} {
         set loads {}
         set drivers {}
         foreach term [$net getITerms] {
-            if {[$term getIoType] == "INPUT"} {lappend loads $term}
+            # Antenna diodes protect the existing wire; they are not logic
+            # sinks. Keep them on that segment when buffering its sole
+            # functional load. The rerouted branches get a fresh antenna check.
+            if {[$term getIoType] == "INPUT" &&
+                [[[$term getInst] getMaster] getName] != "sg13g2_antennanp"} {
+                lappend loads $term
+            }
             if {[$term getIoType] == "OUTPUT"} {lappend drivers $term}
         }
         if {[llength $loads] != 1 || [llength $drivers] != 1} {continue}

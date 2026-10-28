@@ -25,7 +25,7 @@ def digest(path):
     return result.hexdigest()
 
 
-def preserve_small_values(source):
+def preserve_small_values(source, precise_values=False):
     """Keep sub-attofarad values which the pinned SI formatter rounds to zero.
 
     This changes decimal serialization only. The original esSIvalue leaves
@@ -41,12 +41,54 @@ def preserve_small_values(source):
                    '\tfprintf(file, "%.8g", (double)value);\n\treturn;\n    }')
     if text.count(original) != 1:
         raise ValueError('pinned Magic SI formatter differs from the reviewed correction')
-    path.write_text(text.replace(original, replacement))
+    text = text.replace(original, replacement)
+    if precise_values:
+        formatter = '    nDecimals(vstr, (double)value, 5);\n    morphNumericString(vstr, 5);'
+        if text.count(formatter) != 1:
+            raise ValueError('pinned Magic decimal formatter differs from the reviewed correction')
+        # Fixed decimal places accumulate independent rounding on the ground
+        # and coupling records. Nine significant digits retain float precision
+        # at every SI scale without changing the capacitance acceptance bounds.
+        text = text.replace(formatter, '    snprintf(vstr, sizeof(vstr), "%.9g", (double)value);')
+        text = text.replace('fprintf(file, "%.8g", (double)value);',
+                            'fprintf(file, "%.9g", (double)value);')
+    path.write_text(text)
     return dict(file='ext2spice/ext2spice.c', before_sha256=before, after_sha256=digest(path),
-                reason='scientific formatting below 1e-18; no extraction coefficient or geometry changes')
+                reason=('nine significant digits across SI scales' if precise_values else
+                        'scientific formatting below 1e-18') + '; no extraction coefficient or geometry changes')
 
 
-def prepare(destination, clip_tile_area=False, full_sidewall=False):
+def preserve_double_values(source):
+    """Do not narrow double-valued geometry before decimal serialization."""
+    records = []
+    for relative, replacements in (
+        ('ext2spice/ext2spice.c', (
+            ('float esScale = -1.0 ;', 'double esScale = -1.0 ;'),
+            ('esSIvalue(\n    FILE *file,\n    float value)',
+             'esSIvalue(\n    FILE *file,\n    double value)'),
+            ('    float avalue;\n\n    avalue = fabsf(value);',
+             '    double avalue;\n\n    avalue = fabs(value);'))),
+        ('ext2spice/ext2spice.h', (
+            ('extern float esScale;', 'extern double esScale;'),
+            ('extern void esSIvalue(FILE *file, float value);',
+             'extern void esSIvalue(FILE *file, double value);'),))):
+        path = source / relative
+        before = digest(path)
+        text = path.read_text()
+        for old, new in replacements:
+            if text.count(old) != 1:
+                raise ValueError('pinned Magic SI argument differs: ' + relative)
+            text = text.replace(old, new)
+        path.write_text(text)
+        records.append(dict(path=relative, before_sha256=before, after_sha256=digest(path)))
+    return dict(files=records, reason='retain double geometry scale, arguments and SI scaling in serializer; '
+                'no geometry snapping or extraction coefficient changes')
+
+
+def prepare(destination, clip_tile_area=False, full_sidewall=False, precise_values=False,
+            double_values=False):
+    if double_values and not precise_values:
+        raise ValueError('double serialization requires precise decimal output')
     root = destination.resolve()
     root.mkdir(parents=True, exist_ok=True)
     downloads = {}
@@ -72,7 +114,9 @@ def prepare(destination, clip_tile_area=False, full_sidewall=False):
     build = Path(tempfile.mkdtemp(prefix='build-', dir=root))
     subprocess.run(['tar', '-xzf', str(archive), '-C', str(build)], check=True)
     source = build / ('magic-' + COMMIT)
-    adjustments = [preserve_small_values(source)]
+    adjustments = [preserve_small_values(source, precise_values)]
+    if double_values:
+        adjustments.append(preserve_double_values(source))
     if clip_tile_area:
         from magic_tile_area import apply
         adjustments.append(apply(source))
@@ -122,5 +166,9 @@ if __name__ == '__main__':
                         help='bound distributed capacitance area weights to conductor tile geometry')
     parser.add_argument('--full-sidewall', action='store_true',
                         help='remove the duplicate sidewall parser halving; requires separate coefficient qualification')
+    parser.add_argument('--precise-values', action='store_true',
+                        help='preserve nine significant digits instead of five fixed decimal places in SPICE values')
+    parser.add_argument('--double-values', action='store_true',
+                        help='retain double precision through SPICE serialization; requires --precise-values')
     args = parser.parse_args()
-    prepare(args.destination, args.clip_tile_area, args.full_sidewall)
+    prepare(args.destination, args.clip_tile_area, args.full_sidewall, args.precise_values, args.double_values)

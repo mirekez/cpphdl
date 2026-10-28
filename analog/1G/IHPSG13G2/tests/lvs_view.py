@@ -52,6 +52,25 @@ class LabelScoping(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown local device pin'):
             create_flat_view(self.source, self.target, 'Top')
 
+    def test_explicit_native_pin_keeps_masks_and_top_ports(self):
+        self.child.shapes(self.pin).insert(db.Text('CLK', db.Trans(500, 0)))
+        self.layout.write(str(self.source))
+        report = create_flat_view(self.source, self.target, 'Top', {'CLK'})
+        checked = db.Layout()
+        checked.read(str(self.target))
+        self.assertEqual(len(report['removed_local_pin_labels']), 2)
+        self.assertIn('CLK', report['explicitly_allowed_device_pins'])
+        self.assertEqual(mask_signature(checked, 'Top'), mask_signature(self.layout, 'Top'))
+        self.child.shapes(self.pin).insert(db.Text('UNREVIEWED', db.Trans(800, 0)))
+        self.layout.write(str(self.source))
+        with self.assertRaisesRegex(ValueError, 'unknown local device pin'):
+            create_flat_view(self.source, self.target, 'Top', {'CLK'})
+
+    def test_invalid_explicit_native_pin(self):
+        self.layout.write(str(self.source))
+        with self.assertRaisesRegex(ValueError, 'invalid explicit local device pin'):
+            create_flat_view(self.source, self.target, 'Top', {'two names'})
+
 
 if __name__ == '__main__':
     unittest.main()

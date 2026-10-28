@@ -23,8 +23,17 @@ from hardware import configure_cleanup, execute
 from stream import stream
 from route_checkpoints import retain_route_snapshots
 from processing_clock_constraints import constraints as processing_clock_constraints
+from phy_reset_constraints import constraints as phy_reset_constraints
 
 MODULES = {
+    'PHYResetControl': dict(case='phy_reset_control', die=140, harness='phy_reset_control.cpp',
+                           fixture=None, defines='', period=4, reference_period=8,
+                           pcs_period=1000 / 136, output_load=.08,
+                           clock_distance=70, clock_branch_distance=25, capacitance_limit=.1,
+                           preparation_capacitance=.08, optimization_capacitance=.08,
+                           output_buffer_cell='sg13g2_buf_4', final_hold_margin=.08,
+                           route_setup_margin=.15, route_cap_margin=20,
+                           final_network_repair=True),
     'ProcessingClockControl': dict(case='processing_clock_control', die=280,
                                    harness='processing_clock_control.cpp', fixture=None, defines='',
                                    period=1.25, reference_period=8, clock_distance=280,
@@ -144,11 +153,13 @@ def changed_inputs(expected, retained=None):
     return changed
 
 
-def import_placement(origin, work, top, constraints):
+def import_placement(origin, work, top, constraints, checkpoint='placed'):
     """Resume geometry, never a previous pass result or changed design inputs."""
     origin = origin.resolve()
     metadata = origin / 'physical_module.json'
     previous = json.loads(metadata.read_text())
+    if checkpoint not in ('placed', 'resized_global') or (checkpoint == 'resized_global' and top != 'PCSReceiver'):
+        raise ValueError('unsupported physical checkpoint stage')
     if previous.get('top') != top or previous.get('constraints') != constraints:
         raise ValueError('placement checkpoint has a different module or timing contract')
     inputs = previous.get('input_sha256', {})
@@ -176,25 +187,29 @@ def import_placement(origin, work, top, constraints):
     if digest(origin / 'mapped.v') != digest(work / 'mapped.v'):
         raise ValueError('placement checkpoint netlist differs from the current mapped proof')
     adopted = {}
-    recorded = previous.get('placement_checkpoint_sha256', {})
-    for name in ('placed.odb', 'placed.sdc'):
+    record_key = 'placement_checkpoint_sha256' if checkpoint == 'placed' else 'resized_checkpoint_sha256'
+    recorded = previous.get(record_key, {})
+    for name in (checkpoint + '.odb', checkpoint + '.sdc'):
         path = origin / name
         value = digest(path)
         if name in recorded and recorded[name] != value:
             raise ValueError('placement checkpoint artifact changed: ' + name)
         shutil.copyfile(path, work / name)
+        if digest(work / name) != value:
+            raise ValueError('physical checkpoint changed while copying: ' + name)
         adopted[name] = value
     return dict(origin=str(origin), origin_report_sha256=digest(metadata),
                 checkpoint_sha256=adopted, recorded_before_interruption=bool(recorded),
                 changed_driver_sources=changed,
-                scope='resume placement only; all routing, timing, functional, DRC and LVS checks run again')
+                checkpoint_stage=checkpoint,
+                scope='resume saved geometry only; all routing, timing, functional, DRC and LVS checks run again')
 
 
 def implement(args):
     top = getattr(args, 'module', 'ReceiveFilter')
     module_spec = dict(MODULES[top])
     bounded_clock = getattr(args, 'bounded_clock_run', False)
-    if bounded_clock and top != 'ProcessingClockControl':
+    if bounded_clock and top not in ('ProcessingClockControl', 'PHYResetControl'):
         raise ValueError('bounded concurrent execution is limited to the small clock controller')
     limiter = shutil.which('prlimit') if bounded_clock else None
     if bounded_clock and limiter is None:
@@ -215,7 +230,14 @@ def implement(args):
     if not math.isfinite(transition) or transition <= 0:
         raise ValueError('maximum accepted transition must be finite and positive')
     routed_checkpoint = getattr(args, 'resume_routed_database', None)
+    resized_checkpoint = getattr(args, 'resume_resized_global', None)
     placement_only = getattr(args, 'placement_only', False)
+    if resized_checkpoint is not None and (top != 'PCSReceiver' or placement_only or
+            routed_checkpoint is not None or getattr(args, 'resume_placement', None) is not None):
+        raise ValueError('resized receiver checkpoint must be the sole resume mode')
+    clock_ndr_policy = getattr(args, 'clock_ndr_policy', 'preserve')
+    if clock_ndr_policy not in ('preserve', 'none') or (clock_ndr_policy == 'none' and top != 'PCSReceiver'):
+        raise ValueError('clock NDR recovery is limited to the receiver')
     if placement_only and routed_checkpoint is not None:
         raise ValueError('placement-only mode cannot consume a routed database')
     if routed_checkpoint is not None and getattr(args, 'resume_placement', None) is not None:
@@ -255,12 +277,19 @@ def implement(args):
         report['constraints']['reference_period_ns'] = module_spec['reference_period']
         report['constraints']['cross_domain_timing'] = 'excluded'
         report['constraints']['ready_output_load_pf'] = module_spec['ready_output_load']
+    if top == 'PHYResetControl':
+        report['scope'] = ('three-domain reset-controller macro, exact stop/start replay, local release timing '
+                           'and physical checks; excludes downstream reset-tree recovery/removal, MTBF and chip integration')
+        report['constraints'].update(reference_period_ns=module_spec['reference_period'],
+            pcs_period_ns=module_spec['pcs_period'], output_load_pf=module_spec['output_load'],
+            cross_domain_timing='excluded')
 
     def save():
         (work / 'physical_module.json').write_text(json.dumps(report, indent=2) + '\n')
 
     environment = dict(os.environ, REPEATER_PDK=str(args.pdk.resolve()), REPEATER_WORK=str(work),
                        REPEATER_SOURCE=str(COMMON), REPEATER_TOOLS=str(args.tools.resolve()),
+                       REPEATER_CLOCK_NDR_SCRIPT=str(SOURCE / 'receiver_routing.tcl'),
                        REPEATER_TOP=top, REPEATER_DIE_SIZE=str(module_spec['die']),
                        REPEATER_CLOCK_DISTANCE=str(module_spec['clock_distance']),
                        REPEATER_CLOCK_BRANCH_DISTANCE=str(module_spec['clock_branch_distance']),
@@ -290,7 +319,7 @@ def implement(args):
 
     def stage(name, command, timeout=600, fatal=True):
         if bounded_clock:
-            # This 1,500-cell macro can use otherwise idle CPU beside the large
+            # Small clock/reset macros can use otherwise idle CPU beside the large
             # receiver. A hard address-space limit makes excess usage fail the
             # small run instead of exhausting the machine's routing memory.
             command = [limiter, '--as=' + str(1 << 30), '--', *command]
@@ -359,9 +388,12 @@ def implement(args):
             report['input_sha256'][str(resolved)] = digest(resolved)
         for path in (SOURCE / 'physical_module.py',
                      SOURCE / 'extract_routed.tcl', SOURCE / 'processing_clock_constraints.py',
+                     SOURCE / 'phy_reset_constraints.py',
+                     SOURCE / 'phy_reset_physical.py',
                      SOURCE / 'processing_clock_tree.tcl',
                      SOURCE / 'processing_clock_output.tcl',
                      SOURCE / 'processing_clock_finish.tcl',
+                     SOURCE / 'receiver_routing.tcl',
                      SOURCE.parent / 'tests' / module_spec['harness'], COMMON / 'place_route.tcl',
                      COMMON / 'route_extract.tcl', COMMON / 'finish_timing.tcl', COMMON / 'detail_route.tcl',
                      COMMON / 'routing_rc_margin.tcl',
@@ -409,6 +441,10 @@ set_load 0.005 [all_outputs]
             (work / 'constraints.sdc').write_text(processing_clock_constraints(
                 module_spec['reference_period'], module_spec['period'],
                 ready_output_load_pf=module_spec['ready_output_load']))
+        if top == 'PHYResetControl':
+            (work / 'constraints.sdc').write_text(phy_reset_constraints(
+                reference_period_ns=module_spec['reference_period'], adc_period_ns=module_spec['period'],
+                pcs_period_ns=module_spec['pcs_period'], output_load_pf=module_spec['output_load']))
         if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)):
             with (work / 'constraints.sdc').open('a') as constraints:
                 patterns = module_spec.get('analog_control_patterns', 'trial_out* acquire_out* convert_out*')
@@ -417,7 +453,10 @@ if {{[llength $analog_controls] != {module_spec.get("analog_control_ports", 160)
 set_load {module_spec['analog_control_load']} $analog_controls
 ''')
         stage('routing-technology', [pdk_python, COMMON / 'route_tech.py', '--pdk', pdk, '--work', work])
-        resume = getattr(args, 'resume_placement', None)
+        resume = resized_checkpoint or getattr(args, 'resume_placement', None)
+        checkpoint_prefix = 'resized_global' if resized_checkpoint else 'placed'
+        environment['REPEATER_CLOCK_NDR_POLICY'] = clock_ndr_policy
+        report['clock_ndr_policy'] = clock_ndr_policy
         if routed_checkpoint is not None:
             checkpoint = routed_checkpoint.resolve()
             expected = digest(checkpoint)
@@ -431,15 +470,20 @@ set_load {module_spec['analog_control_load']} $analog_controls
             save()
             stage('extract-checkpoint', [tools / 'bin/openroad', '-no_init', '-exit', SOURCE / 'extract_routed.tcl'], timeout=1800)
         elif resume is not None:
-            report['resumed_placement'] = import_placement(resume, work, top, report['constraints'])
-            for name in ('physical_module.json', 'placed.odb', 'placed.sdc'):
+            report['resumed_placement'] = import_placement(resume, work, top, report['constraints'], checkpoint_prefix)
+            for name in ('physical_module.json', checkpoint_prefix + '.odb', checkpoint_prefix + '.sdc'):
                 path = resume.resolve() / name
                 report['input_sha256'][str(path)] = digest(path)
+                if name != 'physical_module.json':
+                    report['retained_input_paths'][str(path)] = str(work / name)
+            if resized_checkpoint:
+                environment['REPEATER_RESIZED_GLOBAL'] = '1'
         else:
             environment['REPEATER_STAGE'] = 'place'
             stage('place-clock-tree', [tools / 'bin/openroad', '-no_init', '-exit', COMMON / 'place_route.tcl'], timeout=1800)
         if routed_checkpoint is None:
-            report['placement_checkpoint_sha256'] = {name: digest(work / name) for name in ('placed.odb', 'placed.sdc')}
+            key = 'resized_checkpoint_sha256' if resized_checkpoint else 'placement_checkpoint_sha256'
+            report[key] = {name: digest(work / name) for name in (checkpoint_prefix + '.odb', checkpoint_prefix + '.sdc')}
             if placement_only:
                 # Retain a reproducible optimization checkpoint without calling
                 # estimated placement timing a routed or layout qualification.
@@ -456,7 +500,7 @@ set_load {module_spec['analog_control_load']} $analog_controls
                 save()
                 return 0
             save()
-            if module_spec.get('pre_route_setup_margin', 0) > 0:
+            if module_spec.get('pre_route_setup_margin', 0) > 0 and not resized_checkpoint:
                 # Placement RC updates and global-route RC updates must not
                 # share an OpenROAD estimator instance. Preserve both inputs.
                 environment['REPEATER_STAGE'] = 'prepare_route'
@@ -583,7 +627,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--module', choices=MODULES, default='ReceiveFilter')
     parser.add_argument('--bounded-clock-run', action='store_true',
-                        help='only the small clock controller: one build worker and 1 GiB per-process address-space cap')
+                        help='small clock/reset controllers only: one build worker and 1 GiB per-process address-space cap')
     parser.add_argument('--placement-only', action='store_true',
                         help='retain placement/CTS for optimization; performs no routed or layout qualification')
     parser.add_argument('--die-size', type=float, help='override square macro die side in micrometres')
@@ -600,6 +644,10 @@ if __name__ == '__main__':
                         help='detailed-route workers; one bounds memory on the large receive filter')
     parser.add_argument('--resume-placement', type=Path,
                         help='import matching saved placement into a fresh run; repeat every subsequent check')
+    parser.add_argument('--resume-resized-global', type=Path,
+                        help='resume the receiver after saved sizing/legalization; repeat routing and all checks')
+    parser.add_argument('--clock-ndr-policy', choices=('preserve', 'none'), default='preserve',
+                        help='receiver-only recovery for optional CTS spacing rules; physical/timing acceptance is unchanged')
     parser.add_argument('--resume-routed-database', type=Path,
                         help='recompute extraction, timing, equivalence, DRC and LVS from a routed OpenDB checkpoint')
     parser.add_argument('--max-transition', type=float, default=.5,

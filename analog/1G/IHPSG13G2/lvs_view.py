@@ -30,19 +30,22 @@ def mask_signature(layout, top):
     return checksum.hexdigest()
 
 
-def create_flat_view(source, target, top):
+def create_flat_view(source, target, top, extra_device_pins=()):
     source, target = Path(source).resolve(), Path(target).resolve()
     layout = db.Layout()
     layout.read(str(source))
     if [c.name for c in layout.top_cells()] != [top]:
         raise ValueError('flat LVS view requires one known top cell')
     before = mask_signature(layout, top)
+    allowed = DEVICE_PINS | set(extra_device_pins)
+    if any(not isinstance(pin, str) or not pin or any(c.isspace() for c in pin) for pin in allowed):
+        raise ValueError('invalid explicit local device pin name')
     removed = []
     for cell in layout.each_cell():
         for layer in layout.layer_indexes():
             for shape in list(cell.each_shape(layer)):
                 if local_pin(layout, cell, top, layer, shape):
-                    if shape.text.string not in DEVICE_PINS:
+                    if shape.text.string not in allowed:
                         raise ValueError('unknown local device pin label: ' + shape.text.string)
                     removed.append(dict(cell=cell.name, layer=layout.get_info(layer).to_s(), text=shape.to_s()))
                     shape.delete()
@@ -58,6 +61,7 @@ def create_flat_view(source, target, top):
            for layer in checked.layer_indexes() for shape in cell.each_shape(layer)):
         raise ValueError('local device labels remain in the flat LVS view')
     return dict(mask_and_hierarchy_sha256=before, removed_local_pin_labels=removed,
+                explicitly_allowed_device_pins=sorted(allowed),
                 source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
                 view_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
                 scope='only child device pin text removed; top ports, device annotations, masks and hierarchy preserved')

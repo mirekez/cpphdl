@@ -6,6 +6,267 @@ same limits. Preset trim values characterize a circuit and do not implement
 calibration. Generic C++RTL/Verilog-A agreement tests the exported equations;
 IHP PSP tests additionally exercise intrinsic transistor charge and body effects.
 
+The composed native-cell PLL passes schematic checks but its first unfilled
+PEX run fails cycle variation, output delivery and tuning ripple. Frequency,
+divided phase wander, rails and supplies pass. The candidate's queued fill
+was stopped. A revised placement keeps tuning and mirror-bias storage with
+the oscillator. Its complete extracted transient reduces ripple to 7.255 mV,
+but still fails the 2 mV ripple, 80 ps cycle-variation (90.507 ps measured) and
+1 ns delivery limits (1.435–1.473 ns measured). An archived-network diagnostic
+separates wire-resistance effects from capacitive coupling. No complete clock-macro result is claimed. A separate power-routing prototype
+passes local DRC, exact 259-device LVS and open-reference rejection without a
+footprint increase. Its extracted tuning-source return resistances fall from
+62–65 Ω to 33–36 Ω. Its complete transient passes cycle variation at 76.73 ps,
+but delivery (1.138–1.162 ns) and control ripple (32.75 mV) still fail.
+The source-contact candidate further reduces cycle variation to 52.10 ps,
+but delivery (1.067–1.086 ns) and control ripple (31.69 mV) still fail.
+The direct capacitor-return candidate still fails delivery (1.067–1.086 ns)
+and control ripple (31.17 mV), while cycle variation passes at 51.51 ps.
+The distributed-contact candidate passes cycle variation at 49.62 ps, but
+delivery (1.016–1.034 ns) and control ripple (31.90 mV) still fail.
+The upper-metal supply-pin candidate places both buffers in one row, passes local geometry and six
+placement guards, and occupies 6% less area. Its complete 2 µs extracted run
+passes delivery (0.972–0.976 ns) and cycle variation (29.24 ps), but fails
+frequency (249.872 MHz), divided phase wander (209.22 ps) and control ripple
+(7.99 mV). Acquisition oscillation contributes to the final 400 ns measurement;
+the last 100 ns still has about 4.22 mV control ripple against the unchanged
+2 mV limit. Fill remains stopped pending electrical repair.
+An unchanged-circuit probe run reproduces those results and finds only
+0.634 mV ripple on the tuning capacitor's ground terminal, versus 65.09 mV
+on the main filter output and 64.88 mV on its return. A real-R3 sizing trial
+with 3 kΩ smoothing and 4 kΩ damping passes frequency (249.999 MHz),
+phase wander (16.81 ps), cycle variation and delivery, but fails tuning
+ripple (4.64 mV). Its final 100 ns still has 3.70 mV ripple. A second
+trial uses 8 kΩ smoothing and 6 kΩ damping. Both retain the previous
+external wiring RC and require matching C++ export and fresh physical
+layout/extraction before qualification.
+The 8 kΩ/6 kΩ retained-wire diagnostic also fails: divided phase wander is
+244.481 ps and tuning ripple is 11.191 mV. Frequency, cycle variation and
+delivery pass. The separate fresh C++/layout/extracted candidate also fails
+its complete 2 µs run: 293.471 ps divided phase wander and 12.078 mV tuning
+ripple. Frequency, cycle variation (65.565 ps) and delivery (0.969–0.978 ns)
+pass. Its conditional fill sequence stopped on that failure. A
+3 kΩ/8 kΩ diagnostic also fails: phase wander is 83.36 ps and tuning ripple
+8.92 mV; the other checks pass. A second diagnostic uses 1.5 kΩ smoothing,
+6 pF control storage and 4 kΩ damping, preserving approximately the 9 ns
+smoothing time constant of the 3 kΩ/3 pF trial while reducing control-node
+impedance. It fails frequency, phase wander (243.82 ps) and tuning ripple
+(11.73 mV). Both use PDK-sized devices with the previous external RC;
+neither qualifies a GDS layout.
+Slow/hot schematic screening passes all eight electrical groups at nominal supplies: 250.001 MHz output, 0.341 mV tuning ripple and 0.882 ns maximum delivery. Fast/cold schematic screening also passes all eight groups over the complete 2 µs: 250.002 MHz output, 0.362 mV tuning ripple and 0.692 ns maximum delivery, with unchanged inputs. These results do not
+establish a passing clock macro or filled layout.
+
+The shared TX translation replica now has a C++-derived physical implementation
+with its actual 50 pF storage. Local DRC/LVS, missing-device rejection, complete
+startup and independent/comparison checks pass at TT/27 °C, SS/125 °C and
+FF/−40 °C. The macro occupies 75,638.83 µm², contains 18 LVS devices including
+the explicit taps, and reaches 1.768–1.855 V with at most 1.33% settled error.
+The wider-metal variant below passes the nominal loaded bank; fill,
+passive/supply corners and full TX qualification remain open.
+
+The latest separate TX translator passes both SS/125 °C loads in the local
+extracted diagnostic: 92.98 ps at 0.2 pF and 97.68 ps at 2 pF, below the
+unchanged 100 ps comparison budget. Short upper connections for the inverter
+output and pull-down nodes create the improvement. Both independent waveforms
+also pass their absolute limits. All six maintained guard, geometry and TT/SS/FF tests pass (874.28 s).
+A separate TT startup diagnostic with one translator and the actual replica
+also passes: 94.32 ps maximum edge difference and 86.96 mV waveform RMS.
+The first maintained connected matrix passes TT/FF but fails SS at 106.48 ps.
+Direct physical connections to the replica storage then pass the SS diagnostic
+at 96.53 ps/74.54 mV RMS without increasing area. Both maintained replica tests
+pass; all three maintained connected corners and their guards also pass
+(1,278.57 s), with maximum edge differences 83.52/96.53/75.13 ps at TT/SS/FF. The C++-derived 22-translator bank
+has passing topology/observation guards. Its complete nominal schematic startup
+and simultaneous-switching stress pass for all 22 translators, with shared bias
+1.773–1.854 V. All 22 extracted gates pass their absolute limits, but the
+121.71 ps edge difference exceeds the unchanged 100 ps comparison limit.
+The extracted shared bias spans 1.545–1.924 V. A wider-metal candidate with
+upper-layer BIAS/VSS access passes local DRC, strict LVS, missing-device
+rejection and three unloaded startup corners. Its wire-only storage access
+falls from 7.66–7.98 Ω to 0.22–0.54 Ω on BIAS and from 3.12–4.27 Ω to
+0.95–2.10 Ω on VSS. The complete 2.128 µs nominal loaded-bank test now passes
+all 22 independent gate checks and the comparison: worst edge difference
+88.964 ps and waveform RMS 83.013 mV, under the unchanged 100 ps/150 mV
+limits. Shared bias remains within 1.723–1.832 V. Supply/passive corners
+and complete TX remain open.
+
+The first connected full-TX schematic simulation stops at 39.357 ns with
+an R3 pullup convergence error, before controller switching begins. Its
+incomplete output is a failed run. The maintained 64 ns startup regression now
+passes with 1 pA and 0.1 pA absolute current tolerances. All 77 voltage
+observations differ by at most 0.464 mV, below the 1 mV numerical budget.
+Twelve guards pass. With the loaded replica bank now passing, both complete
+transmitter circuits have been emitted and the schematic run is queued for
+the shared memory slot. Full-window electrical acceptance and the extracted
+connected flow remain required.
+
+The shared [receive reference layout](receive-common-layout.md) passes its
+maintained local DRC/LVS, missing-sink rejection and conserved-RC checks
+(566,644.91 µm² before fill). Nine topology/binding guards and eight integration
+guards pass. Its eight-lane nominal schematic passes all twelve independent
+check groups, with 7.09 mV settled reference error and 78.00 mV transient error
+under 6.81–16.54 mA sink loading. The baseline extracted layout fails with
+35.27 mV settled error, 158.58 mV transient error and 31.90 mV divider error.
+The revised current-route simulation reached the end of its transient, but
+waveform export exceeded its 64 MiB reservation. Its incomplete archive cannot
+qualify the circuit. The saved prefix already shows 55.77 mV settled reference
+error and 23.82 mV divider error, above the unchanged 15 mV and 2 mV limits.
+Circuit diagnosis is required before another full run. Future receiver captures
+reserve 256 MiB: complete baseline archives occupy about 118 MiB each. The
+slower duplicate SPARSE run was intentionally retired; its exit 143 is not an
+electrical verdict. A subsequent sense-routing candidate passes local DRC,
+exact LVS, missing-sink rejection and conserved extraction. Separate divider
+and feedback connections reduce its DC reference error to 4.80 mV, divider
+error to 0.78 mV and schematic/output difference to 2.39 mV. Seven regression
+checks pass, including geometry equivalence to that candidate. Its maintained
+geometry-regeneration CTest also passes. A subsequent pinned-PDK current check
+finds only 5.2/10 mA drain/source Via3 capacity against at least 16.47 mA required.
+The unstarted transient was retired. Distributed upper-metal sink access now
+passes local DRC/LVS at the same 593,507.56 µm² footprint. Eight Via3/Via4
+cuts per stripe give 53.2/51.6 mA aggregate drain/source Via3 capacity.
+Both DC load extremes pass the original voltage/comparison screens. The
+unreduced high-load DC audit finds a maximum 254.96 µA among 4,112 mapped
+Via1–4 contacts, below 400 µA; the 127 unmapped 9 Ω edges also remain below
+that limit. These checks do not qualify wire density, transient currents or
+PVT reliability. Four maintained routing tests pass, including geometry
+equivalence and invalid-input rejection. The complete original receiver
+transient now fails: 19.934 mV settled reference error, 147.117 mV peak error
+and 8.291 mV divider error, against unchanged 15/100/2 mV limits. Input
+RC-equation and source checks pass. Internal-node probes are investigating
+the switching failure; no receive-macro pass is claimed. Post-processing
+initially exhausted memory by duplicating the trace. Streaming validation
+recovered the complete archived waveform without another simulation or any
+change to electrical limits; four validator regression cases pass.
+The maintained DC/contact-current screen also passes on the fresh regenerated
+extraction (fresh 28.14-second CTest after the validation change), including both load extremes, unreduced-model
+agreement and coordinate-file provenance. Six stimulus/output guards pass.
+The fresh resistor mesh has 125 unassigned 9 Ω edges, all below 400 µA;
+its contact maximum remains 254.961 µA. This remains nominal DC evidence.
+Completed nonloading probes exactly reproduce the failed waveform prefix and
+show up to 77.821 mV between output storage plates and OUT, with target-capacitor
+returns 36.205–47.350 mV above ground. An optional direct storage-access overlay
+now passes local DRC/LVS/extraction, the same DC/contact screen and four routing
+guards. Its four-symbol diagnostic is running with the original cold startup;
+neither that short diagnostic nor DC success qualifies the full receiver.
+
+The [physical receive sampler](receive-sampler-layout.md) has passing local
+DRC, strict 21-device LVS and missing-hold/dummy rejection. Its fourth layout
+connects the downstream load at the hold plate and occupies 15,243.42 µm².
+Both schematic and extracted circuits pass independent acquisition/hold
+checks at five input levels, but closing-transient comparison still fails:
+28.042 mV versus the unchanged 5 mV budget. Ten new integration guards pass
+against actual 1-, 4- and 13-slice exports. Complete ADC comparison decks
+retain the preamplifier, DAC, comparator and C++RTL controller; their
+simulations remain pending. No qualified sampler or ADC macro is claimed.
+An optional GDS-derived junction correction now restores omitted dummy-device
+diffusion area; six guards pass for both 25- and 34-finger layouts. Corrected
+five-level simulations still fail comparison at 28.018 mV for the baseline
+and 19.681 mV for the stronger-driver/source-contact candidate. Raw extraction
+and the queued parent inputs remain preserved; generic extraction is unchanged.
+Isolated C++ sizing and upper-clock-routing trials reduce the best complete
+five-level mismatch to 5.519 mV at 15,005.95 µm². Every independent
+acquisition/hold check passes, but the original 5 mV comparison still fails.
+A separate one-volt late-step diagnostic finds at most 9.363 mV acquisition
+error relative to the actual loaded input; one transition still differs by
+7.538 mV between schematic and layout. Smaller complement drivers and removal
+of all redundant inverse-clock posts do not improve the worst static result.
+These candidates have not replaced the baseline or qualified the ADC.
+
+The large receiver hit the pinned router’s known optional clock-NDR restart
+loop. Its sized checkpoint is preserved. A fresh [routing recovery](receiver-routing.md)
+uses ordinary PDK spacing and repeats all downstream acceptance checks. The
+first recovery was killed by the kernel OOM handler during another simulation's
+waveform export; it produced no routing verdict. A fresh recovery is queued
+from the same verified post-sizing checkpoint. It has no routed pass yet.
+
+The 64 µs extracted processing-clock simulation reached its stop time, but
+waveform export exhausted disk space. The compressed archive ended at
+61.247 µs and failed its gzip integrity check; it cannot establish a complete
+result. A fresh run verifies byte-identical circuit and controller inputs,
+reserves 1.75 GiB of actual disk blocks for compressed output, and holds the
+shared EDA memory slot through simulation, export and checking. Its test
+window, numerical settings and acceptance limits are unchanged. The complete
+extracted result remains pending.
+
+The [three-domain reset-controller macro](phy-reset-physical.md) now passes
+native/RTL/mapped and routed replay, filled DRC and strict LVS in 140 × 140 µm.
+Nominal extracted setup/hold slack is +2.176/+0.270 ns. Downstream reset
+distribution, recovery/removal, MTBF and final fill coupling remain open.
+
+The [transmitter MOS banks](transmit-mos-layout.md) pass the six main/history
+steering, sink and cascode geometry cases. They use parallel via cuts into
+center-fed TopMetal1 collectors; the 1,500 µm cascode has three guarded banks.
+Strict LVS also rejects a deliberately missing bank. Six-case extraction
+preserves every finger and the intended external connection points. Nominal TT
+DC checks pass with at most 3.54% current error against independent equal-width
+PSP references. Unfilled metal minimum density, connected driver layout,
+transient/PVT electrical behavior and EM remain open.
+
+The [50 Ω line pullup](transmit-pullup.md) now passes local geometry, strict
+LVS, missing-section rejection and extracted TT DC testing. Eight parallel
+sections use distributed contacts and center-fed upper-metal collectors.
+Their individual body couplings are matched by physical identity, with charge
+conservation and negative parser tests. Full-chip density, thermal/EM and
+connected transmitter qualification remain open.
+
+The [connected four-device current cells](transmit-current-cell.md) pass local
+DRC/LVS, cut-input rejection and conserved extraction. Both steering directions
+pass extracted TT DC comparisons at 1.3/2.3/3.3 V line bias and half/nominal/
+four-thirds current. Worst errors are 4.00% main and 3.08% history, below the
+unchanged 5% local budget. Wider current routes, sixteen-cut TopVia2 landings
+and direct branch ports corrected an initial 16.0% layout loss. Complete
+transmitter composition and PVT/full-chip qualification remain open. Six
+extracted 42 ns switching cases also pass at an 8 ns symbol interval, using
+ideal gate and bias sources. Each waveform passes independent differential
+and total-current bounds before comparison; worst differences are 3.61% main
+and 2.90% history. Actual translators, bias startup and line loading remain open.
+
+The separate [PSP charge-ownership candidate](mim-area-budget.md) retains two
+explicit local capacitors per current cell and assigns eight generic charge
+terms to the corresponding process MOS terminals. Five ownership guards pass.
+Its main/history storage macros pass maintained local DRC/LVS, missing-capacitor
+and substrate-tap rejection, and conserved extraction (115.82 s). All six
+42 ns extracted current-cell/storage switching cases pass (327.38 s), with
+maximum differences of 3.61% main and 2.93% history, using the original
+independent and comparison limits. This remains a candidate: full transmitter
+loading and chip integration have not adopted it. The current eight-transmitter
+component inventory exceeds recommended whole-chip MIM area even before
+receiver and clock storage are included.
+The complete candidate's 64 ns numerical startup now passes at both current
+tolerances, with maximum departure 0.504 mV across all 77 voltage outputs
+against a 1 mV budget. Both full transmitter circuits are prepared and queued
+for the shared memory slot; this startup result does not establish switched
+transmitter operation.
+
+The [connected trim/cascode bias macro](transmit-bias.md) passes local DRC,
+strict LVS, missing-switch rejection and all 64 extracted TT trim codes.
+Four-cut routing vias and wider buses repair the first candidate's loss and
+nonmonotonic carry transitions. Physical/schematic checks pass independently;
+maximum comparison error is 3.299% against the unchanged 5% local budget.
+The footprint is 221,281.85 µm². A fresh maintained bias/guard run passes
+(119.13 s) after the shared row helper changed. Full TX storage/loading/startup,
+calibration, PVT, mismatch, fill and EM remain open.
+
+The new [physical transmitter partition](transmit-physical-partition.md) exports
+all 931 actual C++ contributions exactly once across 33 blocks. Eight partition
+and six current-cell binding guards pass. The actual eight main/history cells
+match the qualified physical banks; retained storage has explicit access to
+their existing TAIL/LOWER RC anchors. Complete loaded and routed assembly is
+still required.
+
+The latest PAUSE datapath repair completed detailed routing with zero router
+violations and exact 630,084-cycle replay. Extracted setup is +0.091719523 ns,
+but one SRAM-address net still exceeds the 80 fF limit. Its two antenna diodes
+made the point-to-point repair incorrectly classify it as multiple functional
+loads. The helper now buffers its sole logic sink while preserving the diodes;
+the real-cell connectivity CTest passes. Fresh detailed routing finishes with
+zero router violations, exact 630,084-cycle replay, setup +0.089458220 ns,
+hold +0.112074018 ns and no electrical violations. The final crossing-check
+supervisor times out while waiting for the shared memory slot. A fresh
+supervisor verifies the retained route and replay, then queues crossing and
+geometry checks with their execution budgets starting after admission.
+The previous interrupted and failed receipts remain available.
+
 The repeater now uses [Ethernet PAUSE flow control](../flow_control.md), as
 selected by the user. The forwarding path has two 4096-word synchronous frame
 buffers mapped to eight actual IHP dual-port SRAM macros. Independent C++, RTL,
@@ -114,6 +375,46 @@ reference master-Q wire adds 223 fF. A startup diagnostic retains the same
 network and observes internal detector nodes to locate the missed-edge cause.
 The clock remains unqualified.
 
+A full 2 µs sizing trial reduced the common-reset R3 resistor from 1 kΩ to
+200 Ω while retaining the old extracted wiring. It still failed: OUT was
+124.991 MHz, DIVIDED 62.552 MHz, and control ripple 137.4 mV in the final
+400 ns. That resistor-only change was not adopted. Increasing the four
+reset-NAND channels fivefold also fails the complete 2 µs test: OUT averages
+167.012 MHz, DIVIDED 83.494 MHz, and control ripple is 139.9 mV. The detector
+produces only 34 UP pulses for 50 reference edges in the final 400 ns. Its
+retained waveform shows reset recovery and latch propagation overlapping the
+next reference edge. This sizing trial has no matching GDS and was not adopted.
+A compact PDK standard-cell realization of the same sequential functions is
+being evaluated separately; it does not qualify the existing PLL layout.
+The maintained cell-divider schematic tests pass all six load/corner
+combinations at 250 MHz. Fresh generic detector/storage C++ and Verilog-A
+regressions and their comparisons pass. Earlier detector output buffers fail
+slow/hot loading or extracted reset timing. A new gated-output detector makes
+reset decisions from stored state independently of load and suppresses both
+controls while storage clears. It passes all 42 schematic corner/load cases. The extracted wrapped-phase
+case still misses the reference edge at 160.05 ns during common-reset
+recovery. The resulting reversed phase polarity blocks adoption. Its
+675.84 µm² symmetric layout passes local DRC, strict LVS
+(96 normalized devices), cut-clock rejection and conserved RC; the first
+routing short was detected and corrected before those checks passed.
+
+The divider's first 264.32 µm² layout passes the absolute electrical oracle
+at slow/hot but exceeds the 100 ps schematic-comparison bound at 110.07 ps.
+Moving the clear driver and removing unnecessary port stubs reduces it to
+224 µm². All six extracted corner/load cases then pass independently and
+against their schematic, with slow/hot maximum difference 90.06 ps. All seven divider CTests passed after the common parser was separated.
+Later shared-router edits require refreshed geometry/provenance checks.
+Isolated minimum-density violations remain for later chip fill. These are
+component results, not a repaired or qualified full PLL. See
+[compact clock-cell realization](reference-clock-cells.md).
+
+A new whole-IC ownership binding removes the detector/divider implementation
+by C++ device identity while retaining surrounding connections and storage.
+Its first full-loop **schematic diagnostic** passes the existing 2 µs contract:
+250.001554 MHz output, 125.000001 MHz divided feedback, 1.464 mV control ripple
+and 768.15 ps maximum output delivery. The generic outer R/C values remain
+ideal; this does not qualify the failed physical detector or a new PLL GDS.
+
 The processing-clock controller had a second acquisition defect: after its
 512-reference-cycle monitor detected drift, it used the 128-cycle threshold to
 choose the retuning direction. The corrected controller passes 698,640 matching
@@ -133,8 +434,14 @@ historical reproducibility. A fresh source build and export now reproduce the
 controller library, Verilog-A model, metadata and complete PSP circuit byte
 for byte. A separate artifact-equivalence receipt therefore links the current
 source to the completed electrical checks; the original failed receipt is
-preserved. This is not a new transient, native-solver or chip proof. Extracted
-delivery remains running and has the same changed-header provenance issue.
+preserved. This is not a new transient, native-solver or chip proof. The older
+extracted delivery run timed out after 12 hours at approximately 37 us of the
+required 64 us. Its partial controller event log shows admission but cannot
+qualify delivery. A fresh extraction with the corrected sidewall tool is being
+prepared. The full-run wall-clock budget is now 24 hours, with the same circuit,
+64 us duration, timestep and electrical acceptance bounds; CTest also allows
+time for the serialized full-trace checker. The small startup checker does not
+need to wait behind memory-intensive routing.
 The first Verilog-A run exhausted its
 1 GiB allocation limit while creating output vectors; the identical complete
 circuit was resimulated successfully with 3 GiB reserved. The original failed
@@ -247,8 +554,21 @@ storage. The 100 pF variant failed generic ripple; the 200 pF variant passed
 generic tests but failed PSP at 22.497 mV error and 15.771 mV ripple. Neither
 smaller variant is accepted. The compact 400 pF MIM bank exceeds the PDK whole-chip recommended MIM
 area and remains a recorded negative chip-budget case. Actual MOS storage
-provides a smaller alternative. Both banks together occupy 177,703.5074 square
-micrometres, 52.17% below the two-bank MIM reference footprint. The complete
+provides a smaller alternative. The revised upper-metal cascode-storage bank
+and dedicated MOSCAP bank together occupy 231,152.7982 square micrometres,
+37.79% below the two-bank MIM reference footprint. The old lower-metal bank
+failed its first extracted high-frequency check at 37.1 pF against the 50 pF
+floor. Fresh upper-metal geometry/LVS and both disconnection negatives pass;
+extracted TT/27 °C AC also passes over 1.6–2.4 V and 100 kHz–1 GHz, retaining
+at least 63.24 pF. The dedicated MOSCAP bank now uses distributed gate vias
+and merged upper-metal return collectors. Fresh local DRC, adapter-based LVS,
+both disconnection negatives and TT/27 °C extracted AC pass: minimum 435.06 pF,
+maximum wiring loss 3.20% over 0.85–1.10 V and 100 kHz–1 GHz. Its former
+single-via unit failed at 2.10 pF instead of the required 10 pF. Dedicated-model
+binding requires independent LVS and retains all four distributed terminals;
+raw wiring and exact passive-node reduction records remain available.
+Extracted PVT, field calibration and full-transmitter composition remain open.
+The complete schematic
 process transmitter with both replacements passes TT/27 C, SS/125 C and
 FF/−40 C: maximum errors 9.410, 13.190 and 11.993 mV. Shared-line static tests
 also pass at all three conditions. Preset trim codes remain characterization,
