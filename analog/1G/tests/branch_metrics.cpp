@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
             bool valid = false;
         };
 #ifdef PIPELINED_METRICS
-        constexpr unsigned delay = 3;
+        constexpr unsigned delay = 5;
 #else
         constexpr unsigned delay = 0;
 #endif

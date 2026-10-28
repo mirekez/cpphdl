@@ -4,13 +4,22 @@
 namespace cpphdl::hls::math {
 // Exact FP16 conversion, including subnormals and NaN payloads. Only the
 // ten-bit FP16 mantissa needs normalization; no wide shifted significand.
-inline uint32_t fp16_to_fp32_narrow(uint32_t raw) {
-    uint32_t sign=(raw&0x8000u)<<16,exponent=(raw>>10)&31,mantissa=raw&1023;
+// Static methods are also callable from C++ RTL: the frontend emits their
+// definitions and dependencies into the generated module. Free wrappers keep
+// the software and HLS API unchanged.
+struct FloatConvertMethods {
+static uint32_t from_half(uint32_t raw) {
+    uint32_t sign,exponent,mantissa;
+    sign=(raw&0x8000u)<<16;exponent=(raw>>10)&31;mantissa=raw&1023;
     if(exponent==31)return sign|0x7f800000u|(mantissa<<13);
     if(exponent!=0)return sign|((exponent+112)<<23)|(mantissa<<13);
     if(!mantissa)return sign;
-    uint32_t bit=fp32_leading_bit(mantissa);
+    uint32_t bit=Fp32BitMethods::leading_bit(mantissa);
     return sign|((103+bit)<<23)|((mantissa<<((23-bit)&31))&0x7fffffu);
+}
+};
+inline uint32_t fp16_to_fp32_narrow(uint32_t raw) {
+    return FloatConvertMethods::from_half(raw);
 }
 // Signed int32 to FP32, round to nearest/even. Unsigned negation also handles
 // INT32_MIN without C++ signed overflow. The only lossy shift is at most 8.

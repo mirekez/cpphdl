@@ -63,8 +63,13 @@ def main():
         assert not (root / 'initialized.cc').exists()
         returning = root / 'returning.sv'
         returning.write_text('module bad(input logic a, output logic y); function automatic logic f(input logic v); if(v) return 1; return 0; endfunction assign y=f(a); endmodule')
-        run([args.hdlcpp, '--native-graph', '--top', 'bad', '--output', root / 'returning.cc', returning], success=False)
-        assert not (root / 'returning.cc').exists()
+        run([args.hdlcpp, '--native-graph', '--top', 'bad', '--output', root / 'returning.cc', returning])
+        returning_runner = root / 'returning-run.cc'
+        returning_runner.write_text('#include "model.h"\nint main(){cpphdl_native::Model m; '
+                                    'for(unsigned i=0;i<8;++i){m.a[0]=i&1;m.step();if(m.y[0]!=(i&1))return 1;}}\n')
+        run([args.cpphdl, '--native-graph', '--output', root / 'returning', '--cxx', args.cxx,
+             '--runner', returning_runner, root / 'returning.cc'])
+        run([root / 'returning/run'])
         escaped = root / 'escaped.sv'
         escaped.write_text('module odd(input logic a, output logic y); logic \\internal)cpphdl_graph ; assign \\internal)cpphdl_graph = a; assign y = \\internal)cpphdl_graph ; endmodule')
         escaped_cpp = root / 'escaped.cc'

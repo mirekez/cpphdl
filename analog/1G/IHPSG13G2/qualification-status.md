@@ -6,6 +6,152 @@ same limits. Preset trim values characterize a circuit and do not implement
 calibration. Generic C++RTL/Verilog-A agreement tests the exported equations;
 IHP PSP tests additionally exercise intrinsic transistor charge and body effects.
 
+The repeater now uses [Ethernet PAUSE flow control](../flow_control.md), as
+selected by the user. The forwarding path has two 4096-word synchronous frame
+buffers mapped to eight actual IHP dual-port SRAM macros. Independent C++, RTL,
+PDK SRAM and IHP standard-cell replays pass 630084 observations, 240 intact data
+frames, six PAUSE/six resume frames, and unsupported-peer/reset isolation.
+The dedicated FIFO test also passes stopped-transmit prefill and bank/pointer
+wrap; it catches the repaired false underrun before the first SRAM read.
+The actual FLP composition negotiates symmetric PAUSE in both C++ and RTL over
+264750017 reference cycles. `NegotiatedRepeater` now connects these negotiation
+results directly to forwarding, with immediate disable on PMA loss/restart.
+Its maintained C++/RTL integration CTest passes with agreement over 264761099
+observations, including received PAUSE and stopped-clock link loss.
+The first pipelined SRAM/control route completed with zero router violations
+and exact functional replay, but failed extracted setup at −0.516693354 ns
+and exceeded signal-slew limits. Hold was +0.004137135 ns. A new registered
+read-credit stage separates Gray decoding/pointer subtraction from queue and
+SRAM-issue control. It uses only the second synchronizer stage. Native FIFO/PAUSE, FIFO/forwarding/negotiated RTL, PDK SRAM and mapped-cell
+tests all pass. The renewed placement passes setup +0.302903503 ns and hold +0.080113918 ns;
+a 2.5-times wire-capacitance optimization trial then failed global setup at
+−1.948678613 ns after inserting long buffer chains. It was stopped before
+detailed routing. Restoring nominal PDK RC and allowing setup buffer removal
+passes global setup +0.311036527 ns and hold +0.117311329 ns; clock capacitance
+and six fanout violations remained in that estimate. Detailed routing completed
+with zero router violations and the exact 630084-cycle replay. Extracted setup
+(+0.188799202 ns) and hold (+0.011086354 ns) pass, but 710 slew, 576 capacitance
+and six fanout report entries fail. A further FIFO change separates read issue
+from same-edge queue consumption while retaining full frame throughput. Its
+native, RTL FIFO/forwarding/negotiated, PDK SRAM and mapped-cell checks pass.
+The renewed global route passes setup +0.593975544 ns and hold +0.115303881 ns,
+with no slew or fanout violations, but fourteen clock branches exceed the
+80 fF capacitance limit. A targeted branch split now handles both buffer leaves
+and directly attached register clock pins. All fourteen branches pass a real
+checkpoint connectivity exercise. The fresh global route now passes setup
++0.604821086 ns and hold +0.120023437 ns, with no electrical or antenna
+violations. Detailed routing finished with zero router violations and exact
+630084-cycle replay. Extracted setup (+0.444233119 ns) and hold
+(+0.088663414 ns) pass, but 36 slew and 180 capacitance report entries fail.
+The capacitance failures comprise 142 signal nets, 23 clock nets and 15 input
+ports. The next candidate uses three-times wire capacitance during signal
+repair and 0.26 ns / 60 fF finishing targets, then restores the original
+0.30 ns / 80 fF acceptance limits. A concurrent converter rebuild required
+fresh SRAM/cell proofs; both pass with a pinned converter, and fresh placement
+passes setup +0.294023484 ns and hold +0.080415234 ns. The new global
+route passes setup +0.332676113 ns and hold +0.120145671 ns, with zero
+electrical and antenna violations. Detailed routing and exact replay completed.
+Extracted setup is +0.132938102 ns and hold +0.113469906 ns; only two
+capacitance entries remain (one signal and one clock), with no slew/fanout
+violations. The clock branch includes an inverter load that the repair helper
+previously rejected. The helper now preserves inverter leaves, and a second
+helper splits overloaded point-to-point signal wires. The real OpenROAD
+connectivity regression passes. At most two extracted-load repair passes are
+allowed, each followed by fresh detailed routing and extraction; the original
+limits and final replay remain mandatory. Fresh SRAM and mapped-cell CTests
+pass after a shared C++HDL header changed. Fresh placement, route and
+independent geometry/crossing qualification are queued. The fresh global route again passes setup
++0.332676113 ns and hold +0.120145671 ns with zero electrical/antenna violations.
+Detailed routing is running. The
+[physical flow](flow-control-physical.md) checks extracted crossing delays
+separately from synchronous timing, then streams actual SRAM GDS for full DRC/LVS.
+These remain macro results; complete MDI latency, slave transmit-clock recovery
+and full-chip qualification are not established.
+
+The physical processing oscillator's compact resistor layout passes conserved
+extraction and the six fixed-trim cases in the controller's acquisition interval.
+The preceding early-settling stress failed at 119.844 ps against 80 ps and remains
+recorded. A newly tested Magic tile-area correction prevents negative area
+allocations for breakpoints outside their tile; 3,244 independent partition
+cases pass. Fresh oscillator, gate and reference-PLL extractions conserve
+capacitance. Field-solver calibration remains open.
+
+A separate analytical oracle now reproduces the pinned extractor's sidewall
+coefficient defect: all 70 nonzero checks return approximately half the
+expected coupling. An isolated Magic candidate removes the duplicate parser
+halving. It passes all 84 checks across seven metals and both parser keywords,
+including orientation, scaling and shielding; single/series MIM extraction
+also passes. The hierarchical PLL extraction used this candidate. Existing processing
+clock simulations keep their original tool inputs. These coefficient checks
+do not establish field-model accuracy or upgrade older extracted results.
+
+The ADC reference PLL's compact oscillator placement passes complete filled
+DRC and strict LVS, including rejection of a disconnected input. The physical
+inventory contains 526 normalized devices. Its full 2 us extracted electrical
+simulation failed: the output settles near 124.689 MHz and the divided output
+near 62.298 MHz, instead of 250/125 MHz. The reference-side detector also
+misses alternate reference edges. Its failed waveform is retained. Geometry
+inspection found detector enable/reset connections spanning folded row cuts.
+The placement objective now counts both row buses and the connecting spine;
+six targeted placement tests pass in CTest. The new candidate reduces the
+reference-master enable span from 1610 to 237 um and the feedback clock-inverter
+span from 1597 to 103 um. Other paths grew. The new layout passes full DRC with zero violations and strict
+LVS with all 526 normalized devices; its bounding area is 2.067 mm2. Fresh
+extracted electrical simulation failed: OUT is 166.612 MHz and DIVIDED
+83.288 MHz in the final 400 ns. The reference detector still misses edges;
+control ripple is 59.5 mV against the unchanged 2 mV limit. The next placement
+uses exported C++ ownership to retain each complete master/slave flip-flop
+inside one physical row. Twelve hierarchy/placement checks pass; new full
+DRC/LVS and electrical qualification are required. Independent pre-fill checks
+confirm unchanged physical devices/topology and all 91 components of each
+flip-flop retained within a row. The new footprint is 1.611 by 1.404 mm.
+Full filled DRC passes and strict LVS matches all 526 normalized devices.
+The corrected-sidewall extracted simulation still fails: OUT is 125.031 MHz,
+DIVIDED 62.448 MHz, and the reference detector responds to only 25 of the
+50 reference edges in the final 400 ns. Control ripple is 142.7 mV. The
+common-reset wire contributes 785 fF of extracted interconnect load; the
+reference master-Q wire adds 223 fF. A startup diagnostic retains the same
+network and observes internal detector nodes to locate the missed-edge cause.
+The clock remains unqualified.
+
+The processing-clock controller had a second acquisition defect: after its
+512-reference-cycle monitor detected drift, it used the 128-cycle threshold to
+choose the retuning direction. The corrected controller passes 698,640 matching
+native/RTL/mapped-cell events, including slow and fast drift recovery without
+reset. The previous controller fails the new directed regression. Fresh routed
+replay also passes, with extracted setup +0.018183399 ns and hold +0.061225358 ns.
+The two extracted Gray buses pass their independent delay/skew checks. Full
+DRC passes with zero violations; strict LVS matches 20,540 devices and 40 ports. The new native and Verilog-A 64 µs closed-loop delivery runs independently pass
+at 134.132 and 134.467 MHz. Their direct comparison passes: frequency differs
+by 0.249% (1% limit), delivered-waveform normalized RMS by 20.342 mV (60 mV
+limit), and sustained readiness by 128 reference cycles (417-cycle limit).
+The PSP transient completed all 64 us and its electrical checks pass at
+133.773 MHz, with 3959 delivered pulses and 175.7 ps maximum delivery delay.
+Its overall receipt fails provenance because `cpphdl_array.h` changed during
+the run. The exact former header was recovered and hash-checked from Git for
+historical reproducibility. A fresh source build and export now reproduce the
+controller library, Verilog-A model, metadata and complete PSP circuit byte
+for byte. A separate artifact-equivalence receipt therefore links the current
+source to the completed electrical checks; the original failed receipt is
+preserved. This is not a new transient, native-solver or chip proof. Extracted
+delivery remains running and has the same changed-header provenance issue.
+The first Verilog-A run exhausted its
+1 GiB allocation limit while creating output vectors; the identical complete
+circuit was resimulated successfully with 3 GiB reserved. The original failed
+receipt remains unqualified; older 64 us successes below are
+historical evidence, not qualification of the corrected controller.
+
+The integrated negotiated PAUSE repeater again passes its C++/RTL test. The five
+changed RTL hierarchies have been regenerated from fresh passing proofs and
+linted. The receiver resume stopped before routing on the changed shared
+header; fresh native/RTL checks pass, and mapped checks are running. Receiver routing, physical
+slave transmit-clock generation, connected
+TX/RX analog macros, full PHY/PCS assembly, padframe/power and full-chip
+verification remain unfinished. No complete repeater GDSII is qualified.
+
+The detailed component history below includes superseded candidates and their
+original measurements; it does not replace the current status above.
+
 ## Receiver
 
 The recorded precharged baseline is `charge_balanced_receive_frontend<16>`.
@@ -463,3 +609,331 @@ Slice mismatch,
 jitter and SAR setup/hold remain separate physical requirements. A physical
 edge-receiver diagnostic exists, but additional PLL feedback circuitry is
 deferred until the fixed-sample recovery path is tested.
+
+## Autonomous receiver and clock integration, 2026-10-24
+
+[`AutonomousADCReceivePHY`](../autonomous_adc_receive_phy.md) now connects the
+actual thirteen-slice SAR sequencers to fixed-rate timing recovery, a clock
+crossing, autonomous cancellation/equalization and PCS. Its interface consumes
+comparator decisions; it does not consume far-end training targets. Four
+coupled digital fixture cases recover two complete frames and 1,598 bytes each,
+with exact native/generated-RTL trajectories. These fixtures model comparator
+decisions from held samples. They do not qualify the complete electrical AFE,
+automatic gain/offset calibration or the full cable envelope.
+
+The ADC remains at 250 MHz; the separate processing clock is qualified over
+132–136 MHz. The carry-save PCS baseline uses exact path comparison and a
+six-stage branch-metric pipeline. Its frame, fault and symbol-enable traces
+match native C++, generated RTL and 71,945 mapped IHP cells. The slow-corner
+136 MHz cell-only estimate passes with 0.85 ns setup slack. Revised placement
+buffering initially gave 0.002952305 ns setup slack and −0.215014458 ns hold
+slack. Drive-strength repair after hold repair shortened some paths again.
+The maintained flow now inserts final hold delay after that repair, then uses
+the placement space reserved for late buffers during legalization. The fresh
+`build/clock-integration/final-hold-space-receiver/PCSReceiver-a63onlnw`
+checkpoint has **0.122084454 ns hold slack** and **0.000614619 ns setup slack**;
+slew, capacitance and fanout checks pass. The 136 MHz clock, 0.1 ns uncertainty
+and interface constraints are unchanged. The requested 0.15 ns repair margin
+is an optimization target, not a relaxed acceptance limit. Setup margin is
+very small. This is a placement result, not routed timing closure; detailed
+routing, post-route equivalence, extraction and physical verification remain
+pending. The routing flow repeats final hold repair using routed estimates
+and still requires nonnegative extracted setup and hold slack.
+
+Global-route repair of that baseline subsequently failed setup at −0.450 ns
+in `metrics.squared`, despite repairing hold to +0.051 ns at that intermediate
+stage. The run was stopped before detailed routing; it produced no qualified
+GDS. The new candidate removes conditional sample negation before squaring
+and instead reverses the five stored level costs in the next stage, using
+`(-sample - level)^2 == (sample + level)^2`. Polarity travels with its accepted
+sample and freezes during symbol pauses. Pipeline latency remains six clocks.
+The independent native branch-metric oracle passes. Complete receiver frame,
+fault and clock-enable trajectories now match in native C++, generated RTL
+and 73,085 mapped IHP cells. The slow-corner 136 MHz cell setup estimate improves
+from +0.85 ns to **+1.86 ns**, with unchanged constraints and functional evidence
+required. Its first placement had −0.021163516 ns setup and +0.117585614 ns
+hold slack after legalization. A further setup-reserve and hold repair now
+runs in a separate OpenROAD process, preserving both the original placement
+and the repaired checkpoint. Restarting before global routing avoids mixing
+the placement and routed parasitic estimators' update state. The maintained
+`build/clock-integration/polarity-margin-separated/PCSReceiver-g1cdmor3` run
+reproduces **+0.160363287 ns setup** and **+0.150055081 ns hold** before routing.
+Its global-route estimate subsequently failed setup at −0.115185201 ns while
+hold passed at +0.139998347 ns. Detailed routing was stopped to preserve that
+checkpoint for repair. Replacing one excessive delay cell preserves hold;
+repairing the final loaded network and allowing more setup-repair passes gives
+**+0.053054452 ns setup** and **+0.139850020 ns hold** after legalization in
+`build/clock-integration/final-network-repair-safe/`. Remaining XOR/XNOR slew
+violations still reject that candidate. The standard-cell library has only
+one drive strength for those gates. Two output-isolation passes improve setup
+to +0.200952142 ns and retain +0.139849916 ns hold, but two remaining output nets
+still violate slew. The maintained `finish_timing.tcl` now iterates real output
+buffers, setup/hold repair and antenna repair. The v5 run in
+`build/clock-integration/receiver-final-routing-v5` passes its final global
+estimate with **+0.202502027 ns setup**, **+0.139845580 ns hold**, no slew,
+capacitance or fanout violations and zero reported antenna violations.
+The combined run was stopped during detailed routing as it exhausted available
+RAM. Its repaired global database and interruption receipt are retained.
+`receiver-final-routing-v6` resumes that exact checkpoint in a fresh process
+without the synthesis/timing state. The maintained large-module flow now
+separates global timing repair, detailed routing and extracted qualification
+into three processes; two physical-driver guard tests pass for this sequencing.
+The failed OpenROAD estimator-state attempts are retained. A new CTest exercises the maintained repair on real IHP cells:
+the deliberately loaded XNOR starts with a 1.91 ns transition against 0.5 ns,
+and the short path starts at −45.273 ps hold slack. Both failures are repaired;
+the final estimated hold margin is +167.015 ps. Four physical-flow integrity
+regressions also pass after the driver changes.
+The v6 detailed route completed in 6 h 05 min with zero router violations.
+Independent extraction gives **+0.055523142 ns hold**, but **−1.623519182 ns
+setup** and slew/capacitance violations. Normal and fault replay match native;
+the long enable/pause/reset replay initially exceeded its 180 s harness limit.
+It subsequently passed all **186,741 events** in 319.626 s with a bounded
+900 s limit and exactly the same native trace hash. The maintained receiver
+flow now allows 900 s for each complete replay. This does not waive a timing
+failure or shorten a test.
+
+The retained diagnosis compares the same 112,496 net names in estimated and
+extracted SPEF. For estimated wire loads above 1 fF, extracted/estimated
+capacitance ratios are 1.358 median, 2.104 at the 95th percentile and 2.381 at
+the 99th percentile. `routing_rc_margin.tcl` applies a 2.5× capacitance margin
+only during receiver optimization; extraction restores the original PDK LEF
+and uses the unchanged OpenRCX model. Its real OpenROAD CTest verifies scaling,
+repeatability, restoration and unchanged acceptance constraints. It caught and
+fixed compounding caused by `set_layer_rc` modifying OpenDB technology values.
+The interrupted v7 candidate is retained. The v8 run found that omitting
+resistance in `set_layer_rc` clears it; the helper now supplies both RC values
+in the loaded library units. Its extended regression verifies unchanged wire
+resistance as well. A checkpoint after electrical repair preserves buffering
+before subsequent timing optimization. Both real-cell CTests pass. The v9
+incremental repair was stopped with checkpoints retained: its third saved
+stage still has −0.927933335 ns setup under nominal placement estimates,
+while subsequent routing is congested. A fresh 1.8 mm receiver placement now
+uses timing-driven net weighting and routability-driven spreading at 60%
+target density. Timing limits and the mapped functional design are unchanged.
+That placement completes with +0.059227291 ns setup, +0.140721887 ns hold,
+110,410 legally placed cells and no electrical violations. A fresh routing
+run imports its hashed database and repeats all downstream checks. Setup
+repair now avoids serial rebuffering; electrical and hold repair still insert
+required cells. Global screening restores nominal LEF RC after preserving the
+2.5× optimization report. Detailed extracted acceptance remains unchanged.
+No new receiver GDS is qualified. These placement estimates do not qualify a
+finished ASIC. The 359-file RTL catalog has been
+regenerated, and every exported hierarchy passes Verilator lint.
+
+The [clock circuits and their qualification boundaries](clocks.md) are now
+implemented. The reference clock passes native/Verilog-A requirements,
+comparison and the fresh nominal IHP PSP test. Its process-model output is
+250.003564 MHz from 125 MHz; simulated output periods span 3.994359–4.005641 ns.
+The process receipt is
+`build/1G/IHPSG13G2/tests/results/reference_clock_psp/checks.json`.
+This is schematic nominal evidence, not an extracted or noise/PVT jitter
+qualification. The processing oscillator passes all six static native,
+Verilog-A and nominal PSP trim/load/refinement cases. Its direct generic
+comparison also passes. At trim 38528 the native/Verilog-A frequency difference
+decreases from 0.835894% to 0.413712% when the native timestep is halved;
+all waveform, tuning-voltage and supply comparison limits pass.
+Closed processing-clock control passes native and Verilog-A tests using the
+achieved oscillator edges. Its direct comparison also passes after rechecking
+both full electrical trajectories: frequency difference is 0.213552%, output
+period-shape RMS difference is 15.838 mV, and sustained readiness begins on the
+same reference cycle. The two autonomous controllers select different trim
+codes; accounting for their ideal passive DAC voltages leaves 1.313 µV tuning
+voltage disagreement. The first direct-voltage comparison failed because it
+did not account for those different commands; its report is retained in
+`build/clock-integration/closed-clock-comparison-initial/`. Five guard tests
+include an independent nodal solution of the two DAC ladders. The closed-clock
+PSP run passed for that controller revision at 134.282632 MHz, trim 38592,
+1.197758 V minimum high level and 1.190273 V minimum supply, with all 8,000
+reference edges and the final 512 cycles qualified. The completed receipt and
+original controller are retained under
+`build/clock-integration/clock-before-timing-fix/`; the clock tests require rerunning
+after the acquisition-range correction below. These checks do not implement the slave transmitter's
+recovered-clock tracking or qualify a routed clock tree. Complete two-port
+PHY integration, analog layout and full-chip verification remain unfinished;
+there is still no complete repeater GDSII.
+
+The acquisition clock must also meet a faster timing budget than the settled
+PCS clock. The nominal PSP acquisition trajectory contains a 3.370812 ns
+delivered period (296.664 MHz). A new controller regression maps both domains,
+replays native/RTL/mapped/resized trajectories, and checks slow-corner cell
+timing at 125 MHz reference and a 400 MHz raw-clock design budget. The original
+controller fails with −0.661825299 ns setup slack, despite exact functional
+trajectories. The longer independent fixture now covers 192,836 events and
+counter wraparound. A separate arithmetic prototype precomputes both search
+midpoints and registers counter carry predictions; it preserves the complete
+native trajectory and has +0.685320 ns cell-only setup slack. The same 192,836
+events also match generated RTL, mapped IHP gates and resized gates. That
+arithmetic is now in the maintained controller. Both fresh digital CTests pass:
+1,474 mapped cells, exact complete trajectories and +0.685319841 ns cell setup
+slack. All 359 generated RTL/package files have been regenerated and their
+complete hierarchies linted. The fresh native closed-circuit test passes;
+The queued Verilog-A and partial PSP runs were deliberately stopped after a
+fast-corner diagnostic invalidated that acquisition budget; their interruption
+receipts and source snapshots are under
+`build/clock-integration/before-clock-envelope-fix/`.
+At maximum trim, FF/1.32 V/−40 C with the declared 50 fF stage capacitances and
+20 fF output load produces **645.155 MHz** and a **1.550016 ns minimum period**.
+The diagnostic is under `build/clock-integration/clock-fast-limit/`; it is one
+operating point, not a complete oscillator envelope. The revised controller now passes both maintained digital CTests at an
+**800 MHz raw-clock budget**: **+0.172788680 ns cell setup**, **1,497 cells**, and
+**292,092 exact C++/RTL/mapped/resized events**. It uses a continuously running
+counter with two-bit predicted carries, delayed Gray conversion, a pipelined
+heartbeat comparison, unary silence history and asynchronous reset assertion.
+The expanded fixture covers five tunable and three rejected curves, startup
+rates up to 780 MHz, wraparound and cold/warm reset without either clock.
+The maintained source and generated RTL have been updated. All twelve PSP startup/load/PVT points and six acquisition-checker guards
+pass. The fastest complete startup period corresponds to 645.421 MHz. Slow
+or stopped midscale is allowed because the reference-domain search raises
+trim; maximum trim must start and sustain a clock above 136 MHz. The corrected
+checker fully revalidated ten hash-matched trajectories and simulated the two
+slow-corner midscale cases fresh. Fresh
+closed-circuit qualification is required for this revision. The cell proof
+still excludes routed hold, CDC, reset release and receiver clock delivery.
+The new controller physical flow preserves both clock domains and times
+`ready_pcs_out` in the raw-clock domain. Its input snapshot requires exact
+native/RTL/mapped/resized traces and tracked mapped JSON as well as Verilog.
+Four snapshot guards and the existing physical-driver regressions pass. A
+controller physical run completed under
+`build/clock-integration/controller-decision-watchdog-physical/`. The earlier bounded
+candidate completed routing and exact replay, but failed extracted setup at
+−1.434322 ns (hold +0.067394 ns), so no qualified GDS was produced. The revised
+controller registers Gray decoding and readiness qualification. Its clock tree
+removes redundant buffer levels and advances the readiness branch. Placement
+estimates pass at +0.061829 ns setup and +0.069796 ns hold. The capacitance budget
+is now 0.1 pF with fanout eight; the 800 MHz acquisition requirement, uncertainty
+and output delay remain unchanged. Four real-cell clock-tree regressions pass.
+The readiness revision subsequently completed detailed routing with zero router
+violations and exact functional replay. Extracted hold passes at +0.066345 ns,
+and raw-output setup at +0.041346 ns, but the reference measurement/decision
+path fails setup at −0.169423 ns. Its failed receipt and source snapshot remain
+under `build/clock-integration/controller-ready-physical/`. The maintained
+controller now captures the complete 128-cycle measurement and decides on the
+next reference edge. Four fresh CTests pass, including all 292,092 events in
+native/RTL/mapped/resized flows. A negative regression reproduced lost watchdog protection when the reference
+stopped in the new decision state. That intermediate physical run was stopped
+before qualification. The maintained fix keeps the watchdog armed there and
+registers its acquisition level before crossing domains; the new boundary-loss
+fixture passes in all four digital flows. The final 280 × 280 µm controller GDS passes its component checks:
+extracted setup +0.052648444 ns, hold +0.069256634 ns, no electrical violations,
+exact native/routed replay, zero full-deck KLayout DRC violations, and transistor
+LVS matching 47 circuits, 40 ports and 20,432 devices. The independent extracted
+Gray-bus CTest passes all 22 bits at slow/fast corners; worst conservative arrival
+windows are 0.6918 ns and 0.4703 ns. This is a controller macro, with nominal
+routed RC and no post-fill coupling, reset-release or metastability-MTBF claim.
+The updated closed-clock C++RTL and Verilog-A flows both pass independently,
+at 134.245431 MHz and 134.532411 MHz respectively. The nominal PSP loop also
+passes at 134.282637 MHz with trim 38592 and 512 final qualified reference edges.
+A bounded recheck verifies all 8,671,136 samples from the completed 64 µs
+simulation. The native/Verilog-A comparison passes with 0.21332% frequency
+difference and 38.079 mV output-period RMS difference. Its initial list-based
+checker exceeded its memory cap; the failed receipt and original reader are
+preserved. The original waiting PSP checker/CTest queue was stopped after the
+independent compact recheck passed. Exact original physical-flow scripts
+are retained by their recorded hashes under
+`build/clock-integration/retained-flow-sources/`, since subsequent receiver
+optimization changes are not the scripts used to qualify this controller.
+No complete repeater GDSII is qualified.
+
+The preceding controller GDS used a 5 fF output load. Charge integration of
+the actual admission gate, at both held clock levels and all three declared
+process corners, finds a maximum equivalent request capacitance of 52.790 fF.
+The maintained input-charge checker passes all six trajectories. Controller
+implementation now reserves 80 fF for that gate and its interconnect; the
+100 fF total-net acceptance limit remains unchanged. The first loaded route
+failed global timing because its 72 fF optimization target was smaller than
+the external load. A corrected 95 fF optimization target allowed routing, but
+extracted setup still failed at −0.233637109 ns, with positive hold slack.
+That failed layout and its exact functional replay remain recorded under
+`build/clock-integration/controller-loaded-admission-v2/`.
+The next candidate factors the readiness AND into an enable/reference AND,
+a raw-qualifier NAND and an output inverter, preserving asynchronous withdrawal.
+Its real-cell Boolean proof and four malformed-topology rejection cases pass.
+The controller also uses 2.5 times LEF wire capacitance during optimization;
+independent extraction restores original process parameters. The first factored run exposed a long serial buffer
+chain introduced by setup rebuffering; this optimization is now disabled for
+the small controller, while electrical and hold repair retain their buffers.
+The readiness register has a dedicated buffer-8 clock branch to balance its
+input and output paths. Five real-cell clock-tree cases pass, including
+rejection of a conflicting branch before mutation. The flow records the conservative optimization report,
+then restores original LEF capacitance for global screening before independent
+detailed-route extraction. A real-cell regression checks that the margin does
+not leak into the final timing view. The previous shared-root candidate failed
+extracted setup by 7.528 ps; a buffer-4 branch failed by 9.838 ps, with positive
+hold in each case. A separate sizing study selected buffer-8. Its current
+candidate completes detailed routing with **+0.037747696 ns extracted setup**
+and **+0.064936139 ns extracted hold**, with no electrical violations. Its
+280 × 280 µm GDS passes the complete DRC deck with zero violations and
+transistor LVS (46 circuits, 40 ports, 20,404 devices). Fresh controller
+functional, mapped/resized and routed proofs match all 292,092 events. The
+extracted Gray-bus crossing audit also passes. The receipt and original flow
+source snapshots are retained under
+`build/clock-integration/controller-loaded-admission-v7/ProcessingClockControl-1jbz89kz/physical/`.
+Subsequent receiver routing-script changes do not modify this qualified
+artifact or renew its provenance. Post-fill coupling, reset release and the
+connected receiver clock tree still require qualification.
+
+The new 38-MOS `processing_clock_gate` passes both registered CTests: six
+checker guards and the complete electrical matrix. Native, Verilog-A and
+IHP TT/1.2 V/27 C, SS/1.08 V/125 C and FF/1.32 V/−40 C each deliver the
+32 expected complete pulses while blocking all 32 acquisition cycles. The
+slow/hot case has a 3.684 ns minimum high pulse and 178.242 ps maximum edge
+delay at 20 fF load. Native/Verilog-A RMS disagreement is 18.392 mV at the
+output and 11.386 mV at the stored request, below the unchanged 20 mV limits.
+The comparison excludes one initial native sample before SPICE's first
+positive integration time; both full-duration coverage checks still apply.
+The initial comparison-boundary failure is retained under
+`build/clock-integration/gate-proof`; the fresh passing receipt is under
+`build/1G/IHPSG13G2/tests/results/processing_clock_gate`.
+Its generated Verilog-A model is included in the maintained catalog.
+This is standalone schematic evidence: controller integration, latch-aperture
+timing, clock-loss/restart handling, physical realization and the receiver's
+extracted clock tree remain open.
+
+`processing_clock_delivery.hpp` now connects the oscillator's RAW node to the
+physical admission gate, sharing its supply and actual transistor loading.
+The new closed-loop bench drives ADMIT from `ProcessingClockControl` readiness
+in the raw-clock domain and loads the delivered output with 200 fF. Its native
+build, Verilog-A export and 89-MOS process binding succeed. Five checker cases
+pass, including lost pulses, cut pulses and output before admission. The complete
+C++RTL test passes at 134.132254 MHz: 3,833 complete delivered pulses, 3.713606 ns
+minimum high pulse and 36.706 ps maximum edge delay. Verilog-A passes at
+134.466526 MHz with 3,980 complete delivered pulses, 3.716310 ns minimum high
+pulse and 25.537 ps maximum edge delay. Its initial checker exhausted memory
+after simulation completed. A packed-double reader now retains every sample
+without Python objects for every value; four reader regressions pass. Separate
+recheck receipts validate all 1,324,173 native and 10,647,127 Verilog-A samples,
+the original simulation hashes and the unchanged electrical limits. The failed
+original receipt is retained. The independent generic comparison passes:
+frequency differs by 0.24859%, delivered-clock waveform RMS by 20.342 mV,
+and sustained readiness by one 128-reference-cycle measurement window.
+The connected PSP acquisition remains running. This still excludes the actual receiver clock tree, reset distribution,
+clock-loss/restart qualification, latch aperture characterization and layout.
+
+The new `PHYResetControl` connects the three-domain release chains to enable,
+power-good and both clock qualifications. Its generated RTL binds the combined
+request to the child's asynchronous-reset pin. Both reset CTests pass: the
+standalone release block matches 30,720 events, and the connected control
+matches 153,600 events across native, generated RTL and mapped IHP cells.
+The latter uses 21 cells, including six resettable registers. Tests include
+brief qualification withdrawals while every destination clock is stopped.
+This does not yet connect reset to the complete receive pipeline or qualify
+physical reset routing, pulse-width limits, recovery/removal or metastability.
+
+The connected clock-admission layout now uses actual MOS fingers and MIM
+plates, including two physical plates for each 2 fF series element. Strict
+KLayout LVS matches 104 devices; the complete DRC run has only isolated-window
+minimum-density violations. Local geometry, pin and antenna checks pass, and
+removing an input via fails LVS as required. This is an unfilled standalone
+macro, not a complete chip. The [analog extraction flow](analog-extraction.md)
+preserves 46 MOS fingers and 28 MIM plates. Its capacitance-conservation and
+real MIM extraction guards pass. Placement now puts capacitors near their
+connected devices and reduces the enable wiring load from 80.735 to 15.485 fF.
+The controller's real output masters driving the extracted gate and a 200 fF
+output load pass TT/27 °C/1.2 V, SS/125 °C/1.08 V and FF/−40 °C/1.32 V.
+Each produces 32 complete intended pulses; worst delay is 352.431 ps against
+the unchanged 400 ps limit. Extracted input-charge requalification now passes
+all six held-clock/process cases at 100 ps command edges. Maximum equivalent
+load is 71.509 fF; the remaining 8.491 fF must cover the external route from the
+controller. Its receipt is `build/clock-integration/clock-gate-placed-charge-v2/checks.json`.
+Field-solver calibration, clock-tree/reset integration and full-chip placement/fill remain
+open. See `build/clock-integration/clock-gate-placed-controller-pex/checks.json`.

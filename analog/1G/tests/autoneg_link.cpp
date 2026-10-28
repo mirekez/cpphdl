@@ -58,7 +58,7 @@ struct Monitor {
     }
 
     void check(unsigned config, unsigned seed) const {
-        const std::array<unsigned, 4> expected{0x8001, 0xB808, 0x9000 | config, 0x1800 | seed};
+        const std::array<unsigned, 4> expected{0x8401, 0xB808, 0x9000 | config, 0x1800 | seed};
         unsigned group = 0, acknowledged = 0;
         for (unsigned value : pages) {
             const unsigned payload = value & 0xBFFF;
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
             node.eval();
             result = unsigned(node.pulse_out) | (unsigned(node.pma_enable_out) << 1) |
                      (unsigned(node.link_out) << 2) | (unsigned(node.master_out) << 3) |
-                     (unsigned(node.fault_out) << 4) | (unsigned(node.reason_out) << 5);
+                     (unsigned(node.fault_out) << 4) | (unsigned(node.reason_out) << 5) | (unsigned(node.pause_out) << 8);
 #else
             (void)signals;
             ++_system_clock;
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
             node._strobe();
             result = unsigned(node.pulse_out()) | (unsigned(node.pma_enable_out()) << 1) |
                      (unsigned(node.link_out()) << 2) | (unsigned(node.master_out()) << 3) |
-                     (unsigned(node.fault_out()) << 4) | (unsigned(node.reason_out()) << 5);
+                     (unsigned(node.fault_out()) << 4) | (unsigned(node.reason_out()) << 5) | (unsigned(node.pause_out()) << 8);
 #endif
             if ((result & 4) && !(result & 2))
                 throw std::runtime_error("forwarding without a negotiated PMA");
@@ -162,6 +162,8 @@ int main(int argc, char** argv) {
                 a.pma = true;
                 b.pma = true;
                 if ((l & 4) && (r & 4)) {
+                    if (!(l & 256) || !(r & 256))
+                        throw std::runtime_error("wire peers failed symmetric PAUSE resolution");
                     completed = cycle + 1;
                     break;
                 }

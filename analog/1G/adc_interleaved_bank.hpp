@@ -18,12 +18,19 @@ public:
     _PORT(u<4>) slice_out = _ASSIGN_REG(slice);
     _PORT(bool) valid_out = _ASSIGN_REG(valid);
     _PORT(bool) fault_out = _ASSIGN_REG(fault);
+    _PORT(u<16>) aperture_out = _ASSIGN(enable_in() ? aperture_comb_func() : u<16>(0));
 private:
     ADCSARController converters[Slices];
     reg<u<Slices>> launch_slot{};
     reg<u<4>> slice{};
     reg<u<8>> data{};
     reg<u1> valid{}, fault{};
+    _LAZY_COMB(aperture_comb, u<16>)
+        unsigned mask = 0;
+        for (unsigned i = 0; i < Slices; ++i)
+            mask |= unsigned(converters[i].aperture_out()) << i;
+        return aperture_comb = mask;
+    }
 public:
     void _assign() {
         for (unsigned i = 0; i < Slices; ++i) {

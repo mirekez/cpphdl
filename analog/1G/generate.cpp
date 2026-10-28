@@ -1,5 +1,9 @@
 #include "phy.hpp"
 #include "IHPSG13G2/current_steering_driver.hpp"
+#include "IHPSG13G2/reference_clock_generator.hpp"
+#include "IHPSG13G2/processing_clock_oscillator.hpp"
+#include "IHPSG13G2/processing_clock_gate.hpp"
+#include "IHPSG13G2/processing_clock_delivery.hpp"
 #include "IHPSG13G2/biased_driver.hpp"
 #include "IHPSG13G2/emphasized_driver.hpp"
 #include "IHPSG13G2/core_transmit_driver.hpp"
@@ -171,6 +175,28 @@ int main(int argc, char** argv) {
         EXPORT(flp_pulse_detector, "OneGFLPPulseDetector", P(P), P(N), P(PULSE));
         EXPORT(reference_clock_multiplier, "OneGReferenceClockMultiplier", P(REF), P(CLEAR), P(OUT), P(DIVIDED));
         EXPORT(reference_clock_domain, "OneGReferenceClockDomain", P(Vlogic), P(REF), P(CLEAR), P(OUT), P(OUT_N));
+        emit<ihp_sg13g2::reference_clock_generator>(root, destination / "IHPSG13G2", "OneGIHPReferenceClockGenerator", [](auto& c) {
+            return std::vector<named_port>{P(Vdd), P(Vss), P(Vlogic), P(REF), P(CLEAR), P(OUT), P(OUT_N)};
+        });
+        emit<ihp_sg13g2::processing_clock_oscillator>(root, destination / "IHPSG13G2", "OneGIHPProcessingClockOscillator", [](auto& c) {
+            std::vector<named_port> ports{P(Vdd), P(Vss), P(CLEAR), P(OUT)};
+            for (unsigned bit = 0; bit < 8; ++bit) {
+                ports.push_back({"COARSE_N" + std::to_string(bit), c.COARSE_N[bit]});
+                ports.push_back({"FINE_N" + std::to_string(bit), c.FINE_N[bit]});
+            }
+            return ports;
+        });
+        emit<ihp_sg13g2::processing_clock_gate>(root, destination / "IHPSG13G2", "OneGIHPProcessingClockGate", [](auto& c) {
+            return std::vector<named_port>{P(Vdd), P(Vss), P(CLOCK), P(ENABLE), P(OUT)};
+        });
+        emit<ihp_sg13g2::processing_clock_delivery>(root, destination / "IHPSG13G2", "OneGIHPProcessingClockDelivery", [](auto& c) {
+            std::vector<named_port> ports{P(Vdd), P(Vss), P(CLEAR), P(ADMIT), P(RAW), P(OUT)};
+            for (unsigned bit = 0; bit < 8; ++bit) {
+                ports.push_back({"COARSE_N" + std::to_string(bit), c.COARSE_N[bit]});
+                ports.push_back({"FINE_N" + std::to_string(bit), c.FINE_N[bit]});
+            }
+            return ports;
+        });
         EXPORT(clock_level_shifter, "OneGClockLevelShifter", P(Vlogic), P(BIAS), P(A), P(Y), P(Y_N));
         emit<ihp_sg13g2::core_receive_dac>(root, destination / "IHPSG13G2", "OneGIHPCoreReceiveDAC", [](auto& c) {
             std::vector<named_port> ports{P(Vdd), P(Vss), P(Vlogic), P(OUT)};

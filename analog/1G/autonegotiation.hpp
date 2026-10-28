@@ -38,6 +38,7 @@ public:
     _PORT(bool) pulse_out = _ASSIGN(tx.pulse_out());
     _PORT(bool) pma_enable_out = _ASSIGN(control.pma_enable_out());
     _PORT(bool) link_out = _ASSIGN(control.link_out());
+    _PORT(bool) pause_out = _ASSIGN(control.pause_out());
     _PORT(bool) master_out = _ASSIGN(control.master_out());
     _PORT(bool) fault_out = _ASSIGN(control.fault_out());
     _PORT(u<3>) reason_out = _ASSIGN(control.reason_out());

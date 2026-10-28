@@ -16,6 +16,9 @@ public:
     _PORT(bool) acquire_out = _ASSIGN_REG(acquire);
     _PORT(bool) convert_out = _ASSIGN_REG(convert);
     _PORT(bool) busy_out = _ASSIGN(phase != 0);
+    // Assert before the edge that opens the sampling switch. Metadata must
+    // describe this aperture, rather than the earlier launch or later result.
+    _PORT(bool) aperture_out = _ASSIGN(phase == 3);
 
 private:
     reg<u<3>> phase{};

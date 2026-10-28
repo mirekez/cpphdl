@@ -21,6 +21,7 @@ public:
     _PORT(bool) transmit_enable_out = _ASSIGN(state == 1 || state == 2 || state == 3);
     _PORT(bool) pma_enable_out = _ASSIGN(state == 5 || state == 6);
     _PORT(bool) link_out = _ASSIGN(state == 6);
+    _PORT(bool) pause_out = _ASSIGN(state == 6 && remote_pause);
     _PORT(bool) master_out = _ASSIGN((state == 5 || state == 6) && roles.master_out());
     _PORT(bool) fault_out = _ASSIGN(state == 7);
     _PORT(u<3>) reason_out = _ASSIGN_REG(reason);
@@ -33,6 +34,7 @@ private:
     reg<u<11>> milliseconds{}, local_up1{}, local_seed{}, remote_up1{}, remote_seed{};
     reg<u<16>> transmit_page{}, candidate{}, ability{}, ack_word{};
     reg<u<2>> same_count{}, ack_count{};
+    reg<u1> remote_pause{};
     reg<u1> remote_np{}, remote_toggle{}, local_toggle{}, retry{};
     MasterSlaveResolver roles;
 
@@ -65,7 +67,7 @@ public:
                 milliseconds._next = 0;
                 local_up1._next = unsigned(local_up1_in()) & 31;
                 local_seed._next = entropy_seed_in();
-                transmit_page._next = 0x8001; // IEEE selector, NP, no unsupported 10/100 modes.
+                transmit_page._next = 0x8401; // IEEE selector, NP and symmetric PAUSE; no unsupported 10/100 modes.
                 state._next = 1;
                 if ((local_up1_in() & 8) == 0)
                     failure = 4;
@@ -174,13 +176,16 @@ public:
                 // Freeze the matched page's NP/toggle. Later received pages
                 // cannot change this completion decision.
                 remote_np._next = (accepted >> 15) & 1;
-                remote_toggle._next = (accepted >> 11) & 1;
+                // Base-page bit 11 is asymmetric PAUSE, not the next-page toggle.
+                remote_toggle._next = stage == 0 ? 0 : (accepted >> 11) & 1;
                 complete_count._next = 0;
                 role_wait._next = 0;
                 milliseconds._next = 0;
                 state._next = 3;
-                if (stage == 0 && (accepted & 0x8000) == 0)
-                    failure = 4;
+                if (stage == 0) {
+                    remote_pause._next = (accepted & 0x0400) != 0;
+                    if ((accepted & 0x8000) == 0) failure = 4;
+                }
                 if (stage == 1 && ((accepted & 0x27FF) != 0x2008 || (accepted & 0x8000) == 0))
                     failure = 4;
                 if (stage == 2) {
@@ -210,10 +215,11 @@ public:
             candidate._next = 0;
             ability._next = 0;
             ack_word._next = 0;
+            remote_pause._next = 0;
             remote_np._next = 0;
             remote_toggle._next = 0;
             local_toggle._next = 0;
-            transmit_page._next = 0x8001;
+            transmit_page._next = 0x8401;
             if (failure == 2) {
                 collisions._next = collisions + 1;
                 if (collisions >= 6)
@@ -237,12 +243,13 @@ public:
             local_seed._next = 0;
             remote_up1._next = 0;
             remote_seed._next = 0;
-            transmit_page._next = 0x8001;
+            transmit_page._next = 0x8401;
             candidate._next = 0;
             ability._next = 0;
             ack_word._next = 0;
             same_count._next = 0;
             ack_count._next = 0;
+            remote_pause._next = 0;
             remote_np._next = 0;
             remote_toggle._next = 0;
             local_toggle._next = 0;
@@ -267,6 +274,7 @@ public:
         ack_word.strobe();
         same_count.strobe();
         ack_count.strobe();
+        remote_pause.strobe();
         remote_np.strobe();
         remote_toggle.strobe();
         local_toggle.strobe();

@@ -2,6 +2,10 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -14,9 +18,10 @@ def main():
     fixtures = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory(prefix='exhaustive-switch-', dir=args.work) as directory:
         work = Path(directory)
+        tools = TestToolchain(args.cxx, args.verilator, work)
 
         def run(command, success=True):
-            result = subprocess.run([str(item) for item in command], cwd=work,
+            result = subprocess.run(tools.command(command), cwd=work, env=tools.env,
                                     capture_output=True, text=True, timeout=180)
             if (result.returncode == 0) != success:
                 logs = ''.join(path.read_text()[-3000:] for path in work.rglob('*.log'))

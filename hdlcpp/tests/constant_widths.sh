@@ -4,6 +4,12 @@ hdlcpp=$1
 include_dir=$2
 cxx=$3
 verilator=${4:-}
+link_flags=()
+atomic=$("$cxx" -print-file-name=libatomic.so)
+if [[ -f "$atomic" ]]; then
+    library_dir=$(cd "$(dirname "$atomic")" && pwd)
+    link_flags=(-LDFLAGS "-L$library_dir -Wl,-rpath,$library_dir")
+fi
 source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -25,7 +31,7 @@ for optimization in -O0 -O2; do
     ./run
 done
 if [[ -n "$verilator" ]]; then
-    "$verilator" --cc --exe --top-module constant_widths_reference -Wno-fatal \
+    "$verilator" --cc --exe --top-module constant_widths_reference -Wno-fatal "${link_flags[@]}" \
         --Mdir "$work/reference" "$source_dir/constant_widths.sv" \
         "$source_dir/constant_widths_reference.sv" "$source_dir/constant_widths_reference.cpp"
     make -C "$work/reference" -f Vconstant_widths_reference.mk -j1 CXX="$cxx" LINK="$cxx"

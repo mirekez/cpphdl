@@ -60,7 +60,18 @@ else()
     string(JOIN " " flags ${HLS_CXX_FLAGS} -O2 -fopenmp "-I${ROOT}/include"
         -DVERILATOR "-DPIPELINE_LATENCY=${latency}")
     string(JOIN " " links ${HLS_LINK_FLAGS} -fopenmp)
-    execute_process(COMMAND "${VERILATOR}" --cc --exe --build -j 2 --top-module PipelineTop
+    set(verilator_options)
+    if(FLOW STREQUAL "gates")
+        execute_process(COMMAND "${VERILATOR}" --version OUTPUT_VARIABLE verilator_version
+            COMMAND_ERROR_IS_FATAL ANY)
+        # 5.050's DFG pass can fold (~a) ^ (~(a ^ b)) to zero in a shared
+        # gate cone. RowContexts exposes this under randomized backpressure.
+        if(verilator_version MATCHES "^Verilator 5\\.050 ")
+            list(APPEND verilator_options -fno-dfg)
+            message(STATUS "Verilator 5.050: disabling incorrect DFG optimization for gate simulation")
+        endif()
+    endif()
+    execute_process(COMMAND "${VERILATOR}" ${verilator_options} --cc --exe --build -j 2 --top-module PipelineTop
         --prefix VPipelineTop --Mdir "${WORK}/obj_dir" -Wno-fatal
         -CFLAGS "${flags}" -LDFLAGS "${links}" ${sources} "${source}"
         -MAKEFLAGS "CXX=${CXX} LINK=${CXX}"

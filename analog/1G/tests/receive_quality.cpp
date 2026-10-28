@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
                 model_count = 0;
                 model_flushed = 0;
                 model_ready = false;
-            } else if (valid && model_flushed < 39) {
+            } else if (valid && model_flushed < 42) {
                 ++model_flushed;
             } else if (valid && !model_ready) {
                 model_count = word == 0 ? model_count + 1 : 0;
@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
         // Establish quality with intermittent accepted symbols. Poisoned words
         // during invalid clocks cannot count or revoke it.
         for (unsigned reason = 0; reason < 7; ++reason) {
-            for (unsigned n = 0; n < 39; ++n) {
+            for (unsigned n = 0; n < 42; ++n) {
                 valid = true;
                 word = 0;
                 tick();
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
             word = 0;
             tick();
         }
-        for (unsigned n = 0; n < 39; ++n) {
+        for (unsigned n = 0; n < 42; ++n) {
             valid = true;
             word = 0;
             tick();

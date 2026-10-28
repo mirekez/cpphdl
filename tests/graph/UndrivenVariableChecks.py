@@ -1,9 +1,12 @@
 import argparse
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from TestToolchain import TestToolchain
 
 
 def main():
@@ -17,9 +20,11 @@ def main():
     include = fixture.parents[1] / 'include'
     with tempfile.TemporaryDirectory(prefix='undriven-variable-', dir=args.work) as directory:
         work = Path(directory)
+        tools = TestToolchain(args.cxx, args.verilator, work)
 
         def run(command, environment=None):
-            result = subprocess.run([str(item) for item in command], cwd=work, env=environment,
+            result = subprocess.run(tools.command(command), cwd=work,
+                                    env=tools.env if environment is None else environment,
                                     capture_output=True, text=True, timeout=180)
             if result.returncode:
                 logs = ''.join(path.read_text()[-3000:] for path in work.rglob('*.log'))
@@ -32,7 +37,7 @@ def main():
         for enabled in (0, 1):
             configured = work / 'generate.tsv'
             configured.write_text(f'UndrivenVariable.ENABLE\t{enabled}\n')
-            environment = os.environ.copy()
+            environment = tools.env.copy()
             environment['HDLCPP_GENERATE_PARAM_VALUES'] = str(configured)
             run([args.hdlcpp, rtl], environment)
             header = (work / 'generated/UndrivenVariable.h').read_text()

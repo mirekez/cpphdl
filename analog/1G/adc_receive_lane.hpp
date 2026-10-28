@@ -30,6 +30,7 @@ public:
     _PORT(bool) clear_out = _ASSIGN(startup.clear_out());
     _PORT(bool) startup_ready_out = _ASSIGN(startup.ready_out());
     _PORT(bool) evaluate_enable_out = _ASSIGN(enable_in() && startup.ready_out());
+    _PORT(u<16>) aperture_out = _ASSIGN(enable_in() && startup.ready_out() ? adc.aperture_out() : u<16>(0));
 
 private:
     ADCStartupSequencer<> startup;
