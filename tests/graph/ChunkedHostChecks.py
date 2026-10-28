@@ -1,6 +1,5 @@
 """Serialized single-lane graphs preserve ordered DPI effects across chunks."""
 import argparse
-import importlib.util
 from pathlib import Path
 import subprocess
 import sys
@@ -8,6 +7,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from TestToolchain import TestToolchain
+from Cva6Adapter import write_dpi_adapter_header
 
 
 def main():
@@ -22,11 +22,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='chunked-host-', dir=args.work) as directory:
         work = Path(directory)
         toolchain = TestToolchain(args.cxx, None, work)
-        converter = repo / 'hdlcpp/tests/cva6/support/cpphdl/tools/convert_cva6.py'
-        specification = importlib.util.spec_from_file_location('cva6_converter', converter)
-        conversion = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(conversion)
-        conversion.write_dpi_adapter_header(work / 'dpi')
+        write_dpi_adapter_header(work / 'dpi')
 
         def run(command):
             result = subprocess.run(toolchain.command(command), cwd=work, env=toolchain.env,

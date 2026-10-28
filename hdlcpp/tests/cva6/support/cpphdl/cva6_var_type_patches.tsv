@@ -1,1 +1,0 @@
-fp_wdata_pack	logic<CVA6Cfg.XLEN>=>logic<CVA6Cfg.FLen>

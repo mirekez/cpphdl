@@ -392,18 +392,15 @@ if(Python3_Interpreter_FOUND)
             ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(CPPHDL_BUILD_HDLCPP)
-        add_test(NAME hdlcpp_specialization_precedence COMMAND "${CMAKE_COMMAND}" -E env
-            "CPPHDL_TEST_HDLCPP=$<TARGET_FILE:hdlcpp>" "CPPHDL_TEST_CXX=${CMAKE_CXX_COMPILER}"
-            "${Python3_EXECUTABLE}" -B -m unittest
-            test_workflow.WorkflowTests.test_specialization_preserves_non_type_parameter_expression_precedence)
+        add_test(NAME hdlcpp_specialization_precedence COMMAND bash
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/SpecializationPrecedenceTest.sh"
+            "$<TARGET_FILE:hdlcpp>" "${CMAKE_CXX_COMPILER}")
         set_tests_properties(hdlcpp_specialization_precedence PROPERTIES TIMEOUT 120
-            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/hdlcpp/tests/cva6" LABELS "hdlcpp;templates")
+            LABELS "hdlcpp;templates")
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            add_test(NAME cva6_workflow_helpers COMMAND "${CMAKE_COMMAND}" -E env
-                "CPPHDL_TEST_HDLCPP=$<TARGET_FILE:hdlcpp>" "CPPHDL_TEST_TOOL=$<TARGET_FILE:cpphdl>"
-                "CPPHDL_TEST_CXX=${CMAKE_CXX_COMPILER}" "${Python3_EXECUTABLE}" -B -m unittest
-                discover -s "${CMAKE_SOURCE_DIR}/hdlcpp/tests/cva6" -p "test_*.py")
-            set_tests_properties(cva6_workflow_helpers PROPERTIES TIMEOUT 180 LABELS "cva6;scripts")
+            add_test(NAME cva6_bash_scripts COMMAND bash
+                "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/Cva6ScriptsTest.sh" "${CMAKE_CXX_COMPILER}")
+            set_tests_properties(cva6_bash_scripts PROPERTIES TIMEOUT 180 LABELS "cva6;scripts")
         endif()
         add_test(NAME hdlcpp_wide_select_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/WideSelectChecks.py"

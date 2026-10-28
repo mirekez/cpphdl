@@ -1,0 +1,2579 @@
+@@ environment.sh
+export HDLCPP_MODULE_PARAMS="$OUT/cva6_module_params.tsv"
+export HDLCPP_PORT_TYPES="$OUT/cva6_port_types.tsv"
+export HDLCPP_LINE_PATCHES="$OUT/cva6_line_patches.tsv"
+export HDLCPP_AGGREGATE_DEFAULTS="$OUT/cva6_aggregate_defaults.tsv"
+export HDLCPP_QUALIFIED_CALLS="$OUT/cva6_qualified_calls.tsv"
+export HDLCPP_TYPE_DECL_OVERRIDES="$OUT/cva6_type_decl_overrides.tsv"
+export HDLCPP_TYPE_PARAM_DEFAULTS="$OUT/cva6_type_param_defaults.tsv"
+export HDLCPP_TYPE_ALIAS_OVERRIDES="$OUT/cva6_type_alias_overrides.tsv"
+export HDLCPP_METHOD_BODY_OVERRIDES="$OUT/cva6_method_body_overrides.tsv"
+export HDLCPP_SKIP_PARAMS="cva6.AccCfg"
+export HDLCPP_LOCAL_TYPE_MODULES="cva6"
+export HDLCPP_LOCAL_TYPE_NAMES="branchpredict_sbe_t,exception_t,icache_areq_t,icache_arsp_t,icache_dreq_t,fetch_entry_t,jvt_t,scoreboard_entry_t,writeback_t,bp_resolve_t,irq_ctrl_t,lsu_ctrl_t,cbo_t,fu_data_t,icache_req_t,icache_rtrn_t,dcache_req_i_t,dcache_req_o_t,accelerator_req_t,accelerator_resp_t,acc_mmu_req_t,acc_mmu_resp_t,acc_cfg_t"
+export HDLCPP_ADDRESSABLE_PACKED_ARRAY_TYPES="branchpredict_sbe_t,exception_t,icache_areq_t,icache_arsp_t,icache_dreq_t,icache_drsp_t,fetch_entry_t,jvt_t,bht_prediction_t,scoreboard_entry_t,writeback_t,bp_resolve_t,irq_ctrl_t,lsu_ctrl_t,cbo_t,fu_data_t,icache_req_t,icache_rtrn_t,dcache_req_i_t,dcache_req_o_t,accelerator_req_t,accelerator_resp_t,acc_mmu_req_t,acc_mmu_resp_t,acc_cfg_t,forwarding_t,hpdcache_req_t,hpdcache_rsp_t,hpdcache_mem_req_t,hpdcache_mem_req_w_t,hpdcache_mem_resp_r_t,hpdcache_mem_resp_w_t,hpdcache_dir_entry_t,hpdcache_pma_t,hpdcache_rtab_deps_t,rtab_entry_t,hwpf_stride_base_t,hwpf_stride_param_t,hwpf_stride_throttle_t,hwpf_stride_status_t,pte_cva6_t,tlb_update_cva6_t,pmpcfg_t,instruction_t,ras_t"
+export HDLCPP_FALSE_CONSTANT_TYPES="cva6.acc_cfg_t"
+export HDLCPP_CONSTEXPR_GENERATE_MODULES="cva6_fifo_v3,cva6_shared_tlb"
+export HDLCPP_NAMED_PARAM_ORDER="$OUT/cva6_named_param_order.tsv"
+export HDLCPP_QUALIFY_IMPORTED_TYPE_PACKAGES="cvxif_instr_pkg"
+export HDLCPP_ENUM_WIDTH_PREFIXES="$OUT/cva6_enum_width_prefixes.tsv"
+export HDLCPP_SKIP_USING_NAMESPACE_IMPORTS="cvxif_instr_pkg"
+export HDLCPP_VAR_TYPE_PATCHES="$OUT/cva6_var_type_patches.tsv"
+export HDLCPP_INLINE_COMB_MODULES=""
+export HDLCPP_INLINE_COMB_BODIES="$OUT/cva6_inline_comb_bodies.tsv"
+export HDLCPP_WORK_PRECOMB_CALLS="$OUT/cva6_work_precomb_calls.tsv"
+export HDLCPP_BEFORE_STROBE_LINE_CALLS="$OUT/cva6_strobe_hooks.tsv"
+export HDLCPP_AFTER_STROBE_LINE_CODE="$OUT/cva6_after_strobe_code.tsv"
+export HDLCPP_ASSIGN_PREFIX_CODE="$OUT/cva6_assign_prefix_code.tsv"
+export HDLCPP_ASSIGN_SUFFIX_CODE="$OUT/cva6_assign_suffix_code.tsv"
+export HDLCPP_ASSIGN_LINE_PATCHES="$OUT/cva6_assign_line_patches.tsv"
+export HDLCPP_SKIP_ASSIGN_MODULES=""
+export HDLCPP_SKIP_ASSIGN_LINE_PREFIXES="issue_stage|issue_instr_o_out,issue_stage|issue_instr_hs_o_out"
+export HDLCPP_SKIP_UNKNOWN_INSTANCE_TYPES="instr_tracer"
+export HDLCPP_UNKNOWN_INPUTLESS_INSTANCE_TYPES="acc_dispatcher,fpu_wrap"
+export HDLCPP_UNKNOWN_OUTPUT_PORTS="orig_instr_aes_bits"
+export HDLCPP_COMB_RETURN_INJECTIONS="$OUT/cva6_comb_return_injections.tsv"
+export HDLCPP_PACKAGE_METHOD_OVERRIDES="$OUT/cva6_package_method_overrides.tsv"
+export HDLCPP_FUNCTION_WIDTHS="$OUT/cva6_function_widths.tsv"
+export HDLCPP_NUMERIC_ARG_INDICES="$OUT/cva6_numeric_arg_indices.tsv"
+export HDLCPP_GENERATE_PARAM_VALUES="$OUT/cva6_generate_param_values.tsv"
+export HDLCPP_REMOVE_TARGETED_MASK_TOKENS="instr_comb_func()."
+export HDLCPP_REMOVE_ONE_BIT_MASK_TOKENS="instruction_i_in().bits"
+export HDLCPP_PACKED_INPUT_ELEMENT_WIDTH="miss_paddr_i=CVA6Cfg.PLEN;tx_paddr_i=CVA6Cfg.PLEN"
+export HDLCPP_REVERSE_PACKED_TYPES="cva6_mmu.pte_cva6_t"
+export HDLCPP_NOCACHE_COMB_METHODS="id_stage|instruction_cvxif_i_comb_func,id_stage|is_illegal_cvxif_i_comb_func,id_stage|is_compressed_cvxif_i_comb_func,cva6|fetch_entry_if_id_comb_func,cva6|fetch_valid_if_id_comb_func"
+export HDLCPP_READONLY_COMB_OUTPUTS="cva6_fifo_v3|data_o,fifo_v3|data_o"
+export HDLCPP_READONLY_COMB_STOP_TOKENS="$OUT/cva6_readonly_comb_stop_tokens.tsv"
+@@ metadata.list
+vendor/pulp-platform/fpga-support/rtl/SyncDpRam.sv
+vendor/pulp-platform/fpga-support/rtl/AsyncDpRam.sv
+vendor/pulp-platform/fpga-support/rtl/AsyncThreePortRam.sv
+vendor/pulp-platform/fpga-support/rtl/SyncThreePortRam.sv
+vendor/pulp-platform/fpga-support/rtl/SyncDpRam_ind_r_w.sv
+core/cvfpu/src/fpnew_pkg.sv
+core/include/config_pkg.sv
+core/include/cv32a6_imac_sv32_config_pkg.sv
+core/include/riscv_pkg.sv
+core/include/ariane_pkg.sv
+vendor/pulp-platform/axi/src/axi_pkg.sv
+core/include/wt_cache_pkg.sv
+core/include/std_cache_pkg.sv
+core/include/instr_tracer_pkg.sv
+core/include/build_config_pkg.sv
+core/include/aes_pkg.sv
+core/include/triggers_pkg.sv
+core/cvxif_compressed_if_driver.sv
+core/cvxif_issue_register_commit_if_driver.sv
+core/cvxif_example/include/cvxif_instr_pkg.sv
+core/cvxif_fu.sv
+core/cvxif_example/cvxif_example_coprocessor.sv
+core/cvxif_example/instr_decoder.sv
+core/cvxif_example/compressed_instr_decoder.sv
+core/cvxif_example/copro_alu.sv
+vendor/pulp-platform/common_cells/src/cf_math_pkg.sv
+vendor/pulp-platform/common_cells/src/fifo_v3.sv
+vendor/pulp-platform/common_cells/src/lfsr.sv
+vendor/pulp-platform/common_cells/src/lfsr_8bit.sv
+vendor/pulp-platform/common_cells/src/stream_arbiter.sv
+vendor/pulp-platform/common_cells/src/stream_arbiter_flushable.sv
+vendor/pulp-platform/common_cells/src/stream_mux.sv
+vendor/pulp-platform/common_cells/src/stream_demux.sv
+vendor/pulp-platform/common_cells/src/lzc.sv
+vendor/pulp-platform/common_cells/src/rr_arb_tree.sv
+vendor/pulp-platform/common_cells/src/shift_reg.sv
+vendor/pulp-platform/common_cells/src/unread.sv
+vendor/pulp-platform/common_cells/src/popcount.sv
+vendor/pulp-platform/common_cells/src/exp_backoff.sv
+vendor/pulp-platform/common_cells/src/counter.sv
+vendor/pulp-platform/common_cells/src/delta_counter.sv
+core/cva6.sv
+core/cva6_rvfi_probes.sv
+core/alu.sv
+core/alu_wrapper.sv
+core/aes.sv
+core/fpu_wrap.sv
+core/branch_unit.sv
+core/compressed_decoder.sv
+core/macro_decoder.sv
+core/controller.sv
+core/zcmt_decoder.sv
+core/csr_buffer.sv
+core/csr_regfile.sv
+core/trigger_module.sv
+core/decoder.sv
+core/ex_stage.sv
+core/instr_realign.sv
+core/id_stage.sv
+core/issue_read_operands.sv
+core/issue_stage.sv
+core/load_unit.sv
+core/load_store_unit.sv
+core/lsu_bypass.sv
+core/mult.sv
+core/multiplier.sv
+core/serdiv.sv
+core/perf_counters.sv
+core/ariane_regfile_ff.sv
+core/ariane_regfile_fpga.sv
+core/scoreboard.sv
+core/raw_checker.sv
+core/store_buffer.sv
+core/amo_buffer.sv
+core/store_unit.sv
+core/commit_stage.sv
+core/axi_shim.sv
+core/cva6_accel_first_pass_decoder_stub.sv
+core/acc_dispatcher.sv
+core/cva6_fifo_v3.sv
+core/frontend/btb.sv
+core/frontend/bht.sv
+core/frontend/bht2lvl.sv
+core/frontend/ras.sv
+core/frontend/instr_scan.sv
+core/frontend/instr_queue.sv
+core/frontend/frontend.sv
+core/cache_subsystem/wt_dcache_ctrl.sv
+core/cache_subsystem/wt_dcache_mem.sv
+core/cache_subsystem/wt_dcache_missunit.sv
+core/cache_subsystem/wt_dcache_wbuffer.sv
+core/cache_subsystem/wt_dcache.sv
+core/cache_subsystem/cva6_icache.sv
+core/cache_subsystem/wt_cache_subsystem.sv
+core/cache_subsystem/wt_axi_adapter.sv
+core/cache_subsystem/tag_cmp.sv
+core/cache_subsystem/axi_adapter.sv
+core/cache_subsystem/miss_handler.sv
+core/cache_subsystem/cache_ctrl.sv
+core/cache_subsystem/cva6_icache_axi_wrapper.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_pkg.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_req_read_arbiter.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_req_write_arbiter.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_demux.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_lfsr.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sync_buffer.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fifo_reg.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fifo_reg_initialized.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fxarb.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_rrarb.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_mux.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_decoder.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_1hot_to_binary.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_prio_1hot_encoder.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_prio_bin_encoder.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram_wbyteenable.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram_wmask.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_regbank_wbyteenable_1rw.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_regbank_wmask_1rw.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_downsize.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_upsize.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_resize.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_pkg.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_arb.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_wrapper.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_amo.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_cmo.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_core_arbiter.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_ctrl.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_ctrl_pe.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_memctrl.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_cbuf.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_mshr.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_rtab.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_uncached.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_plru.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_random.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_sel.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_wbuf.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_flush.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_resp_demux.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_to_axi_read.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_to_axi_write.sv
+core/include/dummy_l15_pkg.sv
+core/cache_subsystem/cva6_hpdcache_subsystem.sv
+core/cache_subsystem/cva6_hpdcache_subsystem_axi_arbiter.sv
+core/cache_subsystem/cva6_hpdcache_if_adapter.sv
+core/cache_subsystem/cva6_hpdcache_wrapper.sv
+core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_1rw.sv
+core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_wbyteenable_1rw.sv
+core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_wmask_1rw.sv
+core/pmp/src/pmp.sv
+core/pmp/src/pmp_entry.sv
+core/pmp/src/pmp_data_if.sv
+common/local/util/instr_tracer.sv
+common/local/util/tc_sram_wrapper.sv
+common/local/util/tc_sram_wrapper_cache_techno.sv
+vendor/pulp-platform/tech_cells_generic/src/rtl/tc_sram.sv
+common/local/util/sram.sv
+common/local/util/sram_cache.sv
+core/cva6_mmu/cva6_mmu.sv
+core/cva6_mmu/cva6_ptw.sv
+core/cva6_mmu/cva6_tlb.sv
+core/cva6_mmu/cva6_shared_tlb.sv
+corev_apu/tb/ariane_axi_pkg.sv
+corev_apu/tb/axi_intf.sv
+corev_apu/register_interface/src/reg_intf.sv
+corev_apu/tb/ariane_soc_pkg.sv
+corev_apu/riscv-dbg/src/dm_pkg.sv
+corev_apu/tb/ariane_axi_soc_pkg.sv
+core/cva6_rvfi.sv
+corev_apu/src/ariane.sv
+corev_apu/bootrom/bootrom.sv
+corev_apu/clint/axi_lite_interface.sv
+corev_apu/clint/clint.sv
+corev_apu/fpga/src/axi2apb/src/axi2apb.sv
+corev_apu/fpga/src/axi2apb/src/axi2apb_64_32.sv
+corev_apu/fpga/src/apb_timer/apb_timer.sv
+corev_apu/fpga/src/apb_timer/timer.sv
+corev_apu/fpga/src/axi_slice/src/axi_ar_buffer.sv
+corev_apu/fpga/src/axi_slice/src/axi_aw_buffer.sv
+corev_apu/fpga/src/axi_slice/src/axi_b_buffer.sv
+corev_apu/fpga/src/axi_slice/src/axi_r_buffer.sv
+corev_apu/fpga/src/axi_slice/src/axi_single_slice.sv
+corev_apu/fpga/src/axi_slice/src/axi_slice.sv
+corev_apu/fpga/src/axi_slice/src/axi_slice_wrap.sv
+corev_apu/fpga/src/axi_slice/src/axi_w_buffer.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_res_tbl.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_amos.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_amos_alu.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_atomics.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_atomics_wrap.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_lrsc.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_lrsc_wrap.sv
+corev_apu/axi_mem_if/src/axi2mem.sv
+corev_apu/riscv-dbg/src/dm_csrs.sv
+corev_apu/riscv-dbg/src/dm_mem.sv
+corev_apu/riscv-dbg/src/dm_sba.sv
+corev_apu/riscv-dbg/src/dm_top.sv
+corev_apu/riscv-dbg/src/dmi_cdc.sv
+corev_apu/riscv-dbg/src/dmi_jtag.sv
+corev_apu/riscv-dbg/src/dmi_jtag_tap.sv
+corev_apu/rv_plic/rtl/rv_plic_target.sv
+corev_apu/rv_plic/rtl/rv_plic_gateway.sv
+corev_apu/rv_plic/rtl/plic_regmap.sv
+corev_apu/rv_plic/rtl/plic_top.sv
+corev_apu/riscv-dbg/debug_rom/debug_rom.sv
+corev_apu/register_interface/src/apb_to_reg.sv
+vendor/pulp-platform/axi/src/axi_multicut.sv
+vendor/pulp-platform/common_cells/src/rstgen_bypass.sv
+vendor/pulp-platform/common_cells/src/rstgen.sv
+vendor/pulp-platform/common_cells/src/addr_decode.sv
+vendor/pulp-platform/common_cells/src/stream_register.sv
+vendor/pulp-platform/axi/src/axi_cut.sv
+vendor/pulp-platform/axi/src/axi_join.sv
+vendor/pulp-platform/axi/src/axi_delayer.sv
+vendor/pulp-platform/axi/src/axi_to_axi_lite.sv
+vendor/pulp-platform/axi/src/axi_id_prepend.sv
+vendor/pulp-platform/axi/src/axi_atop_filter.sv
+vendor/pulp-platform/axi/src/axi_err_slv.sv
+vendor/pulp-platform/axi/src/axi_mux.sv
+vendor/pulp-platform/axi/src/axi_demux.sv
+vendor/pulp-platform/axi/src/axi_xbar.sv
+vendor/pulp-platform/common_cells/src/cdc_2phase.sv
+vendor/pulp-platform/common_cells/src/spill_register_flushable.sv
+vendor/pulp-platform/common_cells/src/spill_register.sv
+vendor/pulp-platform/common_cells/src/deprecated/fifo_v1.sv
+vendor/pulp-platform/common_cells/src/deprecated/fifo_v2.sv
+vendor/pulp-platform/common_cells/src/stream_delay.sv
+vendor/pulp-platform/common_cells/src/lfsr_16bit.sv
+vendor/pulp-platform/tech_cells_generic/src/deprecated/cluster_clk_cells.sv
+vendor/pulp-platform/tech_cells_generic/src/deprecated/pulp_clk_cells.sv
+vendor/pulp-platform/tech_cells_generic/src/rtl/tc_clk.sv
+corev_apu/instr_tracing/ITI/include/iti_pkg.sv
+corev_apu/instr_tracing/rv_tracer-main/include/te_pkg.sv
+corev_apu/instr_tracing/rv_encapsulator-main/src/include/encap_pkg.sv
+corev_apu/tb/ariane_testharness.sv
+corev_apu/tb/ariane_peripherals.sv
+corev_apu/tb/rvfi_tracer.sv
+corev_apu/tb/common/uart.sv
+corev_apu/tb/common/SimDTM.sv
+corev_apu/tb/common/SimJTAG.sv
+corev_apu/instr_tracing/ITI/cva6_iti/iti.sv
+corev_apu/instr_tracing/ITI/cva6_iti/block_retirement.sv
+corev_apu/instr_tracing/ITI/cva6_iti/single_retirement.sv
+corev_apu/instr_tracing/ITI/cva6_iti/itype_detector.sv
+vendor/pulp-platform/common_cells/src/sync.sv
+vendor/pulp-platform/common_cells/src/sync_wedge.sv
+vendor/pulp-platform/common_cells/src/edge_detect.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_branch_map.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_filter.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_packet_emitter.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_priority.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_reg.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_resync_counter.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/rv_tracer.sv
+corev_apu/instr_tracing/DPTI/slicer_DPTI.sv
+corev_apu/instr_tracing/rv_encapsulator-main/src/rtl/encapsulator.sv
+corev_apu/tb/common/mock_uart.sv
+core/cache_subsystem/cva6_hpdcache_subsystem_l15_adapter.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_to_l15.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_l15_req_arbiter.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_l15_resp_demux.sv
+corev_apu/fpga/src/apb_uart/src/apb_uart.sv
+vendor/pulp-platform/common_cells/src/onehot_to_bin.sv
+vendor/pulp-platform/common_cells/src/id_queue.sv
+vendor/pulp-platform/axi/src/axi_burst_splitter.sv
+corev_apu/riscv-dbg/debug_rom/debug_rom_one_scratch.sv
+corev_apu/fpga/src/apb_uart/src/apb_uart_wrap.sv
+corev_apu/fpga/src/apb_uart/src/slib_clock_div.sv
+corev_apu/fpga/src/apb_uart/src/slib_counter.sv
+corev_apu/fpga/src/apb_uart/src/slib_edge_detect.sv
+corev_apu/fpga/src/apb_uart/src/slib_fifo.sv
+corev_apu/fpga/src/apb_uart/src/slib_input_filter.sv
+corev_apu/fpga/src/apb_uart/src/slib_input_sync.sv
+corev_apu/fpga/src/apb_uart/src/slib_mv_filter.sv
+corev_apu/fpga/src/apb_uart/src/uart_baudgen.sv
+corev_apu/fpga/src/apb_uart/src/uart_interrupt.sv
+corev_apu/fpga/src/apb_uart/src/uart_receiver.sv
+corev_apu/fpga/src/apb_uart/src/uart_transmitter.sv
+@@ cva6_after_strobe_code.tsv
+cva6_fifo_v3|status_cnt_q._next = 0;	if constexpr (!FPGA_EN) { if (~rst_ni_in()) { mem_q = 0; } }
+cva6_fifo_v3|status_cnt_q._next = status_cnt_n;	if constexpr (!FPGA_EN) { if (!gate_clock) { mem_q = mem_n; } }
+@@ cva6_aggregate_defaults.tsv
+config_pkg::cva6_user_cfg_t.NonIdempotentLength	std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull}
+config_pkg::cva6_user_cfg_t.ExecuteRegionAddrBase	std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull, 0x10000ull, 0x0ull}
+config_pkg::cva6_user_cfg_t.ExecuteRegionLength	std::array<uint64_t,config_pkg::NrMaxRules>{0x40000000ull, 0x10000ull, 0x1000ull}
+config_pkg::cva6_user_cfg_t.CachedRegionAddrBase	std::array<uint64_t,config_pkg::NrMaxRules>{0x80000000ull}
+config_pkg::cva6_user_cfg_t.CachedRegionLength	std::array<uint64_t,config_pkg::NrMaxRules>{0x40000000ull}
+@@ cva6_assign_line_patches.tsv
+decoder|instruction_o.valid = instruction_o_out().ex.valid;	instruction_o.valid = instruction_o.ex.valid;
+@@ cva6_assign_prefix_code.tsv
+
+@@ cva6_assign_suffix_code.tsv
+
+@@ cva6_comb_return_injections.tsv
+# Intentionally empty. Do not inject behavioral changes here.
+@@ cva6_enum_width_prefixes.tsv
+riscv::Opcode	7
+@@ cva6_function_widths.tsv
+aes_sbox_fwd	8
+aes_sbox_inv	8
+aes_mixcolumn_fwd	32
+aes_mixcolumn_inv	32
+aes_mixcolumn_inv8	32
+sext32to64	64
+toSize64	2
+ariane_pkg::hs_deleg_interrupts	32
+ariane_pkg::vs_deleg_interrupts	32
+hs_deleg_interrupts	32
+vs_deleg_interrupts	32
+@@ cva6_generate_param_values.tsv
+# module.param	value
+sram_cache.TECHNO_CUT	0
+CVA6Cfg.AxiDataWidth	64
+CVA6Cfg.RVA	1
+CVA6Cfg.RVH	0
+CVA6Cfg.RVV	0
+CVA6Cfg.CvxifEn	0
+CVA6Cfg.EnableAccelerator	0
+CVA6Cfg.MmuPresent	1
+CVA6Cfg.SuperscalarEn	0
+CVA6Cfg.FpgaEn	0
+CVA6Cfg.FpgaAlteraEn	0
+cva6_fifo_v3.FPGA_EN	0
+cva6_fifo_v3.FPGA_ALTERA	0
+CVA6Cfg.NrIssuePorts	1
+CVA6Cfg.NrWbPorts	4
+CVA6Cfg.NOCType	0
+config_pkg::NOC_TYPE_AXI4_ATOP	0
+config_pkg::NOC_TYPE_L15_BIG_ENDIAN	1
+config_pkg::NOC_TYPE_L15_LITTLE_ENDIAN	2
+config_pkg::BHT	0
+config_pkg::PH_BHT	1
+config_pkg::WT	1
+config_pkg::HPDCACHE_WT	2
+config_pkg::HPDCACHE_WB	3
+config_pkg::HPDCACHE_WT_WB	4
+CVA6Cfg.BHTEntries	128
+CVA6Cfg.BPType	0
+CVA6Cfg.DCacheType	2
+stream_arbiter_flushable.ARBITER	"rr"
+stream_delay.StallRandom	0
+stream_delay.FixedDelay	0
+hpdcache_sram.ECC_EN	0
+hpdcache_sram_wbyteenable.ECC_EN	0
+hpdcache_sram_wmask.ECC_EN	0
+HPDcacheCfg.u.mshrRamByteEnable	1
+HPDcacheCfg.u.mshrUseRegbank	1
+dm_mem.HasSndScratch	1
+rv_tracer.N	1
+rv_tracer.ONLY_BRANCHES	1
+@@ cva6_inline_comb_bodies.tsv
+rr_arb_tree.body	    _LAZY_COMB(req_o_comb, logic<1>)\n        req_o_comb = logic<1>(0b0);\n        for (unsigned i = 0; (uint64_t)(i) < (uint64_t)(NumIn); ++i) {\n            req_o_comb = req_o_comb | logic<1>(req_i_in()[(unsigned)(uint64_t)((uint64_t)(i))]);\n        }\n        return req_o_comb;\n    }\n    _LAZY_COMB(idx_o_comb, idx_t)\n        idx_o_comb = idx_t{};\n        bool found = false;\n        for (unsigned i = 0; (uint64_t)(i) < (uint64_t)(NumIn); ++i) {\n            if (!found && bool(req_i_in()[(unsigned)(uint64_t)((uint64_t)(i))])) {\n                idx_o_comb = idx_t(i);\n                found = true;\n            }\n        }\n        return idx_o_comb;\n    }\n    _LAZY_COMB(gnt_o_comb, logic<(uint64_t)(NumIn)>)\n        gnt_o_comb = logic<(uint64_t)(NumIn)>(0);\n        bool granted = false;\n        if (bool(gnt_i_in())) {\n            for (unsigned i = 0; (uint64_t)(i) < (uint64_t)(NumIn); ++i) {\n                if (!granted && bool(req_i_in()[(unsigned)(uint64_t)((uint64_t)(i))])) {\n                    gnt_o_comb[(unsigned)(uint64_t)((uint64_t)(i))] = logic<1>(0b1);\n                    granted = true;\n                }\n            }\n        }\n        return gnt_o_comb;\n    }\n    _LAZY_COMB(data_o_comb, DataType)\n        data_o_comb = DataType{};\n        for (unsigned i = 0; (uint64_t)(i) < (uint64_t)(NumIn); ++i) {\n            if ((uint64_t)(idx_o_comb_func()) == (uint64_t)(i)) {\n                data_o_comb = data_i_in()[(unsigned)(uint64_t)((uint64_t)(i))];\n            }\n        }\n        return data_o_comb;\n    }
+@@ cva6_line_patches.tsv
+# mode	needle	replacement
+replace	ariane_pkg::SMODE_STATUS_WRITE_MASK.bits(	logic<64>(ariane_pkg::SMODE_STATUS_WRITE_MASK).bits(
+replace	ariane_pkg::HSTATUS_WRITE_MASK.bits(	logic<64>(ariane_pkg::HSTATUS_WRITE_MASK).bits(
+replace	SMODE_STATUS_READ_MASK.bits(	logic<64>(SMODE_STATUS_READ_MASK).bits(
+replace	logic<1>(MaxNumWords).bits(	logic<32>(MaxNumWords).bits(
+replace	logic<1>(AxiRdBlenIcache).bits(	logic<32>(AxiRdBlenIcache).bits(
+replace	logic<1>(AxiRdBlenDcache).bits(	logic<32>(AxiRdBlenDcache).bits(
+replace	(uint64_t)(trap_vector_base_o)	(uint64_t)(trap_vector_base_o_comb)
+replace	logic<1>(new_index[0])	logic<1>(((uint64_t)(new_index) & 1ull))
+replace	instr_comb_func().rtype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().itype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().stype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().atype.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().r4type.opcode	logic<7>(instruction_i_in().bits(6,0))
+replace	instr_comb_func().rtype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().itype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().utype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().atype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().r4type.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().rftype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().rvftype.rd	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().rtype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().itype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().stype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().atype.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().r4type.funct3	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().rtype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().itype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().stype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().atype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().r4type.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().rftype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().rvftype.rs1	logic<5>(instruction_i_in().bits(19,15))
+replace	instr_comb_func().rtype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().stype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().atype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().r4type.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().rftype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().rvftype.rs2	logic<5>(instruction_i_in().bits(24,20))
+replace	instr_comb_func().rtype.funct7	logic<7>(instruction_i_in().bits(31,25))
+replace	instr_comb_func().itype.imm	logic<12>(instruction_i_in().bits(31,20))
+replace	instr_comb_func().stype.imm	logic<7>(instruction_i_in().bits(31,25))
+replace	instr_comb_func().stype.imm0	logic<5>(instruction_i_in().bits(11,7))
+replace	instr_comb_func().utype.imm	logic<20>(instruction_i_in().bits(31,12))
+replace	instr_comb_func().atype.funct5	logic<5>(instruction_i_in().bits(31,27))
+replace	instr_comb_func().atype.aq	logic<1>(instruction_i_in()[26])
+replace	instr_comb_func().atype.rl	logic<1>(instruction_i_in()[25])
+replace	instr_comb_func().r4type.rs3	logic<5>(instruction_i_in().bits(31,27))
+replace	instr_comb_func().r4type.funct2	logic<2>(instruction_i_in().bits(26,25))
+replace	instr_comb_func().rftype.funct5	logic<5>(instruction_i_in().bits(31,27))
+replace	instr_comb_func().rftype.fmt	logic<2>(instruction_i_in().bits(26,25))
+replace	instr_comb_func().rftype.rm	logic<3>(instruction_i_in().bits(14,12))
+replace	instr_comb_func().rvftype.funct2	logic<2>(instruction_i_in().bits(31,30))
+replace	instr_comb_func().rvftype.vecfltop	logic<5>(instruction_i_in().bits(29,25))
+replace	instr_comb_func().rvftype.repl	logic<1>(instruction_i_in()[14])
+replace	instr_comb_func().rvftype.vfmt	logic<2>(instruction_i_in().bits(13,12))
+replace	instr_comb_func().instr.bits(31,27)	instruction_i_in().bits(31,27)
+replace	instr_comb_func().instr.bits(31,26)	instruction_i_in().bits(31,26)
+replace	instr_comb_func().instr.bits(31,25)	instruction_i_in().bits(31,25)
+replace	instr_comb_func().instr.bits(31,24)	instruction_i_in().bits(31,24)
+replace	instr_comb_func().instr.bits(31,20)	instruction_i_in().bits(31,20)
+replace	instr_comb_func().instr.bits(24,20)	instruction_i_in().bits(24,20)
+replace	instr_comb_func().instr[25]	instruction_i_in()[25]
+replace	instr_comb_func().rftype.rs2.bits(24,23)	instruction_i_in().bits(24,23)
+replace	instr_comb_func().rftype.rs2.bits(24,22)	instruction_i_in().bits(24,22)
+replace	instr_comb_func().rftype.rs2.bits(22,20)	instruction_i_in().bits(22,20)
+replace	instr_comb_func().rvftype.rs2.bits(21,20)	instruction_i_in().bits(21,20)
+replace	logic<1>((uint64_t)(logic<5>(instruction_i_in().bits(31,27))))	logic<5>((uint64_t)(logic<5>(instruction_i_in().bits(31,27))))
+replace	logic<1>((uint64_t)(logic<5>(instruction_i_in().bits(11,7))))	logic<5>((uint64_t)(logic<5>(instruction_i_in().bits(11,7))))
+replace	(((((uint64_t)(instr_comb_func()	((((uint64_t)(instr_comb_func()
+replace	static_cast<riscv::priv_lvl_t>({	riscv::priv_lvl_t({
+replace	cva6_cfg_t'(0)	{}
+replace	config_pkg::cva6_cfg_t'(0)	{}
+replace	CVA6Cfg.logic<PLEN>	logic<CVA6Cfg.PLEN>
+replace	CVA6Cfg.logic<GPLEN>	logic<CVA6Cfg.GPLEN>
+replace	CVA6Cfg.logic<XLEN>	logic<CVA6Cfg.XLEN>
+replace	CVA6Cfg.logic<VpnLen>	logic<CVA6Cfg.VpnLen>
+replace	CVA6Cfg.logic<AxiAddrWidth>	logic<CVA6Cfg.AxiAddrWidth>
+replace	array<logic<CVA6Cfg.XLEN>,CVA6Cfg.NrCommitPorts> fp_wdata_pack;	array<logic<CVA6Cfg.FLen>,CVA6Cfg.NrCommitPorts> fp_wdata_pack;
+replace	logic<1>((uint64_t)(icache_areq_i_in().fetch_paddr))	logic<CVA6Cfg.PLEN>((uint64_t)(icache_areq_i_in().fetch_paddr))
+replace	logic<1>((uint64_t)(areq_i_in().fetch_paddr))	logic<CVA6Cfg.PLEN>((uint64_t)(areq_i_in().fetch_paddr))
+replace	flu_result_o_comb = cat{logic<(CVA6Cfg.XLEN - CVA6Cfg.VLEN)*(1)>	rs2_forwarding_comb_func();\n        flu_result_o_comb = cat{logic<(CVA6Cfg.XLEN - CVA6Cfg.VLEN)*(1)>
+replace	logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(CVA6Cfg.INSTR_PER_FETCH - 1))])	logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(((uint64_t)((CVA6Cfg.INSTR_PER_FETCH - 1) * 16))+1,(uint64_t)((CVA6Cfg.INSTR_PER_FETCH - 1) * 16)))))
+replace	logic<REQ_ID_BITS>	logic<(CVA6Cfg.NrLoadBufEntries > 1 ? clog2(CVA6Cfg.NrLoadBufEntries) : 1)>
+replace	CVA6Cfg.PMPAddrRstVal[i].bits(	logic<64>(CVA6Cfg.PMPAddrRstVal[i]).bits(
+replace	fpnew_pkg::static_cast<fp_format_e>(	sv_cast<fpnew_pkg::fp_format_e>(
+replace	fpnew_pkg::static_cast<int_format_e>(	sv_cast<fpnew_pkg::int_format_e>(
+replace	fpnew_pkg::static_cast<opgroup_e>(	sv_cast<fpnew_pkg::opgroup_e>(
+replace	fpnew_pkg::static_cast<operation_e>(	sv_cast<fpnew_pkg::operation_e>(
+replace	fpnew_pkg::static_cast<roundmode_e>(	sv_cast<fpnew_pkg::roundmode_e>(
+replace	fpnew_pkg::fp_format_e'(	sv_cast<fpnew_pkg::fp_format_e>(
+replace	fpnew_pkg::int_format_e'(	sv_cast<fpnew_pkg::int_format_e>(
+replace	fpnew_pkg::opgroup_e'(	sv_cast<fpnew_pkg::opgroup_e>(
+replace	fpnew_pkg::operation_e'(	sv_cast<fpnew_pkg::operation_e>(
+replace	fpnew_pkg::roundmode_e'(	sv_cast<fpnew_pkg::roundmode_e>(
+replace	logic<1>((uint64_t)(lsu_ctrl_comb_func().vaddr))	logic<CVA6Cfg.VLEN>((uint64_t)(lsu_ctrl_comb_func().vaddr))
+replace	((((uint64_t)(fu_data_i_in().operation)) & ((1ull << 1) - 1ull)))	((uint64_t)(fu_data_i_in().operation))
+replace	pc_q._next = pc_d;	reset_address_d_comb_func();\n            pc_q._next = pc_d;
+replace	reset_address_q._next = reset_address_d_comb_func();	reset_address_q._next = reset_address_d_comb;
+replace	issue_pointer_q._next = issue_pointer_n_comb_func();	mem_n_comb_func();\n            issue_pointer_q._next = issue_pointer_n_comb_func();
+replace	fu_data_bypass_comb.operand_a = result_o_comb_func()[(unsigned)((uint64_t)(0))];	fu_data_bypass_comb.operand_a = alu_i.result_o_out();
+replace	fu_data_bypass_comb.operand_b = result_o_comb_func()[(unsigned)((uint64_t)(0))];	fu_data_bypass_comb.operand_b = alu_i.result_o_out();
+replace	logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])	logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))
+replace	!logic<1>(instr_is_compressed[(unsigned)(uint64_t)((uint64_t)(0))])	!logic<1>(!cpphdl::reduce_and(logic<2>(data_i_in().bits(1,0))))
+replace	if (icache_first_q) {	if (icache_first_q && axi_rd_last_comb_func()) {
+replace	if (dcache_first_q) {	if (dcache_first_q && axi_rd_last_comb_func()) {
+replace	(((uint64_t)((issue_instr_i_in())[i].fu)) & ((1ull << 1) - 1ull))	((uint64_t)((issue_instr_i_in())[i].fu))
+replace	(((uint64_t)((issue_instr_i_in())[0].fu)) & ((1ull << 1) - 1ull))	((uint64_t)((issue_instr_i_in())[0].fu))
+replace	(((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull))	((uint64_t)((issue_instr_i_in())[1].fu))
+replace	((((uint64_t)((issue_instr_i_in())[i].fu)) & ((1ull << 1) - 1ull)))	((uint64_t)((issue_instr_i_in())[i].fu))
+replace	((((uint64_t)((issue_instr_i_in())[0].fu)) & ((1ull << 1) - 1ull)))	((uint64_t)((issue_instr_i_in())[0].fu))
+replace	((((uint64_t)((issue_instr_i_in())[1].fu)) & ((1ull << 1) - 1ull)))	((uint64_t)((issue_instr_i_in())[1].fu))
+replace	(((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull))	((uint64_t)(lsu_ctrl_comb_func().fu))
+replace	((((uint64_t)(lsu_ctrl_comb_func().fu)) & ((1ull << 1) - 1ull)))	((uint64_t)(lsu_ctrl_comb_func().fu))
+whole-contains	lsu_req_i_comb = cat{logic<1>((uint64_t)(lsu_valid_i_in()))	lsu_req_i_comb = 0;\n        lsu_req_i_comb.valid = lsu_valid_i_in();\n        lsu_req_i_comb.vaddr = vaddr_i_comb_func();\n        lsu_req_i_comb.tinst = tinst_i_in();\n        lsu_req_i_comb.hs_ld_st_inst = hs_ld_st_inst_comb_func();\n        lsu_req_i_comb.hlvx_inst = hlvx_inst_comb_func();\n        lsu_req_i_comb.overflow = overflow_comb_func();\n        lsu_req_i_comb.g_overflow = g_overflow_comb_func();\n        lsu_req_i_comb.data = fu_data_i_in().operand_b;\n        lsu_req_i_comb.be = be_i_comb_func();\n        lsu_req_i_comb.fu = fu_data_i_in().fu;\n        lsu_req_i_comb.operation = fu_data_i_in().operation;\n        lsu_req_i_comb.trans_id = fu_data_i_in().trans_id;\n        lsu_req_i_comb.is_speculative_load = speculative_load_i_in();\n        lsu_req_i_comb.is_speculative_load_miss = logic<1>(0b0);
+replace	atop.bits(	logic<6>(atop).bits(
+replace	axi_pkg::ATOP_ATOMICSWAP.bits(	logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(
+replace	== logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(5,4)	== logic<2>(logic<6>(axi_pkg::ATOP_ATOMICSWAP).bits(5,4))
+replace	$high(div_shift_comb_func())	clog2((uint64_t)(WIDTH) + ((uint64_t)(1) & ((1ull << 32) - 1ull)))
+replace	$high(op_a_i_in())	((uint64_t)(WIDTH) - 1)
+whole-contains	bin_comb[(unsigned)(uint64_t)((uint64_t)((uint64_t)(i)))] = logic<1>((((uint64_t)((logic<	            { logic<(uint64_t)(((uint64_t)(ONEHOT_WIDTH) & ((1ull << 32) - 1ull)))> tmp_mask{};\n            for (unsigned __cpphdl_j = 0; ((uint64_t)(__cpphdl_j) < ((uint64_t)(ONEHOT_WIDTH) & ((1ull << 32) - 1ull))); ++__cpphdl_j) {\n                tmp_mask[(unsigned)(uint64_t)(__cpphdl_j)] = logic<1>((((uint64_t)(__cpphdl_j) >> (unsigned)(uint64_t)(i)) & 1ull) != 0);\n            }\n            bin_comb[(unsigned)(uint64_t)(i)] = logic<1>((((uint64_t)(tmp_mask & onehot_in())) & (((uint64_t)((uint64_t)(ONEHOT_WIDTH)) >= 64) ? ~0ull : ((1ull << (uint64_t)((uint64_t)(ONEHOT_WIDTH))) - 1ull))) != 0);\n            }
+whole-contains	exists_match_comb[(unsigned)(uint64_t)((uint64_t)((uint64_t)(i)))] = (cpphdl::reduce_and(([&]() { mask_t exists_match_bits = {}; if (linked_data_q	            exists_match_comb[(unsigned)(uint64_t)(i)] = cpphdl::reduce_and(([&]() { mask_t exists_match_bits = {}; auto __cpphdl_data_bits = cpphdl::pack_value<type_width<data_t>()>(linked_data_q[(unsigned)(uint64_t)(i)].data); auto __cpphdl_mask_bits = cpphdl::pack_value<type_width<data_t>()>(exists_mask_i_in()); auto __cpphdl_exists_bits = cpphdl::pack_value<type_width<data_t>()>(exists_data_i_in()); for (unsigned k = 0; ((uint64_t)(k) < (uint64_t)(type_width<data_t>())); ++k) { if (linked_data_q[(unsigned)(uint64_t)(i)].free) { exists_match_bits[(unsigned)(uint64_t)(k)] = logic<1>(0b0); } else if (!logic<1>((((uint64_t)(__cpphdl_mask_bits)) >> (unsigned)(uint64_t)(k)) & 1ull)) { exists_match_bits[(unsigned)(uint64_t)(k)] = logic<1>(0b1); } else { bool __cpphdl_eq = (((uint64_t)(__cpphdl_data_bits) >> (unsigned)(uint64_t)(k)) & 1ull) == (((uint64_t)(__cpphdl_exists_bits) >> (unsigned)(uint64_t)(k)) & 1ull); exists_match_bits[(unsigned)(uint64_t)(k)] = logic<1>(__cpphdl_eq); } } return exists_match_bits; }()));
+replace	$high(op_b_i_in())	((uint64_t)(WIDTH) - 1)
+replace	logic<REQ_ID_BITS>	logic<(ReqFifoDepth > 1 ? clog2(ReqFifoDepth) : 1)>
+replace	HS_DELEG_INTERRUPTS.bits(	logic<64>(HS_DELEG_INTERRUPTS).bits(
+replace	VS_DELEG_INTERRUPTS.bits(	logic<64>(VS_DELEG_INTERRUPTS).bits(
+whole-contains	icache_rd_shift_d = cat{	if (icache_first_q && !axi_rd_last_comb_func()) { icache_rd_shift_d[0] = axi_rd_data_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { icache_rd_shift_d[s] = icache_rd_shift_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { icache_rd_shift_d[s] = icache_rd_shift_q[s]; } icache_rd_shift_d[(CVA6Cfg.ICACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth) - 1] = axi_rd_data_comb_func(); }
+whole-contains	icache_rd_shift_user_d = cat{	if (icache_first_q && !axi_rd_last_comb_func()) { icache_rd_shift_user_d[0] = axi_rd_user_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { icache_rd_shift_user_d[s] = icache_rd_shift_user_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { icache_rd_shift_user_d[s] = icache_rd_shift_user_q[s]; } icache_rd_shift_user_d[(CVA6Cfg.ICACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth) - 1] = axi_rd_user_comb_func(); }
+whole-contains	dcache_rd_shift_d = cat{	if (dcache_first_q && !axi_rd_last_comb_func()) { dcache_rd_shift_d[0] = axi_rd_data_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { dcache_rd_shift_d[s] = dcache_rd_shift_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth); ++s) { dcache_rd_shift_d[s] = dcache_rd_shift_q[s]; } dcache_rd_shift_d[(CVA6Cfg.DCACHE_LINE_WIDTH / CVA6Cfg.AxiDataWidth) - 1] = axi_rd_data_comb_func(); }
+whole-contains	dcache_rd_shift_user_d_comb = cat{	if (dcache_first_q && !axi_rd_last_comb_func()) { dcache_rd_shift_user_d_comb[0] = axi_rd_user_comb_func(); for (unsigned s = 1; s < (CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { dcache_rd_shift_user_d_comb[s] = dcache_rd_shift_user_q[s]; } } else { for (unsigned s = 0; s + 1 < (CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth); ++s) { dcache_rd_shift_user_d_comb[s] = dcache_rd_shift_user_q[s]; } dcache_rd_shift_user_d_comb[(CVA6Cfg.DCACHE_USER_LINE_WIDTH / CVA6Cfg.AxiUserWidth) - 1] = axi_rd_user_comb_func(); }
+replace	fetch_entry_valid_o = _ASSIGN( !((bool)((instr_queue_empty & idx_ds_comb_func()[(unsigned)((uint64_t)(1))]))) & ~(cpphdl::reduce_and(fetch_entry_is_cf)) );	if constexpr (CVA6Cfg.SuperscalarEn) { fetch_entry_valid_o[(unsigned)(uint64_t)((uint64_t)(NID))] = logic<1>(!((bool)((instr_queue_empty & idx_ds_comb_func()[(unsigned)((uint64_t)(1))]))) & ~(cpphdl::reduce_and(fetch_entry_is_cf))); }
+replace	using acc_mmu_req_t = bool;	struct acc_mmu_req_t { logic<1> acc_mmu_req; logic<1> acc_mmu_is_store; exception_t acc_mmu_misaligned_ex; logic<CVA6Cfg.VLEN> acc_mmu_vaddr; template<size_t W> acc_mmu_req_t& operator=(const logic<W>& v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = v; return *this; } template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> acc_mmu_req_t& operator=(T v) { (*(logic<sizeof(acc_mmu_req_t)*8>*)this) = logic<sizeof(acc_mmu_req_t)*8>(v); return *this; } auto bits(size_t last, size_t first) { return (*(logic<sizeof(acc_mmu_req_t)*8>*)this).bits(last, first); } auto bits(size_t last, size_t first) const { return const_cast<acc_mmu_req_t*>(this)->bits(last, first); } explicit operator uint64_t() const { return ((const logic<sizeof(acc_mmu_req_t)*8>&)*this).to_ullong(); } };
+replace	using acc_mmu_resp_t = bool;	struct acc_mmu_resp_t { logic<1> acc_mmu_valid; logic<CVA6Cfg.PLEN> acc_mmu_paddr; exception_t acc_mmu_exception; logic<1> acc_mmu_dtlb_hit; logic<CVA6Cfg.PPNW> acc_mmu_dtlb_ppn; template<size_t W> acc_mmu_resp_t& operator=(const logic<W>& v) { (*(logic<sizeof(acc_mmu_resp_t)*8>*)this) = v; return *this; } template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0> acc_mmu_resp_t& operator=(T v) { (*(logic<sizeof(acc_mmu_resp_t)*8>*)this) = logic<sizeof(acc_mmu_resp_t)*8>(v); return *this; } auto bits(size_t last, size_t first) { return (*(logic<sizeof(acc_mmu_resp_t)*8>*)this).bits(last, first); } auto bits(size_t last, size_t first) const { return const_cast<acc_mmu_resp_t*>(this)->bits(last, first); } explicit operator uint64_t() const { return ((const logic<sizeof(acc_mmu_resp_t)*8>&)*this).to_ullong(); } };
+whole-contains	static constexpr uint64_t IsaCode =	static constexpr uint64_t IsaCode = ((uint64_t)(CVA6Cfg.RVA) << 0) | ((uint64_t)(CVA6Cfg.RVB) << 1) | ((uint64_t)(CVA6Cfg.RVC) << 2) | ((uint64_t)(CVA6Cfg.RVD) << 3) | ((uint64_t)(CVA6Cfg.RVF) << 5) | ((uint64_t)(CVA6Cfg.RVH) << 7) | ((uint64_t)(1) << 8) | ((uint64_t)(1) << 12) | ((uint64_t)(0) << 13) | ((uint64_t)(CVA6Cfg.RVS) << 18) | ((uint64_t)(CVA6Cfg.RVU) << 20) | ((uint64_t)(CVA6Cfg.RVV) << 21) | ((uint64_t)(CVA6Cfg.NSX) << 23) | ((uint64_t)(CVA6Cfg.XLEN == 64 ? 2 : 1) << (CVA6Cfg.XLEN - 2));
+whole-contains	inline constexpr uint64_t napot_match(uint64_t base, uint64_t value)	template<typename BASE_T, typename VALUE_T> inline uint64_t napot_match(const BASE_T& base, const VALUE_T& value)
+whole-contains	inline constexpr uint64_t match_scontext(uint64_t scontext, uint64_t sselect, uint64_t sbytemask, uint64_t svalue, uint64_t flag)	template<typename SCONTEXT_T, typename SSELECT_T, typename SBYTEMASK_T, typename SVALUE_T, typename FLAG_T> inline uint64_t match_scontext(const SCONTEXT_T& scontext, const SSELECT_T& sselect, const SBYTEMASK_T& sbytemask, const SVALUE_T& svalue, const FLAG_T& flag)
+replace	static constexpr uint64_t HS_DELEG_INTERRUPTS = { 0b0, ariane_pkg::hs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t HS_DELEG_INTERRUPTS = ariane_pkg::hs_deleg_interrupts(CVA6Cfg);
+replace	static constexpr uint64_t VS_DELEG_INTERRUPTS = { 0b0, ariane_pkg::vs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t VS_DELEG_INTERRUPTS = ariane_pkg::vs_deleg_interrupts(CVA6Cfg);
+replace	static constexpr uint64_t HS_DELEG_INTERRUPTS = { logic<1>(0b0), ariane_pkg::hs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t HS_DELEG_INTERRUPTS = ariane_pkg::hs_deleg_interrupts(CVA6Cfg);
+replace	static constexpr uint64_t VS_DELEG_INTERRUPTS = { logic<1>(0b0), ariane_pkg::vs_deleg_interrupts(CVA6Cfg) };	static constexpr uint64_t VS_DELEG_INTERRUPTS = ariane_pkg::vs_deleg_interrupts(CVA6Cfg);
+replace	{cl_offset_q, 0b0}	((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))
+replace	{cl_offset_q, logic<3>(0b0)}	((uint64_t)(cat{logic<ICACHE_OFFSET_WIDTH>((uint64_t)(cl_offset_q)), logic<3>(0b0)}))
+replace	icache_areq_o_out().fetch_exception.cause	icache_areq_o.fetch_exception.cause
+replace	i_axi_shim.rd_req_i_in = _ASSIGN(axi_rd_req);	i_axi_shim.rd_req_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_req));
+replace	i_axi_shim.rd_addr_i_in = _ASSIGN(axi_rd_addr);	i_axi_shim.rd_addr_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_addr));
+replace	i_axi_shim.rd_blen_i_in = _ASSIGN(axi_rd_blen);	i_axi_shim.rd_blen_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_blen));
+replace	i_axi_shim.rd_size_i_in = _ASSIGN(axi_rd_size);	i_axi_shim.rd_size_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_size));
+replace	i_axi_shim.rd_id_i_in = _ASSIGN(axi_rd_id_in);	i_axi_shim.rd_id_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_id_in));
+replace	i_axi_shim.rd_rdy_i_in = _ASSIGN(axi_rd_rdy);	i_axi_shim.rd_rdy_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_rdy));
+replace	i_axi_shim.rd_lock_i_in = _ASSIGN(axi_rd_lock);	i_axi_shim.rd_lock_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_rd_lock));
+replace	i_axi_shim.wr_req_i_in = _ASSIGN(axi_wr_req);	i_axi_shim.wr_req_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_req));
+replace	i_axi_shim.wr_addr_i_in = _ASSIGN(axi_wr_addr);	i_axi_shim.wr_addr_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_addr));
+replace	i_axi_shim.wr_data_i_in = _ASSIGN(axi_wr_data);	i_axi_shim.wr_data_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_data));
+replace	i_axi_shim.wr_user_i_in = _ASSIGN(axi_wr_user);	i_axi_shim.wr_user_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_user));
+replace	i_axi_shim.wr_be_i_in = _ASSIGN(axi_wr_be);	i_axi_shim.wr_be_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_be));
+replace	i_axi_shim.wr_size_i_in = _ASSIGN(axi_wr_size);	i_axi_shim.wr_size_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_size));
+replace	i_axi_shim.wr_id_i_in = _ASSIGN(axi_wr_id_in);	i_axi_shim.wr_id_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_id_in));
+replace	i_axi_shim.wr_atop_i_in = _ASSIGN(axi_wr_atop_comb_func());	i_axi_shim.wr_atop_i_in = _ASSIGN_COMB(axi_wr_atop_comb_func());
+replace	i_axi_shim.wr_blen_i_in = _ASSIGN(axi_wr_blen);	i_axi_shim.wr_blen_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_blen));
+replace	i_axi_shim.wr_lock_i_in = _ASSIGN(axi_wr_lock);	i_axi_shim.wr_lock_i_in = _ASSIGN_COMB((axi_wr_atop_comb_func(), axi_wr_lock));
+replace	req_amo_op_type_comb = AMO_ADD;	req_amo_op_type_comb = l15_pkg::AMO_ADD;
+replace	req_amo_op_type_comb = AMO_AND;	req_amo_op_type_comb = l15_pkg::AMO_AND;
+replace	req_amo_op_type_comb = AMO_OR;	req_amo_op_type_comb = l15_pkg::AMO_OR;
+replace	req_amo_op_type_comb = AMO_XOR;	req_amo_op_type_comb = l15_pkg::AMO_XOR;
+replace	req_amo_op_type_comb = AMO_MAX;	req_amo_op_type_comb = l15_pkg::AMO_MAX;
+replace	req_amo_op_type_comb = AMO_MIN;	req_amo_op_type_comb = l15_pkg::AMO_MIN;
+replace	req_amo_op_type_comb = AMO_MAXU;	req_amo_op_type_comb = l15_pkg::AMO_MAXU;
+replace	req_amo_op_type_comb = AMO_MINU;	req_amo_op_type_comb = l15_pkg::AMO_MINU;
+replace	req_amo_op_type_comb = AMO_SWAP;	req_amo_op_type_comb = l15_pkg::AMO_SWAP;
+replace	req_amo_op_type_comb = AMO_LR;	req_amo_op_type_comb = l15_pkg::AMO_LR;
+replace	req_amo_op_type_comb = AMO_SC;	req_amo_op_type_comb = l15_pkg::AMO_SC;
+replace	req_amo_op_type_comb = AMO_NONE;	req_amo_op_type_comb = l15_pkg::AMO_NONE;
+replace	cat{logic<4>(0x0), dm::DataCount}	cat{logic<4>(0x0), logic<4>(dm::DataCount)}
+replace	cat{logic<4>(0x0), dm::ProgBufSize}	cat{logic<4>(0x0), logic<4>(dm::ProgBufSize)}
+replace	clk_gated_o = _ASSIGN_REG( clk_gated );	(void)clk_gated;
+@@ cva6_method_body_overrides.tsv
+build_config|config_pkg::cva6_cfg_t	@@OUT@/cva6_build_config_body.cpp
+range_check|logic<1>	@@OUT@/cva6_range_check_body.cpp
+is_inside_nonidempotent_regions|logic<1>	@@OUT@/cva6_is_inside_nonidempotent_regions_body.cpp
+is_inside_execute_regions|logic<1>	@@OUT@/cva6_is_inside_execute_regions_body.cpp
+is_inside_cacheable_regions|logic<1>	@@OUT@/cva6_is_inside_cacheable_regions_body.cpp
+@@ cva6_module_params.tsv
+# module	ordered template declarations
+REG_BUS	unsigned ADDR_WIDTH = static_cast<unsigned>(-1)	unsigned DATA_WIDTH = static_cast<unsigned>(-1)
+AXI_BUS	unsigned AXI_ADDR_WIDTH = static_cast<unsigned>(-1)	unsigned AXI_DATA_WIDTH = static_cast<unsigned>(-1)	unsigned AXI_ID_WIDTH = static_cast<unsigned>(-1)	unsigned AXI_USER_WIDTH = static_cast<unsigned>(-1)
+rr_arb_tree	unsigned NumIn = 64	unsigned DataWidth = 32	typename DataType = logic<DataWidth>	uint64_t ExtPrio = 0	uint64_t AxiVldRdy = 0	uint64_t LockIn = 0	uint64_t FairArb = 1	unsigned IdxWidth = ((NumIn > 1) ? clog2(NumIn) : 1)	typename idx_t = logic<IdxWidth>
+stream_arbiter_flushable	typename DATA_T = bool	unsigned N_INP = 1	hdlcpp_fixed_string ARBITER = "rr"
+compressed_instr_decoder	typename copro_compressed_resp_t = bool	unsigned NbInstr = 1	auto CoproInstr = std::array<copro_compressed_resp_t,NbInstr>{}	typename x_compressed_req_t = bool	typename x_compressed_resp_t = bool
+instr_decoder	typename copro_issue_resp_t = bool	typename opcode_t = bool	unsigned NbInstr = 1	auto CoproInstr = std::array<copro_issue_resp_t,NbInstr>{}	unsigned NrRgprPorts = 2	typename hartid_t = bool	typename id_t = bool	typename x_issue_req_t = bool	typename x_issue_resp_t = bool	typename x_register_t = bool	typename registers_t = bool
+scoreboard	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename bp_resolve_t = bool	typename exception_t = bool	typename scoreboard_entry_t = bool	typename forwarding_t = bool	typename writeback_t = bool	typename rs3_len_t = bool
+issue_read_operands	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename branchpredict_sbe_t = bool	typename fu_data_t = bool	typename scoreboard_entry_t = bool	typename forwarding_t = bool	typename writeback_t = bool	typename rs3_len_t = bool	typename x_issue_req_t = bool	typename x_issue_resp_t = bool	typename x_register_t = bool	typename x_commit_t = bool
+ariane_regfile	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	unsigned DATA_WIDTH = 32	unsigned NR_READ_PORTS = 2	uint64_t ZERO_REG_ZERO = 0
+ariane_regfile_fpga	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	unsigned DATA_WIDTH = 32	unsigned NR_READ_PORTS = 2	uint64_t ZERO_REG_ZERO = 0
+cva6_shared_tlb	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename pte_cva6_t = bool	typename tlb_update_cva6_t = bool	unsigned SHARED_TLB_WAYS = 2	unsigned HYP_EXT = 0
+shift_reg	typename dtype = logic<1>	unsigned Depth = 1
+sram	unsigned DATA_WIDTH = 64	unsigned USER_WIDTH = 1	unsigned USER_EN = 0	unsigned NUM_WORDS = 1024	hdlcpp_fixed_string SIM_INIT = "none"	unsigned OUT_REGS = 0
+sram_cache	unsigned DATA_WIDTH = 64	unsigned USER_WIDTH = 1	unsigned USER_EN = 0	unsigned NUM_WORDS = 1024	hdlcpp_fixed_string SIM_INIT = "none"	unsigned BYTE_ACCESS = 1	unsigned TECHNO_CUT = 0	unsigned OUT_REGS = 0
+cva6_fifo_v3	uint64_t FALL_THROUGH = 0	uint64_t FPGA_ALTERA = 0	unsigned DATA_WIDTH = 32	unsigned DEPTH = 8	typename dtype = logic<DATA_WIDTH>	uint64_t FPGA_EN = 0	unsigned ADDR_DEPTH = ((DEPTH > 1) ? clog2(DEPTH) : 1)
+wt_axi_adapter	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	unsigned ReqFifoDepth = 2	unsigned MetaFifoDepth = CVA6Cfg.DCACHE_MAX_TX	typename axi_req_t = bool	typename axi_rsp_t = bool	typename dcache_req_t = bool	typename dcache_rtrn_t = bool	typename dcache_inval_t = bool	typename icache_req_t = bool	typename icache_rtrn_t = bool
+axi_adapter	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	unsigned DATA_WIDTH = 256	uint64_t CRITICAL_WORD_FIRST = 0	unsigned CACHELINE_BYTE_OFFSET = 8	typename axi_req_t = bool	typename axi_rsp_t = bool
+wt_cache_subsystem	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename icache_areq_t = bool	typename icache_arsp_t = bool	typename icache_dreq_t = bool	typename icache_drsp_t = bool	typename dcache_req_i_t = bool	typename dcache_req_o_t = bool	typename icache_req_t = bool	typename icache_rtrn_t = bool	unsigned NumPorts = 4	typename noc_req_t = bool	typename noc_resp_t = bool
+perf_counters	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename bp_resolve_t = bool	typename dcache_req_i_t = bool	typename dcache_req_o_t = bool	typename exception_t = bool	typename icache_dreq_t = bool	typename scoreboard_entry_t = bool	unsigned NumPorts = 3
+cva6_mmu	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename icache_areq_t = bool	typename icache_arsp_t = bool	typename icache_dreq_t = bool	typename icache_drsp_t = bool	typename dcache_req_i_t = bool	typename dcache_req_o_t = bool	typename exception_t = bool	unsigned HYP_EXT = 0
+load_store_unit	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename dcache_req_i_t = bool	typename dcache_req_o_t = bool	typename exception_t = bool	typename fu_data_t = bool	typename icache_areq_t = bool	typename icache_arsp_t = bool	typename icache_dreq_t = bool	typename icache_drsp_t = bool	typename lsu_ctrl_t = bool	typename acc_mmu_req_t = bool	typename acc_mmu_resp_t = bool	typename cbo_t = bool	typename bp_resolve_t = bool
+lzc	unsigned WIDTH = 2	uint64_t MODE = 0	unsigned CNT_WIDTH = clog2(WIDTH + 1)
+acc_dispatcher	config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty	typename dcache_req_i_t = bool	typename dcache_req_o_t = bool	typename exception_t = bool	typename fu_data_t = bool	typename scoreboard_entry_t = bool	typename acc_req_t = bool	typename acc_resp_t = bool	typename accelerator_req_t = bool	typename accelerator_resp_t = bool	typename acc_mmu_req_t = bool	typename acc_mmu_resp_t = bool	typename acc_cfg_t = bool	acc_cfg_t AccCfg = {}
+hpdcache_to_l15	unsigned NumPorts = 4	uint64_t IcachePort = 0	uint64_t DcacheReadPort = 1	uint64_t DcacheWritePort = 2	uint64_t DcacheAmoPort = 3	uint64_t SwapEndianness = 1	unsigned HPDcacheMemDataWidth = 128	unsigned HPDcacheMemAddrWidth = 40	uint64_t WriteByteMaskEnabled = 0	uint64_t IcacheNoCachableSize = (0b011)	typename hpdcache_mem_req_t = bool	typename hpdcache_mem_req_w_t = bool	typename hpdcache_mem_id_t = bool	typename hpdcache_mem_addr_t = bool	typename hpdcache_mem_resp_t = bool	typename req_portid_t = bool	typename l15_req_t = bool	typename l15_rtrn_t = bool
+hpdcache_l15_req_arbiter	unsigned N = 0	typename hpdcache_mem_req_t = bool	typename hpdcache_mem_req_w_t = bool	typename req_portid_t = bool
+@@ cva6_named_param_order.tsv
+cva6_fifo_v3	FALL_THROUGH=0,FPGA_ALTERA=0,DATA_WIDTH=32,DEPTH=8,dtype=logic<@DATA_WIDTH@>,FPGA_EN=0,ADDR_DEPTH=((DEPTH > 1) ? clog2(DEPTH) : 1)
+@@ cva6_numeric_arg_indices.tsv
+is_inside_nonidempotent_regions	1
+is_inside_execute_regions	1
+is_inside_cacheable_regions	1
+@@ cva6_package_method_overrides.tsv
+napot_match	    template<typename BASE_T, typename VALUE_T> inline uint64_t napot_match(const BASE_T& base_in, const VALUE_T& value_in)\n    {\n        uint64_t base = (uint64_t)(logic<64>(base_in));\n        uint64_t value = (uint64_t)(logic<64>(value_in));\n        bool is_valid_napot = ((base & (base + 1)) == 0);\n        if (!is_valid_napot) return 0;\n        uint64_t mask = ~(base & ~(base + 1));\n        return ((value & mask) == (base & mask)) ? 1 : 0;\n    }
+match_scontext	    template<typename SCONTEXT_T, typename SSELECT_T, typename SBYTEMASK_T, typename SVALUE_T, typename FLAG_T> inline uint64_t match_scontext(const SCONTEXT_T& scontext_in, const SSELECT_T& sselect_in, const SBYTEMASK_T& sbytemask_in, const SVALUE_T& svalue_in, const FLAG_T& flag_in)\n    {\n        uint64_t scontext = (uint64_t)(logic<32>(scontext_in));\n        uint64_t sselect = (uint64_t)(logic<2>(sselect_in));\n        uint64_t sbytemask = (uint64_t)(logic<4>(sbytemask_in));\n        uint64_t svalue = (uint64_t)(logic<32>(svalue_in));\n        bool flag = (bool)(logic<1>(flag_in));\n        if (sselect != 1) return 0;\n        int max_bytes = flag ? 4 : 2;\n        for (int b = 0; b < max_bytes; ++b) {\n            if (!((sbytemask >> b) & 1u) && (((scontext >> (8*b)) & 0xffu) != ((svalue >> (8*b)) & 0xffu))) return 0;\n        }\n        return 1;\n    }
+range_check	    inline constexpr uint64_t range_check(uint64_t base, uint64_t len, uint64_t address)\n    {\n        return (address >= base && address < (base + len)) ? 1ull : 0ull;\n    }
+is_inside_nonidempotent_regions	    inline constexpr uint64_t is_inside_nonidempotent_regions(cva6_cfg_t Cfg, uint64_t address)\n    {\n        for (unsigned k = 0; k < Cfg.NrNonIdempotentRules; ++k) {\n            if (range_check(Cfg.NonIdempotentAddrBase[k], Cfg.NonIdempotentLength[k], address)) return 1ull;\n        }\n        return 0ull;\n    }
+is_inside_execute_regions	    inline constexpr uint64_t is_inside_execute_regions(cva6_cfg_t Cfg, uint64_t address)\n    {\n        if (Cfg.NrExecuteRegionRules == 0) return 1ull;\n        for (unsigned k = 0; k < Cfg.NrExecuteRegionRules; ++k) {\n            if (range_check(Cfg.ExecuteRegionAddrBase[k], Cfg.ExecuteRegionLength[k], address)) return 1ull;\n        }\n        return 0ull;\n    }
+is_inside_cacheable_regions	    inline constexpr uint64_t is_inside_cacheable_regions(cva6_cfg_t Cfg, uint64_t address)\n    {\n        for (unsigned k = 0; k < Cfg.NrCachedRegionRules; ++k) {\n            if (range_check(Cfg.CachedRegionAddrBase[k], Cfg.CachedRegionLength[k], address)) return 1ull;\n        }\n        return 0ull;\n    }
+@@ cva6_port_types.tsv
+tc_sram_wrapper.rdata_o	output:array<logic<1>,1>
+instr_queue.fetch_entry_o	output:array<fetch_entry_t,CVA6Cfg.NrIssuePorts>
+instr_queue.fetch_entry_valid_o	output:logic<(uint64_t)((uint64_t)(CVA6Cfg.NrIssuePorts))>
+frontend.ex_valid_i	input:logic<1>
+controller.ex_valid_i	input:logic<1>
+cva6.i_frontend.ex_valid_i	input:logic<1>
+instr_realign.flush_i	input:logic<1>
+wt_axi_adapter.i_b_fifo.data_i	input:logic<(uint64_t)(CVA6Cfg.AxiIdWidth)+1>
+cva6_fifo_v3.data_i	input:dtype
+cva6_fifo_v3.push_i	input:logic<1>
+cva6_fifo_v3.pop_i	input:logic<1>
+issue_stage.orig_instr_aes_bits	output:logic<6>
+issue_read_operands.orig_instr_aes_bits	output:logic<6>
+cvxif_issue_register_commit_if_driver.register_i	input:logic<(uint64_t)(((uint64_t)(CVA6Cfg.NrRgprPorts) / (uint64_t)(CVA6Cfg.NrIssuePorts)))*(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+cvxif_issue_register_commit_if_driver.rs_valid_i	input:logic<(uint64_t)(((uint64_t)(CVA6Cfg.NrRgprPorts) / (uint64_t)(CVA6Cfg.NrIssuePorts)))>
+ariane_regfile.wdata_i	input:array<logic<(uint64_t)((uint64_t)(DATA_WIDTH))>,(uint64_t)((uint64_t)(CVA6Cfg.NrCommitPorts)),true>
+ariane_regfile_fpga.wdata_i	input:array<logic<(uint64_t)((uint64_t)(DATA_WIDTH))>,(uint64_t)((uint64_t)(CVA6Cfg.NrCommitPorts)),true>
+unread.d_i	input:logic<1>
+trigger_module.tselect_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tdata1_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tdata2_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tdata3_i	input:logic<(uint64_t)((uint64_t)(CVA6Cfg.XLEN))>
+trigger_module.tselect_we	input:logic<1>
+trigger_module.tdata1_we	input:logic<1>
+trigger_module.tdata2_we	input:logic<1>
+trigger_module.tdata3_we	input:logic<1>
+serdiv.opcode_i	input:logic<2>
+load_store_unit.i_pipe_reg_load.d_i	input:logic<1 + (uint64_t)((uint64_t)(CVA6Cfg.TRANS_ID_BITS)) + (uint64_t)((uint64_t)(CVA6Cfg.XLEN)) + (sizeof(exception_t)*8)>
+load_store_unit.i_pipe_reg_store.d_i	input:logic<1 + (uint64_t)((uint64_t)(CVA6Cfg.TRANS_ID_BITS)) + (uint64_t)((uint64_t)(CVA6Cfg.XLEN)) + (sizeof(exception_t)*8)>
+@@ cva6_qualified_calls.tsv
+avoid_neg	ariane_pkg::avoid_neg
+@@ cva6_readonly_comb_stop_tokens.tsv
+cva6_fifo_v3|data_o	push_i_in()
+fifo_v3|data_o	push_i_in()
+@@ cva6_strobe_hooks.tsv
+cva6_fifo_v3|read_pointer_q._next = read_pointer_n;	fifo_ram_read_address_comb_func()
+wt_axi_adapter|icache_first_q._next = icache_first_d;	dcache_wr_pop_comb_func(),dcache_rd_shift_user_d_comb_func()
+@@ cva6_type_alias_overrides.tsv
+rvfi_instr_t	cpphdl_rvfi::instr_t<CVA6Cfg>
+rvfi_csr_elmt_t	cpphdl_rvfi::csr_elmt_t<CVA6Cfg>
+rvfi_csr_t	cpphdl_rvfi::csr_t<CVA6Cfg>
+rvfi_to_iti_t	cpphdl_rvfi::to_iti_t<CVA6Cfg>
+iti_to_encoder_t	cpphdl_rvfi::encoder_t<CVA6Cfg>
+rvfi_probes_instr_t	cpphdl_rvfi::probes_instr_t<CVA6Cfg>
+rvfi_probes_csr_t	cpphdl_rvfi::probes_csr_t<CVA6Cfg>
+hpdcache_decoder.in_t	logic<N>
+hpdcache_decoder.out_t	logic<Pow2N>
+hpdcache_mux.data_t	logic<DATA_WIDTH>
+hpdcache_mux.sel_t	logic<SEL_WIDTH>
+hpdcache_demux.data_t	logic<DATA_WIDTH>
+hpdcache_demux.sel_t	logic<SEL_WIDTH>
+@@ cva6_type_decl_overrides.tsv
+ariane.readregflags_t	using readregflags_t = logic<(CVA6Cfg.X_NUM_RS+CVA6Cfg.X_DUALREAD)>;
+ariane.writeregflags_t	using writeregflags_t = logic<(CVA6Cfg.X_DUALWRITE+1)>;
+ariane.id_t	using id_t = logic<CVA6Cfg.X_ID_WIDTH>;
+ariane.hartid_t	using hartid_t = logic<CVA6Cfg.X_HARTID_WIDTH>;
+ariane.x_compressed_req_t	struct x_compressed_req_t {\n    logic<16> instr;\n    hartid_t hartid;\n@PACKED@};
+ariane.x_compressed_resp_t	struct x_compressed_resp_t {\n    logic<32> instr;\n    bool accept;\n@PACKED@};
+ariane.x_issue_req_t	struct x_issue_req_t {\n    logic<32> instr;\n    hartid_t hartid;\n    id_t id;\n@PACKED@};
+ariane.x_issue_resp_t	struct x_issue_resp_t {\n    bool accept;\n    writeregflags_t writeback;\n    readregflags_t register_read;\n@PACKED@};
+ariane.x_register_t	struct x_register_t {\n    hartid_t hartid;\n    id_t id;\n    array<logic<CVA6Cfg.X_RFR_WIDTH>,CVA6Cfg.X_NUM_RS> rs;\n    readregflags_t rs_valid;\n@PACKED@};
+ariane.x_commit_t	struct x_commit_t {\n    hartid_t hartid;\n    id_t id;\n    bool commit_kill;\n@PACKED@};
+ariane.x_result_t	struct x_result_t {\n    hartid_t hartid;\n    id_t id;\n    logic<CVA6Cfg.X_RFW_WIDTH> data;\n    logic<5> rd;\n    writeregflags_t we;\n@PACKED@};
+ariane.cvxif_req_t	struct cvxif_req_t {\n    bool compressed_valid;\n    x_compressed_req_t compressed_req;\n    bool issue_valid;\n    x_issue_req_t issue_req;\n    bool register_valid;\n    x_register_t register_;\n    bool commit_valid;\n    x_commit_t commit;\n    bool result_ready;\n@PACKED@};
+ariane.cvxif_resp_t	struct cvxif_resp_t {\n    bool compressed_ready;\n    x_compressed_resp_t compressed_resp;\n    bool issue_ready;\n    x_issue_resp_t issue_resp;\n    bool register_ready;\n    bool result_valid;\n    x_result_t result;\n@PACKED@};
+ariane_peripherals.plic_req_t	struct plic_req_t {\n    logic<32> addr;\n    logic<1> write;\n    logic<32> wdata;\n    logic<4> wstrb;\n    logic<1> valid;\n@PACKED@};
+ariane_peripherals.plic_rsp_t	struct plic_rsp_t {\n    logic<32> rdata;\n    logic<1> error;\n    logic<1> ready;\n@PACKED@};
+cva6_hpdcache_subsystem.hpdcache_mem_addr_t	using hpdcache_mem_addr_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.memAddrWidth))>;
+cva6_hpdcache_subsystem.hpdcache_mem_id_t	using hpdcache_mem_id_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.memIdWidth))>;
+cva6_hpdcache_subsystem.hpdcache_mem_data_t	using hpdcache_mem_data_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.memDataWidth))>;
+cva6_hpdcache_subsystem.hpdcache_mem_be_t	using hpdcache_mem_be_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.memDataWidth) / (uint64_t)(8))>;
+cva6_hpdcache_subsystem.hpdcache_mem_req_t	struct hpdcache_mem_req_t {\n    hpdcache_mem_addr_t mem_req_addr;\n    hpdcache_pkg::hpdcache_mem_len_t mem_req_len;\n    hpdcache_pkg::hpdcache_mem_size_t mem_req_size;\n    hpdcache_mem_id_t mem_req_id;\n    hpdcache_pkg::hpdcache_mem_command_e mem_req_command;\n    hpdcache_pkg::hpdcache_mem_atomic_e mem_req_atomic;\n    logic<1> mem_req_cacheable;\n@PACKED@};
+cva6_hpdcache_subsystem.hpdcache_mem_resp_r_t	struct hpdcache_mem_resp_r_t {\n    hpdcache_pkg::hpdcache_mem_error_e mem_resp_r_error;\n    hpdcache_mem_id_t mem_resp_r_id;\n    hpdcache_mem_data_t mem_resp_r_data;\n    logic<1> mem_resp_r_last;\n@PACKED@};
+cva6_hpdcache_subsystem.hpdcache_mem_req_w_t	struct hpdcache_mem_req_w_t {\n    hpdcache_mem_data_t mem_req_w_data;\n    hpdcache_mem_be_t mem_req_w_be;\n    logic<1> mem_req_w_last;\n@PACKED@};
+cva6_hpdcache_subsystem.hpdcache_mem_resp_w_t	struct hpdcache_mem_resp_w_t {\n    logic<1> mem_resp_w_is_atomic;\n    hpdcache_pkg::hpdcache_mem_error_e mem_resp_w_error;\n    hpdcache_mem_id_t mem_resp_w_id;\n@PACKED@};
+cva6_hpdcache_subsystem.hpdcache_tag_t	using hpdcache_tag_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.tagWidth))>;
+cva6_hpdcache_subsystem.hpdcache_data_word_t	using hpdcache_data_word_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.wordWidth))>;
+cva6_hpdcache_subsystem.hpdcache_data_be_t	using hpdcache_data_be_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.wordWidth) / (uint64_t)(8))>;
+cva6_hpdcache_subsystem.hpdcache_req_offset_t	using hpdcache_req_offset_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.reqOffsetWidth))>;
+cva6_hpdcache_subsystem.hpdcache_req_data_t	using hpdcache_req_data_t = array<hpdcache_data_word_t,(uint64_t)((uint64_t)(HPDcacheCfg.u.reqWords)),true>;
+cva6_hpdcache_subsystem.hpdcache_req_be_t	using hpdcache_req_be_t = array<hpdcache_data_be_t,(uint64_t)((uint64_t)(HPDcacheCfg.u.reqWords)),true>;
+cva6_hpdcache_subsystem.hpdcache_req_sid_t	using hpdcache_req_sid_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.reqSrcIdWidth))>;
+cva6_hpdcache_subsystem.hpdcache_req_tid_t	using hpdcache_req_tid_t = logic<(uint64_t)((uint64_t)(HPDcacheCfg.u.reqTransIdWidth))>;
+cva6_hpdcache_subsystem.hpdcache_req_t	struct hpdcache_req_t {\n    hpdcache_req_offset_t addr_offset;\n    hpdcache_req_data_t wdata;\n    hpdcache_pkg::hpdcache_req_op_t op;\n    hpdcache_req_be_t be;\n    hpdcache_pkg::hpdcache_req_size_t size;\n    hpdcache_req_sid_t sid;\n    hpdcache_req_tid_t tid;\n    logic<1> need_rsp;\n    logic<1> phys_indexed;\n    hpdcache_tag_t addr_tag;\n    hpdcache_pkg::hpdcache_pma_t pma;\n@PACKED@};
+cva6_hpdcache_subsystem.hpdcache_rsp_t	struct hpdcache_rsp_t {\n    hpdcache_req_data_t rdata;\n    hpdcache_req_sid_t sid;\n    hpdcache_req_tid_t tid;\n    logic<1> error;\n    logic<1> aborted;\n@PACKED@};
+axi_cut_intf.aw_chan_t	using aw_chan_t = ariane_axi::aw_chan_t;
+axi_cut_intf.w_chan_t	using w_chan_t = ariane_axi::w_chan_t;
+axi_cut_intf.b_chan_t	using b_chan_t = ariane_axi::b_chan_t;
+axi_cut_intf.ar_chan_t	using ar_chan_t = ariane_axi::ar_chan_t;
+axi_cut_intf.r_chan_t	using r_chan_t = ariane_axi::r_chan_t;
+axi_cut_intf.req_t	using req_t = ariane_axi::req_t;
+axi_cut_intf.resp_t	using resp_t = ariane_axi::resp_t;
+axi_multicut_intf.aw_chan_t	using aw_chan_t = ariane_axi::aw_chan_t;
+axi_multicut_intf.w_chan_t	using w_chan_t = ariane_axi::w_chan_t;
+axi_multicut_intf.b_chan_t	using b_chan_t = ariane_axi::b_chan_t;
+axi_multicut_intf.ar_chan_t	using ar_chan_t = ariane_axi::ar_chan_t;
+axi_multicut_intf.r_chan_t	using r_chan_t = ariane_axi::r_chan_t;
+axi_multicut_intf.req_t	using req_t = ariane_axi::req_t;
+axi_multicut_intf.resp_t	using resp_t = ariane_axi::resp_t;
+axi_delayer_intf.aw_chan_t	using aw_chan_t = ariane_axi::aw_chan_t;
+axi_delayer_intf.w_chan_t	using w_chan_t = ariane_axi::w_chan_t;
+axi_delayer_intf.b_chan_t	using b_chan_t = ariane_axi::b_chan_t;
+axi_delayer_intf.ar_chan_t	using ar_chan_t = ariane_axi::ar_chan_t;
+axi_delayer_intf.r_chan_t	using r_chan_t = ariane_axi::r_chan_t;
+axi_delayer_intf.req_t	using req_t = ariane_axi::req_t;
+axi_delayer_intf.resp_t	using resp_t = ariane_axi::resp_t;
+axi_demux_intf.aw_chan_t	struct aw_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    axi_pkg::atop_t atop;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_demux_intf.w_chan_t	struct w_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))> strb;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_demux_intf.b_chan_t	struct b_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    axi_pkg::resp_t resp;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_demux_intf.ar_chan_t	struct ar_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_demux_intf.r_chan_t	struct r_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    axi_pkg::resp_t resp;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_demux_intf.req_t	struct req_t {\n    aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_demux_intf.resp_t	struct resp_t {\n    logic<1> aw_ready;\n    logic<1> ar_ready;\n    w_chan_t w;\n    logic<1> w_ready;\n    b_chan_t b;\n    logic<1> b_valid;\n    r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+axi_xbar_intf.slv_aw_chan_t	struct slv_aw_chan_t {\n    logic<(uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts))> id;\n    logic<(uint64_t)((uint64_t)(Cfg.AxiAddrWidth))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    axi_pkg::atop_t atop;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.mst_aw_chan_t	struct mst_aw_chan_t {\n    logic<(uint64_t)(((uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts) + (uint64_t)(clog2(Cfg.NoSlvPorts))) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)((uint64_t)(Cfg.AxiAddrWidth))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    axi_pkg::atop_t atop;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.w_chan_t	struct w_chan_t {\n    logic<(uint64_t)((uint64_t)(Cfg.AxiDataWidth))> data;\n    logic<(uint64_t)((uint64_t)(Cfg.AxiDataWidth) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))> strb;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.slv_b_chan_t	struct slv_b_chan_t {\n    logic<(uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts))> id;\n    axi_pkg::resp_t resp;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.mst_b_chan_t	struct mst_b_chan_t {\n    logic<(uint64_t)(((uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts) + (uint64_t)(clog2(Cfg.NoSlvPorts))) & ((1ull << 32) - 1ull)))> id;\n    axi_pkg::resp_t resp;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.slv_ar_chan_t	struct slv_ar_chan_t {\n    logic<(uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts))> id;\n    logic<(uint64_t)((uint64_t)(Cfg.AxiAddrWidth))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.mst_ar_chan_t	struct mst_ar_chan_t {\n    logic<(uint64_t)(((uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts) + (uint64_t)(clog2(Cfg.NoSlvPorts))) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)((uint64_t)(Cfg.AxiAddrWidth))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.slv_r_chan_t	struct slv_r_chan_t {\n    logic<(uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts))> id;\n    logic<(uint64_t)((uint64_t)(Cfg.AxiDataWidth))> data;\n    axi_pkg::resp_t resp;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.mst_r_chan_t	struct mst_r_chan_t {\n    logic<(uint64_t)(((uint64_t)((uint64_t)(Cfg.AxiIdWidthSlvPorts) + (uint64_t)(clog2(Cfg.NoSlvPorts))) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)((uint64_t)(Cfg.AxiDataWidth))> data;\n    axi_pkg::resp_t resp;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_xbar_intf.slv_req_t	struct slv_req_t {\n    slv_aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    slv_ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_xbar_intf.slv_resp_t	struct slv_resp_t {\n    logic<1> aw_ready;\n    logic<1> ar_ready;\n    w_chan_t w;\n    logic<1> w_ready;\n    slv_b_chan_t b;\n    logic<1> b_valid;\n    slv_r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+axi_xbar_intf.mst_req_t	struct mst_req_t {\n    mst_aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    mst_ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_xbar_intf.mst_resp_t	struct mst_resp_t {\n    logic<1> aw_ready;\n    logic<1> ar_ready;\n    w_chan_t w;\n    logic<1> w_ready;\n    mst_b_chan_t b;\n    logic<1> b_valid;\n    mst_r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+axi_atop_filter_intf.aw_chan_t	struct aw_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    axi_pkg::atop_t atop;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_atop_filter_intf.w_chan_t	struct w_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))> strb;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_atop_filter_intf.b_chan_t	struct b_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    axi_pkg::resp_t resp;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_atop_filter_intf.ar_chan_t	struct ar_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_atop_filter_intf.r_chan_t	struct r_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    axi_pkg::resp_t resp;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_atop_filter_intf.req_t	struct req_t {\n    aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_atop_filter_intf.resp_t	struct resp_t {\n    logic<1> aw_ready;\n    logic<1> ar_ready;\n    w_chan_t w;\n    logic<1> w_ready;\n    b_chan_t b;\n    logic<1> b_valid;\n    r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+axi_mux_intf.slv_aw_chan_t	struct slv_aw_chan_t {\n    logic<(uint64_t)(((uint64_t)(SLV_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    axi_pkg::atop_t atop;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.mst_aw_chan_t	struct mst_aw_chan_t {\n    logic<(uint64_t)(((uint64_t)(MST_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    axi_pkg::atop_t atop;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.w_chan_t	struct w_chan_t {\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))> strb;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.slv_b_chan_t	struct slv_b_chan_t {\n    logic<(uint64_t)(((uint64_t)(SLV_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    axi_pkg::resp_t resp;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.mst_b_chan_t	struct mst_b_chan_t {\n    logic<(uint64_t)(((uint64_t)(MST_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    axi_pkg::resp_t resp;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.slv_ar_chan_t	struct slv_ar_chan_t {\n    logic<(uint64_t)(((uint64_t)(SLV_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.mst_ar_chan_t	struct mst_ar_chan_t {\n    logic<(uint64_t)(((uint64_t)(MST_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::len_t len;\n    axi_pkg::size_t size;\n    axi_pkg::burst_t burst;\n    logic<1> lock;\n    axi_pkg::cache_t cache;\n    axi_pkg::prot_t prot;\n    axi_pkg::qos_t qos;\n    axi_pkg::region_t region;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.slv_r_chan_t	struct slv_r_chan_t {\n    logic<(uint64_t)(((uint64_t)(SLV_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    axi_pkg::resp_t resp;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.mst_r_chan_t	struct mst_r_chan_t {\n    logic<(uint64_t)(((uint64_t)(MST_AXI_ID_WIDTH) & ((1ull << 32) - 1ull)))> id;\n    logic<(uint64_t)(((uint64_t)(AXI_DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    axi_pkg::resp_t resp;\n    logic<1> last;\n    logic<(uint64_t)(((uint64_t)(AXI_USER_WIDTH) & ((1ull << 32) - 1ull)))> user;\n@PACKED@};
+axi_mux_intf.slv_req_t	struct slv_req_t {\n    slv_aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    slv_ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_mux_intf.slv_resp_t	struct slv_resp_t {\n    logic<1> aw_ready;\n    logic<1> ar_ready;\n    w_chan_t w;\n    logic<1> w_ready;\n    slv_b_chan_t b;\n    logic<1> b_valid;\n    slv_r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+axi_mux_intf.mst_req_t	struct mst_req_t {\n    mst_aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    mst_ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_mux_intf.mst_resp_t	struct mst_resp_t {\n    logic<1> aw_ready;\n    logic<1> ar_ready;\n    w_chan_t w;\n    logic<1> w_ready;\n    mst_b_chan_t b;\n    logic<1> b_valid;\n    mst_r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+axi_lite_cut_intf.aw_chan_t	struct aw_chan_t {\n    logic<(uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::prot_t prot;\n@PACKED@};
+axi_lite_cut_intf.w_chan_t	struct w_chan_t {\n    logic<(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    logic<(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))> strb;\n@PACKED@};
+axi_lite_cut_intf.b_chan_t	struct b_chan_t {\n    axi_pkg::resp_t resp;\n@PACKED@};
+axi_lite_cut_intf.ar_chan_t	struct ar_chan_t {\n    logic<(uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::prot_t prot;\n@PACKED@};
+axi_lite_cut_intf.r_chan_t	struct r_chan_t {\n    logic<(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    axi_pkg::resp_t resp;\n@PACKED@};
+axi_lite_cut_intf.req_t	struct req_t {\n    aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_lite_cut_intf.resp_t	struct resp_t {\n    logic<1> aw_ready;\n    logic<1> w_ready;\n    b_chan_t b;\n    logic<1> b_valid;\n    logic<1> ar_ready;\n    r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+axi_lite_multicut_intf.aw_chan_t	struct aw_chan_t {\n    logic<(uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::prot_t prot;\n@PACKED@};
+axi_lite_multicut_intf.w_chan_t	struct w_chan_t {\n    logic<(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    logic<(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))> strb;\n@PACKED@};
+axi_lite_multicut_intf.b_chan_t	struct b_chan_t {\n    axi_pkg::resp_t resp;\n@PACKED@};
+axi_lite_multicut_intf.ar_chan_t	struct ar_chan_t {\n    logic<(uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))> addr;\n    axi_pkg::prot_t prot;\n@PACKED@};
+axi_lite_multicut_intf.r_chan_t	struct r_chan_t {\n    logic<(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)))> data;\n    axi_pkg::resp_t resp;\n@PACKED@};
+axi_lite_multicut_intf.req_t	struct req_t {\n    aw_chan_t aw;\n    logic<1> aw_valid;\n    w_chan_t w;\n    logic<1> w_valid;\n    logic<1> b_ready;\n    ar_chan_t ar;\n    logic<1> ar_valid;\n    logic<1> r_ready;\n@PACKED@};
+axi_lite_multicut_intf.resp_t	struct resp_t {\n    logic<1> aw_ready;\n    logic<1> w_ready;\n    b_chan_t b;\n    logic<1> b_valid;\n    logic<1> ar_ready;\n    r_chan_t r;\n    logic<1> r_valid;\n@PACKED@};
+@@ cva6_type_param_defaults.tsv
+rvfi_probes_instr_t	cpphdl_rvfi::probes_instr_t<CVA6Cfg>
+rvfi_probes_csr_t	cpphdl_rvfi::probes_csr_t<CVA6Cfg>
+rvfi_probes_t	cpphdl_rvfi::probes_t<CVA6Cfg>
+@@ cva6_type_widths.tsv
+ariane_peripherals.plic_req_t	70
+ariane_peripherals.plic_rsp_t	34
+axi_lite_cut_intf.aw_chan_t	3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))
+axi_lite_cut_intf.w_chan_t	(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + (uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))
+axi_lite_cut_intf.b_chan_t	2
+axi_lite_cut_intf.ar_chan_t	3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))
+axi_lite_cut_intf.r_chan_t	(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + 2
+axi_lite_cut_intf.req_t	(3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))) + 1 + ((uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + (uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))) + 1 + 1 + (3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))) + 1 + 1
+axi_lite_cut_intf.resp_t	1 + 1 + 2 + 1 + 1 + ((uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + 2) + 1
+axi_lite_multicut_intf.aw_chan_t	3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))
+axi_lite_multicut_intf.w_chan_t	(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + (uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))
+axi_lite_multicut_intf.b_chan_t	2
+axi_lite_multicut_intf.ar_chan_t	3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))
+axi_lite_multicut_intf.r_chan_t	(uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + 2
+axi_lite_multicut_intf.req_t	(3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))) + 1 + ((uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + (uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull)) / ((uint64_t)(8) & ((1ull << 32) - 1ull)))) + 1 + 1 + (3 + (uint64_t)(((uint64_t)(ADDR_WIDTH) & ((1ull << 32) - 1ull)))) + 1 + 1
+axi_lite_multicut_intf.resp_t	1 + 1 + 2 + 1 + 1 + ((uint64_t)(((uint64_t)(DATA_WIDTH) & ((1ull << 32) - 1ull))) + 2) + 1
+@@ cva6_var_type_patches.tsv
+fp_wdata_pack	logic<CVA6Cfg.XLEN>=>logic<CVA6Cfg.FLen>
+@@ cva6_work_precomb_calls.tsv
+issue_read_operands	branch_valid_n_comb_func()
+@@ cva6_build_config_body.cpp
+auto pow2 = [](unsigned x) constexpr { return 1u << x; };
+bool IS_XLEN32 = CVA6Cfg.XLEN == 32;
+bool IS_XLEN64 = CVA6Cfg.XLEN != 32;
+bool FpPresent = (bool)CVA6Cfg.RVF || (bool)CVA6Cfg.RVD || (bool)CVA6Cfg.XF16 || (bool)CVA6Cfg.XF16ALT || (bool)CVA6Cfg.XF8;
+bool NSX = (bool)CVA6Cfg.XF16 || (bool)CVA6Cfg.XF16ALT || (bool)CVA6Cfg.XF8 || (bool)CVA6Cfg.XFVec;
+unsigned FLen = (bool)CVA6Cfg.RVD ? 64 : (bool)CVA6Cfg.RVF ? 32 : (bool)CVA6Cfg.XF16 ? 16 : (bool)CVA6Cfg.XF16ALT ? 16 : (bool)CVA6Cfg.XF8 ? 8 : 1;
+bool RVFVec = (bool)CVA6Cfg.RVF && (bool)CVA6Cfg.XFVec && (FLen > 32);
+bool XF16Vec = (bool)CVA6Cfg.XF16 && (bool)CVA6Cfg.XFVec && (FLen > 16);
+bool XF16ALTVec = (bool)CVA6Cfg.XF16ALT && (bool)CVA6Cfg.XFVec && (FLen > 16);
+bool XF8Vec = (bool)CVA6Cfg.XF8 && (bool)CVA6Cfg.XFVec && (FLen > 8);
+bool EnableAccelerator = static_cast<bool>(CVA6Cfg.RVV);
+unsigned NrWbPorts = (CVA6Cfg.CvxifEn || EnableAccelerator) ? 5 : 4;
+unsigned ICACHE_INDEX_WIDTH = clog2(CVA6Cfg.IcacheByteSize / CVA6Cfg.IcacheSetAssoc);
+unsigned DCACHE_INDEX_WIDTH = clog2(CVA6Cfg.DcacheByteSize / CVA6Cfg.DcacheSetAssoc);
+unsigned DCACHE_OFFSET_WIDTH = clog2(CVA6Cfg.DcacheLineWidth / 8);
+unsigned VpnLen = (CVA6Cfg.XLEN == 64) ? (CVA6Cfg.RVH ? 29 : 27) : 20;
+unsigned PtLevels = (CVA6Cfg.XLEN == 64) ? 3 : 2;
+unsigned PLEN_v = (CVA6Cfg.XLEN == 32) ? 34 : 56;
+unsigned GPLEN_v = (CVA6Cfg.XLEN == 32) ? 34 : 41;
+unsigned ASID_WIDTH_v = (CVA6Cfg.XLEN == 64) ? 16 : 1;
+unsigned VMID_WIDTH_v = (CVA6Cfg.XLEN == 64) ? 14 : 1;
+unsigned ICACHE_USER_LINE_WIDTH_v = (CVA6Cfg.AxiUserWidth == 1) ? 4 : CVA6Cfg.IcacheLineWidth;
+unsigned DCACHE_USER_LINE_WIDTH_v = (CVA6Cfg.AxiUserWidth == 1) ? 4 : CVA6Cfg.DcacheLineWidth;
+unsigned AXI_USER_EN_v = (CVA6Cfg.DataUserEn | CVA6Cfg.FetchUserEn) != 0;
+unsigned ModeW_v = (CVA6Cfg.XLEN == 32) ? 1 : 4;
+unsigned ASIDW_v = (CVA6Cfg.XLEN == 32) ? 9 : 16;
+unsigned VMIDW_v = (CVA6Cfg.XLEN == 32) ? 7 : 14;
+unsigned PPNW_v = (CVA6Cfg.XLEN == 32) ? 22 : 44;
+unsigned GPPNW_v = (CVA6Cfg.XLEN == 32) ? 22 : 29;
+auto MODE_SV_v = (CVA6Cfg.XLEN == 32) ? config_pkg::ModeSv32 : config_pkg::ModeSv39;
+unsigned SV_v = (MODE_SV_v == config_pkg::ModeSv32) ? 32 : 39;
+unsigned SVX_v = (MODE_SV_v == config_pkg::ModeSv32) ? 34 : 41;
+config_pkg::cva6_cfg_t cfg{};
+sv_assign_field(cfg.XLEN, CVA6Cfg.XLEN);
+sv_assign_field(cfg.VLEN, CVA6Cfg.VLEN);
+sv_assign_field(cfg.PLEN, PLEN_v);
+sv_assign_field(cfg.GPLEN, GPLEN_v);
+sv_assign_field(cfg.IS_XLEN32, IS_XLEN32);
+sv_assign_field(cfg.IS_XLEN64, IS_XLEN64);
+sv_assign_field(cfg.XLEN_ALIGN_BYTES, clog2(CVA6Cfg.XLEN / 8));
+sv_assign_field(cfg.ASID_WIDTH, ASID_WIDTH_v);
+sv_assign_field(cfg.VMID_WIDTH, VMID_WIDTH_v);
+sv_assign_field(cfg.FpgaEn, CVA6Cfg.FpgaEn);
+sv_assign_field(cfg.FpgaAlteraEn, CVA6Cfg.FpgaAlteraEn);
+sv_assign_field(cfg.TechnoCut, CVA6Cfg.TechnoCut);
+sv_assign_field(cfg.SuperscalarEn, CVA6Cfg.SuperscalarEn);
+sv_assign_field(cfg.NrCommitPorts, CVA6Cfg.SuperscalarEn ? 2 : CVA6Cfg.NrCommitPorts);
+sv_assign_field(cfg.NrIssuePorts, CVA6Cfg.SuperscalarEn ? 2 : 1);
+sv_assign_field(cfg.SpeculativeSb, CVA6Cfg.SuperscalarEn);
+sv_assign_field(cfg.NrALUs, CVA6Cfg.SuperscalarEn ? 2 : 1);
+sv_assign_field(cfg.ALUBypass, CVA6Cfg.SuperscalarEn ? (bool)CVA6Cfg.ALUBypass : false);
+sv_assign_field(cfg.NrLoadPipeRegs, CVA6Cfg.NrLoadPipeRegs);
+sv_assign_field(cfg.NrStorePipeRegs, CVA6Cfg.NrStorePipeRegs);
+sv_assign_field(cfg.AxiAddrWidth, CVA6Cfg.AxiAddrWidth);
+sv_assign_field(cfg.AxiDataWidth, CVA6Cfg.AxiDataWidth);
+sv_assign_field(cfg.AxiIdWidth, CVA6Cfg.AxiIdWidth);
+sv_assign_field(cfg.AxiUserWidth, CVA6Cfg.AxiUserWidth);
+sv_assign_field(cfg.MEM_TID_WIDTH, CVA6Cfg.MemTidWidth);
+sv_assign_field(cfg.NrLoadBufEntries, CVA6Cfg.NrLoadBufEntries);
+sv_assign_field(cfg.RVF, CVA6Cfg.RVF);
+sv_assign_field(cfg.RVD, CVA6Cfg.RVD);
+sv_assign_field(cfg.XF16, CVA6Cfg.XF16);
+sv_assign_field(cfg.XF16ALT, CVA6Cfg.XF16ALT);
+sv_assign_field(cfg.XF8, CVA6Cfg.XF8);
+sv_assign_field(cfg.RVA, CVA6Cfg.RVA);
+sv_assign_field(cfg.RVB, CVA6Cfg.RVB);
+sv_assign_field(cfg.ZKN, CVA6Cfg.ZKN);
+sv_assign_field(cfg.RVV, CVA6Cfg.RVV);
+sv_assign_field(cfg.RVC, CVA6Cfg.RVC);
+sv_assign_field(cfg.RVH, CVA6Cfg.RVH);
+sv_assign_field(cfg.RVZCB, CVA6Cfg.RVZCB);
+sv_assign_field(cfg.RVZCMT, CVA6Cfg.RVZCMT);
+sv_assign_field(cfg.RVZCMP, CVA6Cfg.RVZCMP);
+sv_assign_field(cfg.XFVec, CVA6Cfg.XFVec);
+sv_assign_field(cfg.CvxifEn, CVA6Cfg.CvxifEn);
+sv_assign_field(cfg.CoproType, CVA6Cfg.CoproType);
+sv_assign_field(cfg.RVZiCond, CVA6Cfg.RVZiCond);
+sv_assign_field(cfg.RVZiCbom, CVA6Cfg.RVZiCbom);
+sv_assign_field(cfg.RVZicntr, CVA6Cfg.RVZicntr);
+sv_assign_field(cfg.RVZihpm, CVA6Cfg.RVZihpm);
+sv_assign_field(cfg.NR_SB_ENTRIES, CVA6Cfg.NrScoreboardEntries);
+sv_assign_field(cfg.TRANS_ID_BITS, clog2(CVA6Cfg.NrScoreboardEntries));
+sv_assign_field(cfg.FpPresent, FpPresent);
+sv_assign_field(cfg.NSX, NSX);
+sv_assign_field(cfg.FLen, FLen);
+sv_assign_field(cfg.RVFVec, RVFVec);
+sv_assign_field(cfg.XF16Vec, XF16Vec);
+sv_assign_field(cfg.XF16ALTVec, XF16ALTVec);
+sv_assign_field(cfg.XF8Vec, XF8Vec);
+sv_assign_field(cfg.NrRgprPorts, CVA6Cfg.SuperscalarEn ? 4 : 2);
+sv_assign_field(cfg.NrWbPorts, NrWbPorts);
+sv_assign_field(cfg.EnableAccelerator, EnableAccelerator);
+sv_assign_field(cfg.PerfCounterEn, CVA6Cfg.PerfCounterEn);
+sv_assign_field(cfg.MmuPresent, CVA6Cfg.MmuPresent);
+sv_assign_field(cfg.RVS, CVA6Cfg.RVS);
+sv_assign_field(cfg.RVU, CVA6Cfg.RVU);
+sv_assign_field(cfg.SoftwareInterruptEn, CVA6Cfg.SoftwareInterruptEn);
+sv_assign_field(cfg.HaltAddress, CVA6Cfg.HaltAddress);
+sv_assign_field(cfg.ExceptionAddress, CVA6Cfg.ExceptionAddress);
+sv_assign_field(cfg.RASDepth, CVA6Cfg.RASDepth);
+sv_assign_field(cfg.BTBEntries, CVA6Cfg.BTBEntries);
+sv_assign_field(cfg.BPType, CVA6Cfg.BPType);
+sv_assign_field(cfg.BHTEntries, CVA6Cfg.BHTEntries);
+sv_assign_field(cfg.BHTHist, CVA6Cfg.BHTHist);
+sv_assign_field(cfg.InstrTlbEntries, CVA6Cfg.InstrTlbEntries);
+sv_assign_field(cfg.DataTlbEntries, CVA6Cfg.DataTlbEntries);
+sv_assign_field(cfg.SharedTlbDepth, CVA6Cfg.SharedTlbDepth);
+sv_assign_field(cfg.UseSharedTlb, CVA6Cfg.UseSharedTlb);
+sv_assign_field(cfg.SvnapotEn, CVA6Cfg.SvnapotEn);
+sv_assign_field(cfg.VpnLen, VpnLen);
+sv_assign_field(cfg.PtLevels, PtLevels);
+sv_assign_field(cfg.DmBaseAddress, CVA6Cfg.DmBaseAddress);
+sv_assign_field(cfg.TvalEn, CVA6Cfg.TvalEn);
+sv_assign_field(cfg.DirectVecOnly, CVA6Cfg.DirectVecOnly);
+sv_assign_field(cfg.NrPMPEntries, CVA6Cfg.NrPMPEntries);
+sv_assign_field(cfg.PMPCfgRstVal, CVA6Cfg.PMPCfgRstVal);
+sv_assign_field(cfg.PMPAddrRstVal, CVA6Cfg.PMPAddrRstVal);
+sv_assign_field(cfg.PMPEntryReadOnly, CVA6Cfg.PMPEntryReadOnly);
+sv_assign_field(cfg.PMPNapotEn, CVA6Cfg.PMPNapotEn);
+sv_assign_field(cfg.NOCType, CVA6Cfg.NOCType);
+sv_assign_field(cfg.NrNonIdempotentRules, CVA6Cfg.NrNonIdempotentRules);
+sv_assign_field(cfg.NonIdempotentAddrBase, CVA6Cfg.NonIdempotentAddrBase);
+sv_assign_field(cfg.NonIdempotentLength, CVA6Cfg.NonIdempotentLength);
+sv_assign_field(cfg.NrExecuteRegionRules, CVA6Cfg.NrExecuteRegionRules);
+sv_assign_field(cfg.ExecuteRegionAddrBase, CVA6Cfg.ExecuteRegionAddrBase);
+sv_assign_field(cfg.ExecuteRegionLength, CVA6Cfg.ExecuteRegionLength);
+sv_assign_field(cfg.NrCachedRegionRules, CVA6Cfg.NrCachedRegionRules);
+sv_assign_field(cfg.CachedRegionAddrBase, CVA6Cfg.CachedRegionAddrBase);
+sv_assign_field(cfg.CachedRegionLength, CVA6Cfg.CachedRegionLength);
+sv_assign_field(cfg.MaxOutstandingStores, CVA6Cfg.MaxOutstandingStores);
+sv_assign_field(cfg.DebugEn, CVA6Cfg.DebugEn);
+sv_assign_field(cfg.SDTRIG, CVA6Cfg.SDTRIG);
+sv_assign_field(cfg.Mcontrol6, CVA6Cfg.Mcontrol6);
+sv_assign_field(cfg.Icount, CVA6Cfg.Icount);
+sv_assign_field(cfg.Etrigger, CVA6Cfg.Etrigger);
+sv_assign_field(cfg.Itrigger, CVA6Cfg.Itrigger);
+sv_assign_field(cfg.NonIdemPotenceEn, (CVA6Cfg.NrNonIdempotentRules > 0) &&
+    ((uint64_t)(std::as_const(CVA6Cfg.NonIdempotentLength)[0]) > 0));
+sv_assign_field(cfg.AxiBurstWriteEn, CVA6Cfg.AxiBurstWriteEn);
+sv_assign_field(cfg.ICACHE_SET_ASSOC, CVA6Cfg.IcacheSetAssoc);
+sv_assign_field(cfg.ICACHE_SET_ASSOC_WIDTH, CVA6Cfg.IcacheSetAssoc > 1 ? clog2(CVA6Cfg.IcacheSetAssoc) : CVA6Cfg.IcacheSetAssoc);
+sv_assign_field(cfg.ICACHE_INDEX_WIDTH, ICACHE_INDEX_WIDTH);
+sv_assign_field(cfg.ICACHE_TAG_WIDTH, cfg.PLEN - ICACHE_INDEX_WIDTH);
+sv_assign_field(cfg.ICACHE_LINE_WIDTH, CVA6Cfg.IcacheLineWidth);
+sv_assign_field(cfg.ICACHE_USER_LINE_WIDTH, ICACHE_USER_LINE_WIDTH_v);
+sv_assign_field(cfg.DCacheType, CVA6Cfg.DCacheType);
+sv_assign_field(cfg.DcacheIdWidth, CVA6Cfg.DcacheIdWidth);
+sv_assign_field(cfg.DCACHE_SET_ASSOC, CVA6Cfg.DcacheSetAssoc);
+sv_assign_field(cfg.DCACHE_SET_ASSOC_WIDTH, CVA6Cfg.DcacheSetAssoc > 1 ? clog2(CVA6Cfg.DcacheSetAssoc) : CVA6Cfg.DcacheSetAssoc);
+sv_assign_field(cfg.DCACHE_INDEX_WIDTH, DCACHE_INDEX_WIDTH);
+sv_assign_field(cfg.DCACHE_TAG_WIDTH, cfg.PLEN - DCACHE_INDEX_WIDTH);
+sv_assign_field(cfg.DCACHE_LINE_WIDTH, CVA6Cfg.DcacheLineWidth);
+sv_assign_field(cfg.DCACHE_USER_LINE_WIDTH, DCACHE_USER_LINE_WIDTH_v);
+sv_assign_field(cfg.DCACHE_USER_WIDTH, CVA6Cfg.AxiUserWidth);
+sv_assign_field(cfg.DCACHE_OFFSET_WIDTH, DCACHE_OFFSET_WIDTH);
+sv_assign_field(cfg.DCACHE_NUM_WORDS, pow2(DCACHE_INDEX_WIDTH - DCACHE_OFFSET_WIDTH));
+sv_assign_field(cfg.DCACHE_MAX_TX, pow2(CVA6Cfg.MemTidWidth));
+sv_assign_field(cfg.DcacheFlushOnFence, CVA6Cfg.DcacheFlushOnFence);
+sv_assign_field(cfg.DcacheFlushOnFenceI, CVA6Cfg.DcacheFlushOnFenceI);
+sv_assign_field(cfg.DcacheInvalidateOnFlush, CVA6Cfg.DcacheInvalidateOnFlush);
+sv_assign_field(cfg.DATA_USER_EN, CVA6Cfg.DataUserEn);
+sv_assign_field(cfg.WtDcacheWbufDepth, CVA6Cfg.WtDcacheWbufDepth);
+sv_assign_field(cfg.FETCH_USER_WIDTH, CVA6Cfg.FetchUserWidth);
+sv_assign_field(cfg.FETCH_USER_EN, CVA6Cfg.FetchUserEn);
+sv_assign_field(cfg.AXI_USER_EN, AXI_USER_EN_v);
+sv_assign_field(cfg.FETCH_WIDTH, CVA6Cfg.SuperscalarEn ? 64 : 32);
+sv_assign_field(cfg.FETCH_ALIGN_BITS, clog2(cfg.FETCH_WIDTH / 8));
+sv_assign_field(cfg.INSTR_PER_FETCH, cfg.FETCH_WIDTH / (CVA6Cfg.RVC ? 16 : 32));
+sv_assign_field(cfg.LOG2_INSTR_PER_FETCH, cfg.INSTR_PER_FETCH > 1 ? clog2(cfg.INSTR_PER_FETCH) : 1);
+sv_assign_field(cfg.ModeW, ModeW_v);
+sv_assign_field(cfg.ASIDW, ASIDW_v);
+sv_assign_field(cfg.VMIDW, VMIDW_v);
+sv_assign_field(cfg.PPNW, PPNW_v);
+sv_assign_field(cfg.GPPNW, GPPNW_v);
+sv_assign_field(cfg.MODE_SV, MODE_SV_v);
+sv_assign_field(cfg.SV, SV_v);
+sv_assign_field(cfg.SVX, SVX_v);
+sv_assign_field(cfg.X_NUM_RS, cfg.NrRgprPorts / cfg.NrIssuePorts);
+sv_assign_field(cfg.X_ID_WIDTH, cfg.TRANS_ID_BITS);
+sv_assign_field(cfg.X_RFR_WIDTH, cfg.XLEN);
+sv_assign_field(cfg.X_RFW_WIDTH, cfg.XLEN);
+sv_assign_field(cfg.X_NUM_HARTS, 1);
+sv_assign_field(cfg.X_HARTID_WIDTH, cfg.XLEN);
+sv_assign_field(cfg.X_DUALREAD, 0);
+sv_assign_field(cfg.X_DUALWRITE, 0);
+sv_assign_field(cfg.X_ISSUE_REGISTER_SPLIT, 0);
+return cfg;
+@@ cva6_is_inside_cacheable_regions_body.cpp
+for (unsigned k = 0; k < Cfg.NrCachedRegionRules; ++k) {
+    if (range_check(Cfg.CachedRegionAddrBase[k], Cfg.CachedRegionLength[k], address)) return 1;
+}
+return 0;
+@@ cva6_is_inside_execute_regions_body.cpp
+if (Cfg.NrExecuteRegionRules == 0) return 1;
+for (unsigned k = 0; k < Cfg.NrExecuteRegionRules; ++k) {
+    if (range_check(Cfg.ExecuteRegionAddrBase[k], Cfg.ExecuteRegionLength[k], address)) return 1;
+}
+return 0;
+@@ cva6_is_inside_nonidempotent_regions_body.cpp
+for (unsigned k = 0; k < Cfg.NrNonIdempotentRules; ++k) {
+    if (range_check(Cfg.NonIdempotentAddrBase[k], Cfg.NonIdempotentLength[k], address)) return 1;
+}
+return 0;
+@@ cva6_range_check_body.cpp
+return (address >= base) && ((__uint128_t)address < ((__uint128_t)base + (__uint128_t)len));
+@@ adapters/core/fpu_wrap.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+using namespace ariane_pkg;
+
+template<config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty, typename exception_t = bool, typename fu_data_t = bool>
+class fpu_wrap : public Module
+{
+public:
+    _PORT(logic<1>) rst_ni_in;
+    _PORT(logic<1>) flush_i_in;
+    _PORT(logic<1>) fpu_valid_i_in;
+    _PORT(fu_data_t) fu_data_i_in;
+    _PORT(logic<2>) fpu_fmt_i_in;
+    _PORT(logic<3>) fpu_rm_i_in;
+    _PORT(logic<3>) fpu_frm_i_in;
+    _PORT(logic<7>) fpu_prec_i_in;
+    logic<1> fpu_ready_o = 1;
+    logic<CVA6Cfg.TRANS_ID_BITS> fpu_trans_id_o = {};
+    logic<CVA6Cfg.XLEN> result_o = {};
+    logic<1> fpu_valid_o = {};
+    exception_t fpu_exception_o = {};
+    logic<1> fpu_early_valid_o = {};
+    logic<1>& fpu_ready_o_out() { return fpu_ready_o; }
+    logic<CVA6Cfg.TRANS_ID_BITS>& fpu_trans_id_o_out() { return fpu_trans_id_o; }
+    logic<CVA6Cfg.XLEN>& result_o_out() { return result_o; }
+    logic<1>& fpu_valid_o_out() { return fpu_valid_o; }
+    exception_t& fpu_exception_o_out() { return fpu_exception_o; }
+    logic<1>& fpu_early_valid_o_out() { return fpu_early_valid_o; }
+    fpu_wrap() {}
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+@@ adapters/common/local/util/instr_tracer.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+
+template<config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty, typename bp_resolve_t = bool, typename scoreboard_entry_t = bool, typename interrupts_t = bool, typename exception_t = bool, interrupts_t INTERRUPTS = {}>
+class instr_tracer : public Module
+{
+public:
+    instr_tracer() {}
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+@@ adapters/core/acc_dispatcher.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+using namespace ariane_pkg;
+
+template<config_pkg::cva6_cfg_t CVA6Cfg = config_pkg::cva6_cfg_empty, typename dcache_req_i_t = bool, typename dcache_req_o_t = bool, typename exception_t = bool, typename fu_data_t = bool, typename scoreboard_entry_t = bool, typename acc_req_t = bool, typename acc_resp_t = bool, typename accelerator_req_t = bool, typename accelerator_resp_t = bool, typename acc_mmu_req_t = bool, typename acc_mmu_resp_t = bool, typename acc_cfg_t = bool, acc_cfg_t AccCfg = {}>
+class acc_dispatcher : public Module
+{
+public:
+    logic<1> flush_pipeline_o_out() { return {}; }
+    logic<1> single_step_o_out() { return {}; }
+    logic<1> acc_fflags_valid_o_out() { return {}; }
+    logic<5> acc_fflags_o_out() { return {}; }
+    logic<1> dirty_v_state_o_out() { return {}; }
+    logic<1> issue_stall_o_out() { return {}; }
+    logic<CVA6Cfg.TRANS_ID_BITS> acc_trans_id_o_out() { return {}; }
+    logic<CVA6Cfg.XLEN> acc_result_o_out() { return {}; }
+    logic<1> acc_valid_o_out() { return {}; }
+    exception_t acc_exception_o_out() { return {}; }
+    logic<1> acc_valid_ex_o_out() { return {}; }
+    logic<1> acc_stall_st_pending_o_out() { return {}; }
+    acc_mmu_req_t acc_mmu_req_o_out() { return {}; }
+    logic<1> ctrl_halt_o_out() { return {}; }
+    array<2,dcache_req_i_t> acc_dcache_req_ports_o_out() { return {}; }
+    logic<1> inval_valid_o_out() { return {}; }
+    logic<64> inval_addr_o_out() { return {}; }
+    acc_req_t acc_req_o_out() { return {}; }
+    acc_dispatcher() {}
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+	};
+@@ adapters/corev_apu/tb/common/uart.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+
+template<unsigned BAUD_RATE = 115200, unsigned PARITY_EN = 0>
+class uart_bus : public Module
+{
+public:
+    _PORT(logic<1>) rx_in;
+    _PORT(logic<1>) tx_out = _ASSIGN(logic<1>(0b1));
+    _PORT(logic<1>) rx_en_in;
+
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+@@ adapters/corev_apu/tb/dpi_adapters.h
+#pragma once
+
+#include <cstdint>
+#include <type_traits>
+#include "cpphdl.h"
+
+using svBit = unsigned char;
+
+extern "C" int debug_tick(svBit* debug_req_valid, svBit debug_req_ready,
+                           int* debug_req_bits_addr, int* debug_req_bits_op,
+                           int* debug_req_bits_data, svBit debug_resp_valid,
+                           svBit* debug_resp_ready, int debug_resp_bits_resp,
+                           int debug_resp_bits_data);
+extern "C" int jtag_tick(svBit* jtag_TCK, svBit* jtag_TMS, svBit* jtag_TDI,
+                         svBit* jtag_TRSTn, svBit jtag_TDO);
+
+template<typename T>
+static inline uint64_t cpphdl_dpi_u64(const T& value)
+{
+    return static_cast<uint64_t>(value);
+}
+
+template<typename T>
+static inline void cpphdl_dpi_assign(T& dst, uint64_t value)
+{
+    if constexpr (requires(const T& current) { current.pack(); }) {
+        using value_t = std::remove_cvref_t<decltype(dst.pack())>;
+        dst = value_t(value);
+    } else {
+        dst = T(value);
+    }
+}
+
+template<typename ReqValid, typename ReqReady, typename ReqAddr, typename ReqOp,
+         typename ReqData, typename RespValid, typename RespReady,
+         typename RespBitsResp, typename RespBitsData>
+static inline int debug_tick(ReqValid& debug_req_valid, const ReqReady& debug_req_ready,
+                             ReqAddr& debug_req_bits_addr, ReqOp& debug_req_bits_op,
+                             ReqData& debug_req_bits_data, const RespValid& debug_resp_valid,
+                             RespReady& debug_resp_ready, const RespBitsResp& debug_resp_bits_resp,
+                             const RespBitsData& debug_resp_bits_data)
+{
+    svBit req_valid = static_cast<svBit>(cpphdl_dpi_u64(debug_req_valid) & 1u);
+    svBit req_ready = static_cast<svBit>(cpphdl_dpi_u64(debug_req_ready) & 1u);
+    int req_addr = static_cast<int>(cpphdl_dpi_u64(debug_req_bits_addr));
+    int req_op = static_cast<int>(cpphdl_dpi_u64(debug_req_bits_op));
+    int req_data = static_cast<int>(cpphdl_dpi_u64(debug_req_bits_data));
+    svBit resp_valid = static_cast<svBit>(cpphdl_dpi_u64(debug_resp_valid) & 1u);
+    svBit resp_ready = static_cast<svBit>(cpphdl_dpi_u64(debug_resp_ready) & 1u);
+    int resp_bits_resp = static_cast<int>(cpphdl_dpi_u64(debug_resp_bits_resp));
+    int resp_bits_data = static_cast<int>(cpphdl_dpi_u64(debug_resp_bits_data));
+    int ret = ::debug_tick(&req_valid, req_ready, &req_addr, &req_op, &req_data,
+                           resp_valid, &resp_ready, resp_bits_resp, resp_bits_data);
+    cpphdl_dpi_assign(debug_req_valid, req_valid);
+    cpphdl_dpi_assign(debug_req_bits_addr, static_cast<uint32_t>(req_addr));
+    cpphdl_dpi_assign(debug_req_bits_op, static_cast<uint32_t>(req_op));
+    cpphdl_dpi_assign(debug_req_bits_data, static_cast<uint32_t>(req_data));
+    cpphdl_dpi_assign(debug_resp_ready, resp_ready);
+    return ret;
+}
+
+template<typename TCK, typename TMS, typename TDI, typename TRSTn, typename TDO>
+static inline int jtag_tick(TCK& jtag_TCK, TMS& jtag_TMS, TDI& jtag_TDI,
+                            TRSTn& jtag_TRSTn, const TDO& jtag_TDO)
+{
+    svBit tck = static_cast<svBit>(cpphdl_dpi_u64(jtag_TCK) & 1u);
+    svBit tms = static_cast<svBit>(cpphdl_dpi_u64(jtag_TMS) & 1u);
+    svBit tdi = static_cast<svBit>(cpphdl_dpi_u64(jtag_TDI) & 1u);
+    svBit trstn = static_cast<svBit>(cpphdl_dpi_u64(jtag_TRSTn) & 1u);
+    svBit tdo = static_cast<svBit>(cpphdl_dpi_u64(jtag_TDO) & 1u);
+    int ret = ::jtag_tick(&tck, &tms, &tdi, &trstn, tdo);
+    cpphdl_dpi_assign(jtag_TCK, tck);
+    cpphdl_dpi_assign(jtag_TMS, tms);
+    cpphdl_dpi_assign(jtag_TDI, tdi);
+    cpphdl_dpi_assign(jtag_TRSTn, trstn);
+    return ret;
+}
+@@ adapters/corev_apu/tb/xlnx_axi_stubs.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+
+class xlnx_axi_clock_converter : public Module
+{
+public:
+    _PORT(logic<64>) m_axi_araddr_in;
+    _PORT(logic<64>) m_axi_arburst_in;
+    _PORT(logic<64>) m_axi_arcache_in;
+    _PORT(logic<64>) m_axi_arlen_in;
+    _PORT(logic<64>) m_axi_arlock_in;
+    _PORT(logic<64>) m_axi_arprot_in;
+    _PORT(logic<64>) m_axi_arqos_in;
+    _PORT(logic<64>) m_axi_arready_in;
+    _PORT(logic<64>) m_axi_arregion_in;
+    _PORT(logic<64>) m_axi_arsize_in;
+    _PORT(logic<64>) m_axi_arvalid_in;
+    _PORT(logic<64>) m_axi_awaddr_in;
+    _PORT(logic<64>) m_axi_awburst_in;
+    _PORT(logic<64>) m_axi_awcache_in;
+    _PORT(logic<64>) m_axi_awlen_in;
+    _PORT(logic<64>) m_axi_awlock_in;
+    _PORT(logic<64>) m_axi_awprot_in;
+    _PORT(logic<64>) m_axi_awqos_in;
+    _PORT(logic<64>) m_axi_awready_in;
+    _PORT(logic<64>) m_axi_awregion_in;
+    _PORT(logic<64>) m_axi_awsize_in;
+    _PORT(logic<64>) m_axi_awvalid_in;
+    _PORT(logic<64>) m_axi_bready_in;
+    _PORT(logic<64>) m_axi_bresp_in;
+    _PORT(logic<64>) m_axi_bvalid_in;
+    _PORT(logic<64>) m_axi_rdata_in;
+    _PORT(logic<64>) m_axi_rlast_in;
+    _PORT(logic<64>) m_axi_rready_in;
+    _PORT(logic<64>) m_axi_rresp_in;
+    _PORT(logic<64>) m_axi_rvalid_in;
+    _PORT(logic<64>) m_axi_wdata_in;
+    _PORT(logic<64>) m_axi_wlast_in;
+    _PORT(logic<64>) m_axi_wready_in;
+    _PORT(logic<64>) m_axi_wstrb_in;
+    _PORT(logic<64>) m_axi_wvalid_in;
+    _PORT(logic<64>) s_axi_araddr_in;
+    _PORT(logic<64>) s_axi_arburst_in;
+    _PORT(logic<64>) s_axi_arcache_in;
+    _PORT(logic<64>) s_axi_aresetn_in;
+    _PORT(logic<64>) s_axi_arid_in;
+    _PORT(logic<64>) s_axi_arlen_in;
+    _PORT(logic<64>) s_axi_arlock_in;
+    _PORT(logic<64>) s_axi_arprot_in;
+    _PORT(logic<64>) s_axi_arqos_in;
+    _PORT(logic<64>) s_axi_arready_in;
+    _PORT(logic<64>) s_axi_arregion_in;
+    _PORT(logic<64>) s_axi_arsize_in;
+    _PORT(logic<64>) s_axi_arvalid_in;
+    _PORT(logic<64>) s_axi_awaddr_in;
+    _PORT(logic<64>) s_axi_awburst_in;
+    _PORT(logic<64>) s_axi_awcache_in;
+    _PORT(logic<64>) s_axi_awid_in;
+    _PORT(logic<64>) s_axi_awlen_in;
+    _PORT(logic<64>) s_axi_awlock_in;
+    _PORT(logic<64>) s_axi_awprot_in;
+    _PORT(logic<64>) s_axi_awqos_in;
+    _PORT(logic<64>) s_axi_awready_in;
+    _PORT(logic<64>) s_axi_awregion_in;
+    _PORT(logic<64>) s_axi_awsize_in;
+    _PORT(logic<64>) s_axi_awvalid_in;
+    _PORT(logic<64>) s_axi_bid_in;
+    _PORT(logic<64>) s_axi_bready_in;
+    _PORT(logic<64>) s_axi_bresp_in;
+    _PORT(logic<64>) s_axi_bvalid_in;
+    _PORT(logic<64>) s_axi_rdata_in;
+    _PORT(logic<64>) s_axi_rid_in;
+    _PORT(logic<64>) s_axi_rlast_in;
+    _PORT(logic<64>) s_axi_rready_in;
+    _PORT(logic<64>) s_axi_rresp_in;
+    _PORT(logic<64>) s_axi_rvalid_in;
+    _PORT(logic<64>) s_axi_wdata_in;
+    _PORT(logic<64>) s_axi_wlast_in;
+    _PORT(logic<64>) s_axi_wready_in;
+    _PORT(logic<64>) s_axi_wstrb_in;
+    _PORT(logic<64>) s_axi_wvalid_in;
+
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class xlnx_axi_quad_spi : public Module
+{
+public:
+    _PORT(logic<64>) io0_i_in;
+    _PORT(logic<64>) io0_o_out = _ASSIGN(logic<64>{});
+    _PORT(logic<64>) io0_t_in;
+    _PORT(logic<64>) io1_i_in;
+    _PORT(logic<64>) io1_t_in;
+    _PORT(logic<64>) ip2intc_irpt_in;
+    _PORT(logic<64>) s_axi4_araddr_in;
+    _PORT(logic<64>) s_axi4_arburst_in;
+    _PORT(logic<64>) s_axi4_arcache_in;
+    _PORT(logic<64>) s_axi4_aresetn_in;
+    _PORT(logic<64>) s_axi4_arlen_in;
+    _PORT(logic<64>) s_axi4_arlock_in;
+    _PORT(logic<64>) s_axi4_arprot_in;
+    _PORT(logic<64>) s_axi4_arready_in;
+    _PORT(logic<64>) s_axi4_arsize_in;
+    _PORT(logic<64>) s_axi4_arvalid_in;
+    _PORT(logic<64>) s_axi4_awaddr_in;
+    _PORT(logic<64>) s_axi4_awburst_in;
+    _PORT(logic<64>) s_axi4_awcache_in;
+    _PORT(logic<64>) s_axi4_awlen_in;
+    _PORT(logic<64>) s_axi4_awlock_in;
+    _PORT(logic<64>) s_axi4_awprot_in;
+    _PORT(logic<64>) s_axi4_awready_in;
+    _PORT(logic<64>) s_axi4_awsize_in;
+    _PORT(logic<64>) s_axi4_awvalid_in;
+    _PORT(logic<64>) s_axi4_bready_in;
+    _PORT(logic<64>) s_axi4_bresp_in;
+    _PORT(logic<64>) s_axi4_bvalid_in;
+    _PORT(logic<64>) s_axi4_rdata_in;
+    _PORT(logic<64>) s_axi4_rlast_in;
+    _PORT(logic<64>) s_axi4_rready_in;
+    _PORT(logic<64>) s_axi4_rresp_in;
+    _PORT(logic<64>) s_axi4_rvalid_in;
+    _PORT(logic<64>) s_axi4_wdata_in;
+    _PORT(logic<64>) s_axi4_wlast_in;
+    _PORT(logic<64>) s_axi4_wready_in;
+    _PORT(logic<64>) s_axi4_wstrb_in;
+    _PORT(logic<64>) s_axi4_wvalid_in;
+    _PORT(logic<64>) sck_i_in;
+    _PORT(logic<64>) sck_o_out = _ASSIGN(logic<64>{});
+    _PORT(logic<64>) ss_i_in;
+    _PORT(logic<64>) ss_o_out = _ASSIGN(logic<64>{});
+    _PORT(logic<64>) ss_t_in;
+
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+@@ adapters/vendor/pulp-platform/tech_cells_generic/src/rtl/tc_clk.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+
+class tc_clk_and2 : public Module {
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk0_i_in() & clk1_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class tc_clk_buffer : public Module {
+public:
+    _PORT(logic<1>) clk_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+template<uint64_t IS_FUNCTIONAL = 1>
+class tc_clk_gating : public Module {
+public:
+    _PORT(logic<1>) en_i_in;
+    _PORT(logic<1>) test_en_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    reg<logic<1>> clk_en;
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk_en; return clk_o_comb; }
+public:
+    void _work(bool) {
+        clk_en._next = clk_en;
+        clk_en._next = en_i_in() | test_en_i_in();
+    }
+    void _strobe() { clk_en.strobe(); }
+    void _assign() {}
+};
+
+class tc_clk_inverter : public Module {
+public:
+    _PORT(logic<1>) clk_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = logic<1>(~(uint64_t)clk_i_in()); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class tc_clk_mux2 : public Module {
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+    _PORT(logic<1>) clk_sel_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk_sel_i_in() ? clk1_i_in() : clk0_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class tc_clk_xor2 : public Module {
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk0_i_in() ^ clk1_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class tc_clk_or2 : public Module {
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk0_i_in() | clk1_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+template<unsigned Delay = 300>
+class tc_clk_delay : public Module {
+public:
+    _PORT(logic<1>) in_i_in;
+    _PORT(logic<1>) out_o_out = _ASSIGN_COMB(out_o_comb_func());
+private:
+    logic<1> out_o_comb;
+    logic<1>& out_o_comb_func() { out_o_comb = in_i_in(); return out_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+@@ adapters/vendor/pulp-platform/tech_cells_generic/src/deprecated/pulp_clk_cells.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+
+class pulp_clock_and2 : public Module {
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk0_i_in() & clk1_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class pulp_clock_buffer : public Module {
+public:
+    _PORT(logic<1>) clk_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class pulp_clock_gating : public Module {
+public:
+    _PORT(logic<1>) en_i_in;
+    _PORT(logic<1>) test_en_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    tc_clk_gating<> i_tc_clk_gating;
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = i_tc_clk_gating.clk_o_out(); return clk_o_comb; }
+public:
+    void _work(bool reset) { i_tc_clk_gating._work(reset); }
+    void _strobe() { i_tc_clk_gating._strobe(); }
+    void _assign() {
+        i_tc_clk_gating.en_i_in = _ASSIGN_COMB(en_i_in());
+        i_tc_clk_gating.test_en_i_in = _ASSIGN_COMB(test_en_i_in());
+        i_tc_clk_gating._assign();
+    }
+};
+
+class pulp_clock_inverter : public Module {
+public:
+    _PORT(logic<1>) clk_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = logic<1>(~(uint64_t)clk_i_in()); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class pulp_clock_mux2 : public Module {
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+    _PORT(logic<1>) clk_sel_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk_sel_i_in() ? clk1_i_in() : clk0_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+class pulp_clock_xor2 : public Module {
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+    _PORT(logic<1>) clk_o_out = _ASSIGN_COMB(clk_o_comb_func());
+private:
+    logic<1> clk_o_comb;
+    logic<1>& clk_o_comb_func() { clk_o_comb = clk0_i_in() ^ clk1_i_in(); return clk_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+
+template<unsigned Delay = 300>
+class pulp_clock_delay : public Module {
+public:
+    _PORT(logic<1>) in_i_in;
+    _PORT(logic<1>) out_o_out = _ASSIGN_COMB(out_o_comb_func());
+private:
+    logic<1> out_o_comb;
+    logic<1>& out_o_comb_func() { out_o_comb = in_i_in(); return out_o_comb; }
+public:
+    void _work(bool) {}
+    void _strobe() {}
+    void _assign() {}
+};
+@@ adapters/vendor/pulp-platform/tech_cells_generic/src/deprecated/cluster_clk_cells.h
+#pragma once
+
+#include "cpphdl.h"
+#include <algorithm>
+#include <array>
+#include <tuple>
+#include <print>
+#include <type_traits>
+#include <utility>
+
+#ifndef HDLCPP_RANGE_WIDTH_DEFINED
+#define HDLCPP_RANGE_WIDTH_DEFINED
+consteval uint64_t __hdlcpp_range_width(int32_t first, int32_t last) {
+    return first >= last ? uint64_t(int64_t(first) - last) + 1 : uint64_t(int64_t(last) - first) + 1;
+}
+#endif
+
+#ifndef HDLCPP_FIXED_STRING_DEFINED
+#define HDLCPP_FIXED_STRING_DEFINED
+template <size_t N>
+struct hdlcpp_fixed_string {
+    char value[N]{};
+    constexpr hdlcpp_fixed_string(const char (&str)[N]) { for (size_t i = 0; i < N; ++i) value[i] = str[i]; }
+};
+template <size_t N, size_t M>
+constexpr bool operator==(const hdlcpp_fixed_string<N>& lhs, const char (&rhs)[M]) {
+    if constexpr (N != M) return false;
+    else { for (size_t i = 0; i < N; ++i) if (lhs.value[i] != rhs[i]) return false; return true; }
+}
+template <size_t N, size_t M>
+constexpr bool operator!=(const hdlcpp_fixed_string<N>& lhs, const char (&rhs)[M]) { return !(lhs == rhs); }
+#endif
+
+using namespace cpphdl;
+
+class cluster_clock_and2 : public Module
+{
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+
+private:
+    ::tc_clk_and2 i_tc_clk_and2;
+
+
+public:
+    cluster_clock_and2()
+    {
+    }
+
+    void _work(bool reset)
+    {
+        i_tc_clk_and2._work(reset);
+    }
+
+    void _strobe()
+    {
+        i_tc_clk_and2._strobe();
+    }
+
+    void _assign()
+    {
+        i_tc_clk_and2.clk0_i_in = _ASSIGN_COMB(clk0_i_in());
+        i_tc_clk_and2.clk1_i_in = _ASSIGN_COMB(clk1_i_in());
+        i_tc_clk_and2._assign();
+    }
+
+};
+
+class cluster_clock_buffer : public Module
+{
+public:
+
+private:
+    ::tc_clk_buffer i_tc_clk_buffer;
+
+
+public:
+    cluster_clock_buffer()
+    {
+    }
+
+    void _work(bool reset)
+    {
+        i_tc_clk_buffer._work(reset);
+    }
+
+    void _strobe()
+    {
+        i_tc_clk_buffer._strobe();
+    }
+
+    void _assign()
+    {
+        i_tc_clk_buffer._assign();
+    }
+
+};
+
+class cluster_clock_gating : public Module
+{
+public:
+    _PORT(logic<1>) en_i_in;
+    _PORT(logic<1>) test_en_i_in;
+
+private:
+    ::tc_clk_gating<> i_tc_clk_gating;
+
+
+public:
+    cluster_clock_gating()
+    {
+    }
+
+    void _work(bool reset)
+    {
+        i_tc_clk_gating._work(reset);
+    }
+
+    void _strobe()
+    {
+        i_tc_clk_gating._strobe();
+    }
+
+    void _assign()
+    {
+        i_tc_clk_gating.en_i_in = _ASSIGN_COMB(en_i_in());
+        i_tc_clk_gating.test_en_i_in = _ASSIGN_COMB(test_en_i_in());
+        i_tc_clk_gating._assign();
+    }
+
+};
+
+class cluster_clock_inverter : public Module
+{
+public:
+
+private:
+    ::tc_clk_inverter i_tc_clk_inverter;
+
+
+public:
+    cluster_clock_inverter()
+    {
+    }
+
+    void _work(bool reset)
+    {
+        i_tc_clk_inverter._work(reset);
+    }
+
+    void _strobe()
+    {
+        i_tc_clk_inverter._strobe();
+    }
+
+    void _assign()
+    {
+        i_tc_clk_inverter._assign();
+    }
+
+};
+
+class cluster_clock_mux2 : public Module
+{
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+
+private:
+    ::tc_clk_mux2 i_tc_clk_mux2;
+
+
+public:
+    cluster_clock_mux2()
+    {
+    }
+
+    void _work(bool reset)
+    {
+        i_tc_clk_mux2._work(reset);
+    }
+
+    void _strobe()
+    {
+        i_tc_clk_mux2._strobe();
+    }
+
+    void _assign()
+    {
+        i_tc_clk_mux2.clk0_i_in = _ASSIGN_COMB(clk0_i_in());
+        i_tc_clk_mux2.clk1_i_in = _ASSIGN_COMB(clk1_i_in());
+        i_tc_clk_mux2._assign();
+    }
+
+};
+
+class cluster_clock_xor2 : public Module
+{
+public:
+    _PORT(logic<1>) clk0_i_in;
+    _PORT(logic<1>) clk1_i_in;
+
+private:
+    ::tc_clk_xor2 i_tc_clk_xor2;
+
+
+public:
+    cluster_clock_xor2()
+    {
+    }
+
+    void _work(bool reset)
+    {
+        i_tc_clk_xor2._work(reset);
+    }
+
+    void _strobe()
+    {
+        i_tc_clk_xor2._strobe();
+    }
+
+    void _assign()
+    {
+        i_tc_clk_xor2.clk0_i_in = _ASSIGN_COMB(clk0_i_in());
+        i_tc_clk_xor2.clk1_i_in = _ASSIGN_COMB(clk1_i_in());
+        i_tc_clk_xor2._assign();
+    }
+
+};
+@@ adapters/rvfi_types.h
+#pragma once
+
+#include "cpphdl.h"
+
+using namespace cpphdl;
+
+namespace cpphdl_rvfi {
+#define CPPHDL_RVFI_ZERO_ASSIGN(TYPE)     template<typename V, typename std::enable_if_t<std::is_integral_v<V> || std::is_enum_v<V>, int> = 0>     TYPE& operator=(V) { *this = TYPE{}; return *this; }
+
+template<auto Cfg>
+struct instr_t {
+    logic<config_pkg::NRET> valid;
+    logic<config_pkg::NRET*64> order;
+    logic<config_pkg::NRET*config_pkg::ILEN> insn;
+    logic<config_pkg::NRET> trap;
+    logic<config_pkg::NRET*Cfg.XLEN> cause;
+    logic<config_pkg::NRET> halt;
+    logic<config_pkg::NRET*Cfg.XLEN> intr;
+    logic<config_pkg::NRET*2> mode;
+    logic<config_pkg::NRET*2> ixl;
+    logic<config_pkg::NRET*5> rs1_addr;
+    logic<config_pkg::NRET*5> rs2_addr;
+    logic<config_pkg::NRET*Cfg.XLEN> rs1_rdata;
+    logic<config_pkg::NRET*Cfg.XLEN> rs2_rdata;
+    logic<config_pkg::NRET*5> rd_addr;
+    logic<config_pkg::NRET*Cfg.XLEN> rd_wdata;
+    logic<config_pkg::NRET*Cfg.XLEN> pc_rdata;
+    logic<config_pkg::NRET*Cfg.XLEN> pc_wdata;
+    logic<config_pkg::NRET*Cfg.VLEN> mem_addr;
+    logic<config_pkg::NRET*Cfg.PLEN> mem_paddr;
+    logic<config_pkg::NRET*(Cfg.XLEN/8)> mem_rmask;
+    logic<config_pkg::NRET*(Cfg.XLEN/8)> mem_wmask;
+    logic<config_pkg::NRET*Cfg.XLEN> mem_rdata;
+    logic<config_pkg::NRET*Cfg.XLEN> mem_wdata;
+    CPPHDL_RVFI_ZERO_ASSIGN(instr_t)
+};
+
+template<auto Cfg>
+struct csr_elmt_t {
+    logic<Cfg.XLEN> rdata;
+    logic<Cfg.XLEN> rmask;
+    logic<Cfg.XLEN> wdata;
+    logic<Cfg.XLEN> wmask;
+    CPPHDL_RVFI_ZERO_ASSIGN(csr_elmt_t)
+};
+
+template<auto Cfg>
+struct probes_instr_t {
+    array<Cfg.NrIssuePorts,logic<Cfg.TRANS_ID_BITS>> issue_pointer;
+    array<Cfg.NrCommitPorts,logic<Cfg.TRANS_ID_BITS>> commit_pointer;
+    logic<1> flush_unissued_instr;
+    logic<Cfg.NrIssuePorts> decoded_instr_valid;
+    logic<Cfg.NrIssuePorts> decoded_instr_ack;
+    logic<1> flush;
+    logic<Cfg.NrIssuePorts> issue_instr_ack;
+    logic<Cfg.NrIssuePorts> fetch_entry_valid;
+    array<Cfg.NrIssuePorts,logic<32>> instruction;
+    logic<Cfg.NrIssuePorts> is_compressed;
+    array<Cfg.NrIssuePorts,logic<Cfg.XLEN>> rs1;
+    array<Cfg.NrIssuePorts,logic<Cfg.XLEN>> rs2;
+    array<Cfg.NrCommitPorts,logic<Cfg.VLEN>> commit_instr_pc;
+    array<Cfg.NrCommitPorts,ariane_pkg::fu_op> commit_instr_op;
+    array<Cfg.NrCommitPorts,logic<ariane_pkg::REG_ADDR_SIZE>> commit_instr_rs1;
+    array<Cfg.NrCommitPorts,logic<ariane_pkg::REG_ADDR_SIZE>> commit_instr_rs2;
+    array<Cfg.NrCommitPorts,logic<ariane_pkg::REG_ADDR_SIZE>> commit_instr_rd;
+    array<Cfg.NrCommitPorts,logic<Cfg.XLEN>> commit_instr_result;
+    logic<Cfg.NrCommitPorts> commit_instr_valid;
+    logic<Cfg.NrCommitPorts> commit_drop;
+    logic<Cfg.XLEN> ex_commit_cause;
+    logic<1> ex_commit_valid;
+    riscv::priv_lvl_t priv_lvl;
+    logic<Cfg.VLEN> lsu_ctrl_vaddr;
+    ariane_pkg::fu_t lsu_ctrl_fu;
+    logic<(Cfg.XLEN/8)> lsu_ctrl_be;
+    logic<Cfg.TRANS_ID_BITS> lsu_ctrl_trans_id;
+    array<Cfg.NrWbPorts,logic<Cfg.XLEN>> wbdata;
+    logic<Cfg.NrCommitPorts> commit_ack;
+    logic<Cfg.PLEN> mem_paddr;
+    logic<1> debug_mode;
+    array<Cfg.NrCommitPorts,logic<Cfg.XLEN>> wdata;
+    logic<1> branch_valid;
+    logic<1> is_taken;
+    logic<Cfg.XLEN> tval;
+    logic<Cfg.TRANS_ID_BITS> branch_trans_id;
+    CPPHDL_RVFI_ZERO_ASSIGN(probes_instr_t)
+};
+
+template<auto Cfg>
+struct probes_csr_t {
+    riscv::fcsr_t fcsr_q;
+    riscv::dcsr_t dcsr_q;
+    logic<Cfg.XLEN> jvt_q;
+    logic<Cfg.XLEN> dpc_q;
+    logic<Cfg.XLEN> dscratch0_q;
+    logic<Cfg.XLEN> dscratch1_q;
+    logic<Cfg.XLEN> mie_q;
+    logic<Cfg.XLEN> mip_q;
+    logic<Cfg.XLEN> stvec_q;
+    logic<Cfg.XLEN> scounteren_q;
+    logic<Cfg.XLEN> sscratch_q;
+    logic<Cfg.XLEN> sepc_q;
+    logic<Cfg.XLEN> scause_q;
+    logic<Cfg.XLEN> stval_q;
+    logic<Cfg.XLEN> satp_q;
+    logic<Cfg.XLEN> mstatus_extended;
+    logic<Cfg.XLEN> medeleg_q;
+    logic<Cfg.XLEN> mideleg_q;
+    logic<Cfg.XLEN> mtvec_q;
+    logic<Cfg.XLEN> mcounteren_q;
+    logic<Cfg.XLEN> mscratch_q;
+    logic<Cfg.XLEN> mepc_q;
+    logic<Cfg.XLEN> mcause_q;
+    logic<Cfg.XLEN> mtval_q;
+    logic<1> fiom_q;
+    logic<ariane_pkg::MHPMCounterNum+3> mcountinhibit_q;
+    logic<64> cycle_q;
+    logic<64> instret_q;
+    logic<Cfg.XLEN> dcache_q;
+    logic<Cfg.XLEN> icache_q;
+    logic<Cfg.XLEN> acc_cons_q;
+    array<64,riscv::pmpcfg_t> pmpcfg_q;
+    // SV [Cfg.PLEN-3:0] includes both endpoints.
+    // Its width is (Cfg.PLEN-3)-0+1, or Cfg.PLEN-2.
+    // Missing this +1 makes a legal top-bit read fail at runtime.
+    array<64,logic<(Cfg.PLEN-2)>> pmpaddr_q;
+    CPPHDL_RVFI_ZERO_ASSIGN(probes_csr_t)
+};
+
+template<auto Cfg>
+struct probes_t {
+    probes_csr_t<Cfg> csr;
+    probes_instr_t<Cfg> instr;
+    CPPHDL_RVFI_ZERO_ASSIGN(probes_t)
+};
+
+template<auto Cfg>
+struct csr_t {
+    csr_elmt_t<Cfg> fflags, frm, fcsr, jvt, ftran, dcsr, dpc, dscratch0, dscratch1;
+    csr_elmt_t<Cfg> sstatus, sie, sip, stvec, scounteren, sscratch, sepc, scause, stval, satp;
+    csr_elmt_t<Cfg> mstatus, mstatush, misa, medeleg, mideleg, mie, mtvec, mcounteren;
+    csr_elmt_t<Cfg> mscratch, mepc, mcause, mtval, mip, menvcfg, menvcfgh;
+    csr_elmt_t<Cfg> mvendorid, marchid, mhartid, mcountinhibit, mcycle, mcycleh, minstret, minstreth;
+    csr_elmt_t<Cfg> cycle, cycleh, instret, instreth, dcache, icache, acc_cons;
+    csr_elmt_t<Cfg> pmpcfg0, pmpcfg1, pmpcfg2, pmpcfg3;
+    array<16,csr_elmt_t<Cfg>> pmpaddr;
+    CPPHDL_RVFI_ZERO_ASSIGN(csr_t)
+};
+
+template<auto Cfg>
+struct to_iti_t {
+    logic<Cfg.NrCommitPorts> valid;
+    array<Cfg.NrCommitPorts,logic<Cfg.VLEN>> pc;
+    array<Cfg.NrCommitPorts,ariane_pkg::fu_op> op;
+    logic<Cfg.NrCommitPorts> is_compressed;
+    logic<Cfg.NrCommitPorts> branch_valid;
+    logic<Cfg.NrCommitPorts> is_taken;
+    logic<1> ex_valid;
+    logic<Cfg.XLEN> tval;
+    logic<Cfg.XLEN> cause;
+    riscv::priv_lvl_t priv_lvl;
+    logic<64> cycles;
+    CPPHDL_RVFI_ZERO_ASSIGN(to_iti_t)
+};
+
+template<auto Cfg>
+struct encoder_t {
+    logic<Cfg.NrCommitPorts> valid;
+    array<Cfg.NrCommitPorts,logic<32>> iretire;
+    array<Cfg.NrCommitPorts,logic<1>> ilastsize;
+    array<Cfg.NrCommitPorts,logic<3>> itype;
+    logic<5> cause;
+    logic<Cfg.XLEN> tval;
+    riscv::priv_lvl_t priv;
+    array<Cfg.NrCommitPorts,logic<Cfg.XLEN>> iaddr;
+    logic<64> cycles;
+    CPPHDL_RVFI_ZERO_ASSIGN(encoder_t)
+};
+#undef CPPHDL_RVFI_ZERO_ASSIGN
+}
+@@ all_generated.h
+#pragma once
+
+#include "generated/core/include/config_pkg.h"
+#include "generated/core/include/cv32a6_imac_sv32_config_pkg.h"
+#include "generated/core/include/riscv_pkg.h"
+#include "generated/core/include/ariane_pkg.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_pkg.h"
+#include "generated/core/include/wt_cache_pkg.h"
+#include "generated/core/include/std_cache_pkg.h"
+#include "generated/core/include/instr_tracer_pkg.h"
+#include "generated/core/include/build_config_pkg.h"
+#include "generated/rvfi_types.h"
+#include "generated/core/include/aes_pkg.h"
+#include "generated/core/include/triggers_pkg.h"
+#include "generated/core/cvxif_example/include/cvxif_instr_pkg.h"
+#include "generated/vendor/pulp-platform/common_cells/src/cf_math_pkg.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_pkg.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_pkg.h"
+#include "generated/core/include/dummy_l15_pkg.h"
+#include "generated/vendor/pulp-platform/common_cells/src/lzc.h"
+#include "generated/vendor/pulp-platform/common_cells/src/rr_arb_tree.h"
+#include "generated/vendor/pulp-platform/common_cells/src/delta_counter.h"
+#include "generated/vendor/pulp-platform/common_cells/src/stream_arbiter_flushable.h"
+#include "generated/vendor/pulp-platform/common_cells/src/stream_arbiter.h"
+#include "generated/vendor/pulp-platform/common_cells/src/stream_mux.h"
+#include "generated/vendor/pulp-platform/common_cells/src/lfsr_8bit.h"
+#include "generated/vendor/pulp-platform/common_cells/src/exp_backoff.h"
+#include "generated/vendor/pulp-platform/common_cells/src/counter.h"
+#include "generated/vendor/pulp-platform/common_cells/src/spill_register_flushable.h"
+#include "generated/vendor/pulp-platform/common_cells/src/spill_register.h"
+#include "generated/vendor/pulp-platform/fpga-support/rtl/SyncDpRam_ind_r_w.h"
+#include "generated/core/cva6_fifo_v3.h"
+#include "generated/vendor/pulp-platform/tech_cells_generic/src/rtl/tc_sram.h"
+#include "generated/vendor/pulp-platform/common_cells/src/shift_reg.h"
+#include "generated/common/local/util/tc_sram_wrapper.h"
+#include "generated/common/local/util/tc_sram_wrapper_cache_techno.h"
+#include "generated/common/local/util/sram.h"
+#include "generated/common/local/util/sram_cache.h"
+#include "generated/core/cvxif_example/compressed_instr_decoder.h"
+#include "generated/core/cvxif_example/instr_decoder.h"
+#include "generated/core/cvxif_example/copro_alu.h"
+#include "generated/core/cvxif_example/cvxif_example_coprocessor.h"
+#include "generated/core/ariane_regfile_ff.h"
+#include "generated/core/ariane_regfile_fpga.h"
+#include "generated/core/scoreboard.h"
+#include "generated/core/multiplier.h"
+#include "generated/core/serdiv.h"
+#include "generated/core/mult.h"
+#include "generated/core/pmp/src/pmp_entry.h"
+#include "generated/core/pmp/src/pmp.h"
+#include "generated/core/pmp/src/pmp_data_if.h"
+#include "generated/core/cva6_mmu/cva6_tlb.h"
+#include "generated/vendor/pulp-platform/common_cells/src/lfsr.h"
+#include "generated/core/cva6_mmu/cva6_shared_tlb.h"
+#include "generated/core/cva6_mmu/cva6_ptw.h"
+#include "generated/core/cva6_mmu/cva6_mmu.h"
+#include "generated/core/load_unit.h"
+#include "generated/core/store_buffer.h"
+#include "generated/core/amo_buffer.h"
+#include "generated/core/store_unit.h"
+#include "generated/core/lsu_bypass.h"
+#include "generated/core/load_store_unit.h"
+#include "generated/core/axi_shim.h"
+#include "generated/core/cache_subsystem/axi_adapter.h"
+#include "generated/core/cache_subsystem/tag_cmp.h"
+#include "generated/core/raw_checker.h"
+#include "generated/core/cache_subsystem/wt_dcache_ctrl.h"
+#include "generated/core/cache_subsystem/wt_dcache_mem.h"
+#include "generated/core/cache_subsystem/wt_dcache_wbuffer.h"
+#include "generated/core/cache_subsystem/wt_dcache_missunit.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_1hot_to_binary.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_prio_1hot_encoder.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_prio_bin_encoder.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_1rw.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_wbyteenable_1rw.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_wmask_1rw.h"
+#include "generated/core/cache_subsystem/wt_dcache.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_demux.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_lfsr.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sync_buffer.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fifo_reg.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fifo_reg_initialized.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fxarb.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_rrarb.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_mux.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_decoder.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram_wbyteenable.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram_wmask.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_regbank_wbyteenable_1rw.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_regbank_wmask_1rw.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_downsize.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_upsize.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_resize.h"
+#include "generated/core/cache_subsystem/miss_handler.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_arb.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_wrapper.h"
+#include "generated/core/cache_subsystem/wt_axi_adapter.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_req_read_arbiter.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_req_write_arbiter.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_plru.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_random.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_sel.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_resp_demux.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_to_axi_read.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_to_axi_write.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_to_l15.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_l15_req_arbiter.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_l15_resp_demux.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_amo.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_cmo.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_core_arbiter.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_ctrl_pe.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_memctrl.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_cbuf.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_mshr.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_rtab.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_wbuf.h"
+#include "generated/core/cache_subsystem/cva6_icache.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_ctrl.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_uncached.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache_flush.h"
+#include "generated/core/cache_subsystem/wt_cache_subsystem.h"
+#include "generated/core/cache_subsystem/hpdcache/rtl/src/hpdcache.h"
+#include "generated/core/fpu_wrap.h"
+#include "generated/core/cache_subsystem/cva6_hpdcache_subsystem_axi_arbiter.h"
+#include "generated/core/cache_subsystem/cva6_hpdcache_if_adapter.h"
+#include "generated/core/cache_subsystem/cva6_hpdcache_subsystem_l15_adapter.h"
+#include "generated/core/cache_subsystem/cva6_hpdcache_wrapper.h"
+#include "generated/core/cache_subsystem/cva6_hpdcache_subsystem.h"
+#include "generated/core/trigger_module.h"
+#include "generated/core/csr_regfile.h"
+#include "generated/core/cva6_accel_first_pass_decoder_stub.h"
+#include "generated/vendor/pulp-platform/tech_cells_generic/src/rtl/tc_clk.h"
+#include "generated/vendor/pulp-platform/tech_cells_generic/src/deprecated/cluster_clk_cells.h"
+#include "generated/vendor/pulp-platform/tech_cells_generic/src/deprecated/pulp_clk_cells.h"
+#include "generated/vendor/pulp-platform/common_cells/src/sync.h"
+#include "generated/vendor/pulp-platform/common_cells/src/sync_wedge.h"
+#include "generated/vendor/pulp-platform/common_cells/src/fifo_v3.h"
+#include "generated/vendor/pulp-platform/common_cells/src/edge_detect.h"
+#include "generated/vendor/pulp-platform/common_cells/src/deprecated/fifo_v2.h"
+#include "generated/vendor/pulp-platform/common_cells/src/stream_delay.h"
+#include "generated/vendor/pulp-platform/fpga-support/rtl/SyncDpRam.h"
+#include "generated/vendor/pulp-platform/fpga-support/rtl/AsyncDpRam.h"
+#include "generated/vendor/pulp-platform/fpga-support/rtl/AsyncThreePortRam.h"
+#include "generated/vendor/pulp-platform/fpga-support/rtl/SyncThreePortRam.h"
+#include "generated/core/cvfpu/src/fpnew_pkg.h"
+#include "generated/core/cvxif_compressed_if_driver.h"
+#include "generated/core/cvxif_issue_register_commit_if_driver.h"
+#include "generated/core/cvxif_fu.h"
+#include "generated/vendor/pulp-platform/common_cells/src/stream_demux.h"
+#include "generated/vendor/pulp-platform/common_cells/src/unread.h"
+#include "generated/vendor/pulp-platform/common_cells/src/popcount.h"
+#include "generated/core/cva6_rvfi_probes.h"
+#include "generated/core/alu.h"
+#include "generated/core/alu_wrapper.h"
+#include "generated/core/aes.h"
+#include "generated/core/branch_unit.h"
+#include "generated/core/compressed_decoder.h"
+#include "generated/core/macro_decoder.h"
+#include "generated/core/controller.h"
+#include "generated/core/zcmt_decoder.h"
+#include "generated/core/csr_buffer.h"
+#include "generated/core/decoder.h"
+#include "generated/core/ex_stage.h"
+#include "generated/core/instr_realign.h"
+#include "generated/core/id_stage.h"
+#include "generated/core/issue_read_operands.h"
+#include "generated/core/issue_stage.h"
+#include "generated/core/perf_counters.h"
+#include "generated/core/commit_stage.h"
+#include "generated/core/acc_dispatcher.h"
+#include "generated/core/frontend/btb.h"
+#include "generated/core/frontend/bht.h"
+#include "generated/core/frontend/bht2lvl.h"
+#include "generated/core/frontend/ras.h"
+#include "generated/core/frontend/instr_scan.h"
+#include "generated/core/frontend/instr_queue.h"
+#include "generated/core/frontend/frontend.h"
+#include "generated/core/cache_subsystem/cache_ctrl.h"
+#include "generated/core/cache_subsystem/cva6_icache_axi_wrapper.h"
+#include "generated/common/local/util/instr_tracer.h"
+#include "generated/corev_apu/tb/ariane_axi_pkg.h"
+#include "generated/corev_apu/tb/axi_intf.h"
+#include "generated/corev_apu/register_interface/src/reg_intf.h"
+#include "generated/corev_apu/tb/ariane_soc_pkg.h"
+#include "generated/corev_apu/riscv-dbg/src/dm_pkg.h"
+#include "generated/corev_apu/tb/ariane_axi_soc_pkg.h"
+#include "generated/core/cva6_rvfi.h"
+#include "generated/corev_apu/bootrom/bootrom.h"
+#include "generated/corev_apu/clint/axi_lite_interface.h"
+#include "generated/corev_apu/axi_mem_if/src/axi2mem.h"
+#include "generated/corev_apu/rv_plic/rtl/rv_plic_target.h"
+#include "generated/corev_apu/rv_plic/rtl/rv_plic_gateway.h"
+#include "generated/corev_apu/rv_plic/rtl/plic_regmap.h"
+#include "generated/corev_apu/rv_plic/rtl/plic_top.h"
+#include "generated/corev_apu/register_interface/src/apb_to_reg.h"
+#include "generated/vendor/pulp-platform/common_cells/src/rstgen_bypass.h"
+#include "generated/vendor/pulp-platform/common_cells/src/rstgen.h"
+#include "generated/vendor/pulp-platform/common_cells/src/addr_decode.h"
+#include "generated/vendor/pulp-platform/common_cells/src/stream_register.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_cut.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_join.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_id_prepend.h"
+#include "generated/vendor/pulp-platform/common_cells/src/deprecated/fifo_v1.h"
+#include "generated/vendor/pulp-platform/common_cells/src/lfsr_16bit.h"
+#include "generated/corev_apu/instr_tracing/ITI/include/iti_pkg.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/include/te_pkg.h"
+#include "generated/corev_apu/instr_tracing/rv_encapsulator-main/src/include/encap_pkg.h"
+#include "generated/corev_apu/tb/common/mock_uart.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/slib_clock_div.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/slib_edge_detect.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/slib_fifo.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/slib_input_filter.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/slib_input_sync.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/uart_baudgen.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/uart_interrupt.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/slib_counter.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/slib_mv_filter.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/uart_receiver.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/uart_transmitter.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/apb_uart.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_single_slice.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_ar_buffer.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_aw_buffer.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_b_buffer.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_r_buffer.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_w_buffer.h"
+#include "generated/corev_apu/fpga/src/axi2apb/src/axi2apb_64_32.h"
+#include "generated/corev_apu/fpga/src/apb_timer/timer.h"
+#include "generated/corev_apu/fpga/src/apb_timer/apb_timer.h"
+#include "generated/corev_apu/tb/xlnx_axi_stubs.h"
+#include "generated/corev_apu/tb/ariane_peripherals.h"
+#include "generated/corev_apu/tb/rvfi_tracer.h"
+#include "generated/corev_apu/tb/common/uart.h"
+#include "generated/corev_apu/tb/dpi_adapters.h"
+#include "generated/corev_apu/tb/common/SimDTM.h"
+#include "generated/corev_apu/tb/common/SimJTAG.h"
+#include "generated/corev_apu/instr_tracing/ITI/cva6_iti/block_retirement.h"
+#include "generated/corev_apu/instr_tracing/ITI/cva6_iti/single_retirement.h"
+#include "generated/corev_apu/instr_tracing/ITI/cva6_iti/itype_detector.h"
+#include "generated/corev_apu/instr_tracing/ITI/cva6_iti/iti.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/rtl/te_branch_map.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/rtl/te_filter.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/rtl/te_packet_emitter.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/rtl/te_priority.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/rtl/te_reg.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/rtl/te_resync_counter.h"
+#include "generated/corev_apu/instr_tracing/rv_tracer-main/rtl/rv_tracer.h"
+#include "generated/corev_apu/instr_tracing/DPTI/slicer_DPTI.h"
+#include "generated/corev_apu/instr_tracing/rv_encapsulator-main/src/rtl/encapsulator.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_delayer.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_atop_filter.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_err_slv.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_mux.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_demux.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_xbar.h"
+#include "generated/vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_amos_alu.h"
+#include "generated/vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_amos.h"
+#include "generated/vendor/pulp-platform/axi_riscv_atomics/src/axi_res_tbl.h"
+#include "generated/vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_lrsc.h"
+#include "generated/vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_atomics.h"
+#include "generated/vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_atomics_wrap.h"
+#include "generated/corev_apu/riscv-dbg/src/dm_csrs.h"
+#include "generated/corev_apu/riscv-dbg/debug_rom/debug_rom.h"
+#include "generated/corev_apu/riscv-dbg/src/dm_mem.h"
+#include "generated/corev_apu/riscv-dbg/src/dm_sba.h"
+#include "generated/corev_apu/riscv-dbg/src/dm_top.h"
+#include "generated/corev_apu/riscv-dbg/src/dmi_jtag_tap.h"
+#include "generated/vendor/pulp-platform/common_cells/src/cdc_2phase.h"
+#include "generated/corev_apu/riscv-dbg/src/dmi_cdc.h"
+#include "generated/corev_apu/riscv-dbg/src/dmi_jtag.h"
+#include "generated/corev_apu/clint/clint.h"
+#include "generated/core/cva6.h"
+#include "generated/corev_apu/src/ariane.h"
+#include "generated/corev_apu/tb/ariane_testharness.h"
+#include "generated/vendor/pulp-platform/common_cells/src/onehot_to_bin.h"
+#include "generated/vendor/pulp-platform/common_cells/src/id_queue.h"
+#include "generated/corev_apu/riscv-dbg/debug_rom/debug_rom_one_scratch.h"
+#include "generated/corev_apu/fpga/src/apb_uart/src/apb_uart_wrap.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_multicut.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_burst_splitter.h"
+#include "generated/vendor/pulp-platform/axi/src/axi_to_axi_lite.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_slice.h"
+#include "generated/corev_apu/fpga/src/axi_slice/src/axi_slice_wrap.h"
+#include "generated/vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_lrsc_wrap.h"
+#include "generated/corev_apu/fpga/src/axi2apb/src/axi2apb.h"
+@@ sources.list
+common/local/util/sram.sv
+core/cva6_rvfi.sv
+corev_apu/fpga/src/apb_uart/src/slib_input_filter.sv
+corev_apu/axi_mem_if/src/axi2mem.sv
+core/cvxif_example/instr_decoder.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sync_buffer.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fifo_reg_initialized.sv
+corev_apu/riscv-dbg/src/dm_pkg.sv
+vendor/pulp-platform/common_cells/src/rstgen_bypass.sv
+core/scoreboard.sv
+core/cva6_accel_first_pass_decoder_stub.sv
+core/include/aes_pkg.sv
+corev_apu/fpga/src/apb_uart/src/slib_edge_detect.sv
+core/cache_subsystem/tag_cmp.sv
+vendor/pulp-platform/common_cells/src/lzc.sv
+vendor/pulp-platform/fpga-support/rtl/AsyncThreePortRam.sv
+corev_apu/fpga/src/apb_uart/src/slib_fifo.sv
+corev_apu/tb/common/SimJTAG.sv
+core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_wmask_1rw.sv
+corev_apu/fpga/src/apb_uart/src/uart_baudgen.sv
+corev_apu/instr_tracing/ITI/cva6_iti/itype_detector.sv
+core/frontend/ras.sv
+core/pmp/src/pmp_entry.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fifo_reg.sv
+corev_apu/tb/common/SimDTM.sv
+core/cva6_fifo_v3.sv
+vendor/pulp-platform/common_cells/src/stream_demux.sv
+core/ariane_regfile_fpga.sv
+core/include/build_config_pkg.sv
+core/cva6_mmu/cva6_tlb.sv
+vendor/pulp-platform/common_cells/src/addr_decode.sv
+core/cvxif_example/copro_alu.sv
+vendor/pulp-platform/common_cells/src/delta_counter.sv
+vendor/pulp-platform/common_cells/src/counter.sv
+vendor/pulp-platform/tech_cells_generic/src/rtl/tc_clk.sv
+vendor/pulp-platform/tech_cells_generic/src/deprecated/cluster_clk_cells.sv
+core/store_buffer.sv
+vendor/pulp-platform/common_cells/src/fifo_v3.sv
+core/frontend/bht.sv
+core/perf_counters.sv
+corev_apu/instr_tracing/ITI/include/iti_pkg.sv
+core/frontend/bht2lvl.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_pkg.sv
+core/branch_unit.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_mux.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_prio_1hot_encoder.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_rrarb.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_fxarb.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_resync_counter.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_res_tbl.sv
+vendor/pulp-platform/common_cells/src/rr_arb_tree.sv
+core/cache_subsystem/wt_dcache_mem.sv
+core/cvxif_example/compressed_instr_decoder.sv
+core/cvxif_example/cvxif_example_coprocessor.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_prio_bin_encoder.sv
+corev_apu/fpga/src/apb_uart/src/uart_transmitter.sv
+corev_apu/tb/ariane_axi_soc_pkg.sv
+vendor/pulp-platform/common_cells/src/shift_reg.sv
+core/instr_realign.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_arb.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_amos_alu.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_amos.sv
+vendor/pulp-platform/axi/src/axi_multicut.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_cbuf.sv
+corev_apu/instr_tracing/DPTI/slicer_DPTI.sv
+vendor/pulp-platform/fpga-support/rtl/AsyncDpRam.sv
+core/serdiv.sv
+corev_apu/fpga/src/apb_uart/src/slib_mv_filter.sv
+vendor/pulp-platform/axi/src/axi_xbar.sv
+corev_apu/tb/ariane_axi_pkg.sv
+core/csr_buffer.sv
+common/local/util/sram_cache.sv
+vendor/pulp-platform/common_cells/src/cdc_2phase.sv
+corev_apu/riscv-dbg/src/dmi_cdc.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_upsize.sv
+corev_apu/riscv-dbg/debug_rom/debug_rom_one_scratch.sv
+common/local/util/instr_tracer.sv
+core/fpu_wrap.sv
+core/decoder.sv
+core/include/triggers_pkg.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_demux.sv
+corev_apu/fpga/src/apb_timer/apb_timer.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_packet_emitter.sv
+core/include/riscv_pkg.sv
+core/cvxif_issue_register_commit_if_driver.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_decoder.sv
+core/include/config_pkg.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_ctrl_pe.sv
+core/lsu_bypass.sv
+corev_apu/rv_plic/rtl/plic_regmap.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_plru.sv
+core/cache_subsystem/wt_dcache_wbuffer.sv
+corev_apu/riscv-dbg/debug_rom/debug_rom.sv
+corev_apu/riscv-dbg/src/dm_mem.sv
+corev_apu/instr_tracing/ITI/cva6_iti/iti.sv
+core/commit_stage.sv
+core/cvxif_compressed_if_driver.sv
+corev_apu/bootrom/bootrom.sv
+core/raw_checker.sv
+vendor/pulp-platform/common_cells/src/lfsr.sv
+core/cva6_mmu/cva6_shared_tlb.sv
+core/cvxif_example/include/cvxif_instr_pkg.sv
+core/cvfpu/src/fpnew_pkg.sv
+vendor/pulp-platform/fpga-support/rtl/SyncThreePortRam.sv
+core/include/instr_tracer_pkg.sv
+corev_apu/fpga/src/apb_uart/src/slib_counter.sv
+corev_apu/fpga/src/apb_uart/src/uart_receiver.sv
+vendor/pulp-platform/common_cells/src/cf_math_pkg.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_branch_map.sv
+core/macro_decoder.sv
+corev_apu/instr_tracing/rv_encapsulator-main/src/include/encap_pkg.sv
+core/pmp/src/pmp.sv
+corev_apu/tb/common/uart.sv
+core/load_unit.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_req_write_arbiter.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_cmo.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride.sv
+corev_apu/register_interface/src/apb_to_reg.sv
+core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_1rw.sv
+vendor/pulp-platform/common_cells/src/lfsr_8bit.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram_wmask.sv
+core/trigger_module.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_downsize.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_data_resize.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_filter.sv
+core/csr_regfile.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_to_axi_write.sv
+vendor/pulp-platform/tech_cells_generic/src/rtl/tc_sram.sv
+common/local/util/tc_sram_wrapper.sv
+common/local/util/tc_sram_wrapper_cache_techno.sv
+corev_apu/instr_tracing/rv_encapsulator-main/src/rtl/encapsulator.sv
+core/include/cv32a6_imac_sv32_config_pkg.sv
+core/cva6_mmu/cva6_ptw.sv
+core/cva6_mmu/cva6_mmu.sv
+corev_apu/riscv-dbg/src/dm_sba.sv
+vendor/pulp-platform/common_cells/src/stream_mux.sv
+vendor/pulp-platform/common_cells/src/rstgen.sv
+vendor/pulp-platform/common_cells/src/lfsr_16bit.sv
+corev_apu/instr_tracing/rv_tracer-main/include/te_pkg.sv
+core/cache_subsystem/axi_adapter.sv
+core/cache_subsystem/miss_handler.sv
+corev_apu/instr_tracing/ITI/cva6_iti/single_retirement.sv
+core/cache_subsystem/wt_dcache_ctrl.sv
+core/cache_subsystem/hpdcache/rtl/src/hwpf_stride/hwpf_stride_wrapper.sv
+vendor/pulp-platform/common_cells/src/stream_arbiter_flushable.sv
+vendor/pulp-platform/common_cells/src/stream_arbiter.sv
+core/include/dummy_l15_pkg.sv
+vendor/pulp-platform/axi/src/axi_pkg.sv
+vendor/pulp-platform/common_cells/src/unread.sv
+core/frontend/btb.sv
+vendor/pulp-platform/common_cells/src/popcount.sv
+core/alu.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_lfsr.sv
+vendor/pulp-platform/common_cells/src/deprecated/fifo_v2.sv
+vendor/pulp-platform/common_cells/src/deprecated/fifo_v1.sv
+vendor/pulp-platform/common_cells/src/stream_register.sv
+corev_apu/fpga/src/axi_slice/src/axi_single_slice.sv
+corev_apu/fpga/src/axi_slice/src/axi_b_buffer.sv
+corev_apu/fpga/src/axi_slice/src/axi_r_buffer.sv
+corev_apu/fpga/src/axi_slice/src/axi_w_buffer.sv
+vendor/pulp-platform/axi/src/axi_atop_filter.sv
+corev_apu/fpga/src/axi_slice/src/axi_ar_buffer.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram.sv
+corev_apu/fpga/src/apb_uart/src/slib_clock_div.sv
+corev_apu/rv_plic/rtl/rv_plic_target.sv
+vendor/pulp-platform/common_cells/src/onehot_to_bin.sv
+vendor/pulp-platform/common_cells/src/id_queue.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_resp_demux.sv
+core/aes.sv
+core/cache_subsystem/cva6_icache.sv
+core/ariane_regfile_ff.sv
+core/issue_read_operands.sv
+core/issue_stage.sv
+vendor/pulp-platform/fpga-support/rtl/SyncDpRam.sv
+corev_apu/tb/common/mock_uart.sv
+core/zcmt_decoder.sv
+core/id_stage.sv
+core/compressed_decoder.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_priority.sv
+core/include/ariane_pkg.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_random.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_victim_sel.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_memctrl.sv
+core/cache_subsystem/cva6_hpdcache_if_adapter.sv
+corev_apu/fpga/src/apb_uart/src/slib_input_sync.sv
+core/cva6_rvfi_probes.sv
+core/alu_wrapper.sv
+vendor/pulp-platform/common_cells/src/sync.sv
+core/frontend/instr_queue.sv
+core/frontend/frontend.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_to_axi_read.sv
+corev_apu/tb/axi_intf.sv
+vendor/pulp-platform/common_cells/src/stream_delay.sv
+vendor/pulp-platform/axi/src/axi_delayer.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_regbank_wmask_1rw.sv
+corev_apu/register_interface/src/reg_intf.sv
+vendor/pulp-platform/axi/src/axi_id_prepend.sv
+core/include/wt_cache_pkg.sv
+corev_apu/fpga/src/apb_timer/timer.sv
+vendor/pulp-platform/common_cells/src/exp_backoff.sv
+core/cache_subsystem/wt_dcache_missunit.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_to_l15.sv
+core/cache_subsystem/wt_dcache.sv
+core/amo_buffer.sv
+core/store_unit.sv
+corev_apu/instr_tracing/ITI/cva6_iti/block_retirement.sv
+corev_apu/fpga/src/apb_uart/src/uart_interrupt.sv
+corev_apu/fpga/src/apb_uart/src/apb_uart.sv
+core/axi_shim.sv
+core/cache_subsystem/wt_axi_adapter.sv
+core/cache_subsystem/wt_cache_subsystem.sv
+corev_apu/tb/ariane_soc_pkg.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_1hot_to_binary.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_wbuf.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_flush.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_mem_req_read_arbiter.sv
+core/cache_subsystem/cva6_hpdcache_subsystem_axi_arbiter.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_amo.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_uncached.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_core_arbiter.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_lrsc.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_atomics.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_atomics_wrap.sv
+vendor/pulp-platform/axi_riscv_atomics/src/axi_riscv_lrsc_wrap.sv
+vendor/pulp-platform/axi/src/axi_join.sv
+corev_apu/fpga/src/apb_uart/src/apb_uart_wrap.sv
+core/frontend/instr_scan.sv
+core/pmp/src/pmp_data_if.sv
+core/load_store_unit.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_regbank_wbyteenable_1rw.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_mshr.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_miss_handler.sv
+core/controller.sv
+core/cvxif_fu.sv
+corev_apu/rv_plic/rtl/rv_plic_gateway.sv
+corev_apu/rv_plic/rtl/plic_top.sv
+corev_apu/riscv-dbg/src/dm_csrs.sv
+corev_apu/riscv-dbg/src/dm_top.sv
+vendor/pulp-platform/fpga-support/rtl/SyncDpRam_ind_r_w.sv
+vendor/pulp-platform/tech_cells_generic/src/deprecated/pulp_clk_cells.sv
+vendor/pulp-platform/common_cells/src/sync_wedge.sv
+vendor/pulp-platform/common_cells/src/edge_detect.sv
+corev_apu/riscv-dbg/src/dmi_jtag_tap.sv
+corev_apu/riscv-dbg/src/dmi_jtag.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/te_reg.sv
+corev_apu/instr_tracing/rv_tracer-main/rtl/rv_tracer.sv
+corev_apu/tb/rvfi_tracer.sv
+core/include/std_cache_pkg.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_pkg.sv
+vendor/pulp-platform/axi/src/axi_err_slv.sv
+corev_apu/clint/axi_lite_interface.sv
+corev_apu/clint/clint.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_l15_resp_demux.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_rtab.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache_ctrl.sv
+core/cache_subsystem/hpdcache/rtl/src/hpdcache.sv
+core/cache_subsystem/cva6_hpdcache_wrapper.sv
+core/cache_subsystem/cva6_hpdcache_subsystem.sv
+vendor/pulp-platform/common_cells/src/spill_register_flushable.sv
+vendor/pulp-platform/common_cells/src/spill_register.sv
+vendor/pulp-platform/axi/src/axi_cut.sv
+vendor/pulp-platform/axi/src/axi_demux.sv
+vendor/pulp-platform/axi/src/axi_mux.sv
+vendor/pulp-platform/axi/src/axi_burst_splitter.sv
+vendor/pulp-platform/axi/src/axi_to_axi_lite.sv
+core/cache_subsystem/hpdcache/rtl/src/utils/hpdcache_l15_req_arbiter.sv
+core/cache_subsystem/cva6_hpdcache_subsystem_l15_adapter.sv
+core/cache_subsystem/hpdcache/rtl/src/common/macros/behav/hpdcache_sram_wbyteenable_1rw.sv
+core/cache_subsystem/hpdcache/rtl/src/common/hpdcache_sram_wbyteenable.sv
+core/cache_subsystem/cache_ctrl.sv
+core/cache_subsystem/cva6_icache_axi_wrapper.sv
+core/acc_dispatcher.sv
+corev_apu/fpga/src/axi_slice/src/axi_aw_buffer.sv
+corev_apu/fpga/src/axi2apb/src/axi2apb.sv
+corev_apu/fpga/src/axi2apb/src/axi2apb_64_32.sv
+corev_apu/tb/ariane_peripherals.sv
+corev_apu/fpga/src/axi_slice/src/axi_slice.sv
+corev_apu/fpga/src/axi_slice/src/axi_slice_wrap.sv
+core/multiplier.sv
+core/mult.sv
+core/ex_stage.sv
+core/cva6.sv
+corev_apu/src/ariane.sv
+corev_apu/tb/ariane_testharness.sv
+@@ includes.list
+core/include/
+vendor/pulp-platform/common_cells/include/
+vendor/pulp-platform/common_cells/src/
+vendor/pulp-platform/axi/include/
+common/local/util/
+core/cache_subsystem/hpdcache/rtl/include
+corev_apu/axi_node
+corev_apu/register_interface/include/
+corev_apu/tb/common/
+verif/core-v-verif/lib/uvm_agents/uvma_rvfi/
+verif/core-v-verif/lib/uvm_components/uvmc_rvfi_reference_model/
+verif/core-v-verif/lib/uvm_components/uvmc_rvfi_scoreboard/
+verif/core-v-verif/lib/uvm_agents/uvma_core_cntrl/
+verif/tb/core/
+corev_apu/instr_tracing/ITI/include
+/tools/spike/include/disasm/

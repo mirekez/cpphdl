@@ -1,5 +1,4 @@
 import argparse
-import importlib.util
 from pathlib import Path
 import subprocess
 import tempfile
@@ -7,6 +6,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from TestToolchain import TestToolchain
+from Cva6Adapter import write_dpi_adapter_header
 
 
 def main():
@@ -20,11 +20,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='native-split-', dir=args.work) as directory:
         work = Path(directory)
         toolchain = TestToolchain(args.cxx, None, work)
-        converter = fixtures.parents[1] / 'hdlcpp/tests/cva6/support/cpphdl/tools/convert_cva6.py'
-        specification = importlib.util.spec_from_file_location('split_converter', converter)
-        conversion = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(conversion)
-        conversion.write_dpi_adapter_header(work / 'dpi')
+        write_dpi_adapter_header(work / 'dpi')
         for name, macro in (('Features', 'CPP_GRAPH_FEATURES_RUN'),
                             ('Memory', 'CPP_GRAPH_MEMORY_RUN'),
                             ('Jtag', 'CPP_GRAPH_JTAG_RUN'),
