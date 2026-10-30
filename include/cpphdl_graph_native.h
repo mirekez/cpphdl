@@ -60,7 +60,7 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     // Each sink owns its entire pure combinational fan-in, ending at current
     // state, input ports and memory contents. Duplicated operations have private
     // node IDs/storage, so lanes never communicate intermediate values.
-    struct Root { std::vector<Value*> fields; std::vector<size_t> cone; uint64_t cost = 0; unsigned lane = 0; uint64_t sinkCost = 0; };
+    struct Root { std::vector<Value*> fields; uint64_t cost = 0; unsigned lane = 0; uint64_t sinkCost = 0; };
     std::vector<Root> roots;
     std::vector<size_t> stateRoots, accessRoots, writeRoots;
     std::vector<std::vector<size_t>> portRoots(graph.ports.size());
@@ -113,26 +113,35 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     for (auto& node : graph.nodes) if (node.validation()) {
         validationRoots.push_back(roots.size()); roots.push_back({{&node.left}});
     }
-    std::vector<size_t> seen(count, size_t(-1));
-    size_t active = 0;
-    for (size_t r = 0; r < roots.size(); ++r) {
-        auto& root = roots[r]; std::vector<size_t> pending;
-        // Account for assembling the sink as well as its combinational cone.
-        // Constant/direct-state sinks still do work and must not all land on 0.
-        root.sinkCost = 1;
+    // Do not retain one transitive dependency vector per sink. Wide RAM
+    // interfaces and shared control cones can make that storage quadratic.
+    // Visit once for costs, then reconstruct one cone at a time for placement.
+    std::vector<size_t> seen(count, size_t(-1)), pending, cone;
+    size_t epoch = 0;
+    auto visitCone = [&](const Root& root, auto&& visit) {
+        if (++epoch == size_t(-1)) { std::fill(seen.begin(), seen.end(), size_t(-1)); epoch = 0; }
+        pending.clear();
         for (auto* field : root.fields) for (auto raw : *field) {
             auto bit = graph.resolve(raw);
             if (bit > 1 && weight[Graph::owner(bit)]) pending.push_back(Graph::owner(bit));
         }
-        for (auto* field : root.fields) root.sinkCost += (field->size() + 63) / 64;
-        root.cost = root.sinkCost;
         while (!pending.empty()) {
             auto node = pending.back(); pending.pop_back();
-            if (seen[node] == r) continue;
-            seen[node] = r; root.cone.push_back(node); root.cost += weight[node];
+            if (seen[node] == epoch) continue;
+            seen[node] = epoch; visit(node);
             pending.insert(pending.end(), dependencies[node].begin(), dependencies[node].end());
         }
-        active += !root.cone.empty();
+    };
+    size_t active = 0;
+    for (auto& root : roots) {
+        // Account for assembling the sink as well as its combinational cone.
+        // Constant/direct-state sinks still do work and must not all land on 0.
+        root.sinkCost = 1;
+        for (auto* field : root.fields) root.sinkCost += (field->size() + 63) / 64;
+        root.cost = root.sinkCost;
+        bool nonempty = false;
+        visitCone(root, [&](size_t node) { nonempty = true; root.cost += weight[node]; });
+        active += nonempty;
     }
     lanes = std::min<size_t>(lanes, active);
     if (lanes < 2) { NativeParallelPlan p; p.tasks = {values}; p.waits.resize(1); return p; }
@@ -148,10 +157,11 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     // would repeat the call or race its output buffers. Independent pure
     // cones can still run in workers against the same committed snapshot.
     if (!hostRoots.empty())
-        for (size_t root = 0; root < roots.size(); ++root)
-            if (std::any_of(roots[root].cone.begin(), roots[root].cone.end(),
-                            [&](size_t node) { return graph.nodes[node].hostEffect(); }))
-                callerRoots.insert(root);
+        for (size_t root = 0; root < roots.size(); ++root) {
+            bool hostDependent = false;
+            visitCone(roots[root], [&](size_t node) { hostDependent |= graph.nodes[node].hostEffect(); });
+            if (hostDependent) callerRoots.insert(root);
+        }
     if (hostOverlap) {
         for (const auto& port : portRoots) callerRoots.insert(port.begin(),port.end());
         callerRoots.insert(accessRoots.begin(), accessRoots.end());
@@ -162,18 +172,19 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
     }
     for (auto r : callerRoots) {
         load[0] += roots[r].sinkCost;
-        for (auto node : roots[r].cone) if (!owned[0][node]) {
-            owned[0][node] = true; load[0] += weight[node];
-        }
+        visitCone(roots[r], [&](size_t node) {
+            if (!owned[0][node]) { owned[0][node] = true; load[0] += weight[node]; }
+        });
     }
     // Group large overlapping cones first. Balance the accumulated lane cost
     // and penalize extra work, rather than balancing unrelated depth slices.
     for (auto r : sorted) {
         if (callerRoots.count(r)) continue;
         auto& root = roots[r]; uint64_t bestScore = UINT64_MAX, bestAdded = 0;
+        cone.clear(); visitCone(root, [&](size_t node) { cone.push_back(node); });
         const auto peak = *std::max_element(load.begin(), load.end());
         for (unsigned lane = hostOverlap ? 1 : 0; lane < lanes; ++lane) {
-            uint64_t added = root.sinkCost; for (auto node : root.cone) if (!owned[lane][node]) added += weight[node];
+            uint64_t added = root.sinkCost; for (auto node : cone) if (!owned[lane][node]) added += weight[node];
             // Compact scheduling avoids duplication once another cone fixes
             // the critical path. Distributed scheduling balances each lane
             // independently, allowing large hosts to use the requested CPUs.
@@ -182,7 +193,7 @@ inline NativeParallelPlan nativeParallelPlan(Graph& graph, const std::vector<siz
             if (score < bestScore) { bestScore = score; bestAdded = added; root.lane = lane; }
         }
         load[root.lane] += bestAdded;
-        for (auto node : root.cone) owned[root.lane][node] = true;
+        for (auto node : cone) owned[root.lane][node] = true;
     }
     // Overlapping cones can leave lanes unused. Keep the caller at lane zero,
     // but do not create workers or barrier participants for empty lanes.
@@ -1132,16 +1143,42 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     for(size_t word=0;word<parallel.portWords[i].size();++word)
                         output << ports[i].name << '[' << word << "] = " << pending(parallel.portWords[i][word])
                                << ".port" << i << '[' << word << "];\n";
-                output << "}\nvoid __cpphdl_commit() noexcept {\n";
-                // Preserve global write order; workers only read RAM.
-                for (size_t i = 0; i < memoryWrites.size(); ++i) {
+                output << "}\n";
+                // Preserve global write order; workers only read RAM. Bound
+                // host function size as well as the combinational chunks:
+                // a whole design may contain hundreds of thousands of ports.
+                auto emitMemoryCommit = [&](size_t i) {
                     const auto& write = memoryWrites[i]; const auto tx = pending(parallel.writes[i]);
                     output << "if(" << tx << ".enable" << i << ") {\n";
                     for (unsigned offset = 0; offset < write.data.size(); offset += 64)
                         output << "memory" << write.memory << '[' << tx << ".address" << i << "][" << offset/64
                                << "] = " << tx << ".data" << i << '[' << offset/64 << "];\n";
                     output << "}\n";
+                };
+                std::vector<std::string> commitFunctions;
+                if (splitChunks && memoryWrites.size() > chunkSize) {
+                    auto modelPath = std::filesystem::path(path);
+                    for (size_t first = 0; first < memoryWrites.size(); first += chunkSize) {
+                        auto name = "__cpphdl_commit_ram_" + std::to_string(commitFunctions.size());
+                        commitFunctions.push_back(name);
+                        header << "[[gnu::noinline]] void " << name << "() noexcept;\n";
+                        auto partPath = modelPath.parent_path() /
+                            (modelPath.stem().string() + ".part." + std::to_string(parts++) + ".cpp");
+                        part.open(partPath);
+                        if (!part) throw std::runtime_error("cannot write native commit part");
+                        output.rdbuf(part.rdbuf());
+                        output << "#include " << nativeStringLiteral(modelPath.filename().string())
+                               << "\nnamespace cpphdl_native {\nvoid Model::" << name << "() noexcept {\n";
+                        for (size_t i = first; i < std::min(memoryWrites.size(), first + chunkSize); ++i)
+                            emitMemoryCommit(i);
+                        output << "}\n";
+                        closePart();
+                    }
                 }
+                output << "void __cpphdl_commit() noexcept {\n";
+                if (commitFunctions.empty())
+                    for (size_t i = 0; i < memoryWrites.size(); ++i) emitMemoryCommit(i);
+                else for (const auto& name : commitFunctions) output << name << "();\n";
                 output << "__cpphdl_current = !__cpphdl_current;\n";
                 for (size_t i = 0; i < clocks.size(); ++i)
                     output << "__cpphdl_previous_clock_" << i << " = " << clocks[i].name << ";\n";

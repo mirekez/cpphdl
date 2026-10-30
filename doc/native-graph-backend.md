@@ -2239,3 +2239,46 @@ state-derived reset settling and continued rejection of state-derived clocks.
 `NativeMemoizationChecks.py` additionally compares forced serial, forced
 parallel and adaptive dispatch across held clocks, both edges, ROM, packed
 outputs, retained initialized state and copied models.
+
+### Linking graphs before native partitioning
+
+`include/cpphdl_graph_link.h` provides `linkGraphInstance(host, child, pins,
+instanceName)` for combining already scheduled module graphs into one native
+simulation graph. `pins` maps child port names to host bit vectors. All child
+inputs must be bound; unused child outputs may be omitted. The operation
+copies state and memories with distinct identities and connects the equations
+directly. It creates no foreign calls, module evaluators or thread assignments.
+After removing temporary interface ports from the host, call `Graph::emit`
+once to partition the complete model automatically.
+
+Both graphs must use explicit events. `explicitClockEvents(child)` converts
+rising-edge or named-edge synchronous modules to explicit clock-history
+equations first. It preserves rising/falling edges and clocked memory writes;
+modules with asynchronous-reset metadata must already be lowered to explicit
+events. Scheduled register
+equations are retained, while streaming templates used for re-retiming are
+not copied into this simulation-only link.
+
+Large serialized graphs can be loaded directly with `Graph::load(std::istream&)`
+to avoid retaining duplicate text buffers. Dependency ordering uses an iterative
+DFS so deep control reductions do not exhaust the process stack. The
+`NativeLinkChecks.py` regression checks independent clocks, synchronous reset,
+separate RAMs and repeated settling with one and six native threads;
+`NativeDependencyDepthChecks.py` covers a 60,000-stage reduction and real-cycle
+rejection.
+
+With threaded native output and split compilation enabled, large RAM commits
+are also emitted as bounded out-of-line functions. They are called in their
+original order on the committing thread; this only bounds host compiler
+function size and does not introduce runtime partitions. Validation still
+finishes before any write is committed. `NativeRuntimeSplitChecks.py` checks
+ordered writes across function boundaries, disabled writes, RAM cache
+invalidation and failed transactions under serial, parallel and automatic
+dispatch.
+
+The automatic partitioner visits shared dependency cones to calculate costs,
+then reconstructs one cone at a time during lane placement. It does not retain
+a transitive dependency list for every sink. This bounds temporary cone storage
+without changing lane scoring or dependency order. `NativeConeStorageChecks.py`
+checks 2,048 sinks sharing an 8,192-operation cone under a 96 MiB address-space
+limit, including private-lane dependency closure.

@@ -806,6 +806,12 @@ public:
 
     void load(const char* text) {
         std::istringstream input(text);
+        load(input);
+    }
+
+    // Large linked designs need not retain two copies of their serialized
+    // records while constructing the executable graph.
+    void load(std::istream& input) {
         input.exceptions(std::ios::failbit | std::ios::badbit);
         auto readValue = [&]() {
             size_t count; input >> count;
@@ -1086,7 +1092,9 @@ public:
             std::vector<size_t> cyclePath;
             bool outputCone = true;
             order.clear();
-            std::function<void(Bit)> visit = [&](Bit raw) {
+            struct DependencyFrame { size_t index; unsigned operand = 0; size_t offset = 0; };
+            std::vector<DependencyFrame> traversal;
+            auto enter = [&](Bit raw) {
                 auto bit = resolve(raw);
                 if (bit < 2 || cycle) return;
                 auto index = owner(bit);
@@ -1156,9 +1164,28 @@ public:
                     throw std::runtime_error("transactional host effect reaches a combinational output");
                 marks[index] = 1;
                 stack.push_back(index);
-                for (auto* value : {&node.left, &node.right, &node.select}) for (auto input : *value) visit(input);
-                marks[index] = 2; order.push_back(index);
-                stack.pop_back();
+                traversal.push_back({index});
+            };
+            // Whole linked designs can contain very deep control reductions.
+            // Keep the DFS frames on the heap, preserving operand order and
+            // the same cycle path used by bitwise-cycle refinement.
+            auto visit = [&](Bit raw) {
+                enter(raw);
+                while (!traversal.empty() && !cycle) {
+                    auto& frame = traversal.back();
+                    if (frame.operand == 3) {
+                        marks[frame.index] = 2; order.push_back(frame.index);
+                        stack.pop_back(); traversal.pop_back();
+                        continue;
+                    }
+                    const auto& node = nodes[frame.index];
+                    const auto& value = frame.operand == 0 ? node.left : frame.operand == 1 ? node.right : node.select;
+                    if (frame.offset == value.size()) { ++frame.operand; frame.offset = 0; }
+                    else {
+                        auto input = value[frame.offset++];
+                        enter(input);
+                    }
+                }
             };
             for (const auto& port : ports) if (!port.input) for (auto bit : port.bits) visit(bit);
             for (const auto& access : memoryAccesses) if (!access.transaction) {

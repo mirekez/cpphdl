@@ -247,7 +247,7 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/PowerOfTwoFoldingChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_power_of_two_folding PROPERTIES TIMEOUT 120)
-    foreach(check Memoization Batch Broadcast Settle WidePort)
+    foreach(check Memoization Batch Broadcast Settle WidePort Link DependencyDepth RuntimeSplit ConeStorage)
         string(TOLOWER "${check}" check_name)
         add_test(NAME "cpp_graph_native_${check_name}" COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/Native${check}Checks.py"
