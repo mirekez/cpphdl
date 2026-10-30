@@ -2282,3 +2282,10 @@ a transitive dependency list for every sink. This bounds temporary cone storage
 without changing lane scoring or dependency order. `NativeConeStorageChecks.py`
 checks 2,048 sinks sharing an 8,192-operation cone under a 96 MiB address-space
 limit, including private-lane dependency closure.
+
+Large threaded sink functions are split under the same compilation option.
+Each lane still executes its own helpers in order. RAM transactions are prepared
+without committing memory; all inactive state words are initialized before
+ordered state updates are applied, including updates that share a state word.
+The runtime-split regression covers priority updates to the same register
+and checks that failed transactions leave committed state and RAM unchanged.

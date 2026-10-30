@@ -1075,49 +1075,110 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                         output << "bool enable" << i << " = false;\nuint64_t address" << i << " = 0;\n"
                                << "std::array<uint64_t," << (memoryWrites[i].data.size()+63)/64 << "> data" << i << "{};\n";
                     output << "} " << pending(lane) << ";\n";
-                    output << "template<bool Commit> [[gnu::noinline]] void __cpphdl_sinks_" << lane << "() noexcept {\n"
-                           << "auto& tx = " << pending(lane) << ";\ntx.errors = 0;\n";
+                    size_t sinkCount =
+                        std::count(parallel.accesses.begin(), parallel.accesses.end(), lane) +
+                        std::count(parallel.writes.begin(), parallel.writes.end(), lane) +
+                        std::count(parallel.states.begin(), parallel.states.end(), lane);
+                    for (const auto& words : parallel.portWords)
+                        sinkCount += std::count(words.begin(), words.end(), lane);
+                    const bool splitSinks = splitChunks && sinkCount > chunkSize;
+                    std::vector<std::pair<std::string, bool>> sinkFunctions;
+                    size_t sinkItems = 0;
+                    bool sinkOpen = false, sinkCommit = false;
+                    auto closeSink = [&] {
+                        if (!sinkOpen) return;
+                        if (sinkCommit) output << "}\n";
+                        const auto& name = sinkFunctions.back().first;
+                        output << "}\ntemplate void Model::" << name << "<false>() noexcept;\n"
+                               << "template void Model::" << name << "<true>() noexcept;\n";
+                        closePart(); sinkOpen = false;
+                    };
+                    auto emitSink = [&](bool commitOnly, auto&& body) {
+                        if (splitSinks) {
+                            if (!sinkOpen || sinkItems == chunkSize || sinkCommit != commitOnly) {
+                                closeSink();
+                                auto name = "__cpphdl_sinks_" + std::to_string(lane) + "_part_" + std::to_string(sinkFunctions.size());
+                                sinkFunctions.emplace_back(name, commitOnly);
+                                header << "template<bool Commit> [[gnu::noinline]] void " << name << "() noexcept;\n";
+                                auto modelPath = std::filesystem::path(path);
+                                part.open(modelPath.parent_path() / (modelPath.stem().string() + ".part." + std::to_string(parts++) + ".cpp"));
+                                if (!part) throw std::runtime_error("cannot write native sink part");
+                                output.rdbuf(part.rdbuf());
+                                output << "#include " << nativeStringLiteral(modelPath.filename().string())
+                                       << "\nnamespace cpphdl_native {\ntemplate<bool Commit> void Model::" << name << "() noexcept {\n"
+                                       << "auto& tx = " << pending(lane) << ";\n";
+                                if (commitOnly) output << "if constexpr(Commit) {\n";
+                                sinkOpen = true; sinkCommit = commitOnly; sinkItems = 0;
+                            }
+                            body(); ++sinkItems;
+                        } else {
+                            if (commitOnly) output << "if constexpr(Commit) {\n";
+                            body();
+                            if (commitOnly) output << "}\n";
+                        }
+                    };
+                    if (!splitSinks)
+                        output << "template<bool Commit> [[gnu::noinline]] void __cpphdl_sinks_" << lane << "() noexcept {\n"
+                               << "auto& tx = " << pending(lane) << ";\ntx.errors = 0;\n";
                     for (size_t i = 0; i < memoryAccesses.size(); ++i) if (parallel.accesses[i] == lane) {
                         const auto& access = memoryAccesses[i];
-                        output << "if(" << (access.transaction ? "Commit && " + clockEdge(access.clock, access.falling) + " && " : "")
-                               << assembly(access.enabled) << " && " << assembly(access.address) << " >= "
-                               << memories[access.memory].depth << "ull) tx.errors |= 1;\n";
+                        emitSink(false, [&] {
+                            output << "if(" << (access.transaction ? "Commit && " + clockEdge(access.clock, access.falling) + " && " : "")
+                                   << assembly(access.enabled) << " && " << assembly(access.address) << " >= "
+                                   << memories[access.memory].depth << "ull) tx.errors |= 1;\n";
+                        });
                     }
                     for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input)
                         for (unsigned offset = 0; offset < ports[i].bits.size(); offset += 32)
-                            if(parallel.portWords[i][offset/32]==lane)
-                            output << "tx.port" << i << '[' << offset/32 << "] = uint32_t("
-                                   << assembly(slice(ports[i].bits, offset, std::min<size_t>(32,ports[i].bits.size()-offset))) << ");\n";
-                    output << "if constexpr(Commit) {\n";
+                            if (parallel.portWords[i][offset/32] == lane) emitSink(false, [&] {
+                                output << "tx.port" << i << '[' << offset/32 << "] = uint32_t("
+                                       << assembly(slice(ports[i].bits, offset, std::min<size_t>(32,ports[i].bits.size()-offset))) << ");\n";
+                            });
                     for (size_t i = 0; i < memoryWrites.size(); ++i) if (parallel.writes[i] == lane) {
                         const auto& write = memoryWrites[i];
-                        output << "tx.enable" << i << " = " << clockEdge(write.clock, write.falling) << " && " << assembly(write.enabled) << ";\n"
-                               << "if(tx.enable" << i << ") {\ntx.address" << i << " = " << assembly(write.address) << ";\n"
-                               << "if(tx.address" << i << " >= " << memories[write.memory].depth << "ull) tx.errors |= 2;\n";
-                        for (unsigned offset = 0; offset < write.data.size(); offset += 64)
-                            output << "tx.data" << i << '[' << offset/64 << "] = "
-                                   << assembly(slice(write.data, offset, std::min<size_t>(64,write.data.size()-offset))) << ";\n";
-                        output << "}\n";
+                        emitSink(true, [&] {
+                            output << "tx.enable" << i << " = " << clockEdge(write.clock, write.falling) << " && " << assembly(write.enabled) << ";\n"
+                                   << "if(tx.enable" << i << ") {\ntx.address" << i << " = " << assembly(write.address) << ";\n"
+                                   << "if(tx.address" << i << " >= " << memories[write.memory].depth << "ull) tx.errors |= 2;\n";
+                            for (unsigned offset = 0; offset < write.data.size(); offset += 64)
+                                output << "tx.data" << i << '[' << offset/64 << "] = "
+                                       << assembly(slice(write.data, offset, std::min<size_t>(64,write.data.size()-offset))) << ";\n";
+                            output << "}\n";
+                        });
                     }
+                    // Initialize all inactive words before applying any ordered
+                    // updates. Splitting a function must not reset a word after
+                    // an earlier update to that same word has been prepared.
                     std::set<size_t> initialized;
                     for (size_t i = 0; i < states.size(); ++i) if (parallel.states[i] == lane)
                         for (auto bit : states[i].bits) if (initialized.insert(owner(bit)).second)
-                            output << "__cpphdl_state[!__cpphdl_current].state" << owner(bit) << " = " << names.at(owner(bit)) << ";\n";
+                            emitSink(true, [&] { output << "__cpphdl_state[!__cpphdl_current].state" << owner(bit) << " = " << names.at(owner(bit)) << ";\n"; });
                     for (size_t i = 0; i < states.size(); ++i) if (parallel.states[i] == lane) {
                         const auto& state = states[i];
-                        output << "const bool trigger" << i << " = (" << assembly(state.trigger) << " && " << clockEdge(state.clock, state.falling) << ")";
-                        if (!state.reset.empty()) output << " || " << assembly(state.reset);
-                        output << ";\nif(trigger" << i << ") {\n";
-                        for (unsigned offset = 0; offset < state.bits.size(); offset += 64) {
-                            auto index = owner(state.bits[offset]);
-                            auto width = std::min<size_t>(64,state.next.size()-offset);
-                            auto next = assembly(slice(state.next,offset,width));
-                            if (!state.reset.empty()) next = assembly(state.reset) + " ? " + assembly(slice(state.resetValue,offset,width)) + " : " + next;
-                            output << "__cpphdl_state[!__cpphdl_current].state" << index << " = " << next << ";\n";
-                        }
-                        output << "}\n";
+                        emitSink(true, [&] {
+                            output << "const bool trigger" << i << " = (" << assembly(state.trigger) << " && " << clockEdge(state.clock, state.falling) << ")";
+                            if (!state.reset.empty()) output << " || " << assembly(state.reset);
+                            output << ";\nif(trigger" << i << ") {\n";
+                            for (unsigned offset = 0; offset < state.bits.size(); offset += 64) {
+                                auto index = owner(state.bits[offset]);
+                                auto width = std::min<size_t>(64,state.next.size()-offset);
+                                auto next = assembly(slice(state.next,offset,width));
+                                if (!state.reset.empty()) next = assembly(state.reset) + " ? " + assembly(slice(state.resetValue,offset,width)) + " : " + next;
+                                output << "__cpphdl_state[!__cpphdl_current].state" << index << " = " << next << ";\n";
+                            }
+                            output << "}\n";
+                        });
                     }
-                    output << "}\n}\n";
+                    if (splitSinks) {
+                        closeSink();
+                        output << "template<bool Commit> [[gnu::noinline]] void __cpphdl_sinks_" << lane << "() noexcept {\n"
+                               << pending(lane) << ".errors = 0;\n";
+                        for (const auto& [name, commitOnly] : sinkFunctions) {
+                            if (commitOnly) output << "if constexpr(Commit) ";
+                            output << name << "<Commit>();\n";
+                        }
+                    }
+                    output << "}\n";
                 }
                 output << "template<bool Commit> static void __cpphdl_lane(void* target, cpphdl::graph_runtime::Threads&, "
                           "unsigned lane, uint32_t) noexcept {\n"
