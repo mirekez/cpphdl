@@ -247,7 +247,7 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/PowerOfTwoFoldingChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_power_of_two_folding PROPERTIES TIMEOUT 120)
-    foreach(check Memoization Batch Broadcast Settle WidePort Link DependencyDepth RuntimeSplit ConeStorage)
+    foreach(check Memoization Batch Broadcast Settle WidePort BitGather Link DependencyDepth RuntimeSplit ConeStorage WriteTracking MemoryTransactions ParallelMemory StateTransactions LocalTasks)
         string(TOLOWER "${check}" check_name)
         add_test(NAME "cpp_graph_native_${check_name}" COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/Native${check}Checks.py"
@@ -266,6 +266,11 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeResetEventsChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_reset_events PROPERTIES TIMEOUT 120)
+    add_test(NAME cpp_graph_register_array_reset COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/RegisterArrayResetChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/register-array-reset")
+    set_tests_properties(cpp_graph_register_array_reset PROPERTIES TIMEOUT 300)
     add_test(NAME cpp_graph_word_helpers COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WordHelpersChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -420,6 +425,16 @@ if(Python3_Interpreter_FOUND)
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
             --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/array-write-bounds-graph")
         set_tests_properties(hdlcpp_array_write_bounds_graph PROPERTIES TIMEOUT 600)
+        add_test(NAME hdlcpp_whole_array_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/WholeArrayChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/whole-array-graph")
+        set_tests_properties(hdlcpp_whole_array_graph PROPERTIES TIMEOUT 300)
+        add_test(NAME hdlcpp_real_branches_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/RealBranchesChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/real-branches-graph")
+        set_tests_properties(hdlcpp_real_branches_graph PROPERTIES TIMEOUT 300)
         add_test(NAME hdlcpp_nested_packed_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/NestedPackedChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"

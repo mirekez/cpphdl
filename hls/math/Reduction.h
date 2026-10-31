@@ -40,7 +40,16 @@ VectorValues<float,Rows> reduce_rows_tree(MatrixValues<float,Rows,Cols> input) {
         return reduce_rows_tree<Rows,(Cols+1)/2>(next);
     }
 }
-template<unsigned Rows,unsigned Cols> struct ReductionMethods {
+// Replacement hardware has at most seven enabled stages for 1..64 columns.
+// The retimer may add further latency; the generated wrapper delays data and
+// tags by exactly that amount. Ordinary C++ still executes the tree below.
+template<unsigned Rows,unsigned Cols> struct
+#ifdef CPPHDL_HLS_REDUCTION_REPLACEMENT
+    [[clang::annotate("CPPHDL_REPLACEMENT_MODULE=Fp32Reduction_$(Rows)_$(Cols)")]]
+    [[clang::annotate("CPPHDL_REPLACEMENT_MIN_LATENCY=7")]]
+    [[clang::annotate("CPPHDL_REPLACEMENT_SCRIPT=generate_reduction_replacement.py $(Rows) $(Cols);")]]
+#endif
+    ReductionMethods {
     VectorValues<uint32_t,Rows> command(MatrixValues<uint32_t,Rows,Cols> input,
         MatrixValues<uint32_t,Rows,Cols>,MatrixValues<uint32_t,Rows,Cols>) const {
         MatrixValues<float,Rows,Cols> decoded{};decoded.tag=input.tag;

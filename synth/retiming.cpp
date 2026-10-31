@@ -522,6 +522,7 @@ public:
 };
 }
 RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& model) {
+    if (!graph.replacements.empty()) throw std::runtime_error("retiming must precede pipeline replacement linking");
     if (!std::isfinite(rule.period) || rule.period <= 0) throw std::runtime_error("retiming period must be positive");
     if (rule.mode != "keep_behaviour_retiming" && rule.mode != "fit_pipeline_retiming") throw std::runtime_error("unknown retiming mode: " + rule.mode);
     Graph g = graph; g.validateClocks(); g.optimize();

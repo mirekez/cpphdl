@@ -3,6 +3,10 @@
 #include "../synth/Verilog.h"
 #include "../synth/StreamPipeline.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Attr.h"
+
+std::string cpphdlHlsReplacement(const clang::CXXRecordDecl*, const clang::ASTContext&);
+std::string cpphdlHlsAnnotationValue(const clang::CXXRecordDecl*, const clang::ASTContext&, const std::string&);
 
 namespace cpphdl::hls {
 using namespace graph;
@@ -28,6 +32,34 @@ std::map<std::string,Value> exportPipelineGraph(clang::ASTContext& ctx, clang::S
             name == "index_in" || name == "value_in")
             command.ports.push_back({name,bits,name.find("_in") != std::string::npos});
     command.optimize();
+    const auto* object = llvm::cast<clang::ClassTemplateSpecializationDecl>(record)->getTemplateArgs()[0].getAsType()->getAsCXXRecordDecl();
+    std::string replacementModule;
+    unsigned minimumLatency = 1;
+    for (const auto* attr : object->specific_attrs<clang::AnnotateAttr>()) {
+        auto text = attr->getAnnotation().str();
+        const std::string modulePrefix = "CPPHDL_REPLACEMENT_MODULE=", minimumPrefix = "CPPHDL_REPLACEMENT_MIN_LATENCY=";
+        if (text.find(modulePrefix) == 0) {
+            if (!replacementModule.empty()) throw std::runtime_error("duplicate pipeline replacement module");
+            replacementModule = ::cpphdlHlsAnnotationValue(object,ctx,text.substr(modulePrefix.size()));
+            if (replacementModule.empty() || (!std::isalpha(replacementModule[0]) && replacementModule[0]!='_') ||
+                std::any_of(replacementModule.begin(),replacementModule.end(),[](unsigned char c){return !std::isalnum(c)&&c!='_';}))
+                throw std::runtime_error("invalid pipeline replacement module name");
+        }
+        if (text.find(minimumPrefix)==0) {
+            auto value=text.substr(minimumPrefix.size()); size_t used=0;
+            minimumLatency=std::stoul(value,&used);
+            if (used!=value.size() || !minimumLatency || minimumLatency>64)
+                throw std::runtime_error("replacement minimum latency must be in 1..64");
+        }
+    }
+    if (!replacementModule.empty()) {
+        if (!command.states.empty()) throw std::runtime_error("pipeline replacement requires a stateless command class");
+        auto body=::cpphdlHlsReplacement(object,ctx);
+        if (body.empty()) throw std::runtime_error("pipeline replacement requires a Verilog annotation body");
+        output.attributes.push_back({scope,"pipeline_replacement",replacementModule});
+        output.attributes.push_back({scope,"pipeline_replacement_body",body});
+        output.attributes.push_back({scope,"pipeline_replacement_min_latency",std::to_string(minimumLatency)});
+    }
     auto order = command.dependencyOrder();
     std::vector<unsigned> depth(command.nodes.size());
     unsigned longest = 1;
@@ -43,6 +75,7 @@ std::map<std::string,Value> exportPipelineGraph(clang::ASTContext& ctx, clang::S
         command.nodes[n].scope = scope + ".hls_stage_" + std::to_string((depth[n]-1)*stages/longest);
     StreamPipeline pipeline;
     pipeline.scope = scope; pipeline.stages = stages;
+    pipeline.latency = std::max(stages,minimumLatency);
     std::ostringstream serialized; command.save(serialized); pipeline.logic = serialized.str();
     output.currentScope = scope;
     for (auto [name,width] : std::map<std::string,unsigned>{{"reset",1},{"command_valid_in",1},

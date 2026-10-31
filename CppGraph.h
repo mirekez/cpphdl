@@ -731,7 +731,8 @@ class Lowering {
             return value(*item.registerNext, type);
         }
         initial(item);
-        item.key += "._next"; item.type = type; item.extent = width(type);
+        if (!item.extent) item.extent = width(type);
+        item.key += "._next"; item.type = type;
         return item;
     }
     Item cast(Item item, QualType type) {
@@ -809,7 +810,7 @@ class Lowering {
         auto selected = wideShiftRight(std::move(source), low);
         return graph.mux(valid, graph.binary("and", selected, mask, count), Value(count, 0));
     }
-    void write(Item target, Item source) {
+    void write(Item target, Item source, bool resetCurrent = false) {
         if (source.closure) {
             if (!structural || target.key.empty() || !port(target.type)) fail("closure assignment outside structural port binding");
             bindings[target.key] = source.closure;
@@ -850,11 +851,11 @@ class Lowering {
         }
         if (!producerStorage.empty() && !target.key.starts_with("$") && target.key != producerStorage.back())
             fail("combinational getter mutates another field: " + target.key);
-        if ((templateName(target.type) == "cpphdl::reg" && !target.key.starts_with("$")) || registers.count(target.key))
+        if (!resetCurrent && ((templateName(target.type) == "cpphdl::reg" && !target.key.starts_with("$")) || registers.count(target.key)))
             fail("direct current-state C++ mutation unsupported: " + target.key);
         if (templateName(target.type) == "cpphdl::reg" && templateName(source.type) == "cpphdl::reg")
             write(nextRegister(target), value(read(nextRegister(source)), payload(target.type)));
-        if (moduleFields.count(target.key)) {
+        if (moduleFields.count(target.key) && !resetCurrent) {
             if (structural) {
                 auto incoming = read(cast(source, target.type));
                 if (std::any_of(incoming.begin(), incoming.end(), [](Bit bit) { return bit > 1; }))
@@ -942,6 +943,10 @@ class Lowering {
                 continue;
             }
             const auto& fallback = before.count(key) ? before.at(key) : originals.at(key);
+            const auto& yesBits = yes.count(key) ? yes.at(key) : fallback;
+            const auto& noBits = no.count(key) ? no.at(key) : fallback;
+            if (yesBits.size() != noBits.size())
+                fail("branch merge width mismatch for " + key + ": " + std::to_string(yesBits.size()) + " / " + std::to_string(noBits.size()));
             cells.set(key, graph.mux(condition, yes.count(key) ? yes.at(key) : fallback, no.count(key) ? no.at(key) : fallback));
         }
     }
@@ -1989,7 +1994,8 @@ class Lowering {
                 fail("unsupported asynchronous register reset", call);
             initial(receiver);
             claim(resetOwners, receiver.key);
-            cells.set(receiver.key + "._next", name == "clr" ? Value(width(receiver.type), 0) : read(cast(arguments[0], payload(receiver.type))));
+            auto next = nextRegister(receiver);
+            write(next, name == "clr" ? value(Value(width(next.type), 0), next.type) : arguments[0]);
             return {};
         }
         if (name == "strobe" && !receiver.type.isNull() && templateName(receiver.type) == "cpphdl::reg") {
@@ -2016,7 +2022,8 @@ class Lowering {
             write(next, value(Value(width(next.type), 0), next.type));
             // clr() also changes the value seen by subsequent statements in
             // this C++ work call; graph state itself still commits on the edge.
-            cells.set(receiver.key, Value(width(receiver.type), 0));
+            auto current = receiver; current.type = payload(receiver.type);
+            write(current, value(Value(width(current.type), 0), current.type), true);
             return {};
         }
         if (qualified == "cpphdl::Module::assignIf") {

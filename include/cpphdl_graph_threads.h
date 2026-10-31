@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -54,6 +55,30 @@ public:
     }
     void run(void* model, Function function, unsigned activeLanes) {
         run(model, function, activeLanes, [] {});
+    }
+    // Independent generated evaluation groups can outnumber physical workers.
+    // Group zero stays on the caller (foreign effects may be pinned there).
+    // Each group has private scratch/next-state storage; publication still
+    // happens only after run() joins every worker. No cross-group waits are
+    // allowed in this entry point.
+    void runTasks(void* model, Function function, unsigned count) {
+        if (!count) return;
+        const unsigned active = std::min(lanes_, count);
+        struct Work {
+            void* model;
+            Function function;
+            unsigned count;
+            std::atomic<unsigned> next;
+        } work{model, function, count, active};
+        run(&work, [](void* opaque, Threads& executor, unsigned lane, uint32_t epoch) noexcept {
+            auto& work = *static_cast<Work*>(opaque);
+            work.function(work.model, executor, lane, epoch);
+            for (;;) {
+                const unsigned task = work.next.fetch_add(1, std::memory_order_relaxed);
+                if (task >= work.count) break;
+                work.function(work.model, executor, task, epoch);
+            }
+        }, active);
     }
     // Run a caller-only continuation before joining the register workers.
     // Always drain workers before propagating an exception or releasing the

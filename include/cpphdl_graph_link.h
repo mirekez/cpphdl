@@ -60,6 +60,8 @@ inline void linkGraphInstance(Graph& host, const Graph& child,
         child.clockContract != ClockContract::ExplicitEvents ||
         !host.clocks.empty() || !child.clocks.empty())
         throw std::runtime_error("graph linking requires explicit clock events");
+    if (!child.replacements.empty())
+        throw std::runtime_error("link resolved replacement graphs");
     // Streaming templates are scheduler metadata, not executable state. This
     // simulation link preserves the already scheduled equations and registers;
     // it deliberately does not make those templates available for re-retiming.

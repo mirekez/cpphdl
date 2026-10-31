@@ -2178,7 +2178,7 @@ and boundary pin. The caller must provide a checked implementation for every
 boundary; this is not an implementation of an omitted hardware module.
 
 The optional root scope attribute `native.quiet_events=1` is restricted to
-one-lane explicit-event graphs without host effects. It exposes a predicate for
+explicit-event graphs without host effects. It exposes a predicate for
 all non-history state triggers, clocked RAM accesses/writes and checks. After
 output settling, `__cpphdl_advance_quiet_event()` returns true only when none is
 active, and updates only event histories to their sampled levels. The caller
@@ -2187,6 +2187,9 @@ must execute. The default emitter leaves this optimization disabled. This is
 host work elimination; timestamp order, hardware clock counts and memory
 latencies are unchanged.
 
+Multi-lane evaluators update both history banks after all workers have joined.
+This preserves held-clock and asynchronous-reset observations across bank swaps.
+
 An application can combine a quiet control lane with separately scheduled math
 graphs. Control-lane inactivity does not demonstrate compute scaling; measure
 numerical correctness, device-clock behavior and host throughput separately.
@@ -2194,6 +2197,26 @@ numerical correctness, device-clock behavior and host throughput separately.
 `tests/graph/NativeRamMemoizationChecks.py` checks uncached, key-cached and
 delta-cached RAM against an independent 64,000-transaction oracle, including
 held addresses, host mutations, registered reads and output-only settling.
+
+### Internally managed RAM caches
+
+`native.owned_memories=1` is an optional attribute for pure, chunk-memoized
+graphs whose mutable RAM changes through generated write transactions. The
+evaluator invalidates chunks reading a RAM when a write commits, after all
+workers have joined. Repeated settling with unchanged RAM can reuse those
+chunks. Address changes still pass through normal dependency tracking, and
+simultaneous reads observe the memory contents before writes commit.
+
+The default continues to detect arbitrary host writes to public RAM arrays by
+invalidating read chunks at every evaluation. With `native.owned_memories`,
+the host must call `model.__cpphdl_invalidate_memories()` after directly
+modifying RAM and before evaluating again. Copies retain their independent RAM
+and cache state. This option changes simulator caching, not the synthesized
+memory, clock schedule, or memory latency.
+
+`NativeRamCacheChecks.py` exercises both key and delta caches with this option,
+single and multiple lanes, named and explicit clock events, held addresses,
+read-before-write behavior, resets, copies and notified host mutations.
 
 ## Parallel root scanning and private state
 
@@ -2218,8 +2241,12 @@ all register updates.** The host must not modify internal state-bank fields or
 the bank selector. Input-port changes and host RAM mutations remain supported;
 inputs are observed on each evaluation and mutable RAM keeps its independent
 invalidation path. Copies retain the bank observations and root histories.
-This option requires parallel roots and a pure named-edge graph. A plan that
-compacts to one lane uses the ordinary state-observation path.
+This option requires delta memoization and a pure named-edge graph. It works
+with either caller-side or parallel root scanning. With caller-side scanning,
+input and state observations use separate groups; only state groups are skipped
+when the bank is unchanged. This also benefits independent-model batching where
+each model's inner evaluator runs serially. A plan that compacts to one lane
+uses the ordinary state-observation path.
 
 These attributes are opt-in; default emission keeps the previous scheduler.
 Memoized multi-lane models without host overlap select serial or parallel
@@ -2240,6 +2267,84 @@ state-derived reset settling and continued rejection of state-derived clocks.
 parallel and adaptive dispatch across held clocks, both edges, ROM, packed
 outputs, retained initialized state and copied models.
 
+
+### Experimental sparse bit-gather coalescing
+
+`native.coalesce_bits=1` selects shorter equivalent native C++ expressions for
+bit assembly. It can merge nonadjacent bits from the same source that share a
+shift into one masked shift, and broadcast one source bit into a sparse mask.
+It compares both forms with the original contiguous-run expression and keeps
+the shortest text. This is a code-size heuristic; smaller generated source
+does not imply a runtime speedup. The option is off by default.
+
+The transformation preserves the graph, registers, memory operations and
+clock scheduling. Shifts stay within 0–63 and masks use unsigned 64-bit values.
+`NativeBitGatherChecks.py` checks sparse/repeated/reversed routes, constants,
+word boundaries, held state and resets against an independent bit oracle with
+serial and six-lane evaluation under UBSan. It also checks that the fixture
+actually exercises source-size reduction. Real-design benchmarking is required
+before selecting this option for a build.
+
+
+`native.bmi2_gathers=1` additionally considers monotone sparse routes expressed
+with CPU bit extract/deposit. The generated evaluator includes
+`cpphdl_graph_gather.h`, which checks CPU support before executing BMI2 and
+provides an exact portable fallback. Compilation does not require `-mbmi2`.
+When a caller explicitly compiles with `-mbmi2`, the helper instead inlines
+PEXT/PDEP directly; that build requires a BMI2-capable execution host. The
+regression checks this path too when the test host supports it.
+Repeated or reversed bits are partitioned into separate monotone routes.
+This option also remains off by default: its cost depends on the host CPU and
+route shape. The bit-gather regression exercises the portable helper directly
+and the selected runtime path, plus generated clocked models.
+
+
+### Experimental clean-chunk call guards
+
+`native.guard_chunk_calls=1` requires delta memoization and tests a chunk's
+exact pending flag before calling its non-inlined evaluator. Clean chunks
+already return immediately; the caller guard avoids that call and its code
+fetch. It uses the same commit/settle cache phase as the chunk, retains the
+existing in-chunk check, and preserves topological order, root invalidation,
+clock events, RAM writes and output publication. The option is off by default.
+
+The memoization regression compares guarded single-lane and six-lane models
+with uncached models, including forced serial/parallel dispatch, held inputs,
+both clock edges, resets, ROM, wide ports and copies. The RAM regression also
+covers guarded ordinary and explicitly owned memories under named and explicit
+clock events, including host writes followed by invalidation. These establish
+correctness coverage, not a performance guarantee for every graph.
+
+
+## Verilog real arithmetic and retained SYNTHESIS alternatives
+
+The hdlcpp native frontend supports `real`, `realtime` and `shortreal` values,
+arithmetic `+`, `-`, `*`, `/`, comparisons, sign negation, integer-to-real
+conversion, real/shortreal precision conversion, and the `$bitstoreal`,
+`$realtobits`, `$bitstoshortreal`, `$shortrealtobits` bit conversions. Floating
+operations remain native graph operations and emit host `double` / `float`
+expressions. Dynamic numeric real-to-integer casts are rejected rather than
+silently using C++ truncation instead of SystemVerilog rounding.
+
+By default the Verilog preprocessor selects one branch. To preserve hardware
+and simulation alternatives explicitly:
+
+```sh
+hdlcpp --native-graph --preserve-synthesis --top Mac --output mac.cc replacement.sv
+c++ -std=c++23 -O1 -ffp-contract=off -Icpphdl/include mac.cc -o emit-simulation
+./emit-simulation mac-native.h
+c++ -std=c++23 -O1 -ffp-contract=off -DSYNTHESIS -Icpphdl/include mac.cc -o emit-hardware
+./emit-hardware mac-hardware.h
+```
+
+The converter elaborates each alternative separately, validates matching port
+and external-module interfaces, and wraps both generated graphs in C++
+`#ifdef SYNTHESIS` / `#else`. The selected emitter generates a model containing
+only its selected graph. Do not pass explicit `-DSYNTHESIS` or `-USYNTHESIS`
+alongside `--preserve-synthesis`; that mode controls the macro for each pass.
+Both emitted models must be tested for the intended numerical and cycle
+contract before using a behavioral simulation alternative in place of RTL.
+
 ### Linking graphs before native partitioning
 
 `include/cpphdl_graph_link.h` provides `linkGraphInstance(host, child, pins,
@@ -2255,7 +2360,7 @@ Both graphs must use explicit events. `explicitClockEvents(child)` converts
 rising-edge or named-edge synchronous modules to explicit clock-history
 equations first. It preserves rising/falling edges and clocked memory writes;
 modules with asynchronous-reset metadata must already be lowered to explicit
-events. Scheduled register
+events. Unresolved replacement annotations are rejected. Scheduled register
 equations are retained, while streaming templates used for re-retiming are
 not copied into this simulation-only link.
 
@@ -2289,3 +2394,224 @@ without committing memory; all inactive state words are initialized before
 ordered state updates are applied, including updates that share a state word.
 The runtime-split regression covers priority updates to the same register
 and checks that failed transactions leave committed state and RAM unchanged.
+
+## Register write tracking
+
+Delta-memoized native models track internally generated register writes by
+default. A changed register word notifies only the chunks consuming its changed
+bits. Output-only settling no longer scans register snapshots, and independent
+lanes do not keep duplicate snapshots of shared registers.
+
+Workers record affected chunks in lane-local dirty bitmaps while calculating
+inactive state. After validation succeeds, the caller commits state and merges
+the bitmaps with all workers stopped. Each affected chunk is published once,
+even when many registers changed. A failed transaction publishes no
+register notifications. Multiple priority updates may conservatively dirty a
+consumer even if the final value returns to its original value; same-edge
+operands and final state retain their original semantics. Quiet-event history
+updates notify consumers too. Copies include their dirty flags and input
+snapshots and do not retain pointers into the original model.
+
+Public input arrays remain writable for compatibility. Each evaluation checks
+only the externally writable input roots, once before worker dispatch. A host
+may instead call `model.__cpphdl_set_PORT(word_index, value)` to record a port
+write immediately; the compatibility input check remains active. The generated
+`__cpphdl_input_root_count` describes this small input boundary. Both methods
+preserve the same bit-sensitive invalidation semantics.
+
+Internal generated register fields should be changed through model execution.
+Debug code that directly modifies them must call `__cpphdl_invalidate_state()`
+afterward. To retain the old full-scan behavior for comparison or direct-state
+debugging, set the graph attribute `native.scan_roots` to `1`. This override
+does not change the graph's equations, partitioning or memory semantics.
+The older `native.cache_state_roots` option is redundant when write tracking
+is enabled; its scan-based implementation remains available with the override.
+
+`NativeWriteTrackingChecks.py` compares full scans with one- and six-lane write
+tracking, including raw/setter input writes, shared roots, both clock edges,
+reset, repeated settling, copied models and failed commits. Runtime-split
+coverage includes a later update that restores the original register value.
+
+## Native RAM transaction scheduling
+
+Threaded models share the enable test for adjacent write ports on a lane when
+both their enable expression and clock edge match. Inactive groups skip all
+address/data preparation. Groups are bounded for split compilation; each
+memory's writes retain their original order. Grouping does
+not reorder colliding writes or change last-write-wins priority. All address
+validation finishes before any RAM or register commit.
+
+For threaded, delta-memoized `native.owned_memories`, writes to RAMs with
+multiple read chunks compare the stored words with the prepared words.
+Unchanged writes then leave cached reads valid. Commit records affected memory
+bits and invalidates each memory's read chunks once after all writes finish.
+Single-lane models and RAMs with one reader chunk retain simple stores: checking
+every written word can cost more than invalidating that reader. Memory remains ordinary block storage;
+this optimization only removes redundant simulator work. External mutations
+still require `__cpphdl_invalidate_memories()` under the ownership contract.
+
+`native.ungrouped_transactions=1` and
+`native.unconditional_memory_writes=1` retain the corresponding older paths for
+controlled comparisons. Neither changes hardware scheduling or clock counts.
+`NativeMemoryTransactionsChecks.py` checks shared enables, wide RAM words,
+overlapping writes, split compilation, rising/falling clock domains, copied
+models and rejected transactions against an independent priority oracle.
+
+Delta-memoized threaded models also cache expensive RAM transaction payloads.
+The emitter counts fragments in address/data assembly and enables this cache
+when fragments exceed twice the number of word operands. Simple word transfers
+retain direct preparation. `native.cache_simple_transactions=1` forces caching
+for regression coverage and controlled comparisons. Address/data producers
+notify a cached transaction group when their consumed bits change. An enabled
+group assembles its payload only when dirty; enable and clock-edge checks still
+execute every commit. Cached address-validation failures are replayed on every
+enabled attempt, so retrying an unchanged invalid transaction cannot bypass
+validation. Disabled groups retain dirty payloads until they are needed.
+`native.uncached_transactions=1` keeps unconditional payload preparation for
+comparisons. This cache uses the automatic lane assignment and requires no
+manual partitioning in the simulation harness.
+
+Owned-memory scheduling removes an earlier store when a later store has the
+identical resolved address, enable, clock edge, and write width. All operands
+are sampled before commit, so the earlier store cannot affect any reader or
+the final memory value. The retained store validates the same enabled address.
+The unconditional-write comparison option retains these stores too. This
+also avoids adding changed-word comparisons around stores the C++ compiler
+could previously eliminate. The memory regression retries invalid transactions
+without changing inputs and verifies all committed RAM rows.
+
+
+### Experimental idempotent RAM commits
+
+This is disabled by default. `native.cache_memory_commits=1` opts in. A repeated-
+write microbenchmark improved, but the full Llama GEMM benchmark regressed from
+227–228 to about 212 simulated clocks/s, so the faster existing path remains
+the default. These are host simulation rates, not FPGA token throughput.
+
+Internally owned RAM can cache a complete prepared write set when every writer
+uses payload caching and the memory has more than two ports per preparation
+group. The commit path remembers the last **active** enable mask. If that mask
+and all prepared payloads are unchanged, replaying the ordered writes would
+leave RAM unchanged, so commit skips the stores and their read-cache
+invalidations. Inactive clock phases retain the last active mask.
+
+The cache decision is made before each memory's first store, while its stores
+retain their original ordering across helper boundaries. Changing enables
+replays the active writes, including collisions and priority overrides. Payload
+changes prepared by a failed transaction remain pending until successful
+commit. Each memory retains those changes through fully disabled recovery
+transactions. `__cpphdl_invalidate_memories()` invalidates this cache too.
+
+`native.uncached_memory_commits=1` disables the optimization for comparison.
+`native.cache_small_memory_commits=1` removes the port-count threshold for
+regression coverage. Neither option permits caching externally mutable RAM.
+The memory transaction regression checks inactive recovery after failure,
+explicit debug invalidation, split helpers, priorities and model copies.
+
+### Parallel memory commit
+
+The native generator schedules RAM commit separately from combinational
+evaluation and transaction preparation. Generated RAMs are distinct backing
+vectors: all ports writing one vector belong to one commit lane, in original
+port order. This preserves collisions and partial/wide word writes. Reads and
+write operands are prepared from the pre-commit snapshot; all lane validation
+finishes before any commit worker starts. Register-bank, clock-history and
+invalidation publication follow the commit barrier.
+
+Memory components are assigned to available lanes by descending write cost,
+placing each component on the least-loaded lane. The static cost is one enable
+check plus the number of 64-bit data words per retained port. The automatic
+path requires at least two independent components and a total cost of 16,384;
+smaller workloads avoid an additional executor dispatch. This uses graph
+metadata only and has no design-specific partitioning or arithmetic assumptions.
+One backing memory remains sequential even if it has many ports.
+
+Each worker records changed memories in its own cache-line-aligned bitmap.
+After joining, the caller merges these and invalidates shared read caches.
+Workers never concurrently modify reader-cache flags. Both delta and key-based
+memoization are supported; graphs without memoization also use parallel commit.
+The `native.owned_memories` contract is not required for parallel commit:
+externally mutable vectors are still distinct, and their ordinary per-evaluation
+cache invalidation remains in effect. As with the existing evaluator, callers
+must not mutate a model's RAM concurrently with its evaluation.
+
+With experimental idempotent commit caching enabled, memories that consume the
+same payload notification are joined into one component. Ordered helpers on
+that lane clear each notification only after all its consumers have observed
+it. This can reduce the available parallelism; cache correctness takes priority.
+
+`native.serial_memory_commits=1` selects the sequential reference implementation.
+`native.parallel_memory_commits=1` removes the cost threshold for experiments,
+but cannot split a conflicting component. The serial override takes precedence.
+`Model::__cpphdl_memory_commit_lanes` reports the generated lane count.
+`CPPHDL_NATIVE_DISPATCH=serial` executes those commit lanes sequentially as well;
+automatic and parallel dispatch use the existing persistent executor.
+
+`NativeParallelMemoryChecks.py` tests cross-memory read snapshots, interleaved
+colliding wide writes, helpers, clock edges, resets, rejected transactions,
+retries and concurrent copied models across memoization modes. Its optional
+`--tsan` run also covers shared payload notifications under commit caching.
+
+
+## Cached register transactions
+
+Write-tracked threaded models with implicit edges or explicit event logic
+(`state.clock < 0` for every update) cache register preparation in automatic
+lane-local groups. Updates sharing a register word remain together in priority
+order. Independent components are grouped by lane and trigger/reset conditions,
+so always-active event histories do not force unrelated registers to prepare.
+A group consumes changes to its next values, resets and committed words.
+Named-edge models retain the earlier preparation path.
+
+Trigger predicates remain live checks, not payload dependencies. Each group
+remembers its last **active** trigger combination; an inactive clock phase does
+not overwrite that key. Preparation runs when the group is active and either
+the key or its data dependencies changed. This avoids invalidating unchanged
+payloads solely because a rising-edge predicate changed at a falling edge.
+
+A group records whether preparing its inactive bank changed any words. Only
+those groups copy committed words before another preparation or inactive bank
+switch. Committed words are also dependencies, ensuring both banks converge.
+`__cpphdl_invalidate_state()` marks the bank copies stale as well as invalidating
+cached work after direct debug mutations.
+
+A failed transaction publishes neither state nor deferred notifications. The
+next attempt invalidates all register preparation groups and recomputes from
+committed state; private notification bits are retained until successful
+publication. They may cause conservative extra evaluation after recovery.
+
+`native.uncached_state_transactions=1` retains unconditional register
+preparation for comparisons. Automatic dispatch estimates pending state work
+from dirty transaction groups rather than the total register count.
+`NativeRuntimeSplitChecks.py` covers combined RAM/register caching, priority
+updates, unchanged failed retries, changed enables during recovery and idle
+bank switches. Reset-event and scheduling regressions cover explicit clocks,
+quiet events, asynchronous reset and concurrent callers.
+`NativeStateTransactionsChecks.py` compares scanned, uncached and cached paths
+against an independent oracle with two explicit clocks, competing writes,
+asynchronous resets, repeated failed transactions and copies after failure.
+
+### Experimental local evaluation tasks
+
+`native.scope_tasks=1` groups state and RAM sinks with the same nonempty
+frontend scope before cone placement. Scope groups are bounded at 256 original
+sink roots; ordered writers to the same state word remain indivisible. Empty
+or mixed scopes retain ordinary cone scheduling. This is an automatic locality
+hint, not a new hierarchy or a change to hardware equations. Each resulting
+task owns its complete combinational fan-in and private preparation storage.
+
+`native.tasks=N` requests up to N independent evaluation tasks, while the
+`emit(..., threads, ...)` argument still bounds worker threads. For example,
+24 tasks on six workers use a persistent pool and a dynamic task queue. Task
+zero remains on the caller for pinned host effects. State/RAM validation and
+publication still wait for all preparation tasks; RAM commits retain their
+separate ownership schedule. The generated `__cpphdl_task_count` reports
+actual tasks and `__cpphdl_thread_count` reports workers, after compaction.
+
+These options are experimental and disabled by default. Task count must be
+between the requested worker count and 256. Oversubscribed tasks currently
+reject host-overlap continuations. More tasks without locality can duplicate
+large shared cones and regress performance; measure both throughput and CPU
+work before selecting a configuration. The task queue only accepts independent
+groups, with no cross-task waits. This does not yet introduce an active-group
+queue or skip all bookkeeping for inactive groups.

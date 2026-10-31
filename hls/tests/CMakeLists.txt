@@ -1,7 +1,60 @@
 find_program(HLS_VERILATOR NAMES verilator HINTS "${CMAKE_SOURCE_DIR}/.conda/bin")
 find_program(HLS_MAKE NAMES gmake make REQUIRED)
 add_custom_target(hls_tests DEPENDS cpphdl)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME hls_fp32_mac_direct_native_graph
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32MacDirectChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-direct")
+set_tests_properties(hls_fp32_mac_direct_native_graph PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
+find_program(HLS_HDLCPP NAMES hdlcpp HINTS "${CMAKE_BINARY_DIR}/hdlcpp" "${CMAKE_SOURCE_DIR}/build/hdlcpp")
+if(HLS_HDLCPP)
+    add_test(NAME hls_fp32_reduction_retimed_replacement
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32ReductionPipelineChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "${HLS_HDLCPP}" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-reduction-retimed")
+    set_tests_properties(hls_fp32_reduction_retimed_replacement PROPERTIES TIMEOUT 1800 LABELS "hls;retiming;replacement")
+    add_test(NAME hls_fp32_reduction_simulation_branches
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32ReductionBranchesChecks.py"
+            --hdlcpp "${HLS_HDLCPP}" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-reduction-branches")
+    set_tests_properties(hls_fp32_reduction_simulation_branches PROPERTIES TIMEOUT 1800 LABELS "hls;native;replacement")
+    add_test(NAME hls_fp32_mac_simulation_branches
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32MacBranchesChecks.py"
+            --hdlcpp "${HLS_HDLCPP}" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-branches")
+    set_tests_properties(hls_fp32_mac_simulation_branches PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
+    add_test(NAME hls_fp32_mac_direct_rtl_equivalence
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32MacDirectChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}" --hdlcpp "${HLS_HDLCPP}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-direct-rtl")
+    set_tests_properties(hls_fp32_mac_direct_rtl_equivalence PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME hls_pipeline_replacement_native_graph
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/PipelineReplacementChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "${HLS_HDLCPP}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/pipeline-replacement"
+            --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(hls_pipeline_replacement_native_graph PROPERTIES TIMEOUT 600 LABELS "hls;retiming;replacement")
+    add_test(NAME hls_fp32_mac_replacement_native_graph
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/PipelineReplacementChecks.py"
+            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "${HLS_HDLCPP}" --fp32
+            --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-replacement"
+            --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(hls_fp32_mac_replacement_native_graph PROPERTIES TIMEOUT 1200 LABELS "hls;retiming;replacement")
+endif()
 include(Libcxx.cmake)
+add_executable(hls_pipeline_replacement_metadata PipelineReplacementMetadata.cpp)
+target_include_directories(hls_pipeline_replacement_metadata PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_definitions(hls_pipeline_replacement_metadata PRIVATE CPPHDL_GRAPH_CORE_ONLY)
+set_target_properties(hls_pipeline_replacement_metadata PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_dependencies(hls_tests hls_pipeline_replacement_metadata)
+add_test(NAME hls_pipeline_replacement_metadata COMMAND hls_pipeline_replacement_metadata)
+add_executable(hls_fp32_mac Fp32Mac.cpp)
+target_include_directories(hls_fp32_mac PRIVATE "${CMAKE_SOURCE_DIR}/include")
+set_target_properties(hls_fp32_mac PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_dependencies(hls_tests hls_fp32_mac)
+add_test(NAME hls_fp32_mac COMMAND hls_fp32_mac)
 add_executable(hls_fp32_math Fp32Math.cpp)
 set_target_properties(hls_fp32_math PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_options(hls_fp32_math PRIVATE -ffp-contract=off)

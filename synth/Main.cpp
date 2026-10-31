@@ -71,6 +71,13 @@ int main(int argc, char** argv) {
                    << ",\"initiation_interval\":1,\"feedback_policy\":\"floating\"}";
             comma = true;
         }
+        report << "],\"pipeline_replacements\":[";
+        comma=false;
+        for (const auto& p : graph.pipelines) for (const auto& a : graph.attributes)
+            if (a.scope==p.scope && a.name=="pipeline_replacement") {
+                report << (comma ? "," : "") << "{\"scope\":" << std::quoted(p.scope)
+                    << ",\"module\":" << std::quoted(a.value) << ",\"latency\":" << p.latency << '}'; comma=true;
+            }
         report << "]}\n";
         if (!report) throw std::runtime_error("cannot write timing report");
         graph.writeCpp(argv[4]);

@@ -43,8 +43,21 @@ int main(int argc,char**argv) {
     auto enable=g.binary("or",slowEdge,resetEdge,1);
     g.states.push_back({state,g.mux(reset_n,g.binary("add",state,constant(1,8),8),constant(0,8)),enable});
     g.ports.push_back({"value",state,false});
+    // Independent state cones force the parallel variants to keep all lanes.
+    for(unsigned b=0;b<8;++b) {
+        auto s=g.wire(32,"lane_state"+std::to_string(b),"state"),next=s;
+        for(unsigned j=0;j<16;++j)
+            next=g.binary("mul",g.binary("add",next,constant(j+b+1,32),32),constant(3,32),32);
+        g.states.push_back({s,next,fastEdge});
+        g.ports.push_back({"out"+std::to_string(b),s,false});
+    }
+    auto original=g;
     g.emit(argv[1]);
-    g.attributes.push_back({"","native.quiet_events","1"});g.emit(argv[2],2);
+    auto quiet=original;quiet.attributes.push_back({"","native.quiet_events","1"});quiet.emit(argv[2],2);
+    for(unsigned n:{2u,4u,6u}) {
+        auto parallel=original;parallel.attributes.push_back({"","native.quiet_events","1"});
+        parallel.emit(std::string(argv[2])+std::to_string(n),16,n,false,false,true,false,true);
+    }
     // State-derived clocks are still rejected, unlike labeled reset events.
     Graph bad; bad.clockContract=ClockContract::ExplicitEvents;
     auto derived=bad.wire(1,"derived","state");
@@ -86,4 +99,46 @@ int main() {
 ''')
     run([*flags, runner, '-o', work / 'run'])
     run([work / 'run'])
+    parallel = work / 'parallel.cpp'
+    parallel.write_text(r'''
+#define cpphdl_native plain
+#include "plain.h"
+#undef cpphdl_native
+#define cpphdl_native quiet2
+#include "quiet.h2"
+#undef cpphdl_native
+#define cpphdl_native quiet4
+#include "quiet.h4"
+#undef cpphdl_native
+#define cpphdl_native quiet6
+#include "quiet.h6"
+#undef cpphdl_native
+#include <cassert>
+template<class M> auto outputs(const M& m){return std::array{m.value,m.out0,m.out1,m.out2,m.out3,m.out4,m.out5,m.out6,m.out7};}
+template<class M> void check(){
+    plain::Model reference;M model;std::array<uint32_t,8> expected{};
+    bool previousFast=false;unsigned quiet=0;
+    for(unsigned i=0;i<8192;++i){
+        // Extended stopped-clock intervals exercise cached bank transitions.
+        bool fast=i%257<160?(i/2)%2:false,slow=(i/13)%2,reset=i%89<11;
+        auto drive=[&](auto& m){m.clk[0]=fast;m.slow[0]=slow;m.reset[0]=reset;};
+        drive(reference);drive(model);reference.step();model.eval(false);
+        if(model.__cpphdl_advance_quiet_event()){++quiet;model.eval(false);}else model.step();
+        if(fast&&!previousFast)for(unsigned b=0;b<8;++b)for(unsigned j=0;j<16;++j)expected[b]=(expected[b]+j+b+1)*3u;
+        auto actual=outputs(model);assert(actual==outputs(reference));
+        for(unsigned b=0;b<8;++b)assert(actual[b+1][0]==expected[b]);
+        previousFast=fast;
+    }
+    assert(quiet>100);
+}
+int main(){
+    static_assert(quiet2::Model::__cpphdl_thread_count==2);
+    static_assert(quiet4::Model::__cpphdl_thread_count==4);
+    static_assert(quiet6::Model::__cpphdl_thread_count==6);
+    check<quiet2::Model>();check<quiet4::Model>();check<quiet6::Model>();
+}
+''')
+    run([args.cxx, '-std=c++23', '-O1', '-pthread', '-fsanitize=undefined', '-fno-sanitize-recover=all',
+         '-I' + str(repo / 'include'), parallel, '-o', work / 'parallel'])
+    run([work / 'parallel'])
 print('native reset events: stopped/independent clocks, quiet timestamps and state-clock rejection PASS')

@@ -47,9 +47,20 @@ int main(int argc, char** argv) {
     }
     g.memoryWrites.push_back({0,address,data,enable,0,false});
     const unsigned mode = std::stoul(argv[2]), threads = std::stoul(argv[3]);
-    if (mode >= 3) g.attributes.push_back({"","native.parallel_roots","1"});
-    if (mode == 4) g.attributes.push_back({"","native.cache_state_roots","1"});
-    g.emit(argv[1],2,threads,false,false,mode>0,mode>0,mode>=2);
+    if (mode == 7) {
+        auto clock=input("clock_level",1);
+        auto previous=g.wire(1,"event history","state");
+        auto rising=g.binary("and",clock,g.unary("not",previous),1);
+        g.clockContract=ClockContract::ExplicitEvents;g.clocks.clear();
+        for(auto& state:g.states){state.clock=-1;state.trigger=rising;}
+        for(auto& write:g.memoryWrites){write.clock=-1;write.enabled=g.binary("and",write.enabled,rising,1);}
+        g.states.push_back({previous,clock,{1},-1});
+    }
+    if (mode == 3 || mode == 4) g.attributes.push_back({"","native.parallel_roots","1"});
+    if (mode == 4 || mode == 8 || mode == 9) g.attributes.push_back({"","native.cache_state_roots","1"});
+    if (mode >= 5 && mode != 9) g.attributes.push_back({"","native.owned_memories","1"});
+    if(argc>4)g.attributes.push_back({"","native.guard_chunk_calls","1"});
+    g.emit(argv[1],2,threads,false,false,mode>0,mode>0,mode>=2 && mode!=5);
 }
 ''')
     flags = [args.cxx, '-std=c++23', '-O1', '-I' + str(repo / 'include')]
@@ -69,29 +80,45 @@ int main() {
         for(unsigned a=0;a<16;++a) assert(model.memory0[a][0]==ram[a]);
     };
     for(unsigned i=0;i<64000;++i) {
-        model.clock=(i/3)%2; model.enable[0]=(i/11)%2; model.reset[0]=i%193==0;
+        bool clock=(i/3)%2;
+#ifdef TEST_EXPLICIT
+        model.clock_level[0]=clock;
+#else
+        model.clock=clock;
+#endif
+        model.enable[0]=(i/11)%2; model.reset[0]=i%193==0;
         model.data[0]=i*7919; model.address[0]=(i/29)%16;
-        if(i%17==0) model.memory0[model.address[0]][0]=ram[model.address[0]]=i*13;
+        if(i%17==0) {
+            model.memory0[model.address[0]][0]=ram[model.address[0]]=i*13;
+            if constexpr(cpphdl_native::Model::__cpphdl_owned_memories)model.__cpphdl_invalidate_memories();
+        }
         model.eval(false); check();
-        if(model.clock && !previous) {
+        if(clock && !previous) {
             for(unsigned lane=0;lane<4;++lane)
                 if(model.reset[0]) state[lane]=0;
                 else if(model.enable[0]) state[lane]+=ram[model.address[0]]+model.data[0]+lane;
             if(model.enable[0]) ram[model.address[0]]=model.data[0];
         }
-        model.step(); previous=model.clock; check();
+        model.step(); previous=clock; check();
         if(i%127==0) {
             auto copy=model; copy.eval(false);
             assert(copy.read==model.read && copy.state_out0==model.state_out0);
-            copy.memory0[model.address[0]][0]^=0x1234; copy.eval(false);
+            copy.memory0[model.address[0]][0]^=0x1234;
+            if constexpr(cpphdl_native::Model::__cpphdl_owned_memories)copy.__cpphdl_invalidate_memories();
+            copy.eval(false);
             assert(copy.read[0]==(model.read[0]^0x1234));
             model.eval(false); check();
         }
     }
 }
 ''')
-    for mode, threads in ((0,1), (1,1), (1,2), (2,1), (2,2), (3,2), (4,2), (4,1)):
-        run([work / 'emit', work / 'model.h', mode, threads])
-        run([*flags, '-O2', '-pthread', runner, '-o', work / 'run'])
+    configurations=[(mode,threads,False) for mode,threads in ((0,1), (1,1), (1,2), (2,1), (2,2), (3,2), (4,2), (4,1),
+                          (5,1), (5,6), (6,1), (6,6), (7,1), (7,6))]
+    configurations += [(mode,threads,True) for mode in (2,6,7) for threads in (1,6)]
+    configurations += [(mode,threads,False) for mode in (8,9) for threads in (1,6)]
+    configurations += [(mode,6,True) for mode in (8,9)]
+    for mode, threads, guard in configurations:
+        run([work / 'emit', work / 'model.h', mode, threads,*(['guard'] if guard else [])])
+        run([*flags, '-O2', '-pthread', *(['-DTEST_EXPLICIT'] if mode==7 else []), runner, '-o', work / 'run'])
         run([work / 'run'])
-        print(f'RAM oracle: mode={mode}, threads={threads}, 64000 transactions PASS', flush=True)
+        print(f'RAM oracle: mode={mode}, threads={threads}, guard={guard}, 64000 transactions PASS', flush=True)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <bit>
 #include <iostream>
 #include "../include/cpphdl_graph.h"
 #include "slang/driver/Driver.h"
@@ -87,6 +88,21 @@ class Lowering {
         return result;
     }
     void discoverMemories() {
+        // Whole-array assignments are register-bank updates. Representing the
+        // reads as RAM while assigning the packed bank as ordinary state
+        // creates two independent stores (and reads permanent zeroes).
+        std::set<const ValueSymbol*> wholeArrayWrites;
+        auto wholeArrays=makeVisitor([&](auto& self,const AssignmentExpression& assignment) {
+            const auto& left=assignment.left();
+            if(left.kind==ExpressionKind::NamedValue || left.kind==ExpressionKind::HierarchicalValue) {
+                const auto& symbol=left.as<ValueExpressionBase>().symbol;
+                if(symbol.getType().getCanonicalType().kind==SymbolKind::FixedSizeUnpackedArrayType)
+                    wholeArrayWrites.insert(&symbol);
+            }
+            self.visitDefault(assignment);
+        });
+        for(auto symbol:hardware)if(symbol->kind==SymbolKind::ProceduralBlock)
+            symbol->as<ProceduralBlockSymbol>().getBody().visit(wholeArrays);
         auto visitor=makeVisitor([&](auto& self,const AssignmentExpression& assignment) {
             if(assignment.isNonBlocking()) {
                 const auto* base=&assignment.left();
@@ -97,7 +113,7 @@ class Lowering {
                 if(base->kind==ExpressionKind::NamedValue || base->kind==ExpressionKind::HierarchicalValue) {
                     const auto& symbol=base->as<ValueExpressionBase>().symbol;
                     const auto& type=symbol.getType().getCanonicalType();
-                    if(type.kind==SymbolKind::FixedSizeUnpackedArrayType && !ram.count(&symbol)) {
+                    if(type.kind==SymbolKind::FixedSizeUnpackedArrayType && !ram.count(&symbol) && !wholeArrayWrites.count(&symbol)) {
                         const auto& array=type.as<FixedSizeUnpackedArrayType>();
                         if(!array.elementType.isIntegral())fail("RAM rows must be packed integral values",base->sourceRange);
                         ram[&symbol]=graph.memories.size();
@@ -117,11 +133,15 @@ class Lowering {
         throw std::runtime_error(message + (location ? " at " + std::string(manager.getFileName(location)) + ":" + std::to_string(manager.getLineNumber(location)) : ""));
     }
     static unsigned width(const Type& type) {
+        if (type.isFloating())
+            return type.getCanonicalType().as<FloatingType>().floatKind == FloatingType::ShortReal ? 32 : 64;
         auto count = type.getBitstreamWidth();
         if (!count || count > 1048576) throw std::runtime_error("non-fixed hardware type");
         return unsigned(count);
     }
     Value bits(const ConstantValue& value) {
+        if (value.isReal()) return constant(std::bit_cast<uint64_t>(double(value.real())),64);
+        if (value.isShortReal()) return constant(std::bit_cast<uint32_t>(float(value.shortReal())),32);
         Value result;
         if (value.isInteger()) {
             const auto& integer = value.integer();
@@ -238,7 +258,7 @@ class Lowering {
         if (expression.kind != ExpressionKind::Assignment) {
             EvalContext context(ASTContext(*scope, LookupLocation::max));
             auto value = expression.eval(context);
-            if (value && (value.isInteger() || value.isUnpacked())) return bits(value);
+            if (value && (value.isInteger() || value.isUnpacked() || value.isReal() || value.isShortReal())) return bits(value);
         }
         using E = ExpressionKind;
         switch (expression.kind) {
@@ -249,6 +269,15 @@ class Lowering {
             return lvalueReference;
         case E::Conversion: {
             const auto& conversion = expression.as<ConversionExpression>();
+            const auto& from=*conversion.operand().type;
+            if(expression.type->isFloating()) {
+                auto operand=expr(conversion.operand());
+                if(from.isFloating() && width(from)==width(*expression.type))return operand;
+                if(width(from)>64)fail("real conversion requires an operand of at most 64 bits",expression.sourceRange);
+                return graph.add(from.isFloating()?"fp_cast":from.isSigned()?"fp_from_signed":"fp_from_unsigned",
+                                 width(*expression.type),operand);
+            }
+            if(from.isFloating())fail("numeric real-to-integer conversion unsupported; use $realtobits/$shortrealtobits for bit patterns",expression.sourceRange);
             return resize(expr(conversion.operand()),width(*expression.type),conversion.operand().type->isSigned());
         }
         case E::MemberAccess: {
@@ -293,6 +322,17 @@ class Lowering {
         }
         case E::BinaryOp: {
             const auto& operation = expression.as<BinaryExpression>();
+            if(operation.left().type->isFloating() || operation.right().type->isFloating()) {
+                using B=BinaryOperator;
+                static const std::map<B,std::string> ops{{B::Add,"fp_add"},{B::Subtract,"fp_sub"},{B::Multiply,"fp_mul"},{B::Divide,"fp_div"},
+                    {B::Equality,"fp_eq"},{B::Inequality,"fp_ne"},{B::LessThan,"fp_lt"},{B::LessThanEqual,"fp_le"},
+                    {B::GreaterThan,"fp_gt"},{B::GreaterThanEqual,"fp_ge"}};
+                if(!ops.count(operation.op))fail("unsupported real binary operator",expression.sourceRange);
+                auto left=expr(operation.left()),right=expr(operation.right());
+                if(!operation.left().type->isFloating() || !operation.right().type->isFloating() || left.size()!=right.size())
+                    fail("real operands require elaborated common precision",expression.sourceRange);
+                return graph.add(ops.at(operation.op),width(*expression.type),left,right);
+            }
             bool sign = operation.left().type->isSigned() &&
                         (OpInfo::isShift(operation.op) || operation.right().type->isSigned());
             return binary(operation.op,expr(operation.left()),expr(operation.right()),width(*expression.type),sign);
@@ -301,6 +341,13 @@ class Lowering {
             const auto& operation = expression.as<UnaryExpression>();
             auto value = expr(operation.operand());
             using U = UnaryOperator;
+            if(operation.operand().type->isFloating()) {
+                if(operation.op==U::Plus)return value;
+                if(operation.op==U::Minus) { // Negation flips the sign, including signed zero and NaNs.
+                    auto sign=Value(value.size(),0);sign.back()=1;return graph.binary("xor",value,sign,value.size());
+                }
+                fail("unsupported real unary operator",expression.sourceRange);
+            }
             switch(operation.op) {
             case U::Plus: return value;
             case U::Minus: return graph.binary("sub",Value(value.size(),0),value,value.size());
@@ -350,7 +397,14 @@ class Lowering {
         }
         case E::Call: {
             const auto& call = expression.as<CallExpression>();
-            if (call.isSystemCall()) fail("nonconstant system call " + std::string(call.getSubroutineName()),expression.sourceRange);
+            if (call.isSystemCall()) {
+                auto name=call.getSubroutineName();
+                if(name=="$bitstoreal" || name=="$realtobits" || name=="$bitstoshortreal" || name=="$shortrealtobits") {
+                    if(call.arguments().size()!=1)fail("invalid real bit conversion",expression.sourceRange);
+                    return resize(expr(*call.arguments()[0]),width(*expression.type));
+                }
+                fail("nonconstant system call " + std::string(name),expression.sourceRange);
+            }
             const auto& function = *std::get<0>(call.subroutine);
             if(!function.returnValVar) {
                 if(call.hasOutputArgs())fail("task output/ref arguments are not supported",expression.sourceRange);
@@ -564,6 +618,41 @@ class Lowering {
         };
         combine(pending,yesPending,true);
         combine(current,yes,false);
+    }
+    // Parameter guards are elaboration checks, never simulated hardware state.
+    // Reject any live assignment, runtime condition, timing control or other
+    // side effect instead of silently dropping a general initial process.
+    void initialCheck(const Statement& stmt) {
+        using S=StatementKind;
+        if (stmt.kind==S::Empty) return;
+        if (stmt.kind==S::List) { for(auto child:stmt.as<StatementList>().list) initialCheck(*child); return; }
+        if (stmt.kind==S::Block && stmt.as<BlockStatement>().blockKind==StatementBlockKind::Sequential) {
+            initialCheck(stmt.as<BlockStatement>().body); return;
+        }
+        if (stmt.kind==S::Conditional) {
+            const auto& condition=stmt.as<ConditionalStatement>(); bool selected=true;
+            for (const auto& item:condition.conditions) {
+                if(item.pattern) fail("initial parameter guard pattern unsupported",stmt.sourceRange);
+                EvalContext context(ASTContext(*scope,LookupLocation::max));
+                auto value=item.expr->eval(context);
+                if(!value || !value.isInteger()) fail("initial guard must be a constant parameter expression",stmt.sourceRange);
+                auto constantValue=number(bits(value));
+                if(!constantValue) fail("initial parameter guard must be known",stmt.sourceRange);
+                selected &= *constantValue!=0;
+            }
+            if(selected) initialCheck(condition.ifTrue);
+            else if(condition.ifFalse) initialCheck(*condition.ifFalse);
+            return;
+        }
+        if(stmt.kind==S::ExpressionStatement) {
+            const auto& expression=stmt.as<ExpressionStatement>().expr;
+            if(expression.kind==ExpressionKind::Call) {
+                const auto& call=expression.as<CallExpression>();
+                if(call.isSystemCall() && (call.getSubroutineName()=="$fatal" || call.getSubroutineName()=="$error"))
+                    fail("initial parameter assertion failed: "+std::string(call.getSubroutineName()),stmt.sourceRange);
+            }
+        }
+        fail("initial process only supports constant parameter assertions",stmt.sourceRange);
     }
     void statement(const Statement& stmt) {
         // Unreachable statements (including subsequent loop iterations)
@@ -804,7 +893,8 @@ public:
             } else {
                 auto& block = symbol->as<ProceduralBlockSymbol>();
                 if (block.isFromAssertion) fail("assertion process requires synthesis guard");
-                if (block.procedureKind == ProceduralBlockKind::Initial || block.procedureKind == ProceduralBlockKind::Final)
+                if (block.procedureKind == ProceduralBlockKind::Initial) { initialCheck(block.getBody()); continue; }
+                if (block.procedureKind == ProceduralBlockKind::Final)
                     fail("initial/final process unsupported",block.getBody().sourceRange);
                 const Statement* body = &block.getBody();
                 bool sequential = false; Value enable{1};
@@ -818,6 +908,8 @@ public:
             }
         }
         graph.writeCpp(output);
+        std::ofstream ports(output+".ports.tsv");
+        for(const auto& port:graph.ports)ports<<port.name<<'\t'<<port.bits.size()<<'\t'<<port.input<<'\n';
         if(!externalPorts.empty()) {
             std::ofstream metadata(output+".externals.tsv");
             for(const auto& p:externalPorts)metadata<<p.instance<<'\t'<<p.module<<'\t'<<p.path<<'\t'<<p.port<<'\t'<<p.pin<<'\t'<<p.input<<'\t'<<p.bits<<'\n';
@@ -827,6 +919,49 @@ public:
 
 inline int run(int argc, char** argv) {
     try {
+        bool preserve=false;
+        for(int i=2;i<argc;++i)preserve|=std::string_view(argv[i])=="--preserve-synthesis";
+        if(preserve) {
+            std::string output;
+            std::vector<std::string> base;
+            for(int i=0;i<argc;++i) {
+                std::string arg=argv[i];
+                if(arg=="--preserve-synthesis")continue;
+                if(arg=="--output") {
+                    if(++i==argc)throw std::runtime_error("missing output path");
+                    output=argv[i];continue;
+                }
+                if(arg=="-DSYNTHESIS" || arg.starts_with("-DSYNTHESIS=") || arg=="-USYNTHESIS" ||
+                   ((arg=="-D" || arg=="-U") && i+1<argc &&
+                     (std::string_view(argv[i+1])=="SYNTHESIS" || std::string_view(argv[i+1]).starts_with("SYNTHESIS="))))
+                    throw std::runtime_error("--preserve-synthesis selects both branches; omit explicit SYNTHESIS defines/undefines");
+                base.push_back(std::move(arg));
+            }
+            if(output.empty() || std::filesystem::exists(output))throw std::runtime_error("--output must name a new C++ file");
+            auto read=[](const std::string& path) {
+                std::ifstream f(path);if(!f)throw std::runtime_error("cannot read branch output: "+path);
+                return std::string(std::istreambuf_iterator<char>(f),{});
+            };
+            for(bool synthesis:{true,false}) {
+                auto args=base;args.push_back(synthesis?"-DSYNTHESIS":"-USYNTHESIS");
+                args.push_back("--output");args.push_back(output+(synthesis?".synthesis.cc":".simulation.cc"));
+                std::vector<char*> pointers;for(auto& arg:args)pointers.push_back(arg.data());
+                if(int status=run(int(pointers.size()),pointers.data()))return status;
+            }
+            for(const std::string suffix:{".ports.tsv",".externals.tsv"}) {
+                auto synth=output+".synthesis.cc"+suffix,sim=output+".simulation.cc"+suffix;
+                bool left=std::filesystem::exists(synth),right=std::filesystem::exists(sim);
+                if(left!=right || (left && read(synth)!=read(sim)))
+                    throw std::runtime_error("SYNTHESIS and simulation branches have different interfaces: "+suffix);
+                if(left)std::filesystem::copy_file(sim,output+suffix);
+            }
+            std::ofstream combined(output);
+            combined<<"// Both SystemVerilog SYNTHESIS alternatives were independently elaborated.\n"
+                    <<"#ifdef SYNTHESIS\n"<<read(output+".synthesis.cc")
+                    <<"\n#else\n"<<read(output+".simulation.cc")<<"\n#endif\n";
+            if(!combined)throw std::runtime_error("cannot write dual-branch conversion");
+            return 0;
+        }
         std::string output;
         std::set<std::string> external;
         std::vector<const char*> args{argv[0]};

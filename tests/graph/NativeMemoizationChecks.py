@@ -70,19 +70,50 @@ int main(int argc,char**argv) {
  auto owned=g;owned.attributes.push_back({"","native.parallel_roots","1"});
  owned.attributes.push_back({"","native.cache_state_roots","1"});
  owned.emit(std::string(argv[1])+"delta_owned.h",19,6,false,false,true,true,true);
+ auto guarded=g;guarded.attributes.push_back({"","native.guard_chunk_calls","1"});
+ bool guardRejected=false;
+ try{auto bad=guarded;bad.emit(std::string(argv[1])+"bad_guard.h",19,6,false,false,true);}
+ catch(const std::runtime_error&){guardRejected=true;}assert(guardRejected);
+ auto guardedOne=guarded;
+ guarded.emit(std::string(argv[1])+"guarded.h",19,6,false,false,true,true,true);
+ guardedOne.emit(std::string(argv[1])+"guarded_one.h",17,1,false,false,true,false,true);
+ auto ownedSerialRoots=g;ownedSerialRoots.attributes.push_back({"","native.cache_state_roots","1"});
+ bool ownedRejected=false;
+ try{auto bad=ownedSerialRoots;bad.emit(std::string(argv[1])+"bad_owned_roots.h",19,6,false,false,true);}
+ catch(const std::runtime_error&){ownedRejected=true;}assert(ownedRejected);
+ ownedSerialRoots.emit(std::string(argv[1])+"owned_serial_roots.h",19,6,false,false,true,true,true);
+ auto ownedSingle=g;ownedSingle.attributes.push_back({"","native.cache_state_roots","1"});
+ ownedSingle.emit(std::string(argv[1])+"owned_single.h",17,1,false,false,true,false,true);
+ Graph compacted;compacted.clockContract=ClockContract::NamedEdges;compacted.clocks.push_back({"clock",100});
+ auto direct=compacted.wire(64,"value","input");
+ compacted.ports.push_back({"value",direct,true});compacted.ports.push_back({"result",direct,false});
+ compacted.attributes.push_back({"","native.cache_state_roots","1"});
+ compacted.emit(std::string(argv[1])+"owned_compacted.h",17,6,false,false,true,false,true);
 }
 ''')
 run([a.cxx,'-std=c++23','-O1','-I'+str(root/'include'),work/'emit.cpp','-o',work/'emit'])
 run([work/'emit',str(work)+'/'])
-for name in ('plain.h','cached_only.h','cached.h','cached_one.h','cached_wide.h','delta.h','delta_one.h','delta_owned.h'):
+for name in ('plain.h','cached_only.h','cached.h','cached_one.h','cached_wide.h','delta.h','delta_one.h','delta_owned.h','guarded.h','guarded_one.h','owned_serial_roots.h','owned_single.h'):
     fields=re.findall(r'uint(?:8|16|32|64)_t state\d+ =', (work/name).read_text())
     if len(fields)!=13:raise RuntimeError(f'{name}: expected 12 written and one fixed live state word, got {len(fields)}')
 if '__cpphdl_key{{' not in (work/'cached_wide.h').read_text():
     raise RuntimeError('Wide-key array comparison was not exercised')
+if 'if(model.__cpphdl_dirty[' not in (work/'guarded.h').read_text() or 'if(__cpphdl_dirty[' not in (work/'guarded_one.h').read_text():
+    raise RuntimeError('Caller dirty guards were not exercised')
+if '__cpphdl_write_tracking = true' not in (work/'owned_serial_roots.h').read_text():
+    raise RuntimeError('Write tracking without parallel root scans was not exercised')
+if '__cpphdl_root_keys' in (work/'owned_serial_roots.h').read_text():
+    raise RuntimeError('Tracked registers must not retain scanned root snapshots')
+if '__cpphdl_root_state_bank' in (work/'owned_single.h').read_text():
+    raise RuntimeError('Single-lane state must not use bank observations')
+(work/'compacted.cpp').write_text('#include "owned_compacted.h"\n#include <cassert>\n'
+    'int main(){cpphdl_native::Model m;m.value[0]=0x1234;m.value[1]=0xabcd;m.eval();assert(m.result==m.value);m.step();assert(m.result==m.value);}\n')
+run([a.cxx,'-std=c++23','-O1','-pthread','-I'+str(root/'include'),work/'compacted.cpp','-o',work/'compacted'])
+run([work/'compacted'])
 # Compile each generated model separately: a single translation unit containing
 # all variants exhausts memory on small CI machines before it can run the oracle.
 models = ('plain', 'cached_only', 'cached', 'cached_one', 'cached_wide',
-          'delta', 'delta_one', 'delta_owned')
+          'delta', 'delta_one', 'delta_owned', 'guarded', 'guarded_one', 'owned_serial_roots', 'owned_single')
 (work/'adapter.h').write_text(r'''
 #pragma once
 #include <array>
@@ -115,7 +146,7 @@ for name in models:
     members=[member for i in range(12) for member in (f'out{i}',f'state_out{i}')]
     members+=['packed','fixed']
     output_code=''.join('r.insert(r.end(),m.'+member+'.begin(),m.'+member+'.end());' for member in members)
-    adaptive = name not in ('plain', 'cached_one', 'delta_one')
+    adaptive = name not in ('plain', 'cached_one', 'delta_one', 'guarded_one', 'owned_single')
     policy_code='m.__cpphdl_dispatch_policy=p;' if adaptive else ''
     serial_code='m.__cpphdl_serial_dispatch' if adaptive else 'true'
     phase_code=r'''
@@ -165,7 +196,7 @@ int main(){
  uint64_t random=42;bool serial=false,parallel=false;
  for(unsigned i=0;i<4096;++i){
   if(i%101==0){random^=random<<13;random^=random>>7;random^=random<<17;}
-  for(unsigned index:{1u,5u,7u})models[index]->policy(i%3==0?Policy::Serial:(i%3==1?Policy::Parallel:Policy::Automatic));
+  for(unsigned index:{1u,5u,7u,8u,10u})models[index]->policy(i%3==0?Policy::Serial:(i%3==1?Policy::Parallel:Policy::Automatic));
   for(auto& m:models)m->inputs(i,random);
   for(bool commit:{false,true,false}){
    models[0]->eval(commit);auto reference=models[0]->outputs();
