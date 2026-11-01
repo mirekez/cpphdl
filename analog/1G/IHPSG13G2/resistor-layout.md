@@ -4,8 +4,9 @@
 PCell from requested resistance and explicit width. The pinned PDK calculation
 includes body sheet resistance, linewidth correction and metal-to-poly contact
 resistance. Dimensions round upward and nominal resistance must stay within
-1% of the request. Width starts at 2 µm; large-current resistors need a wider
-choice. The [IHP process specifications](https://ihp-open-pdk-docs.readthedocs.io/en/latest/process_specs/02_process_control_params.html#rppd-specs)
+1% of the request. Default width is 2 µm; explicit widths down to the legal
+0.5 µm minimum are supported and tested for the clock's low-current bias
+branches. Large-current resistors need a wider choice. The [IHP process specifications](https://ihp-open-pdk-docs.readthedocs.io/en/latest/process_specs/02_process_control_params.html#rppd-specs)
 describe the material, temperature dependence and current-density limits.
 
 The cell exposes Metal2 `PLUS`, `MINUS` and `SUB` ports. Via1 contacts reach
@@ -19,8 +20,10 @@ tap resistance. The process simulation instance uses the three-terminal
 | 100 Ω | 20 µm | 7.43 µm | 100.0610 Ω | 311.1408 µm² |
 | 2.5 kΩ | 2 µm | 19.02 µm | 2,500.2044 Ω | 157.4640 µm² |
 | 100 kΩ | 2 µm | 772 µm | 100,094.8205 Ω | 5,036.7744 µm² |
+| 10 kΩ | 0.5 µm | 19.19 µm | 10,000.4743 Ω | 121.8606 µm² |
+| 20 kΩ | 0.5 µm | 38.66 µm | 20,004.8221 Ω | 218.8212 µm² |
 
-All three pass strict three-port resistor/tap LVS and complete local DRC,
+All five pass strict three-port resistor/tap LVS and complete local DRC,
 including pin and antenna checks. Removing the physical vias fails LVS while
 the schematic and terminal labels remain intact. The isolated layouts retain
 global minimum-density failures; the report keeps `full_chip_drc` false.

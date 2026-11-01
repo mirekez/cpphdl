@@ -9,7 +9,8 @@ namespace analog::one_g {
 // the oscillator output before a MOS phase/frequency detector and passive loop
 // filter. This is the reference clock path; receive data timing is a separate
 // loop and must not be mistaken for locking the slave to the local reference.
-class reference_clock_multiplier : public IC {
+template <class Oscillator = ring_vco>
+class basic_reference_clock_multiplier : public IC {
 public:
     _PORT(electrical) REF;
     _PORT(electrical) CLEAR;
@@ -19,10 +20,11 @@ public:
     cmos_divide2 feedback;
     cmos_phase_frequency_detector detector;
     lead_lag_filter filter;
-    ring_vco oscillator;
+    Oscillator oscillator;
     resistance smoothing_resistance{1000};
     capacitance_value smoothing_storage{3e-12};
     capacitance_value stage_storage{.05e-12}, logic_storage{5e-15};
+    bool weak_pump_return{true};
     mos_model logic_channel{channel_strength(.01), voltage(.35)};
 
     void _assign() override {
@@ -46,7 +48,10 @@ public:
         PUMP = resistor(HIGH, resistance(10000));
         LOW = nmos(detector.DOWN, PUMP, logic_channel);
         LOW = resistor(Vss, resistance(10000));
-        HIGH = resistor(Vss, resistance(1e9));
+        if (weak_pump_return)
+            HIGH = resistor(Vss, resistance(1e9));
+        else
+            HIGH = capacitor(Vss, logic_storage);
         PUMP = capacitor(Vss, logic_storage);
         filter.IN = PUMP;
         filter.OUT = FILTERED;
@@ -73,4 +78,5 @@ public:
         REF = capacitor(Vss, capacitance_value(2e-15));
     }
 };
+class reference_clock_multiplier : public basic_reference_clock_multiplier<> {};
 } // namespace analog::one_g

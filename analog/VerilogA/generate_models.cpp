@@ -1,5 +1,6 @@
 #include <VerilogA/export.hpp>
 #include <basic/basic.hpp>
+#include <basic/balanced_ring_vco.hpp>
 #include <basic/level_down.hpp>
 #include <basic/nmos_source_follower.hpp>
 #include <basic/differential_source_follower.hpp>
@@ -106,6 +107,8 @@ int main(int argc, char** argv) {
         MODEL(cmos_xor, "cmos_xor", PORT(A), PORT(B), PORT(Y));
         MODEL(current_starved_inverter, "current_starved_inverter", PORT(A), PORT(Y), PORT(CONTROL));
         MODEL(ring_vco, "ring_vco", PORT(CONTROL), PORT(OUT));
+        MODEL(balanced_starved_inverter, "balanced_starved_inverter", PORT(A), PORT(Y), PORT(CONTROL), PORT(CHARGE_BIAS));
+        MODEL(balanced_ring_vco, "balanced_ring_vco", PORT(CONTROL), PORT(OUT));
         MODEL(lead_lag_filter, "lead_lag_filter", PORT(IN), PORT(OUT));
         MODEL(pll, "pll", PORT(REF), PORT(OUT));
         MODEL(variable_gain_amplifier, "variable_gain_amplifier", PORT(IN), PORT(OUT), PORT(BIAS), PORT(CONTROL));

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the checked-in Verilog-A catalog from native C++ elaboration."""
+"""Regenerate the Verilog-A catalog from native C++ elaboration."""
 import argparse
 import difflib
 import os
@@ -69,13 +69,15 @@ def relative_location(match, root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path, help="cpphdl package root")
+    parser.add_argument("--output", type=Path, help="catalog destination (default: ROOT/analog)")
     parser.add_argument("--models", required=True, type=Path, help="native model catalog executable")
     parser.add_argument("--example", action="append", default=[], metavar="NAME=EXECUTABLE")
-    parser.add_argument("--check", action="store_true", help="compare against tracked files without changing them")
+    parser.add_argument("--check", action="store_true", help="compare against the destination catalog without changing it")
     parser.add_argument("--openvaf", type=Path, help="also compile every generated .va into temporary OSDI files")
     args = parser.parse_args()
     root = args.root.resolve()
     analog = root / "analog"
+    destination_root = (args.output or analog).resolve()
     executables = dict(value.split("=", 1) for value in args.example)
     actual = {path.parent.name for path in (analog / "examples").glob("*/main.cpp")}
     if actual != EXAMPLES.keys() | LIMITS.keys():
@@ -107,7 +109,7 @@ def main():
             compiled.mkdir()
             for index, path in enumerate(sorted(output.rglob("*.va"))):
                 run([args.openvaf, path, "-o", compiled / f"model_{index}.osdi"])
-        current = generated_files(analog)
+        current = generated_files(destination_root)
         if args.check:
             differences = sorted(path for path in current.keys() | expected.keys()
                                  if current.get(path) != expected.get(path))
@@ -120,13 +122,13 @@ def main():
                 return 1
         else:
             for path in current.keys() - expected.keys():
-                (analog / path).unlink()
+                (destination_root / path).unlink()
             for path, contents in expected.items():
-                target = analog / path
+                target = destination_root / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(contents)
             for name in actual:
-                target = analog / "examples/generated" / name / "README.md"
+                target = destination_root / "examples/generated" / name / "README.md"
                 target.parent.mkdir(parents=True, exist_ok=True)
                 text = f"# {name}\n\n[Original C++ model and explanation](../../{name}/README.md).\n\n"
                 if name in LIMITS:

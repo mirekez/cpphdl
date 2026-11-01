@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check source truth, slips and 39-symbol PCS latency from immutable traces."""
+"""Check source truth, slips and 42-symbol PCS latency from immutable traces."""
 import argparse
 import gzip
 import json
@@ -37,8 +37,8 @@ def audit(path, fixture_directory):
             # Trace observes pre-edge outputs. They belong to the latest
             # previously accepted recovered symbol, never this edge's input.
             if output_valid:
-                if latest is None or output != source_words[role].get(latest - 39, 0):
-                    raise ValueError(f'case {case} clock {clock}: source/39-symbol latency mismatch')
+                if latest is None or output != source_words[role].get(latest - 42, 0):
+                    raise ValueError(f'case {case} clock {clock}: source/42-symbol latency mismatch')
                 result['words'] += 1
                 result['data_bytes'] += bool(output & 256)
             if symbol_valid:
@@ -57,7 +57,7 @@ def audit(path, fixture_directory):
                 latest = symbol
     if len(cases) != 18 or any(c['data_bytes'] != 1598 or c['words'] < 4000 for c in cases):
         raise ValueError('missing decoded frame bytes or latency coverage')
-    return dict(status='pass', pcs_latency_accepted_symbols=39, cases=cases)
+    return dict(status='pass', pcs_latency_accepted_symbols=42, cases=cases)
 
 
 if __name__ == '__main__':

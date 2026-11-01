@@ -1,0 +1,19 @@
+# One write port and one synchronous read port, independent positive clocks.
+# An 11-bit frame word occupies 16 physical bits; four depth banks hold 4096.
+bram $__IHP_FRAME_1024X16
+  init 0
+  abits 10
+  dbits 16
+  groups 2
+  ports 1 1
+  wrmode 1 0
+  enable 1 1
+  transp 0 0
+  clocks 1 2
+  clkpol 1 1
+endbram
+
+match $__IHP_FRAME_1024X16
+  min bits 11264
+  min efficiency 65
+endmatch

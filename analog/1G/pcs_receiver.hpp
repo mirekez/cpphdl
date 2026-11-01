@@ -14,7 +14,7 @@ class PCSReceiver : public Module {
     // mostly constant GMII byte in every delay slot wastes registers and makes
     // old synthesis tools repeatedly propagate constants through the FIFO.
     static constexpr unsigned TAG_BITS = 11;
-    static constexpr unsigned TAG_DEPTH = 37;
+    static constexpr unsigned TAG_DEPTH = 40;
 
 public:
     // Accepted symbol ticks from input metadata to the paired output word.
@@ -37,14 +37,13 @@ private:
     PCSTrellisDecoder decoder;
     reg<u<12>> hard_delayed{};
     reg<u<32>> samples_delayed{}, samples_for_metrics{};
-    reg<u<28>> control_history{};
+    reg<u<42>> control_history{};
+    reg<u<18>> decoder_metrics[8]{};
+    reg<u<6>> decoder_points[8]{};
+    reg<u<3>> decoder_flags{};
     reg<logic<TAG_BITS * TAG_DEPTH>> tags{};
     reg<u<10>> output_reg{};
     reg<u1> output_valid{};
-
-    unsigned decoder_control(unsigned history) {
-        return (history >> 21) & 127;
-    }
 
     unsigned slice(unsigned samples) {
         unsigned packed, sample, code;
@@ -80,25 +79,33 @@ public:
         metrics.negate_in = _ASSIGN(framer.negate_out());
         metrics.advance_in = _ASSIGN((framer.control_out() & 1) != 0);
         for (unsigned i = 0; i < 8; ++i) {
-            decoder.metric_in[i] = _ASSIGN_I(
-                (decoder_control(unsigned(control_history)) & 8)
-                    ? (((decoder_control(unsigned(control_history)) >> 4) & 7) == i ? 0 : 262143)
-                    : unsigned(metrics.metric_out[i]()));
-            decoder.point_in[i] = _ASSIGN_I(
-                (decoder_control(unsigned(control_history)) & 8) ? 0 : unsigned(metrics.point_out[i]()));
+            decoder.metric_in[i] = _ASSIGN_REG_I(decoder_metrics[i]);
+            decoder.point_in[i] = _ASSIGN_REG_I(decoder_points[i]);
         }
-        decoder.advance_in = _ASSIGN((decoder_control(unsigned(control_history)) & 1) != 0);
-        decoder.start_in = _ASSIGN((decoder_control(unsigned(control_history)) & 2) != 0);
-        decoder.end_in = _ASSIGN((decoder_control(unsigned(control_history)) & 4) != 0);
+        decoder.advance_in = _ASSIGN((decoder_flags & 1) != 0);
+        decoder.start_in = _ASSIGN((decoder_flags & 2) != 0);
+        decoder.end_in = _ASSIGN((decoder_flags & 4) != 0);
         sync._assign();
         framer._assign();
         metrics._assign();
         decoder._assign();
     }
     void _work(bool reset) {
-        unsigned tag, byte, kind, source, encoded;
+        unsigned tag, byte, kind, source, encoded, control;
+        control = unsigned(control_history >> 35) & 127;
         output_valid._next = symbol_enable_in() && pma_ok_in();
         if (symbol_enable_in()) {
+            // Constrained control symbols select a metric before this register
+            // boundary. The trellis recurrence receives complete 18-bit costs
+            // without the control mux and its fanout on the addition path.
+            for (unsigned i = 0; i < 8; ++i) {
+                decoder_metrics[i]._next = (control & 8)
+                    ? (((control >> 4) & 7) == i ? 0 : 262143)
+                    : unsigned(metrics.metric_out[i]());
+                decoder_points[i]._next = (control & 8)
+                    ? 0 : unsigned(metrics.point_out[i]());
+            }
+            decoder_flags._next = control & 7;
             tag = unsigned(tags >> ((TAG_DEPTH - 1) * TAG_BITS)) & 2047;
             kind = tag & 7;
             byte = unsigned(decoder.data_out()) ^ (tag >> 3);
@@ -143,6 +150,7 @@ public:
             output_reg._next = 512;
             tags._next = 0;
             control_history._next = 0;
+            decoder_flags._next = 0;
         }
         if (reset) {
             output_valid._next = 0;
@@ -152,6 +160,11 @@ public:
             control_history._next = 0;
             tags._next = 0;
             output_reg._next = 0;
+            decoder_flags._next = 0;
+            for (unsigned i = 0; i < 8; ++i) {
+                decoder_metrics[i]._next = 0;
+                decoder_points[i]._next = 0;
+            }
         }
     }
     void _strobe() {
@@ -163,6 +176,11 @@ public:
         samples_delayed.strobe();
         samples_for_metrics.strobe();
         control_history.strobe();
+        for (unsigned i = 0; i < 8; ++i) {
+            decoder_metrics[i].strobe();
+            decoder_points[i].strobe();
+        }
+        decoder_flags.strobe();
         tags.strobe();
         output_reg.strobe();
         output_valid.strobe();

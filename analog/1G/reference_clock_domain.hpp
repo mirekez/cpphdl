@@ -7,14 +7,15 @@ namespace analog::one_g {
 
 // One low-voltage reference drives the physical PLL and its loaded 3.3 V
 // clock interface. Both supplies and the shared translator bias remain wires.
-class reference_clock_domain : public IC {
+template <class Multiplier = reference_clock_multiplier>
+class basic_reference_clock_domain : public IC {
 public:
     _PORT(electrical) Vlogic;
     _PORT(electrical) REF;
     _PORT(electrical) CLEAR;
     _PORT(electrical) OUT;
     _PORT(electrical) OUT_N;
-    reference_clock_multiplier multiplier;
+    Multiplier multiplier;
     cmos<> predriver, driver;
     level_shift_bias bias;
     clock_level_shifter translator;
@@ -60,4 +61,5 @@ public:
         translator.elaborate();
     }
 };
+class reference_clock_domain : public basic_reference_clock_domain<> {};
 } // namespace analog::one_g

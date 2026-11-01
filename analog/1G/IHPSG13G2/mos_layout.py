@@ -33,7 +33,8 @@ def append_mos(layout, pdk, name, width_um, length_um, fingers, polarity, domain
     if (domain not in ('lv', 'hv') or polarity not in ('n', 'p')
             or not isinstance(fingers, int) or isinstance(fingers, bool) or fingers < 1
             or not all(math.isfinite(v) for v in (width_um, length_um))
-            or not 2 <= width_um / fingers <= 10 or not (.45 if domain == 'hv' else .13) <= length_um <= 10
+            or not (1 if fingers == 1 and domain == 'lv' else 2) <= width_um / fingers <= 10
+            or not (.45 if domain == 'hv' else .13) <= length_um <= 10
             or not math.isclose(layout.dbu, .001)
             or layout.cell(name) is not None):
         raise ValueError('unsupported routed MOS geometry, database unit or cell name')
@@ -89,7 +90,11 @@ def append_mos(layout, pdk, name, width_um, length_um, fingers, polarity, domain
     gates = unique_boxes(poly, lambda b: True)
     if len(stripes) != fingers + 1 or len(gates) != fingers:
         raise ValueError('pinned PCell diffusion/gate geometry changed')
-    for parity, net, y in ((0, 'S', .45), (1, 'D', finger_width - .45)):
+    # A single narrow finger has independent diffusion stripes. Put its two
+    # landings near opposite ends; the wider multi-finger buses need the
+    # original inset to remain separated from their neighboring stripes.
+    inset = .1 if finger_width < 2 else .45
+    for parity, net, y in ((0, 'S', inset), (1, 'D', finger_width - inset)):
         xs = [s.center().x * layout.dbu for i, s in enumerate(stripes) if i % 2 == parity]
         for x in xs:
             via_at(x, y)

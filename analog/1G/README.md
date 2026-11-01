@@ -151,6 +151,26 @@ comparison. Run them with `ctest --test-dir analog/build -L hardware
 IHP gate simulation is enabled when the prepared
 repeater toolchain and standard-cell library exist.
 
+The [autonomous ADC receiver](autonomous_adc_receive_phy.md) connects actual SAR
+control and comparator decisions through timing recovery, clock crossing,
+autonomous adaptation and PCS decoding. Its CTest regression checks independent
+Ethernet frame expectations in C++ and RTL, then compares their complete traces.
+
+The [clock-qualified receiver](qualified_adc_receive_phy.md) connects power and
+clock qualification to destination-local reset release and a mutual release
+handshake. Its C++/RTL regression passes stopped-clock power loss and complete
+reacquisition on an active receiver, with 16 frames and exact event agreement.
+Physical reset distribution and complete-chip assembly remain open.
+
+`generate-1g-rtl` exports a complete `.f` file list for each C++ entry point.
+Run tools from `analog/1G/generated`, for example
+`verilator --lint-only -Wno-fatal -f autonomous_adc_receive_phy.f`.
+The file-list comment identifies its top modules. Shared child modules carry
+an entry-point prefix because the converter specializes their clock interfaces;
+combining differently clocked exports by overwriting a shared class file would
+break those connections. The `analog.1g.generated_rtl` CTest checks regeneration
+and lints each complete hierarchy when Verilator is available.
+
 The new [MOS-biased drivers](IHPSG13G2/biased_driver.md) replace the ideal tail
 bias with a resistor/diode MOS reference and optional six-bit PMOS-switched
 resistor bank. Native and Verilog-A equations are compared; separate actual-PSP
@@ -170,5 +190,11 @@ These schematic blocks do not yet supply a layout-ready complete PHY macro.
 
 Source material checked 2026-10-17. No waveform in this prototype is asserted to
 meet a normative transmit template or the complete 100 m cable specification.
+
+[Ethernet PAUSE flow control](flow_control.md) connects negotiated symmetric
+PAUSE to the repeater's independent RX/TX clocks and SRAM frame buffers.
+`NegotiatedRepeater` binds the real FLP negotiation controllers to the forwarding
+path. Its electrical PHY and chip clock/layout integration remain separate
+qualification work.
 
 [Analog gain acquisition](receive_gain_control.md) provides a five-setting training controller and independent native/RTL/mapped regression flows.

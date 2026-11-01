@@ -1262,20 +1262,13 @@ bool TestTribe::run(std::string filename, size_t start_offset, std::string expec
                 return false;
             }
             fclose(checkpoint_in);
-            // Checkpoint loading restores _system_clock together with registers and
-            // memories. Move to a fresh comb epoch before reading restored
-            // UART/PLIC/MMU outputs; otherwise lazy comb caches can still carry
-            // pre-load host-process values.
-            ++_system_clock;
-            // A test process can construct and reset a fresh model after the
-            // checkpoint was saved, then restore an earlier _system_clock.
-            // Lazy combs use that value as their native-simulation cache key.
-            // Advance by whole L2 periods until the next work cycle is newer
-            // than every cycle evaluated before the load, retaining the exact
-            // clk/l2_clock phase relationship stored by the checkpoint.
-            while (_system_clock + 1 <= pre_load_comb_epoch) {
+            // Invalidate comb caches without changing the saved CPU/L2 phase.
+            // The simulation loop advances one CPU tick before the next work
+            // call, just as it would after the save. An extra single tick here
+            // would shift which L2 work/strobe calls execute after restoration.
+            do {
                 _system_clock += CPU_CLK_MULTIPLIER;
-            }
+            } while (_system_clock <= pre_load_comb_epoch);
             perf_system_clock_start = _system_clock;
             perf_live_start = std::chrono::steady_clock::now();
             checkpoint_loaded_pending_work = true;

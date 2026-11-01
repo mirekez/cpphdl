@@ -686,33 +686,23 @@ needs additional compiler support. Do not use this mode as an implicit fallback
 for unsupported legacy models. Synthesis `translate_off` regions must be
 excluded explicitly, e.g. `--translate-off-format pragma,translate_off,translate_on`.
 
-## Small CVA6 replay
+## CVA6 fixture
 
-The existing replay harness supports `-DUSE_NATIVE_GRAPH`. A source-controlled
-regeneration/comparison entry point is:
+The old small replay experiments have been removed. The maintained fixture is
+the fixed full-core Bash workflow in `hdlcpp/tests/cva6/README.md`:
 
 ```sh
-python3 -B hdlcpp/tests/cva6/check_native_graph.py \
-  --cva6-source /path/to/cva6 --hdlcpp /path/to/hdlcpp \
-  --cpphdl /path/to/cpphdl --cxx clang++ \
-  --trace /external/matmul-bus.bin --output /external/new-comparison \
-  --reference /external/original-verilator/VXbarBench \
-  --cxxrtl-reference /external/cxxrtl/run --trials 5
+cd hdlcpp/tests/cva6
+./.build_cva6.sh
+./.build_cva6_hdlcpp.sh
+./.build_cva6_cpphdl-native-graph.sh
+./.run_cva6_verilator.sh
+./.run_cva6_cpphdl-native-graph.sh
 ```
 
-This regenerates only the small original PULP bus hierarchy, copies the original
-testharness address map, records source/build commands and hashes, and times
-alternating CPU-pinned runs. Each executable must first validate every output
-bit against the same trace. The optional references must be the matching
-original-SV replay executables. Conversion, compilation, trace loading and
-full-output validation are outside the work timer. Input application, model
-evaluation, output reads and checksum accumulation are inside it.
-
-It intentionally does not import legacy callback demand-context restrictions:
-there are no callbacks to classify. It simulates the same hardware ports and
-state using a different scheduling representation. No small-block result is
-evidence of full-CVA6 correctness or performance; full-core regeneration is a
-separate validation step.
+Both run scripts check the fixed workload and cycle count. The native run also
+checks every integer commit against Verilator before its separate timed run.
+No small-block result is evidence of full-core correctness or performance.
 
 The full `cv32a6_imac_sv32` ordinary-conversion trial on 2026-09-19 completed
 regeneration but did not produce a native executable. Its initial
@@ -2130,8 +2120,8 @@ blocked checkpoint. Ordinary hdlcpp conversion, C++ graph extraction, separately
 compiled native emission and the unmodified-size SRAM now complete the original
 single-core CVA6 integer matmul. Both simulators pass at exactly 46,264 total
 cycles (10 reset plus 46,254 work); all 21,285 integer architectural commit
-records match. The diagnostic checker is
-`hdlcpp/tests/cva6/check_commit_trace.py`.
+records match. The current fixed Bash run scripts retain integer commit
+comparison without the former Python diagnostic checker.
 
 Fresh three-trial, CPU-pinned simulation-loop medians are 0.806077422 s for
 original-SV Verilator and 27.020316519 s for ordinary C++ / native graph. The
@@ -2139,8 +2129,8 @@ correct full chain is still 33.52x slower. The regenerated bus-only replay is
 near parity (1.601615311 s versus 1.564686474 s), so it is not a proxy for full
 CPU performance. These measurements exclude conversion/compilation and use the
 same ELF; Verilator's RTL diagnostic file I/O remains a host-I/O difference.
-Complete timing samples, correctness scope, executable hashes and the bounded
-sampling evidence are in `hdlcpp/tests/cva6/compare_matmul.md`.
+The old replay report is available in repository history; maintained full-core
+instructions are in `hdlcpp/tests/cva6/README.md`.
 
 ## Converted RTL infrastructure and inactive timestamps
 

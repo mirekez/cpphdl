@@ -48,19 +48,19 @@ def run(args):
                              '-CFLAGS', '-DVERILATOR -std=c++17', *rtl, fixture,
                              '-MAKEFLAGS', 'CXX=' + args.cxx + ' LINK=' + args.cxx])
         command('rtl', [objects / 'VReceiveQuality', work / 'rtl.csv'])
-        expected = 'PASS 1813 clocks, 8 acquisitions, 8 revocations; symbol-count qualification and reset/fault priority\n'
+        expected = 'PASS 1837 clocks, 8 acquisitions, 8 revocations; symbol-count qualification and reset/fault priority\n'
         if any((work / (flow + '.log')).read_text() != expected for flow in ('native', 'rtl')):
             raise ValueError('missing independent state/fault checks')
         if digest(work / 'native.csv') != digest(work / 'rtl.csv'):
             raise ValueError('full-clock native/RTL mismatch')
         for flow in ('native', 'rtl'):
             rows = (work / (flow + '.csv')).read_text().splitlines()
-            if len(rows) != 1813 or any(len(r.split(',')) != 11 or int(r.split(',')[0]) != i for i, r in enumerate(rows)):
+            if len(rows) != 1837 or any(len(r.split(',')) != 11 or int(r.split(',')[0]) != i for i, r in enumerate(rows)):
                 raise ValueError('missing complete clock state')
         report['traces'] = {flow: archive(work / (flow + '.csv')) for flow in ('native', 'rtl')}
         if any(digest(p) != h for p, h in hashes.items()):
             raise ValueError('input changed during qualification')
-        report.update(status='pass', clocks=1813, acquisitions=8, revocations=8,
+        report.update(status='pass', clocks=1837, acquisitions=8, revocations=8,
                       rtl_sha256={str(p): digest(p) for p in rtl})
         print(expected.strip())
     except BaseException as error:

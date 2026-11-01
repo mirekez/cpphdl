@@ -120,8 +120,9 @@ def run(args):
     rtl_files += [work / "rtl" / (name + ".sv") for name in
                  (["PCSReceiveSynchronizer", "PCSReceiveFramer", "PipelinedPCSBranchMetrics", "PCSTrellisDecoder", "PCSReceiver"]
                   if args.case == "receiver" else ["PCSSymbolMapper", "PCSTransmitBits", "PCSTransmitter"]
-                  if args.case == "transmitter" else ["PipelinedReceiveFilter", "ReceiveFilter"]
-                  if args.case == "filter_datapath" else ["MasterSlaveResolver", "Autonegotiator"]
+                  if args.case == "transmitter" else ["ReceiveFilterPipelineCore", "PipelinedReceiveFilter", "ReceiveFilter"]
+                  if args.case == "filter_datapath" else ["ReceiveFilterPipelineCore", "PipelinedReceiveFilter"]
+                  if args.case == "filter_pipeline" else ["MasterSlaveResolver", "Autonegotiator"]
                   if args.case == "negotiation" else ["ReferenceMillisecond", "FLPTransmitter", "FLPReceiver",
                                                         "MasterSlaveResolver", "Autonegotiator", "Autonegotiation"]
                   if args.case == "autoneg_link" else [module])]

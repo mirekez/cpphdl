@@ -57,12 +57,14 @@ add_dependencies(check-10g analog_10g_solver)
 add_test(NAME analog.10g.generated COMMAND "${CMAKE_COMMAND}"
   "-DGENERATOR=$<TARGET_FILE:analog_10g_generate>" "-DROOT=${CPPHDL_ANALOG_PACKAGE_ROOT}"
   "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/.." "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/generated"
+  "-DCATALOG=${CPPHDL_ANALOG_GENERATED_ROOT}/10G"
   -P "${CMAKE_CURRENT_SOURCE_DIR}/Generated.cmake")
 set_tests_properties(analog.10g.generated PROPERTIES LABELS "analog;10g;veriloga" TIMEOUT 60)
 if(OPENVAF_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
   add_test(NAME analog.10g.generated_compile COMMAND "${CMAKE_COMMAND}"
     "-DGENERATOR=$<TARGET_FILE:analog_10g_generate>" "-DROOT=${CPPHDL_ANALOG_PACKAGE_ROOT}"
     "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/.." "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/generated-compile"
+    "-DCATALOG=${CPPHDL_ANALOG_GENERATED_ROOT}/10G"
     "-DOPENVAF=${OPENVAF_EXECUTABLE}" -P "${CMAKE_CURRENT_SOURCE_DIR}/Generated.cmake")
   set_tests_properties(analog.10g.generated_compile PROPERTIES LABELS "analog;10g;veriloga" TIMEOUT 180)
 endif()

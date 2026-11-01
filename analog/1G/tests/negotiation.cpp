@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
         if (argc == 2)
             trace.open(argv[1]);
         unsigned observations = 0, page = 0, flags = 0;
+        bool pause = false;
         auto require = [](bool condition, const char* message) {
             if (!condition)
                 throw std::runtime_error(message);
@@ -59,6 +60,7 @@ int main(int argc, char** argv) {
             dut.clk = 1;
             dut.eval();
             page = dut.transmit_page_out;
+            pause = dut.pause_out;
             flags = unsigned(dut.transmit_enable_out) | (unsigned(dut.pma_enable_out) << 1) |
                     (unsigned(dut.link_out) << 2) | (unsigned(dut.master_out) << 3) |
                     (unsigned(dut.fault_out) << 4) | (unsigned(dut.retry_out) << 5) |
@@ -68,6 +70,7 @@ int main(int argc, char** argv) {
             dut._work(reset);
             dut._strobe();
             page = dut.transmit_page_out();
+            pause = dut.pause_out();
             flags = unsigned(dut.transmit_enable_out()) | (unsigned(dut.pma_enable_out()) << 1) |
                     (unsigned(dut.link_out()) << 2) | (unsigned(dut.master_out()) << 3) |
                     (unsigned(dut.fault_out()) << 4) | (unsigned(dut.retry_out()) << 5) |
@@ -78,7 +81,7 @@ int main(int argc, char** argv) {
             require(!(flags & 8) || (flags & 2), "clock role exposed before negotiation completes");
             require(!(flags & 16) || !(flags & 7), "configuration fault enabled a link");
             if (trace)
-                trace << observations << ',' << page << ',' << flags << '\n';
+                trace << observations << ',' << page << ',' << flags << ',' << pause << '\n';
             ++observations;
         };
         auto reset_case = [&]() {
@@ -105,7 +108,7 @@ int main(int argc, char** argv) {
             require(!(flags & 1), "break-link interval ended early");
             tick();
             ms = false;
-            require((flags & 3) == 1 && page == 0x8001, "base-page advertisement did not start");
+            require((flags & 3) == 1 && page == 0x8401, "base-page advertisement did not start");
         };
         auto receive = [&](unsigned value) {
             received = value;
@@ -144,7 +147,7 @@ int main(int argc, char** argv) {
             tick();
             burst = false;
         };
-        auto base = [&]() { qualify(0x8001, 0x8001); complete(0x8001); };
+        auto base = [&]() { qualify(0x8001, 0x8401); complete(0x8401); };
         auto messages = [&](unsigned remote_config, unsigned captured_local) {
             qualify(0xB808, 0xB808);
             complete(0xB808);
@@ -214,7 +217,7 @@ int main(int argc, char** argv) {
         for (unsigned i = 0; i < 3; ++i)
             receive(0xC001);
         tick();
-        complete(0x8001);
+        complete(0x8401);
         require(page == 0xB808, "already-acknowledged abilities required duplicate ACK qualification");
 
         // Unsupported message codes refuse a 1G link and permit a later retry.
@@ -275,6 +278,20 @@ int main(int argc, char** argv) {
         enable = false;
         tick();
         require((flags & 63) == 0, "disable did not isolate negotiation and PMA");
+        // Our symmetric-only advertisement resolves PAUSE only when the peer
+        // advertises its symmetric bit. Asymmetric-only is insufficient.
+        for (unsigned ability : {0u, 0x0400u, 0x0800u, 0x0c00u}) {
+            local = 9; entropy = 33;
+            reset_case(); begin_attempt();
+            qualify(0x8001 | ability, 0x8401); complete(0x8401);
+            messages(11, 9);
+            qualify(0x1807, 0x1821); complete(0x1821);
+            require(!pause, "PAUSE enabled before PMA link qualification");
+            link = true; tick();
+            require((flags & 4) && pause == ((ability & 0x0400) != 0), "wrong symmetric PAUSE resolution");
+            link = false; tick();
+            require(!pause, "link loss retained PAUSE negotiation");
+        }
         std::cout << observations << " page-arbitration observations; ordered pages, ACK/toggle/NP races, roles, timers and seven collisions passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

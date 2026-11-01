@@ -75,6 +75,9 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(analog_veriloga_hierarchy tests/hierarchy.cpp)
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+endif()
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME analog.veriloga.compiler_runtime COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_runtime.py" --converter "$<TARGET_FILE:cpphdl-veriloga>")
@@ -87,6 +90,12 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   add_test(NAME analog.veriloga.trace_storage COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/trace_storage_contract.py")
   set_tests_properties(analog.veriloga.trace_storage PROPERTIES LABELS "analog;veriloga" TIMEOUT 90)
+  add_test(NAME analog.veriloga.reserved_trace COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/reserved_trace.py")
+  set_tests_properties(analog.veriloga.reserved_trace PROPERTIES LABELS "analog;veriloga" TIMEOUT 90)
+  add_test(NAME analog.veriloga.validate_trace COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/validate_trace.py")
+  set_tests_properties(analog.veriloga.validate_trace PROPERTIES LABELS "analog;veriloga" TIMEOUT 30)
 endif()
 if(BUILD_TESTING AND Python3_Interpreter_FOUND AND NGSPICE_EXECUTABLE AND NOT CPPHDL_ANALOG_VERILOGA_TESTS STREQUAL "OFF")
   add_test(NAME analog.veriloga.time_grid COMMAND "${Python3_EXECUTABLE}"

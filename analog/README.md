@@ -16,6 +16,8 @@ local Python dependencies and ngspice compact models.
 Checked-in Verilog-A models are in [basic/generated](basic/generated/README.md)
 and [examples/generated](examples/generated/README.md), with regeneration commands,
 complete simulation benches and explicit export limits for digital behavior.
+See [regenerating excluded artifacts](doc/regeneration.md) for the
+`generate-analog` target, clean-output checks and tool/PDK setup recipes.
 
 Describe an IC as a C++ class, line by line. Add a device to deliver a function,
 then another to correct or constrain it. Connect their purposes through wires;

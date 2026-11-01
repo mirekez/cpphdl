@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,6 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from TestToolchain import TestToolchain
+from Cva6Adapter import write_dpi_adapter_header
 
 
 def main():
@@ -273,11 +273,7 @@ def main():
              '-I' + str(fixtures.parents[1] / 'include'), '-Wl,--wrap=random',
              '-fsanitize=address,undefined'])
         print(run([work / 'random/run']).stdout, end='')
-        converter = fixtures.parents[1] / 'hdlcpp/tests/cva6/support/cpphdl/tools/convert_cva6.py'
-        specification = importlib.util.spec_from_file_location('cva6_converter', converter)
-        conversion = importlib.util.module_from_spec(specification)
-        specification.loader.exec_module(conversion)
-        conversion.write_dpi_adapter_header(work / 'dpi')
+        write_dpi_adapter_header(work / 'dpi')
         run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
              '--frontend-flag=-I' + str(work / 'dpi'),
              '--runner', fixtures / 'CppGraphJtag.cc', '--output', work / 'jtag',

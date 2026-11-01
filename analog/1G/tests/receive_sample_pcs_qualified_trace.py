@@ -67,7 +67,7 @@ def audit(path, fixture_directory):
             if ov and locked and output & 256:
                 if not quality or output & 512 or latest is None:
                     raise ValueError('frame error or data accepted without hardware readiness')
-                if output != source_words[case // 9].get(latest - 39, 0):
+                if output != source_words[case // 9].get(latest - 42, 0):
                     raise ValueError('frame byte or fixed PCS latency differs from source truth')
                 result['frame_bytes'] += 1
                 if result['first_frame_clock'] is None:
@@ -75,7 +75,7 @@ def audit(path, fixture_directory):
             if bad or reset:
                 result['readiness_revocations'] += qualified
                 qualified, idles, flushed = False, 0, 0
-            elif ov and flushed < 39:
+            elif ov and flushed < 42:
                 flushed += 1
             elif ov and not qualified:
                 idles = idles + 1 if output == 0 else 0
@@ -91,4 +91,4 @@ def audit(path, fixture_directory):
     if counts != expected_counts or any(c['frame_bytes'] != 1598 or c['first_ready_clock'] is None for c in cases):
         raise ValueError('incomplete startup/readiness/frame coverage')
     return dict(status='pass', clocks=sum(counts), cases=cases,
-                pipeline_flush_accepted_words=39, consecutive_clean_idle_words=64)
+                pipeline_flush_accepted_words=42, consecutive_clean_idle_words=64)

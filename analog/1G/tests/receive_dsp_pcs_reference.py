@@ -14,7 +14,9 @@ import zlib
 from transmit_reference import Reference
 
 
-def generate(directory):
+def generate(directory, quiet_symbols=0):
+    if not isinstance(quiet_symbols, int) or quiet_symbols < 0:
+        raise ValueError('invalid silent-peer interval')
     directory.mkdir(parents=True, exist_ok=True)
     summaries = []
     for case in range(4):
@@ -57,6 +59,8 @@ def generate(directory):
             samples.append((word, local_symbol, desired, (65520 + n) & 65535, int(train)))
             previous, previous_local = physical, tx
 
+        for _ in range(quiet_symbols):
+            emit(mode=0)
         for _ in range(train_count + 6000):
             emit()
         for _ in range(512):
@@ -82,7 +86,7 @@ def generate(directory):
             for frame in frames:
                 output.write(str(len(frame)) + ' ' + ' '.join(map(str, frame)) + '\n')
         summaries.append(dict(case=case, master=master, impaired=impaired, symbols=len(samples),
-                              train_symbols=train_count, frames=len(frames), bytes=sum(map(len, frames)),
+                              train_symbols=train_count, quiet_symbols=quiet_symbols, frames=len(frames), bytes=sum(map(len, frames)),
                               physical_to_logical=permutation, polarity_mask=signs, delay_symbols=delays))
     (directory / 'cases.json').write_text(json.dumps(summaries, indent=2) + '\n')
     return summaries

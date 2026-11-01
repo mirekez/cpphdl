@@ -15,10 +15,15 @@ physical connectivity.
 
 Total width and length retain their PSP meaning. Unsupported geometries,
 off-grid dimensions and changed PCell inventories fail explicitly. The initial
-supported range is 2–10 µm per finger, length 0.45–10 µm for HV and 0.13–10 µm
+supported range is 1–10 µm for a single LV finger and 2–10 µm per finger
+otherwise, length 0.45–10 µm for HV and 0.13–10 µm
 for LV, and the pinned 10 nm PCell parameter grid. Low-voltage gates get a
 wider contacted landing outside active; their channel dimensions remain intact.
 Duplicate overlapping shapes in the pinned LV PMOS are treated as one conductor.
+For a single finger narrower than 2 µm, source and drain landings sit near
+opposite ends of the diffusion stripes. The wider-device inset would violate
+Metal2 spacing at 1 µm. Both narrow polarities have separate local DRC and
+strict transistor/tap LVS checks.
 
 ```python
 import klayout.db as db

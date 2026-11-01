@@ -17,8 +17,10 @@ if {[$die xMin] != 0 || [$die yMin] != 0 || [$die xMax] != $expected || [$die yM
 }
 read_sdc "$work/constraints.sdc"
 set_propagated_clock [all_clocks]
-set_wire_rc -signal -layer Metal3
-set_wire_rc -clock -layer Metal5
+# A checkpoint may retain the larger RC used only for routing optimization.
+# Restore the original LEF before independent extraction and acceptance.
+source "$::env(REPEATER_SOURCE)/routing_rc_margin.tcl"
+apply_routing_capacitance_margin 1 "$libroot/lef/sg13g2_tech.lef"
 set_max_transition $::env(REPEATER_MAX_TRANSITION) [current_design]
 set_max_fanout 8 [current_design]
 set_max_capacitance $::env(REPEATER_MAX_CAPACITANCE) [current_design]

@@ -24,6 +24,13 @@ clock timing is checked separately with Liberty/SPEF STA.
 `test_flow.py` rejects absent/malformed/violating DRC reports, bad timing,
 missing extraction and incomplete-chip requests.
 
+`finish_timing.py` runs the real IHP libraries and OpenROAD on an overloaded
+XNOR and a short register path. It first requires actual slew and hold failures,
+then exercises output isolation, placement, RC rebuilds and final network repair.
+Acceptance requires legal placement, positive setup and hold, and no electrical
+violations. This small regression covers the repair mechanism; the complete
+receiver still needs detailed-route extraction and independent physical checks.
+
 ```bash
 cd ~/cpphdl
 cmake -S analog -B analog/build -DBUILD_TESTING=ON -DCPPHDL_BUILD_ANALOG_TESTS=ON

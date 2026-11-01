@@ -18,6 +18,34 @@ spec.loader.exec_module(timing)
 
 
 class PhysicalModule(unittest.TestCase):
+    def test_resized_receiver_checkpoint_keeps_identity_and_timing_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            origin, work = root / 'origin', root / 'work'
+            origin.mkdir()
+            work.mkdir()
+            source = root / 'design.hpp'
+            source.write_text('same receiver')
+            for name in ('mapped.v', 'resized_global.odb', 'resized_global.sdc'):
+                (origin / name).write_text('saved ' + name)
+            (work / 'mapped.v').write_bytes((origin / 'mapped.v').read_bytes())
+            constraints = dict(period_ns=1000 / 136)
+            evidence = dict(top='PCSReceiver', constraints=constraints,
+                input_sha256={str(source): flow.digest(source)},
+                resized_checkpoint_sha256={name: flow.digest(origin / name)
+                    for name in ('resized_global.odb', 'resized_global.sdc')})
+            (origin / 'physical_module.json').write_text(json.dumps(evidence))
+            result = flow.import_placement(origin, work, 'PCSReceiver', constraints, 'resized_global')
+            self.assertEqual(result['checkpoint_stage'], 'resized_global')
+            self.assertEqual((work / 'resized_global.odb').read_bytes(), (origin / 'resized_global.odb').read_bytes())
+            with self.assertRaisesRegex(ValueError, 'timing contract'):
+                flow.import_placement(origin, work, 'PCSReceiver', dict(period_ns=8), 'resized_global')
+            with self.assertRaisesRegex(ValueError, 'unsupported'):
+                flow.import_placement(origin, work, 'ReceiveFilter', constraints, 'resized_global')
+            (origin / 'resized_global.odb').write_text('different sizing')
+            with self.assertRaisesRegex(ValueError, 'artifact changed'):
+                flow.import_placement(origin, work, 'PCSReceiver', constraints, 'resized_global')
+
     def test_def_import_preserves_public_array_bit_identity(self):
         mapped = 'output [0:2] acquire_out; output [0:2] convert_out; output [23:0] trial_out;'
         routed = 'output [2:0] acquire_out; output [2:0] convert_out; output [23:0] trial_out;'
@@ -66,13 +94,73 @@ class PhysicalModule(unittest.TestCase):
             with self.subTest(missing=key), self.assertRaisesRegex(ValueError, 'constraints'):
                 timing.timing_contract(dict(top='ADCReceiveController', constraints=broken))
 
+    def test_bounded_execution_cannot_bypass_large_module_memory_lock(self):
+        with self.assertRaisesRegex(ValueError, 'limited to the small clock controller'):
+            flow.implement(SimpleNamespace(module='PCSReceiver', bounded_clock_run=True))
+
+    def test_processing_clock_recheck_preserves_both_domains_and_scope(self):
+        original = dict(period_ns=1.25, reference_period_ns=8,
+                        cross_domain_timing='excluded', clock_uncertainty_ns=.1,
+                        input_output_delay_ns=.4, accepted_transition_ns=.5,
+                        accepted_fanout=8, accepted_capacitance_pf=.05,
+                        analog_control_load_pf=.005)
+        actual, script = timing.timing_contract(dict(top='ProcessingClockControl', constraints=original))
+        self.assertEqual(actual, original)
+        self.assertIn('-period 8 [get_ports ref_clk]', script)
+        self.assertIn('-period 1.25 [get_ports pcs_clk]', script)
+        self.assertIn('-clock acquisition [get_ports ready_pcs_out]', script)
+        self.assertNotIn('[get_ports clk]', script)
+        self.assertIn('set_clock_groups -asynchronous', script)
+        self.assertIn('set_load 0.005 [get_ports ready_pcs_out]', script)
+        loaded = dict(original, ready_output_load_pf=.08)
+        actual, loaded_script = timing.timing_contract(dict(top='ProcessingClockControl', constraints=loaded))
+        self.assertEqual(actual, loaded)
+        self.assertIn('set_load 0.08 [get_ports ready_pcs_out]', loaded_script)
+        for key in ('reference_period_ns', 'cross_domain_timing'):
+            broken = dict(original)
+            broken.pop(key)
+            with self.assertRaisesRegex(ValueError, 'clock-domain constraints'):
+                timing.timing_contract(dict(top='ProcessingClockControl', constraints=broken))
+        for bad in (0, float('nan'), float('inf'), True):
+            with self.assertRaisesRegex(ValueError, 'invalid processing-clock'):
+                flow.processing_clock_constraints(bad)
+
+    def test_reset_recheck_preserves_three_domains_and_output_loading(self):
+        original = dict(period_ns=4, reference_period_ns=8, pcs_period_ns=1000 / 136,
+                        cross_domain_timing='excluded', clock_uncertainty_ns=.1,
+                        input_output_delay_ns=.4, output_load_pf=.08,
+                        accepted_transition_ns=.3, accepted_fanout=8,
+                        accepted_capacitance_pf=.1, analog_control_load_pf=.005)
+        actual, script = timing.timing_contract(dict(top='PHYResetControl', constraints=original))
+        self.assertEqual(actual, original)
+        self.assertEqual(script.count('create_clock '), 3)
+        for clock, pin in (('reference', 'ref'), ('adc', 'adc'), ('processing', 'pcs')):
+            self.assertIn(f'-clock {clock} [get_ports reset_{pin}_out]', script)
+        self.assertIn('set_load 0.08 [all_outputs]', script)
+        self.assertNotIn('[get_ports clk]', script)
+        for key in ('reference_period_ns', 'pcs_period_ns', 'output_load_pf', 'cross_domain_timing'):
+            broken = dict(original)
+            broken.pop(key)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'reset clock-domain constraints'):
+                timing.timing_contract(dict(top='PHYResetControl', constraints=broken))
+        for name in ('reference_period_ns', 'adc_period_ns', 'pcs_period_ns',
+                     'uncertainty_ns', 'io_delay_ns', 'output_load_pf'):
+            for bad in (0, -1, float('nan'), float('inf'), True):
+                with self.subTest(name=name, bad=bad), self.assertRaisesRegex(ValueError, 'invalid PHY reset'):
+                    flow.phy_reset_constraints(**{name: bad})
+        with self.assertRaisesRegex(ValueError, 'half-cycle'):
+            flow.phy_reset_constraints(adc_period_ns=.8)
+
     def test_failed_extracted_timing_retains_route_and_stops_before_layout_checks(self):
         self.check_failed_route(False)
 
     def test_routed_database_still_requires_equivalence_and_new_timing(self):
         self.check_failed_route(True)
 
-    def check_failed_route(self, resume_routed):
+    def test_large_module_separates_global_detail_and_extraction(self):
+        self.check_failed_route(False, large=True)
+
+    def check_failed_route(self, resume_routed, large=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             mapped = root / 'mapped'
@@ -102,8 +190,14 @@ class PhysicalModule(unittest.TestCase):
             def execute(command, **options):
                 work, environment = Path(options['cwd']), options['env']
                 if Path(command[0]).name == 'openroad':
-                    names = ('placed.odb', 'placed.sdc') if environment.get('REPEATER_STAGE') == 'place' else (
-                        'postroute.v', 'core.cdl', 'core.spef', 'core.def')
+                    if environment.get('REPEATER_STAGE') == 'place':
+                        names = ('placed.odb', 'placed.sdc')
+                    elif Path(command[-1]).name == 'route_extract.tcl' and environment.get('REPEATER_STAGE') == 'global_route':
+                        names = ('global_repaired.odb', 'global_repaired.sdc')
+                    elif Path(command[-1]).name == 'detail_route.tcl':
+                        names = ('core.odb', 'core.def')
+                    else:
+                        names = ('postroute.v', 'core.cdl', 'core.spef', 'core.def')
                     for name in names:
                         (work / name).write_text('routed ' + name)
                 if Path(command[0]).name == 'VPAM5DriverControl':
@@ -112,6 +206,7 @@ class PhysicalModule(unittest.TestCase):
 
             with patch.object(flow, 'execute', side_effect=execute), \
                     patch.object(flow, 'check_timing', side_effect=ValueError('setup timing failed: -0.09 ns')), \
+                    patch.dict(flow.MODULES['PAM5DriverControl'], {'large': large}), \
                     patch.object(flow, 'stream') as stream:
                 with self.assertRaisesRegex(ValueError, 'setup timing failed'):
                     flow.implement(args)
@@ -119,7 +214,17 @@ class PhysicalModule(unittest.TestCase):
             report = json.loads((args.work / 'physical_module.json').read_text())
             self.assertEqual(report['status'], 'failed')
             self.assertTrue(report['native_postroute_exact'])
-            self.assertEqual(set(report['artifact_sha256']), {'postroute.v', 'core.cdl', 'core.spef', 'core.def'})
+            expected_artifacts = {'postroute.v', 'core.cdl', 'core.spef', 'core.def'}
+            if large:
+                self.assertEqual((args.work / 'core.odb').read_bytes(),
+                                 (args.work / 'routed_checkpoint.odb').read_bytes())
+                stages = [stage['name'] for stage in report['stages']]
+                self.assertLess(stages.index('global-route-timing'), stages.index('detailed-route'))
+                self.assertLess(stages.index('detailed-route'), stages.index('extract-routed'))
+                self.assertLess(stages.index('extract-routed'), stages.index('postroute-vectors'))
+                self.assertNotIn('route-extract', stages)
+                self.assertEqual(set(report['global_checkpoint_sha256']), {'global_repaired.odb', 'global_repaired.sdc'})
+            self.assertEqual(set(report['artifact_sha256']), expected_artifacts)
             self.assertFalse(any(stage['name'] in ('fill', 'drc', 'lvs') for stage in report['stages']))
             self.assertFalse((args.work / 'PAM5DriverControl.gds').exists())
             if resume_routed:
