@@ -856,6 +856,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         std::ostream output(header.rdbuf());
         output << "#pragma once\n";
         if (threads > 1) output << "#include <cpphdl_graph_threads.h>\n";
+        if (writeTracking && threads > 1) output << "#include <cpphdl_graph_events.h>\n";
         if(bmi2Gathers)output << "#include <cpphdl_graph_gather.h>\n";
         if (std::any_of(nodes.begin(), nodes.end(), [](const Node& node) { return node.op == "host_random"; }))
             output << "#include <cstdlib>\n";
@@ -1209,22 +1210,21 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 }
                 if(threads>1) {
                     auto words=(count+63)/64;
-                    output << "void __cpphdl_notify_pending(std::array<uint64_t," << words
+                    output << "void __cpphdl_notify_pending(cpphdl::graph_runtime::PendingEvents<" << words
                            << ">& pending,uint32_t first,uint32_t last,uint64_t delta) noexcept {\n"
                               "if(!delta) return;\nfor(auto i=first;i<last;++i) {\n"
                               "const auto& consumer=__cpphdl_root_consumers[i];\n"
-                              "if(delta & consumer.bits) pending[consumer.chunk/64] |= uint64_t(1) << (consumer.chunk%64);\n}\n}\n";
+                              "if(delta & consumer.bits) pending.set(consumer.chunk);\n}\n}\n";
                     for(unsigned lane=0;lane<threads;++lane)
-                        output << "alignas(64) std::array<uint64_t," << words << "> __cpphdl_pending_state_" << lane << "{};\n";
+                        output << "alignas(64) cpphdl::graph_runtime::PendingEvents<" << words << "> __cpphdl_pending_state_" << lane << "{};\n";
+                    output << "cpphdl::graph_runtime::PendingEvents<" << words << "> __cpphdl_merged_root_events{};\n";
                     output << "void __cpphdl_publish_root_events() noexcept {\n";
-                    output << "for(size_t word=0;word<" << words << ";++word) {\nuint64_t dirty=0";
                     for(unsigned lane=0;lane<threads;++lane)
-                        output << " | __cpphdl_pending_state_" << lane << "[word]";
-                    output << ";\n";
-                    for(unsigned lane=0;lane<threads;++lane)output << "__cpphdl_pending_state_" << lane << "[word]=0;\n";
+                        output << "__cpphdl_merged_root_events.mergeFrom(__cpphdl_pending_state_" << lane << ");\n";
+                    output << "__cpphdl_merged_root_events.drain([&](size_t word,uint64_t dirty) noexcept {\n";
                     output << "while(dirty) {\nconst auto chunk=word*64+__builtin_ctzll(dirty);\n"
                               "__cpphdl_dirty[chunk].pending[0]=__cpphdl_dirty[chunk].pending[1]=true;\n"
-                              "dirty &= dirty-1;\n}\n}\n}\nuint64_t __cpphdl_pending_root_work(bool commit=false) const {\nuint64_t work = " << inputs.size() << ";\nif(commit) {\n";
+                              "dirty &= dirty-1;\n}\n});\n}\nuint64_t __cpphdl_pending_root_work(bool commit=false) const {\nuint64_t work = " << inputs.size() << ";\nif(commit) {\n";
                     if(cachedStateTransactions) {
                         for(const auto& group:stateGroups)
                             output << "if(__cpphdl_dirty[" << group.chunk << "].pending[1]) work += " << group.words.size()+group.updates.size() << ";\n";

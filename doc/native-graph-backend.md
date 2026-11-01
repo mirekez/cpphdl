@@ -2394,7 +2394,16 @@ lanes do not keep duplicate snapshots of shared registers.
 
 Workers record affected chunks in lane-local dirty bitmaps while calculating
 inactive state. After validation succeeds, the caller commits state and merges
-the bitmaps with all workers stopped. Each affected chunk is published once,
+only the changed bitmap words with all workers stopped. Each lane records a
+word index once when that word first becomes nonzero. Publication drains those
+indices into a shared accumulator, then drains the accumulator to mark each
+affected chunk. Thus sparse/idle commits do not scan and clear every word of
+every task's bitmap; work scales with touched words and affected chunks.
+`cpphdl_graph_events.h` provides the fixed-storage `PendingEvents` helper:
+there are no per-commit allocations or shared writes between worker lanes.
+The touched-index arrays add four bytes per bitmap word plus a size counter,
+and publication uses one additional accumulator. Copies retain pending events.
+Each affected chunk is published once,
 even when many registers changed. A failed transaction publishes no
 register notifications. Multiple priority updates may conservatively dirty a
 consumer even if the final value returns to its original value; same-edge
@@ -2421,6 +2430,11 @@ is enabled; its scan-based implementation remains available with the override.
 tracking, including raw/setter input writes, shared roots, both clock edges,
 reset, repeated settling, copied models and failed commits. Runtime-split
 coverage includes a later update that restores the original register value.
+The C++ `cpp_graph_native_pending_events` regression additionally covers empty
+sets, word boundaries, duplicate events, dense/sparse reuse, copies and 30
+independent writers. Its optional `--benchmark` mode compares the former full
+bitmap reduction with touched-word publication across 120 tasks; these are
+host publication timings, not whole-design simulation speedups.
 
 ## Native RAM transaction scheduling
 

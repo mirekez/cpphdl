@@ -25,6 +25,12 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
     "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
 find_package(Threads REQUIRED)
+add_executable(cpp_graph_native_pending_events graph/NativePendingEvents.cc)
+target_include_directories(cpp_graph_native_pending_events PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_features(cpp_graph_native_pending_events PRIVATE cxx_std_23)
+target_link_libraries(cpp_graph_native_pending_events PRIVATE Threads::Threads)
+add_test(NAME cpp_graph_native_pending_events COMMAND cpp_graph_native_pending_events)
+set_tests_properties(cpp_graph_native_pending_events PROPERTIES TIMEOUT 60)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME optimizer_assign_initialization COMMAND "${Python3_EXECUTABLE}" -B
