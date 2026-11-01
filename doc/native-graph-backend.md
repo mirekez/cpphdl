@@ -2608,6 +2608,15 @@ publication still wait for all preparation tasks; RAM commits retain their
 separate ownership schedule. The generated `__cpphdl_task_count` reports
 actual tasks and `__cpphdl_thread_count` reports workers, after compaction.
 
+Worker counts from 1 through 256 are accepted at generation time. For example,
+`threads=30`, `native.tasks=120` and `native.scope_tasks=1` select a 30-worker
+pool with 120 automatically assigned tasks when enough independent work exists.
+Changing `OMP_NUM_THREADS` cannot resize an already generated native graph.
+`NativeManyWorkersChecks.py` verifies this configuration against a scalar
+oracle in serial, parallel and automatic dispatch, including cross-task state
+reads and model copies. This checks correctness on smaller hosts as well;
+30-core throughput must be measured on a host with 30 available physical cores.
+
 These options are experimental and disabled by default. Task count must be
 between the requested worker count and 256. Oversubscribed tasks currently
 reject host-overlap continuations. More tasks without locality can duplicate
