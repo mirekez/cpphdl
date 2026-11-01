@@ -32,6 +32,29 @@ Then for both Win&Lin:
  - conda create -p ./.conda; source activate base; conda activate ./.conda; conda env update --file requirements.yaml
  - mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" ..; make
 
+### Fully static Linux converter
+
+To also build `build/cpphdl-static`, install the static dependencies and enable
+the optional target (commands run from the repository root):
+
+```sh
+conda install -p ./.conda -c conda-forge zstd-static
+cmake -S . -B build -DCPPHDL_BUILD_STATIC=ON -DCPPHDL_BUILD_HLS_TESTS=OFF
+cmake --build build --target cpphdl-static -j2
+ctest --test-dir build -R '^cpphdl_static_cli_' --output-on-failure
+```
+
+This requires static Clang, LLVM, zlib, zstd and C/C++ runtime libraries.
+The normal `cpphdl` target remains available. The static target verifies that
+its ELF binary has no interpreter or shared-library dependencies and applies
+the same GNU ISA-note workaround as `cpphdl`. Static linkage does not remove
+unsupported CPU instructions from dependency archives. Headers, Python scripts
+and external tools used by particular conversion modes are still required;
+this target does not bundle them or support loading shared Clang plugins.
+Static glibc can still load NSS modules for account lookups (for example,
+expanding `~user`); a static ELF does not guarantee those optional operations
+work on a filesystem without shared libraries.
+
 ## tests
 
 ```

@@ -1,0 +1,92 @@
+function(cpphdl_add_static_converter)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "cpphdl-static currently requires a Linux toolchain with static libc")
+  endif()
+  # Conda's static Clang targets depend on the shared LLVM target. Replace it
+  # with the frontend components and follow their static dependency closure.
+  set(llvm_components LLVMOption LLVMFrontendOpenMP LLVMFrontendOpenACC
+    LLVMFrontendHLSL LLVMFrontendDriver LLVMProfileData LLVMBitReader
+    LLVMCore LLVMMCParser LLVMWindowsDriver)
+  set(pending clangTooling clangBasic clangASTMatchers clangFrontend clangRewrite
+    ${llvm_components} z)
+  set(visited)
+  set(archive_targets)
+  set(archives)
+  # Function scope keeps these lookup rules separate from the normal target.
+  set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+  while(pending)
+    list(POP_FRONT pending library)
+    if(library IN_LIST visited)
+      continue()
+    endif()
+    list(APPEND visited "${library}")
+    if(library STREQUAL "LLVM")
+      list(APPEND pending ${llvm_components})
+    elseif(library STREQUAL "ZLIB::ZLIB")
+      list(APPEND pending z)
+    elseif(library MATCHES "^zstd::libzstd_(shared|static)$")
+      list(APPEND pending zstd)
+    elseif(library MATCHES "^\\$<LINK_ONLY:(.*)>$")
+      list(APPEND pending "${CMAKE_MATCH_1}")
+    elseif(TARGET ${library})
+      get_target_property(type ${library} TYPE)
+      if(type STREQUAL "STATIC_LIBRARY")
+        list(APPEND archive_targets ${library})
+        list(APPEND archives "$<TARGET_FILE:${library}>")
+      elseif(NOT type STREQUAL "INTERFACE_LIBRARY")
+        message(FATAL_ERROR "cpphdl-static requires a static replacement for ${library} (${type})")
+      endif()
+      get_target_property(dependencies ${library} INTERFACE_LINK_LIBRARIES)
+      if(dependencies)
+        list(APPEND pending ${dependencies})
+      endif()
+    else()
+      string(REGEX REPLACE "^-l" "" name "${library}")
+      if(NOT name MATCHES "^[A-Za-z0-9_+.-]+$")
+        message(FATAL_ERROR "Unsupported cpphdl-static dependency: ${library}")
+      endif()
+      find_library(CPPHDL_STATIC_${name}_LIBRARY NAMES "${name}"
+        HINTS ${LLVM_LIBRARY_DIRS} ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
+      if(NOT CPPHDL_STATIC_${name}_LIBRARY)
+        message(FATAL_ERROR "cpphdl-static needs lib${name}.a. Install its static development package (Conda zstd: zstd-static), or set CPPHDL_STATIC_${name}_LIBRARY.")
+      endif()
+      list(APPEND archives "${CPPHDL_STATIC_${name}_LIBRARY}")
+    endif()
+  endwhile()
+
+  get_target_property(sources cpphdl SOURCES)
+  add_executable(cpphdl-static ${sources})
+  target_include_directories(cpphdl-static PRIVATE "$<TARGET_PROPERTY:cpphdl,INCLUDE_DIRECTORIES>")
+  target_compile_options(cpphdl-static PRIVATE "$<TARGET_PROPERTY:cpphdl,COMPILE_OPTIONS>")
+  target_compile_definitions(cpphdl-static PRIVATE "$<TARGET_PROPERTY:cpphdl,COMPILE_DEFINITIONS>")
+  add_dependencies(cpphdl-static ${archive_targets})
+  get_target_property(generated_dependencies cpphdl MANUALLY_ADDED_DEPENDENCIES)
+  if(generated_dependencies)
+    add_dependencies(cpphdl-static ${generated_dependencies})
+  endif()
+  target_link_options(cpphdl-static PRIVATE -static)
+  set_target_properties(cpphdl-static PROPERTIES SKIP_BUILD_RPATH TRUE)
+  target_link_libraries(cpphdl-static PRIVATE
+    "-Wl,--start-group" ${archives} "-Wl,--end-group")
+  cpphdl_link_stdcxxexp_if_available(cpphdl-static)
+  if(TARGET cpphdl_veriloga_driver)
+    target_link_libraries(cpphdl-static PRIVATE cpphdl_veriloga_driver)
+  endif()
+  cpphdl_strip_gnu_property_after_build(cpphdl-static)
+  find_program(CPPHDL_STATIC_READELF NAMES llvm-readelf readelf
+    HINTS "${LLVM_TOOLS_BINARY_DIR}" REQUIRED)
+  add_custom_command(TARGET cpphdl-static POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" "-DBINARY=$<TARGET_FILE:cpphdl-static>"
+      "-DREADELF=${CPPHDL_STATIC_READELF}" -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/VerifyStatic.cmake"
+    VERBATIM)
+  if(BUILD_TESTING)
+    foreach(case help forwarding)
+      add_test(NAME cpphdl_static_cli_${case} COMMAND "${CMAKE_COMMAND}"
+        "-DCPPHDL=$<TARGET_FILE:cpphdl-static>" "-DCASE=${case}"
+        "-DTEST_DIR=${CMAKE_SOURCE_DIR}/tests/cli"
+        "-DGENERATED_DIR=${CMAKE_BINARY_DIR}/tests/generated_static_cli"
+        -P "${CMAKE_SOURCE_DIR}/tests/cli/CommandLine.cmake")
+      set_tests_properties(cpphdl_static_cli_${case} PROPERTIES TIMEOUT 60)
+    endforeach()
+  endif()
+endfunction()
