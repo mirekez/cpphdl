@@ -31,6 +31,22 @@ target_compile_features(cpp_graph_native_pending_events PRIVATE cxx_std_23)
 target_link_libraries(cpp_graph_native_pending_events PRIVATE Threads::Threads)
 add_test(NAME cpp_graph_native_pending_events COMMAND cpp_graph_native_pending_events)
 set_tests_properties(cpp_graph_native_pending_events PROPERTIES TIMEOUT 60)
+add_executable(cpp_graph_native_thread_runtime graph/NativeThreadRuntime.cc)
+target_include_directories(cpp_graph_native_thread_runtime PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_features(cpp_graph_native_thread_runtime PRIVATE cxx_std_23)
+target_link_libraries(cpp_graph_native_thread_runtime PRIVATE Threads::Threads)
+foreach(spins 0 64 1024)
+    add_test(NAME cpp_graph_native_thread_runtime_${spins}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_SPIN=${spins}"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>")
+    set_tests_properties(cpp_graph_native_thread_runtime_${spins} PROPERTIES TIMEOUT 120)
+endforeach()
+foreach(spins invalid -1 65537)
+    add_test(NAME cpp_graph_native_thread_invalid_spin_${spins}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_SPIN=${spins}"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>" --invalid-spin)
+    set_tests_properties(cpp_graph_native_thread_invalid_spin_${spins} PROPERTIES TIMEOUT 10)
+endforeach()
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME optimizer_assign_initialization COMMAND "${Python3_EXECUTABLE}" -B

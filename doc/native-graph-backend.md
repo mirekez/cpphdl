@@ -218,10 +218,22 @@ Invalid values fail at construction. Each model also exposes
 can have more workers than one graph needs: generated calls pass their active
 lane count, and only those workers receive commands or participate in the join.
 Workers skipped for many transactions rejoin using independent command stamps.
-Workers and joins spin for at most 64 iterations before sleeping, rather than
-keeping spare cores busy for 4,096 iterations. This bounds dispatch overhead
-on hosts running other simulations or compilers; it does not change the graph
-schedule or its synchronization guarantees.
+Workers and joins default to a bounded 64-iteration spin before sleeping.
+`CPPHDL_NATIVE_SPIN=1024` increases that window for short, frequent transactions
+on a host with spare CPUs. It is read once per executor before workers start;
+the supported range is 0 (immediate waiting) through 65536. Invalid values fail
+at construction. All waits still fall back to atomic waiting after the bounded
+window; command stamps and synchronization are unchanged. Longer spinning can
+avoid kernel wakeups but can hurt on oversubscribed hosts. Compare simulated
+clocks per host second, not CPU occupancy, using the same executable and inputs.
+Changing this environment variable needs a process restart, but no rebuild
+once the executable has been compiled with this runtime.
+
+`bash tests/graph/BenchmarkNativeSpin.sh /tmp/native-spin 6 24` builds and checks
+a generated graph with registers, RAM, reset and model copies, then measures
+idle, sparse, dense and alternating activity at several spin windows. It
+records throughput and process CPU time. This is a small graph benchmark,
+not a prediction of full-model speedup.
 
 For independent module instances, outer parallelism can avoid the repeated
 barriers and duplicated fan-in of splitting each instance into worker cones.

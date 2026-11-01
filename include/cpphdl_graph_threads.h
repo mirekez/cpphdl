@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -24,6 +25,21 @@ inline DispatchPolicy nativeDispatchPolicy() {
     if (std::string_view(value) == "serial") return DispatchPolicy::Serial;
     if (std::string_view(value) == "parallel") return DispatchPolicy::Parallel;
     throw std::invalid_argument("CPPHDL_NATIVE_DISPATCH must be auto, serial or parallel");
+}
+
+// Read once per executor, before starting workers. Bounded spinning can avoid
+// kernel sleep/wakeup overhead for frequent short graph transactions. Keep a
+// conservative default for shared/oversubscribed hosts; tune by throughput,
+// not CPU occupancy. Zero requests immediate atomic waiting.
+inline unsigned nativeSpinLimit() {
+    const char* value = std::getenv("CPPHDL_NATIVE_SPIN");
+    if (!value) return 64;
+    const std::string_view text(value);
+    unsigned count = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), count);
+    if (error != std::errc{} || end != text.data() + text.size() || count > 65536)
+        throw std::invalid_argument("CPPHDL_NATIVE_SPIN must be an integer from 0 to 65536");
+    return count;
 }
 
 // Persistent workers for one graph transaction. Generated tasks are noexcept:
@@ -115,7 +131,6 @@ public:
 private:
     // Long idle spins can keep the caller descheduled on a busy host. A short
     // window catches immediate completions, then lets the futex wake the lane.
-    static constexpr unsigned spinLimit = 64;
     static void pause() noexcept {
 #if defined(__i386__) || defined(__x86_64__)
         __builtin_ia32_pause();
@@ -125,12 +140,12 @@ private:
         std::this_thread::yield();
 #endif
     }
-    static void waitFor(const std::atomic<uint32_t>& slot, uint32_t epoch) noexcept {
+    void waitFor(const std::atomic<uint32_t>& slot, uint32_t epoch) const noexcept {
         unsigned spins = 0;
         for (;;) {
             auto observed = slot.load(std::memory_order_acquire);
             if (observed == epoch) return;
-            if (++spins < spinLimit) pause();
+            if (++spins < spinLimit_) pause();
             else { slot.wait(observed, std::memory_order_acquire); spins = 0; }
         }
     }
@@ -142,7 +157,7 @@ private:
             if (epoch == seen) {
                 unsigned spins = 0;
                 do {
-                    if (++spins < spinLimit) pause();
+                    if (++spins < spinLimit_) pause();
                     else { command.wait(seen, std::memory_order_acquire); spins = 0; }
                     epoch = command.load(std::memory_order_acquire);
                 } while (epoch == seen);
@@ -163,6 +178,7 @@ private:
         for (auto& worker : workers_) worker.join();
     }
     unsigned lanes_;
+    const unsigned spinLimit_ = nativeSpinLimit();
     std::unique_ptr<Slot[]> commands_, completed_, tasks_;
     std::vector<std::thread> workers_;
     std::mutex mutex_;
