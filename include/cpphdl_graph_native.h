@@ -561,6 +561,22 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
             if (!settleLive[*position] || node.op == "state" || node.op == "input") continue;
             for (const auto* value : {&node.left, &node.right, &node.select}) requireSettling(*value);
         }
+        // Output-only evaluation need not visit tasks whose only sinks are
+        // next-state or transactional memory checks. Keep task zero pinned to
+        // the caller, and retain every live output cone and continuous check.
+        std::vector<bool> settleTaskRequired(threads, false);
+        settleTaskRequired[0]=true;
+        std::vector<unsigned> settleTasks;
+        if(threads>1 && parallel.stages==1 && !hostOverlap && !option("native.all_settle_tasks")) {
+            for(size_t port=0;port<ports.size();++port)if(!ports[port].input)
+                for(auto task:parallel.portWords[port])settleTaskRequired[task]=true;
+            for(size_t access=0;access<memoryAccesses.size();++access)
+                if(!memoryAccesses[access].transaction)settleTaskRequired[parallel.accesses[access]]=true;
+            for(unsigned task=0;task<threads;++task)
+                for(auto node:taskNodes[task])if(settleLive[node])settleTaskRequired[task]=true;
+        } else std::fill(settleTaskRequired.begin(),settleTaskRequired.end(),true);
+        for(unsigned task=0;task<threads;++task)if(settleTaskRequired[task])settleTasks.push_back(task);
+        const bool filteredSettleTasks=settleTasks.size()<threads;
         std::vector<int64_t> chunkOf(nodes.size(), -1);
         std::vector<std::vector<size_t>> taskChunks(taskNodes.size());
         std::vector<bool> settleChunks;
@@ -728,6 +744,20 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         }
         for(size_t i=0;i<memoryWrites.size();++i)if(!shadowedWrites[i])
             commitWrites[memoryCommitLane[memoryWrites[i].memory]].push_back(i);
+        const bool activeMemoryCommits=parallelMemoryCommits && !hostOverlap &&
+            option("native.active_memory_commits");
+        const unsigned commitMaskWords=(commitLanes+63)/64;
+        std::vector<bool> taskHasCommitWork(threads);
+        std::vector<std::vector<uint64_t>> groupCommitMasks;
+        if(activeMemoryCommits)
+            groupCommitMasks.assign(writeGroups.size(),std::vector<uint64_t>(commitMaskWords));
+        if(activeMemoryCommits)for(size_t group=0;group<writeGroups.size();++group) {
+            taskHasCommitWork[writeGroups[group].lane]=true;
+            for(auto i:writeGroups[group].writes) {
+                const auto lane=memoryCommitLane[memoryWrites[i].memory];
+                groupCommitMasks[group][lane/64] |= uint64_t(1) << (lane%64);
+            }
+        }
         const bool cachedStateTransactions=writeTracking&&threads>1&&!option("native.uncached_state_transactions")&&
             std::all_of(states.begin(),states.end(),[](const auto& state){return state.clock<0;});
         struct StateGroup {
@@ -1614,6 +1644,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                        << "static constexpr bool __cpphdl_cached_transactions = " << (cachedTransactions?"true":"false") << ";\n";
                 for (unsigned lane = 0; lane < threads; ++lane) {
                     output << "struct alignas(64) __cpphdl_Transaction_" << lane << " {\nunsigned errors = 0;\n";
+                    if(activeMemoryCommits&&taskHasCommitWork[lane])
+                        output << "std::array<uint64_t," << commitMaskWords << "> active_commits{};\n";
                     for (size_t i = 0; i < ports.size(); ++i) if (!ports[i].input &&
                             std::find(parallel.portWords[i].begin(),parallel.portWords[i].end(),lane)!=parallel.portWords[i].end())
                         output << "std::array<uint32_t," << (ports[i].bits.size()+31)/32 << "> port" << i << "{};\n";
@@ -1674,6 +1706,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     if (!splitSinks)
                         output << "template<bool Commit> [[gnu::noinline]] void __cpphdl_sinks_" << lane << "() noexcept {\n"
                                << "auto& tx = " << pending(lane) << ";\ntx.errors = 0;\n";
+                    if(!splitSinks&&activeMemoryCommits&&taskHasCommitWork[lane])
+                        output << "if constexpr(Commit) tx.active_commits.fill(0);\n";
                     for (size_t i = 0; i < memoryAccesses.size(); ++i) if (parallel.accesses[i] == lane) {
                         const auto& access = memoryAccesses[i];
                         emitSink(false, [&] {
@@ -1710,6 +1744,17 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                             if(cachedWriteGroups[group])
                                 output << "}\nif(tx.invalid_address" << group << ") tx.errors |= 2;\n";
                             output << "}\n";
+                            if(activeMemoryCommits) {
+                                // A rejected earlier transaction may leave a
+                                // payload notification pending while enable is
+                                // now false. Its commit bookkeeping must run.
+                                output << "if(tx.enable" << group;
+                                if(commitPayloadGroups[group])output << " || tx.payload_pending" << group;
+                                output << ") {\n";
+                                for(unsigned word=0;word<commitMaskWords;++word)if(groupCommitMasks[group][word])
+                                    output << "tx.active_commits[" << word << "] |= " << groupCommitMasks[group][word] << "ull;\n";
+                                output << "}\n";
+                            }
                         });
                         // Account for all ports, not just the shared predicate,
                         // when bounding generated sink function size.
@@ -1790,6 +1835,8 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                         closeSink();
                         output << "template<bool Commit> [[gnu::noinline]] void __cpphdl_sinks_" << lane << "() noexcept {\n"
                                << pending(lane) << ".errors = 0;\n";
+                        if(activeMemoryCommits&&taskHasCommitWork[lane])
+                            output << "if constexpr(Commit) " << pending(lane) << ".active_commits.fill(0);\n";
                         for (const auto& [name, commitOnly] : sinkFunctions) {
                             if (commitOnly) output << "if constexpr(Commit) ";
                             output << name << "<Commit>();\n";
@@ -1811,9 +1858,29 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     }
                     output << "model.__cpphdl_sinks_" << lane << "<Commit>();\nbreak;\n";
                 }
-                output << "}\n}\nvoid __cpphdl_publish(bool commit = true) {\nunsigned errors = 0;\n";
-                for (unsigned lane = 0; lane < (hostOverlap ? 1u : threads); ++lane)
+                output << "}\n}\n";
+                if(filteredSettleTasks) {
+                    output << "static constexpr std::array<unsigned," << settleTasks.size() << "> __cpphdl_settle_tasks{{";
+                    for(size_t i=0;i<settleTasks.size();++i)output << (i?",":"") << settleTasks[i];
+                    output << "}};\nstatic void __cpphdl_settle_lane(void* target, cpphdl::graph_runtime::Threads& executor, unsigned index, uint32_t epoch) noexcept {\n"
+                              "__cpphdl_lane<false>(target,executor,__cpphdl_settle_tasks[index],epoch);\n}\n";
+                }
+                output << "static constexpr unsigned __cpphdl_settle_task_count = " << settleTasks.size() << ";\n";
+                if(activeMemoryCommits)
+                    output << "std::array<uint64_t," << commitMaskWords << "> __cpphdl_active_commit_mask{};\n"
+                           << "std::array<unsigned," << commitLanes << "> __cpphdl_active_commit_lanes{};\n";
+                output << "static constexpr bool __cpphdl_active_memory_commits = " << (activeMemoryCommits?"true":"false") << ";\n"
+                          "void __cpphdl_publish(bool commit = true) {\nunsigned errors = 0;\n";
+                if(activeMemoryCommits)output << "if(commit) __cpphdl_active_commit_mask.fill(0);\n";
+                for (unsigned lane = 0; lane < (hostOverlap ? 1u : threads); ++lane) {
+                    // Skipped tasks may retain an error from a rejected commit;
+                    // output-only evaluation has no checks in those tasks.
+                    if(filteredSettleTasks && !settleTaskRequired[lane])output << "if(commit) ";
                     output << "errors |= " << pending(lane) << ".errors;\n";
+                    if(activeMemoryCommits&&taskHasCommitWork[lane])
+                        for(unsigned word=0;word<commitMaskWords;++word)
+                            output << "if(commit) __cpphdl_active_commit_mask[" << word << "] |= " << pending(lane) << ".active_commits[" << word << "];\n";
+                }
                 for (const auto& node : nodes) if (node.validation())
                     output << "if(commit && " << assembly(node.left) << ") throw std::runtime_error("
                            << nativeStringLiteral(node.name) << ");\n";
@@ -1916,13 +1983,27 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     }
                     output << "}\n}\nstatic void __cpphdl_commit_lane(void* target, cpphdl::graph_runtime::Threads&, unsigned lane, uint32_t) noexcept {\n"
                               "static_cast<Model*>(target)->__cpphdl_commit_memory_lane(lane);\n}\n";
+                    if(activeMemoryCommits)
+                        output << "static void __cpphdl_active_commit_lane(void* target, cpphdl::graph_runtime::Threads&, unsigned lane, uint32_t) noexcept {\n"
+                                  "auto& model = *static_cast<Model*>(target);\n"
+                                  "model.__cpphdl_commit_memory_lane(model.__cpphdl_active_commit_lanes[lane]);\n}\n";
                 }
                 output << "void __cpphdl_commit() noexcept {\n";
-                if(parallelMemoryCommits) {
+                if(activeMemoryCommits) {
+                    output << "unsigned active = 0;\n";
+                    for(unsigned word=0;word<commitMaskWords;++word)
+                        output << "{ auto mask = __cpphdl_active_commit_mask[" << word << "];\nwhile(mask) {\n"
+                               << "__cpphdl_active_commit_lanes[active++] = " << word*64 << "u + unsigned(__builtin_ctzll(mask));\n"
+                                  "mask &= mask-1;\n}\n}\n";
+                    output << "if(active <= 1 || " << (adaptiveDispatch?"__cpphdl_dispatch_policy":"__cpphdl_memory_dispatch_policy")
+                           << " == cpphdl::graph_runtime::DispatchPolicy::Serial) {\n"
+                              "for(unsigned i=0;i<active;++i) __cpphdl_commit_memory_lane(__cpphdl_active_commit_lanes[i]);\n"
+                              "} else __cpphdl_threads->runTasks(this,&Model::__cpphdl_active_commit_lane,active);\n";
+                } else if(parallelMemoryCommits) {
                     output << "if(" << (adaptiveDispatch?"__cpphdl_dispatch_policy":"__cpphdl_memory_dispatch_policy")
                            << " == cpphdl::graph_runtime::DispatchPolicy::Serial) {\n"
                            << "for(unsigned lane=0;lane<" << commitLanes << ";++lane) __cpphdl_commit_memory_lane(lane);\n"
-                           << "} else __cpphdl_threads->run(this,&Model::__cpphdl_commit_lane," << commitLanes << "u);\n";
+                           << "} else __cpphdl_threads->runTasks(this,&Model::__cpphdl_commit_lane," << commitLanes << "u);\n";
                 } else emitCommitLane(0);
                 if(memoryChangeEvents)output << "__cpphdl_publish_memory_changes();\n";
                 output << "__cpphdl_current = !__cpphdl_current;\n";
@@ -1937,12 +2018,23 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                     output << "for(auto& activity:__cpphdl_activity) activity.nodes = 0;\n"
                               "if(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Serial ||\n"
                               "(__cpphdl_dispatch_policy == cpphdl::graph_runtime::DispatchPolicy::Automatic && __cpphdl_serial_by_phase[Commit]"
-                           << (parallelRoots?" && __cpphdl_pending_root_work(Commit) < 4096":"") << ")) {\n"
-                              "for(unsigned lane=0;lane<__cpphdl_task_count;++lane)\n"
-                              "__cpphdl_lane<Commit>(this,*__cpphdl_threads,lane,0);\n"
+                           << (parallelRoots?" && __cpphdl_pending_root_work(Commit) < 4096":"") << ")) {\n";
+                if(adaptiveDispatch) {
+                    if(filteredSettleTasks)output << "if constexpr(!Commit) {\nfor(auto lane:__cpphdl_settle_tasks) __cpphdl_lane<false>(this,*__cpphdl_threads,lane,0);\n} else ";
+                    output << "{ for(unsigned lane=0;lane<__cpphdl_task_count;++lane)\n"
+                              "__cpphdl_lane<Commit>(this,*__cpphdl_threads,lane,0); }\n"
                               "} else ";
+                }
+                output << "{\n";
+                if(filteredSettleTasks) {
+                    output << "if constexpr(!Commit) ";
+                    if(settleTasks.size()==1)output << "__cpphdl_settle_lane(this,*__cpphdl_threads,0,0);\n";
+                    else output << "__cpphdl_threads->runTasks(this,&Model::__cpphdl_settle_lane,__cpphdl_settle_task_count);\n";
+                    output << "else ";
+                }
                 output << "__cpphdl_threads->" << (dynamicTasks?"runTasks":"run")
                        << "(this, &Model::__cpphdl_lane<Commit>, __cpphdl_task_count);\n";
+                output << "}\n";
                 if (adaptiveDispatch)
                     output << "uint64_t active_nodes = 0;\n"
                               "for(const auto& activity:__cpphdl_activity) active_nodes += activity.nodes;\n"

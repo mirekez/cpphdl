@@ -25,6 +25,9 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
     "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
 find_package(Threads REQUIRED)
+add_test(NAME cpp_graph_native_settle_tasks COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSettleTasksChecks.sh" "${CMAKE_CXX_COMPILER}")
+set_tests_properties(cpp_graph_native_settle_tasks PROPERTIES TIMEOUT 600)
 add_executable(cpp_graph_native_pending_events graph/NativePendingEvents.cc)
 target_include_directories(cpp_graph_native_pending_events PRIVATE "${CMAKE_SOURCE_DIR}/include")
 target_compile_features(cpp_graph_native_pending_events PRIVATE cxx_std_23)
@@ -40,6 +43,18 @@ foreach(spins 0 64 1024)
         COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_SPIN=${spins}"
             "$<TARGET_FILE:cpp_graph_native_thread_runtime>")
     set_tests_properties(cpp_graph_native_thread_runtime_${spins} PROPERTIES TIMEOUT 120)
+endforeach()
+foreach(workers 1 2 4 30)
+    add_test(NAME cpp_graph_native_task_workers_${workers}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_TASK_WORKERS=${workers}" "CPPHDL_NATIVE_SPIN=64"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>")
+    set_tests_properties(cpp_graph_native_task_workers_${workers} PROPERTIES TIMEOUT 120)
+endforeach()
+foreach(workers invalid 0 -1 257)
+    add_test(NAME cpp_graph_native_task_workers_invalid_${workers}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_TASK_WORKERS=${workers}"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>" --invalid-setting)
+    set_tests_properties(cpp_graph_native_task_workers_invalid_${workers} PROPERTIES TIMEOUT 10)
 endforeach()
 foreach(spins invalid -1 65537)
     add_test(NAME cpp_graph_native_thread_invalid_spin_${spins}
@@ -276,6 +291,10 @@ if(Python3_Interpreter_FOUND)
             --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties("cpp_graph_native_${check_name}" PROPERTIES TIMEOUT 600)
     endforeach()
+    add_test(NAME cpp_graph_native_active_memory_commits COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeParallelMemoryChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --active-commits --task-workers 1 4)
+    set_tests_properties(cpp_graph_native_active_memory_commits PROPERTIES TIMEOUT 600)
     add_test(NAME cpp_graph_native_ram_memoization COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeRamMemoizationChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-ram-memoization")

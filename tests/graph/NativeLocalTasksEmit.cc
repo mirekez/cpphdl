@@ -33,5 +33,6 @@ int main(int argc,char**argv) {
   g.attributes.push_back({"",option,"1"});
  if(std::stoul(argv[3]))g.attributes.push_back({"","native.scope_tasks","1"});
  g.attributes.push_back({"","native.tasks",argv[2]});
+ if(argc>5)g.attributes.push_back({"","native.active_memory_commits","1"});
  g.emit(argv[1],64,std::stoul(argv[4]),false,true,true,false,true);
 }

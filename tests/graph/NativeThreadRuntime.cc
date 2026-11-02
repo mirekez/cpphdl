@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <thread>
 
 using cpphdl::graph_runtime::Threads;
@@ -34,24 +35,32 @@ static void subsets(Threads& pool, unsigned capacity) {
     }
 }
 
-static void tasks(Threads& pool) {
+static void tasks(Threads& pool, unsigned capacity) {
     struct Work {
         unsigned count;
         std::array<std::atomic<unsigned>, 120> visits{};
+        std::array<std::thread::id, 120> workers{};
         std::thread::id caller = std::this_thread::get_id();
     } work;
     for (unsigned i = 0; i < 512; ++i) {
         work.count = i % 4 ? 120 : i % 31;
         for (auto& v : work.visits) v.store(0);
-        pool.runTasks(&work, [](void* ptr, Threads&, unsigned task, uint32_t) noexcept {
+        auto visit = [](void* ptr, Threads&, unsigned task, uint32_t) noexcept {
             auto& w = *static_cast<Work*>(ptr);
             require(task < w.count);
             if (task == 0) require(std::this_thread::get_id() == w.caller);
             require(w.visits[task].fetch_add(1) == 0);
+            w.workers[task] = std::this_thread::get_id();
             if (task % 17 == 0) std::this_thread::yield();
-        }, work.count);
+        };
+        if (i % 2) pool.runTasks(&work, visit, work.count, 1 + (i % 30));
+        else pool.runTasks(&work, visit, work.count);
         for (unsigned j = 0; j < 120; ++j)
             require(work.visits[j].load() == unsigned(j < work.count));
+        const auto cap = cpphdl::graph_runtime::nativeTaskWorkers(capacity);
+        const auto limit = i % 2 ? std::min(cap, 1 + i % 30) : cap;
+        const std::set<std::thread::id> workers(work.workers.begin(), work.workers.begin() + work.count);
+        require(workers.size() <= limit);
     }
 }
 
@@ -109,13 +118,17 @@ int main(int argc, char**) {
     }
     for (unsigned count : {1u, 2u, 6u, 30u}) {
         Threads pool(count, 120);
+        bool invalidBudget = false;
+        try { pool.runTasks(nullptr, [](void*, Threads&, unsigned, uint32_t) noexcept {}, 1, 0); }
+        catch (const std::invalid_argument&) { invalidBudget = true; }
+        require(invalidBudget);
         subsets(pool, count);
-        tasks(pool);
+        tasks(pool, count);
         dependencies(pool, count);
         exceptionDrain(pool, count);
         // Concurrent model copies share one executor, but never job metadata.
         std::thread a([&] { subsets(pool, count); });
-        std::thread b([&] { tasks(pool); });
+        std::thread b([&] { tasks(pool, count); });
         a.join(); b.join();
         for (unsigned invalid : {0u, count + 1}) {
             bool caught = false;

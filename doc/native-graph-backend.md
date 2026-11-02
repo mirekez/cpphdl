@@ -229,6 +229,43 @@ clocks per host second, not CPU occupancy, using the same executable and inputs.
 Changing this environment variable needs a process restart, but no rebuild
 once the executable has been compiled with this runtime.
 
+`CPPHDL_NATIVE_TASK_WORKERS=N` limits workers executing independent queued
+tasks, including generated RAM commits. It accepts 1 through 256, clamps to the
+compiled pool capacity, and defaults to that capacity. It is read once when
+the executor is constructed. Every task still executes; task zero stays on the
+caller. With one active worker, the caller processes tasks without atomic queue
+claims. With one task per active worker, the executor uses direct dispatch.
+Fixed-lane dependency stages deliberately ignore this cap: reducing their lanes
+could leave prerequisites unexecuted. Thus this is an independent-task budget,
+not a process-wide thread limit. Compare elapsed time at several budgets rather
+than interpreting spinning CPU occupancy as useful parallelism.
+
+Output-only evaluation now visits only tasks that own observable output words,
+live output dependencies or continuous memory checks. Task zero remains on the
+caller. Tasks that only prepare registers or transactional memory are omitted;
+their stale error flags after a rejected commit are not published by settling.
+All tasks still execute during commit preparation. The filter applies to
+independent single-stage plans without host overlap; other plans retain their
+original schedule. `Model::__cpphdl_settle_task_count` reports the selected
+count. Set `native.all_settle_tasks=1` on the graph to generate the reference
+schedule for comparison. `NativeSettleTasksChecks.sh` checks plain, cached and
+split output against an independent state oracle, including continuous checks,
+rejected commits, resets, copied models and different worker budgets.
+
+Local comparison (GCC 15 `-O1`, six compiled workers capped to four, CPUs 1–4,
+24 tasks, 96 xorshift rounds per state, three interleaved trials) reduced the
+output-only task count from 24 to 3. Median output-only evaluation improved
+from 9.73 to 36.27 million evaluations/s at 64 spins. Complete steps changed
+from 224,092 to 219,086 clocks/s at 64 spins and from 227,776 to 232,045 at 4096
+spins. Thus the isolated phase improved 3.73x, while whole-step throughput was
+approximately unchanged (-2.2% / +1.9%); this is not a Llama speedup claim.
+[Raw samples](validation/native-settle-tasks-20261102.tsv) include CPU cost.
+Build `NativeSettleTasksEmit.cc` and `NativeSettleTasksRun.cc` with
+`-DNATIVE_SETTLE_ROUNDS=96` to reproduce this workload. Emitter arguments after
+the output header are `all_tasks memoize split`; reference and filtered builds
+use `1 1 0` and `0 1 0`. Runner arguments `settle` and `step` time the separate
+phase and complete clocks respectively; no arguments run the numerical oracle.
+
 `bash tests/graph/BenchmarkNativeSpin.sh /tmp/native-spin 6 24` builds and checks
 a generated graph with registers, RAM, reset and model copies, then measures
 idle, sparse, dense and alternating activity at several spin windows. It
@@ -2563,10 +2600,43 @@ but cannot split a conflicting component. The serial override takes precedence.
 `CPPHDL_NATIVE_DISPATCH=serial` executes those commit lanes sequentially as well;
 automatic and parallel dispatch use the existing persistent executor.
 
+The experimental `native.active_memory_commits=1` option filters commit lanes
+using the write predicates already evaluated during transaction preparation.
+Each preparation task records a bitmap of required RAM owners. The caller merges
+these during validation, then skips an empty commit dispatch, executes a single
+owner directly, or dispatches just the required owners. A pending cached payload
+also activates its owner, including after a rejected transaction. Port priority,
+pre-commit read snapshots and validation before writes remain unchanged.
+`Model::__cpphdl_active_memory_commits` reports whether this path was generated.
+It requires parallel memory commits and currently excludes host-overlap models.
+It is opt-in: mask preparation and compaction can cost more than they save for
+dense writes. Benchmark the actual workload before enabling it.
+
+A local GCC 15 `-O1` comparison used `NativeLocalTasksEmit.cc` with 24 scoped
+tasks and four workers. Passing an additional `active` argument after the
+worker count enables this option in that fixture. Both binaries used the same
+runtime and passed `NativeLocalTasksRun.cc`'s independent oracle. Three
+interleaved trials, allowing workers to use all six VM CPUs while one unrelated
+compiler was running, produced these median clock rates (thousands/s):
+
+| Activity | Baseline, 64 spins | Filtered, 64 | Baseline, 4096 | Filtered, 4096 |
+| --- | ---: | ---: | ---: | ---: |
+| Idle registers | 229.10 | 245.97 | 234.43 | 255.46 |
+| One enabled unit | 227.48 | 244.12 | 232.49 | 254.97 |
+| All units enabled | 182.85 | 188.33 | 188.38 | 192.06 |
+| Alternating half | 209.72 | 203.85 | 215.61 | 213.88 |
+
+This supports testing sparse workloads, not enabling the option universally:
+alternating activity regressed, and there is no Llama or 30-worker result yet.
+See [raw samples](validation/native-active-commits-20261102.tsv).
+Earlier restricted-affinity runs were unstable and are excluded from this table.
+
 `NativeParallelMemoryChecks.py` tests cross-memory read snapshots, interleaved
 colliding wide writes, helpers, clock edges, resets, rejected transactions,
 retries and concurrent copied models across memoization modes. Its optional
-`--tsan` run also covers shared payload notifications under commit caching.
+`--tsan` run also covers shared payload notifications under commit caching;
+`--active-commits` exercises filtered commit scheduling, including its fallback
+for serial and host-overlap models.
 
 
 ## Cached register transactions

@@ -42,6 +42,19 @@ inline unsigned nativeSpinLimit() {
     return count;
 }
 
+// Independent tasks can use fewer workers than the compiled pool. Fixed-lane
+// dependency stages must keep all their lanes and deliberately ignore this cap.
+inline unsigned nativeTaskWorkers(unsigned capacity) {
+    const char* value = std::getenv("CPPHDL_NATIVE_TASK_WORKERS");
+    if (!value) return capacity;
+    const std::string_view text(value);
+    unsigned count = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), count);
+    if (error != std::errc{} || end != text.data() + text.size() || !count || count > 256)
+        throw std::invalid_argument("CPPHDL_NATIVE_TASK_WORKERS must be an integer from 1 to 256");
+    return std::min(capacity, count);
+}
+
 // Persistent workers for one graph transaction. Generated tasks are noexcept:
 // validation errors are reported to the caller. A caller continuation may
 // consume completed output ports while workers prepare inactive registers.
@@ -78,14 +91,30 @@ public:
     // happens only after run() joins every worker. No cross-group waits are
     // allowed in this entry point.
     void runTasks(void* model, Function function, unsigned count) {
+        runTasks(model, function, count, lanes_);
+    }
+    void runTasks(void* model, Function function, unsigned count, unsigned requestedWorkers) {
         if (!count) return;
-        const unsigned active = std::min(lanes_, count);
+        if (!requestedWorkers) throw std::invalid_argument("native task worker budget must be positive");
+        const unsigned active = std::min({taskWorkers_, count, requestedWorkers});
+        if (active == count) {
+            run(model, function, active);
+            return;
+        }
         struct Work {
             void* model;
             Function function;
             unsigned count;
             std::atomic<unsigned> next;
         } work{model, function, count, active};
+        if (active == 1) {
+            run(&work, [](void* opaque, Threads& executor, unsigned, uint32_t epoch) noexcept {
+                auto& work = *static_cast<Work*>(opaque);
+                for (unsigned task = 0; task < work.count; ++task)
+                    work.function(work.model, executor, task, epoch);
+            }, 1u);
+            return;
+        }
         run(&work, [](void* opaque, Threads& executor, unsigned lane, uint32_t epoch) noexcept {
             auto& work = *static_cast<Work*>(opaque);
             work.function(work.model, executor, lane, epoch);
@@ -179,6 +208,7 @@ private:
     }
     unsigned lanes_;
     const unsigned spinLimit_ = nativeSpinLimit();
+    const unsigned taskWorkers_ = nativeTaskWorkers(lanes_);
     std::unique_ptr<Slot[]> commands_, completed_, tasks_;
     std::vector<std::thread> workers_;
     std::mutex mutex_;

@@ -10,6 +10,8 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--cxx',default='g++')
 p.add_argument('--work',type=Path)
 p.add_argument('--tsan',action='store_true')
+p.add_argument('--active-commits',action='store_true')
+p.add_argument('--task-workers',type=int,nargs='+',default=[None],help='Runtime independent-task worker caps')
 p.add_argument('--cases',nargs='+',choices=('serial','plain','keys','external','delta','coupled','overlap','tasks'),
                help='Restrict diagnostic runs to these cache modes')
 a=p.parse_args()
@@ -52,6 +54,7 @@ int main(int argc,char**argv) {
  if(kind=="serial")g.attributes.push_back({"","native.serial_memory_commits","1"});
  else g.attributes.push_back({"","native.parallel_memory_commits","1"});
  if(kind=="tasks")g.attributes.push_back({"","native.tasks","24"});
+ if(argc>6)g.attributes.push_back({"","native.active_memory_commits","1"});
  g.emit(argv[1],7,std::stoul(argv[2]),kind=="overlap",true,memo,false,delta,std::stoul(argv[4]));
 }
 ''')
@@ -121,9 +124,10 @@ if a.cases:cases=[c for c in cases if c[0] in a.cases]
 elif a.tsan:cases=[('delta',6,1),('coupled',6,1),('overlap',6,1),('tasks',6,1)]
 for index,(kind,threads,split) in enumerate(cases):
  d=w/f'{index}-{kind}';d.mkdir(exist_ok=True)
- subprocess.run([w/'emit',d/'model.h',str(threads),kind,str(split),'8'],check=True)
+ subprocess.run([w/'emit',d/'model.h',str(threads),kind,str(split),'8',*(['active'] if a.active_commits else [])],check=True)
  generated=(d/'model.h').read_text()
  lanes=int(re.search(r'__cpphdl_memory_commit_lanes = (\d+)',generated)[1])
+ if a.active_commits and lanes>1 and kind!='overlap':assert '__cpphdl_active_memory_commits = true;' in generated
  if kind=='coupled':assert 1<=lanes<=6 and '__cpphdl_cached_memory_commits = 0;' not in generated
  elif kind=='overlap':assert 1<lanes<=6
  else:assert lanes==(1 if kind=='serial' or threads==1 else 6)
@@ -132,5 +136,8 @@ for index,(kind,threads,split) in enumerate(cases):
  instrumentation=['-fsanitize=thread','-g'] if a.tsan else []
  subprocess.run([*flags,*instrumentation,'-DRAMS=8',f'-DCOUPLED={int(kind=="coupled")}',f'-DEXPECTED_LANES={lanes}','-I'+str(d),d/'run.cpp',
                  *sorted(d.glob('model.part.*.cpp')),'-o',d/'run'],check=True)
- for dispatch in ('serial','parallel','auto'):
-  subprocess.run([d/'run'],env=dict(os.environ,CPPHDL_NATIVE_DISPATCH=dispatch),check=True,timeout=60)
+ for cap in a.task_workers:
+  for dispatch in ('serial','parallel','auto'):
+   env=dict(os.environ,CPPHDL_NATIVE_DISPATCH=dispatch)
+   if cap is not None:env['CPPHDL_NATIVE_TASK_WORKERS']=str(cap)
+   subprocess.run([d/'run'],env=env,check=True,timeout=60)
