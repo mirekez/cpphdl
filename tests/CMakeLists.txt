@@ -25,6 +25,9 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
     "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
 find_package(Threads REQUIRED)
+add_test(NAME cpp_graph_native_quiet_probes COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeQuietProbesChecks.sh" "${CMAKE_CXX_COMPILER}")
+set_tests_properties(cpp_graph_native_quiet_probes PROPERTIES TIMEOUT 900)
 add_test(NAME cpp_graph_native_settle_tasks COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSettleTasksChecks.sh" "${CMAKE_CXX_COMPILER}")
 set_tests_properties(cpp_graph_native_settle_tasks PROPERTIES TIMEOUT 600)

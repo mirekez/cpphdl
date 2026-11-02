@@ -2226,6 +2226,16 @@ must execute. The default emitter leaves this optimization disabled. This is
 host work elimination; timestamp order, hardware clock counts and memory
 latencies are unchanged.
 
+Activity probes are deduplicated and published as packed predicate words,
+so native partitioning can distribute their independent fan-in cones. The
+caller checks all published words after workers join. A single global OR
+would make this observation one indivisible task, potentially serializing
+much of a large design just to decide whether a commit can be skipped.
+Constant-active and empty activity sets retain their constant fast paths.
+The generated `__cpphdl_event_active` observation array may have multiple
+words; callers should use `__cpphdl_advance_quiet_event()` instead of inspecting
+its first word.
+
 Multi-lane evaluators update both history banks after all workers have joined.
 This preserves held-clock and asynchronous-reset observations across bank swaps.
 

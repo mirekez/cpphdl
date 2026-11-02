@@ -432,20 +432,30 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         if(quietEvents) {
             if(hostEffects||clockContract!=ClockContract::ExplicitEvents||!clocks.empty())
                 throw std::runtime_error("quiet-event observation requires an explicit-event graph without host effects");
-            Value active{0};unsigned histories=0;
+            // Keep independent event cones visible to nativeParallelPlan.
+            // One OR of every trigger/enabled/check pins the entire design's
+            // activity calculation to a single task, even with many workers.
+            // Packed output words are independent roots; the host checks their
+            // published values only after all evaluation tasks have joined.
+            Value active; std::set<Bit> observed; unsigned histories=0; bool alwaysActive=false;
+            auto observe = [&](const Value& value) {
+                if(alwaysActive)return;
+                const auto bit = value.empty() ? Bit(0) : resolve(value.front());
+                if(bit==1) { active={1}; alwaysActive=true; return; }
+                if(bit && observed.insert(bit).second) active.push_back(bit);
+            };
             for(const auto& state:states) {
                 const auto& name=nodes[owner(state.bits.at(0))].name;
                 if(name=="event history"||name=="async reset history") {
                     if(state.bits.size()!=1||state.next.size()!=1||number(resolved(state.trigger))!=1)
                         throw std::runtime_error("invalid quiet-event history");
                     ports.push_back({"__cpphdl_event_history_"+std::to_string(histories++),Value{state.next[0],state.bits[0]},false});
-                }else active=binary("or",active,state.trigger,1);
+                }else observe(state.trigger);
             }
-            for(const auto& write:memoryWrites)active=binary("or",active,write.enabled,1);
-            for(const auto& access:memoryAccesses)if(access.transaction)active=binary("or",active,access.enabled,1);
-            std::vector<Value> checks;
-            for(const auto& node:nodes)if(node.validation())checks.push_back(node.left);
-            for(const auto& check:checks)active=binary("or",active,check,1);
+            for(const auto& write:memoryWrites)observe(write.enabled);
+            for(const auto& access:memoryAccesses)if(access.transaction)observe(access.enabled);
+            for(const auto& node:nodes)if(node.validation())observe(node.left);
+            if(active.empty())active.push_back(0);
             ports.push_back({"__cpphdl_event_active",active,false});
         }
         if (memoizeChunks && hostEffects)
@@ -1053,7 +1063,7 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                 }
         output << "bool __cpphdl_advance_quiet_event() {\n";
         if(quietEvents) {
-            output << "if(__cpphdl_event_active[0]) return false;\n";
+            output << "for(auto active:__cpphdl_event_active) if(active) return false;\n";
             for(const auto& port:ports)if(!port.input&&port.name.rfind("__cpphdl_event_history_", 0) == 0) {
                 auto bit=resolve(port.bits.at(1));auto index=owner(bit);
                 if(bit<2||lane(bit)||nodes[index].op!="state"||nodes[index].width!=1)
