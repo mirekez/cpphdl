@@ -3192,9 +3192,11 @@ orientations, positions and placement states before rerouting. OpenROAD rejects
 loading a second ODB into an already populated database; the native rejection
 test exposed that limitation, and the stage now restores these attributes in
 place. The retained ODB remains available to a fresh process. The predicate
-regression and real-IHP improvement/rejection fixture pass; an additional
-fresh-process checkpoint reload check is queued. The production 48-trial pass
-is running under `receiver-square-lookup-revision/data-repair/`.
+regression and real-IHP improvement/rejection fixture pass; the additional
+fresh-process checkpoint reload check also passes. The production 48-trial pass
+completed in 2,210.99 native seconds and retained its original checkpoint after
+the candidate failed the selection screen. See the subsequent publication
+update for the completed pin-repair candidate.
 
 The real IHP output-isolation fixture also passes the new independent global
 measurement and admission handoff: setup improves from -0.232196271 to
@@ -3215,3 +3217,35 @@ unbound evidence and mismatched replay. The component's recorded timing remains
 +0.037747696/+0.064936139 ns, with zero DRC violations and matching transistor
 LVS. Receiver timing, clock-tree integration and full-chip qualification remain
 open; this is not a completed repeater GDSII.
+
+## November 3 current physical block publication
+
+The earlier standalone publication is superseded by
+[`results/repeater_development.gds.gz`](results/repeater_development.gds.gz),
+a single hierarchical collection of 21 currently available physical blocks,
+and newly rendered overview/per-block PNGs. The receiver is exported from the
+latest completed `receiver-square-lookup-revision/pin-repair/global.odb`.
+This publishes failing geometry as-is without weakening qualification checks.
+
+Equivalent-input pin repair completed in 339.02 seconds. Nominal global-route
+setup/hold are **+0.412071288/+0.123619340 ns**; the enlarged-capacitance
+estimates are **-0.661499321/+0.140293896 ns**. The margin view also reports
+two clock-buffer capacitance violations. The continuation driver rejected this
+candidate and retained the preceding data-repair checkpoint. The new GDS
+publishes the latest pin candidate for inspection, not as an accepted timing
+solution. Signal detailed routing is still pending for this revision.
+
+The package also includes the newer clock-drift controller, with recorded
+standalone extracted setup/hold **+0.018183399/+0.061225358 ns**, zero full-deck
+DRC violations and matching LVS, plus the latest available analog, transmit,
+clock, reset, flow-control/SRAM, core and padframe geometry. Geometry hashes
+prove each block is preserved through merging and GDS round trip. Four
+publication regression cases pass under CTest, including failing timing and
+same-named cells with different geometry.
+
+The assembly adds **no electrical connections between blocks** and includes
+separate clock alternatives for review. It is not a chip floorplan or a full
+PHY/ADC/DSP layout; the equalizer/echo canceller has no physical checkpoint to
+include. Block dimensions and recorded checks are indexed in
+[`results/README.md`](results/README.md). Full-chip timing, DRC and LVS remain
+unfinished. Historical published files remain available in Git history.

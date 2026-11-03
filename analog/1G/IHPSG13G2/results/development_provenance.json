@@ -1,0 +1,1026 @@
+{
+  "schema": 1,
+  "generated_utc": "2026-11-03T21:30:36.425625+00:00",
+  "source_base_commit": "ea6cf21e5660c2582be3548c0bffdbbfeafdb626",
+  "status": "development_snapshot",
+  "top": "RepeaterDevelopmentAssembly",
+  "full_chip_qualified": false,
+  "electrically_integrated": false,
+  "inter_block_connections_added": 0,
+  "scope": "Non-overlapping physical block collection; not an electrically connected repeater.",
+  "database_unit_um": 0.001,
+  "bounds_um": [
+    0.0,
+    0.0,
+    5685.21,
+    5942.34
+  ],
+  "blocks": [
+    {
+      "name": "receiver_pcs",
+      "top": "PCSReceiver",
+      "title": "Receiver PCS / current placed checkpoint",
+      "caption": "Placement + CTS; signal detailed routing pending. Timing margin screen fails.",
+      "status": "Current square-lookup revision, including branch metrics and trellis decoder. Nominal global-route estimate setup/hold +0.412071288/+0.123619340 ns; 1.75x capacitance estimate -0.661499321/+0.140293896 ns. GDS includes placed cells, physical clock/power wires present in the ODB; global-route guides are not signal metal. No receiver equalizer/echo-canceller DSP is included in this PCS block. Latest completed equivalent-input pin repair; enlarged-capacitance clock-pin limits also fail. This failed candidate is published as-is, without replacing the repair driver's retained checkpoint.",
+      "source": "build/clock-integration/receiver-square-lookup-revision/pin-repair/global.odb",
+      "format": "odb",
+      "receipts": [
+        "build/clock-integration/receiver-square-lookup-revision/pin-repair/checks.json"
+      ],
+      "assembly_cell": "B00_PCSReceiver",
+      "source_sha256": "9c19b9e0d1a0ad5dfe31db215ac5b92d6653e4572977a99931d21ced74c72b2e",
+      "geometry_sha256": "5b3a99d8f47a710ff3c0fb3c1803aeec7af1c4b5f87b87377a24bda35ee18eec",
+      "bounds_um": [
+        0.0,
+        0.0,
+        2400.0,
+        2400.0
+      ],
+      "width_um": 2400.0,
+      "height_um": 2400.0,
+      "evidence": [
+        {
+          "path": "build/clock-integration/receiver-square-lookup-revision/pin-repair/checks.json",
+          "sha256": "fb3694a1d10885318fb3f11b10dee38fc5da6bc7ae19932e584ebb6098b55ae6",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "fail",
+            "stage": "global",
+            "error": "candidate misses 0.1 ns setup target or 0.1 ns margin for hold",
+            "timing_qualified": false,
+            "physical_qualified": false,
+            "full_chip_qualified": false,
+            "global_electrical_pass": true,
+            "global_estimates": {
+              "setup_ns": 0.412071288,
+              "hold_ns": 0.12361934
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flow_control",
+      "top": "FlowControlledRepeater",
+      "title": "Flow control / SRAM assembly candidate",
+      "caption": "Routed block with SRAM well repair; candidate, DRC/LVS qualification incomplete.",
+      "status": "Latest row-well repair candidate. Preceding filled assembly had failing LVS. Current modified assembly has no completed full DRC/LVS qualification; no pass is inherited from the earlier revision.",
+      "source": "build/clock-integration/extracted-repair/embedded-sram-row-wells-v2/assembly.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/extracted-repair/embedded-sram-row-wells-v2/checks.json"
+      ],
+      "assembly_cell": "B01_FlowControlledRepeater",
+      "source_sha256": "f3cac291b2f28e487318ef4a8cf158c64f614f1dcda37474f315ce2beee9bb9b",
+      "geometry_sha256": "23a1df516160207be54da7ed7389ca1dd46a26fbd9d569de072398e6b7f9aed6",
+      "bounds_um": [
+        2500.0,
+        0.0,
+        4500.0,
+        1200.0
+      ],
+      "width_um": 2000.0,
+      "height_um": 1200.0,
+      "evidence": [
+        {
+          "path": "build/clock-integration/extracted-repair/embedded-sram-row-wells-v2/checks.json",
+          "sha256": "39ec8eaa7798e6722bbbad878eae22b8943246e56df10d22d5a9a28266987bd0",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "candidate_generated",
+            "drc_qualified": false,
+            "lvs_qualified": false,
+            "full_chip_qualified": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "receive_reference_current",
+      "top": "ReceiveCommonReference",
+      "title": "Receive common reference / amplifier repair",
+      "caption": "Recorded local DRC + LVS pass; unfilled, electrical qualification incomplete.",
+      "status": "Latest amplifier-stack candidate. Recorded local geometry and LVS pass; density/fill and electrical acceptance remain separate.",
+      "source": "build/clock-integration/extracted-repair/receive-amplifier-stack-v2-candidate/results/run-y9iong_w/reference.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/extracted-repair/receive-amplifier-stack-v2-candidate/results/run-y9iong_w/checks.json"
+      ],
+      "assembly_cell": "B02_ReceiveCommonReference",
+      "source_sha256": "08654963859f9022ca60f2c72d794ef48775a0805ca1863232df14983df1844a",
+      "geometry_sha256": "c62ff86ac380247f85e85eb2c9fa3cef8a763be2d0a8f6da1ec749ceca4667e0",
+      "bounds_um": [
+        0.0,
+        2500.0,
+        1855.03,
+        2837.4700000000003
+      ],
+      "width_um": 1855.03,
+      "height_um": 337.47,
+      "evidence": [
+        {
+          "path": "build/clock-integration/extracted-repair/receive-amplifier-stack-v2-candidate/results/run-y9iong_w/checks.json",
+          "sha256": "5c63b43371f9a54df66341dcb6706bd313c811e4f7e5421d138c7f42092280d6",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "stage": "complete",
+            "local_drc_violations": 0,
+            "lvs": {
+              "matched_circuits": 46,
+              "top_ports": 3,
+              "instantiated_devices": 81,
+              "report": "/home/me/cpphdl/analog/build/clock-integration/extracted-repair/receive-amplifier-stack-v2-candidate/results/run-y9iong_w/lvs/reference.lvsdb"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "receive_sampler",
+      "top": "ReceiveSampler",
+      "title": "Receive sample-and-hold",
+      "caption": "Clock-shield separation candidate; recorded geometry test pass, electrical work open.",
+      "status": "Latest separated-clock-shield sampler candidate. Geometry receipt passes; not a complete ADC or receive AFE.",
+      "source": "build/clock-integration/extracted-repair/sampler-separated-clock-shields-candidate/results/run-qjsa9h79/connected/sampler.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/extracted-repair/sampler-separated-clock-shields-candidate/results/run-qjsa9h79/checks.json"
+      ],
+      "assembly_cell": "B03_ReceiveSampler",
+      "source_sha256": "b23414c695f0704c05c5b157a8d156856a8c1567eea696e1ebd228e08b3d45d9",
+      "geometry_sha256": "8061d2f2ef4d6c95bd6c7e3f64cf3ad268ecc27ef91b059045d89a0bbe39043a",
+      "bounds_um": [
+        1955.03,
+        2500.0,
+        2216.64,
+        2566.76
+      ],
+      "width_um": 261.61,
+      "height_um": 66.76,
+      "evidence": [
+        {
+          "path": "build/clock-integration/extracted-repair/sampler-separated-clock-shields-candidate/results/run-qjsa9h79/checks.json",
+          "sha256": "1a5a1c86217d5c0ca4233c27e735bdd77639be7ad3302a53fb65ceb300a501f8",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "stage": "complete"
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_bias",
+      "top": "TransmitBias",
+      "title": "Transmit bias / reference access",
+      "caption": "Recorded geometry receipt; electrical qualification and full-chip integration open.",
+      "status": "Latest maintained finger-access bias geometry. Saved checks are included as evidence, not rerun at publication.",
+      "source": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_bias_reference_access/run-z4zuu92_/bias.gds",
+      "format": "gds",
+      "receipts": [
+        "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_bias_reference_access/run-z4zuu92_/checks.json"
+      ],
+      "assembly_cell": "B04_TransmitBias",
+      "source_sha256": "0198c51eba337a8274f86644a952e4958b65d269aab33eeef770d5cf27fd1317",
+      "geometry_sha256": "f6ef83859e9f8c0822dcf1c1fb69d4369afdcb80529e5a42b35af16cf79eb1d6",
+      "bounds_um": [
+        2316.64,
+        2500.0,
+        2712.89,
+        3058.44
+      ],
+      "width_um": 396.25,
+      "height_um": 558.44,
+      "evidence": [
+        {
+          "path": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_bias_reference_access/run-z4zuu92_/checks.json",
+          "sha256": "cca8d0d8b1b3fddc1663bc25cfe923641e0614f99659d3d9306fb9ad2e1555b3",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "local_drc_violations": 0,
+            "lvs": {
+              "matched_circuits": 17,
+              "top_ports": 10,
+              "instantiated_devices": 32,
+              "report": "/home/me/cpphdl/analog/build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_bias_reference_access/run-z4zuu92_/lvs/bias.lvsdb"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_replica",
+      "top": "TransmitTranslationBias",
+      "title": "Transmit translation bias / replica",
+      "caption": "MOS storage candidate; physical block, full electrical acceptance incomplete.",
+      "status": "Latest replica MOS-storage physical candidate, separate from translator and line driver.",
+      "source": "build/clock-integration/extracted-repair/replica-mos-storage-geometry/run-uyvehl66/connected/replica.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/extracted-repair/replica-mos-storage-geometry/run-uyvehl66/checks.json"
+      ],
+      "assembly_cell": "B05_TransmitTranslationBias",
+      "source_sha256": "55a49547ecacc49a3d3c04ab448931704b5a01543cfd2c9ef3d69f710df647f3",
+      "geometry_sha256": "ffd6e1d6aa9cb325252f2f0deda2399874c64d06cfb30af8447f250b181515ad",
+      "bounds_um": [
+        2812.89,
+        2500.0,
+        3317.6,
+        2890.5
+      ],
+      "width_um": 504.71000000000004,
+      "height_um": 390.5,
+      "evidence": [
+        {
+          "path": "build/clock-integration/extracted-repair/replica-mos-storage-geometry/run-uyvehl66/checks.json",
+          "sha256": "3a8490efa5418573b5569325c9b61bdc6d9903f2bcec210ea3889df4e84ec3eb",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "stage": "complete"
+          }
+        }
+      ]
+    },
+    {
+      "name": "storage_adapter",
+      "top": "HVStorageAdapter",
+      "title": "High-voltage storage adapter",
+      "caption": "Recorded geometry test; standalone storage-access block.",
+      "status": "Maintained connected adapter geometry; disconnected fault variants excluded.",
+      "source": "build/regeneration-audit/1G/IHPSG13G2/tests/results/mos_gate_storage_adapter/run-72j2023w/connected/adapter.gds",
+      "format": "gds",
+      "receipts": [
+        "build/regeneration-audit/1G/IHPSG13G2/tests/results/mos_gate_storage_adapter/run-72j2023w/checks.json"
+      ],
+      "assembly_cell": "B06_HVStorageAdapter",
+      "source_sha256": "e8d85ac98a640676b65ec12418ec0ce4b570db28c5dc01489091adc08baa0bc5",
+      "geometry_sha256": "e0dd2659da877bb3f8a42768ca8e04f57515f5e7af9c29822a1e6860f81f390d",
+      "bounds_um": [
+        3417.6,
+        2500.0,
+        3821.27,
+        2860.2000000000003
+      ],
+      "width_um": 403.67,
+      "height_um": 360.2,
+      "evidence": [
+        {
+          "path": "build/regeneration-audit/1G/IHPSG13G2/tests/results/mos_gate_storage_adapter/run-72j2023w/checks.json",
+          "sha256": "ae485562df17b2cd2984f30ac2de424a4940e8dd32701afa869bce5561ce334d",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "stage": "complete"
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_translator",
+      "top": "TransmitTranslator",
+      "title": "Transmit level translator",
+      "caption": "PSP layout candidate; recorded local checks, system qualification incomplete.",
+      "status": "Latest maintained PSP translator geometry; standalone, not a connected complete transmitter.",
+      "source": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_translator_psp_layout/run-nvjo35q8/translator.gds",
+      "format": "gds",
+      "receipts": [
+        "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_translator_psp_layout/run-nvjo35q8/checks.json"
+      ],
+      "assembly_cell": "B07_TransmitTranslator",
+      "source_sha256": "ff75aee0a15248d593df502cf7043b7b92075b8e9eda9b4de2de46b8e4d27f44",
+      "geometry_sha256": "a2341cab864d49d4af1be72914003945af68d5e36683080cef72dd7009c4e998",
+      "bounds_um": [
+        3921.27,
+        2500.0,
+        4209.29,
+        2549.71
+      ],
+      "width_um": 288.02,
+      "height_um": 49.71,
+      "evidence": [
+        {
+          "path": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_translator_psp_layout/run-nvjo35q8/checks.json",
+          "sha256": "3cf84e9091ef49f93242c78b59500d7f05ba03603dfdd5a887bf2fa9d5447da8",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "local_drc_violations": 0,
+            "lvs": {
+              "matched_circuits": 15,
+              "top_ports": 7,
+              "instantiated_devices": 26,
+              "report": "/home/me/cpphdl/analog/build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_translator_psp_layout/run-nvjo35q8/lvs/translator.lvsdb"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_main",
+      "top": "TransmitCell",
+      "title": "Transmit main current cell",
+      "caption": "Current-cell geometry; standalone device array, system qualification incomplete.",
+      "status": "Maintained current-cell geometry with intentional device connectivity; no complete MDI driver assembly.",
+      "source": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/run-p3sz9p2k/main/cell.gds",
+      "format": "gds",
+      "receipts": [
+        "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/checks.json"
+      ],
+      "assembly_cell": "B08_TransmitCell",
+      "source_sha256": "277807d7eab59cdec4f8ca74692b613e6b5c9c2f77bb598cedd0e661fc272fd6",
+      "geometry_sha256": "024b0e2ceaece9f2dd90ef5908533c0ede9a642141c8b7b3fa86242e9a516b02",
+      "bounds_um": [
+        4309.29,
+        2500.0,
+        4779.05,
+        2964.41
+      ],
+      "width_um": 469.76,
+      "height_um": 464.41,
+      "evidence": [
+        {
+          "path": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/checks.json",
+          "sha256": "7195c16381b69b307a3ceaa475243ffd3c70653049387f2552bdf8e7a9d83109",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass"
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_history",
+      "top": "TransmitCell",
+      "title": "Transmit history current cell",
+      "caption": "Current-cell geometry; standalone device array, system qualification incomplete.",
+      "status": "Maintained current-cell geometry with intentional device connectivity; no complete MDI driver assembly.",
+      "source": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/run-p3sz9p2k/history/cell.gds",
+      "format": "gds",
+      "receipts": [
+        "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/checks.json"
+      ],
+      "assembly_cell": "B09_TransmitCell",
+      "source_sha256": "05e3777cad963d284587827a7bcac87b7fb976ed906b2bb9fede9e0828ee9884",
+      "geometry_sha256": "cb72e7151c7d80b437bba710a6a00617057aeb7167cd8c632654956dbd99fc93",
+      "bounds_um": [
+        4879.05,
+        2500.0,
+        5168.97,
+        2964.41
+      ],
+      "width_um": 289.92,
+      "height_um": 464.41,
+      "evidence": [
+        {
+          "path": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/checks.json",
+          "sha256": "7195c16381b69b307a3ceaa475243ffd3c70653049387f2552bdf8e7a9d83109",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass"
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_pullup",
+      "top": "TransmitPullup",
+      "title": "Transmit pullup",
+      "caption": "Standalone pullup geometry; full transmitter integration incomplete.",
+      "status": "Maintained pullup layout. System behavior is not established by this physical snapshot.",
+      "source": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_pullup/run-bo3s_8ft/pullup.gds",
+      "format": "gds",
+      "receipts": [
+        "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_pullup/run-bo3s_8ft/checks.json"
+      ],
+      "assembly_cell": "B10_TransmitPullup",
+      "source_sha256": "0d43218acf9eed72ec0dd958f577cde59aef9016420b188e36093e3721e5444d",
+      "geometry_sha256": "f4d0c3a265d26d6dfa2bd3a6312b140489cfc3e07fd57a1ad5bf684ee8b0a6f8",
+      "bounds_um": [
+        5268.97,
+        2500.0,
+        5418.81,
+        2524.26
+      ],
+      "width_um": 149.84,
+      "height_um": 24.26,
+      "evidence": [
+        {
+          "path": "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_pullup/run-bo3s_8ft/checks.json",
+          "sha256": "5bd804c6d3e65603ccc9665dc77335ab347a38338b0bae1cfef0b913a7bfd595",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "local_drc_violations": 0,
+            "lvs": {
+              "matched_circuits": 1,
+              "top_ports": 3,
+              "instantiated_devices": 2,
+              "report": "/home/me/cpphdl/analog/build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_pullup/run-bo3s_8ft/lvs/pullup.lvsdb"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_main_storage",
+      "top": "TransmitMainChargeStorage",
+      "title": "Transmit main charge storage",
+      "caption": "Standalone intended storage, not extracted parasitic capacitance.",
+      "status": "Latest transmitter storage candidate; a constituent block, not a complete transmitter.",
+      "source": "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/main.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/checks.json"
+      ],
+      "assembly_cell": "B11_TransmitMainChargeStorage",
+      "source_sha256": "4a3a828466e1e4407dcf1b03fb9af50f2b3de08786fb565ed56d589b0608333a",
+      "geometry_sha256": "2f526dadc4c69b5e119cad651d59ad195e25f61e19cc188711145689b28a2123",
+      "bounds_um": [
+        5518.81,
+        2500.0,
+        5553.650000000001,
+        2536.02
+      ],
+      "width_um": 34.84,
+      "height_um": 36.02,
+      "evidence": [
+        {
+          "path": "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/checks.json",
+          "sha256": "aa288323c9c1ac5ccea5db9f762657fcc490cc497d9a468954df8c70c05db22a",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "generated_unqualified"
+          }
+        }
+      ]
+    },
+    {
+      "name": "transmit_history_storage",
+      "top": "TransmitHistoryChargeStorage",
+      "title": "Transmit history charge storage",
+      "caption": "Standalone intended storage, not extracted parasitic capacitance.",
+      "status": "Latest transmitter storage candidate; a constituent block, not a complete transmitter.",
+      "source": "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/history.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/checks.json"
+      ],
+      "assembly_cell": "B12_TransmitHistoryChargeStorage",
+      "source_sha256": "4b3cd9766034e7a2935bfb3d75e73d5e165aa742fb18e663696da7f91fc36a04",
+      "geometry_sha256": "7a1a85e4cf4ac87a47689712aca231566c2896f92c3d2c71776e6288a36b0b26",
+      "bounds_um": [
+        5653.650000000001,
+        2500.0,
+        5685.21,
+        2536.02
+      ],
+      "width_um": 31.560000000000002,
+      "height_um": 36.02,
+      "evidence": [
+        {
+          "path": "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/checks.json",
+          "sha256": "aa288323c9c1ac5ccea5db9f762657fcc490cc497d9a468954df8c70c05db22a",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "generated_unqualified"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reference_clock",
+      "top": "ReferenceClockGenerator",
+      "title": "Reference clock generator / hierarchical layout",
+      "caption": "Recorded hierarchy/LVS checks; connected-system electrical qualification open.",
+      "status": "Latest completed hierarchical placement-v2 generator. Distinct from the realized-loop alternative; both retained for review.",
+      "source": "build/clock-integration/reference-clock-hierarchical/placement-v2/run-8epyrq68/reference.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/reference-clock-hierarchical/placement-v2/run-8epyrq68/checks.json"
+      ],
+      "assembly_cell": "B13_ReferenceClockGenerator",
+      "source_sha256": "2bd30310b48e730c13b6c119ce338e25d93f1229ce1ce0f7473525ae0fc9c9cd",
+      "geometry_sha256": "6f3b4e967fd6d924b1d21d6f44de9b82ff5248da6aba3f05d609771dd12af6a9",
+      "bounds_um": [
+        0.0,
+        3158.44,
+        1610.67,
+        4562.34
+      ],
+      "width_um": 1610.67,
+      "height_um": 1403.9,
+      "evidence": [
+        {
+          "path": "build/clock-integration/reference-clock-hierarchical/placement-v2/run-8epyrq68/checks.json",
+          "sha256": "e21457ac5345c19561a0463421ec52113915b4410bbf7a4c9ccef8b82930ad98",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "lvs": {
+              "matched_circuits": 1,
+              "top_ports": 7,
+              "instantiated_devices": 526,
+              "report": "/home/me/cpphdl/analog/build/clock-integration/reference-clock-hierarchical/placement-v2/run-8epyrq68/lvs/reference.lvsdb",
+              "normalized_device_inventory": {
+                "sg13_lv_nmos": 112,
+                "sg13_hv_nmos": 5,
+                "sg13_lv_pmos": 109,
+                "sg13_hv_pmos": 4,
+                "dpantenna": 3,
+                "rppd": 9,
+                "cap_cmim": 167,
+                "ntap1": 116,
+                "ptap1": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "realized_clock",
+      "top": "RealizedReferenceClock",
+      "title": "Reference clock / realized-loop candidate",
+      "caption": "Unfilled realized-loop layout; recorded local checks, electrical acceptance open.",
+      "status": "Latest realized clock filter candidate. An alternative clock macro; not connected in series with the reference-generator alternative.",
+      "source": "build/clock-integration/extracted-repair/realized-clock-filter-candidate/run-8ak1t5bu/clock_unfilled.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/extracted-repair/realized-clock-filter-candidate/run-8ak1t5bu/checks.json"
+      ],
+      "assembly_cell": "B14_RealizedReferenceClock",
+      "source_sha256": "f1ce3996b16111e2170802bfc37a62e92cfff2f0b46175ad93bdd5ef916df31a",
+      "geometry_sha256": "f4b9e80a8871c77b83926c5dff61c5dcf45a3cf4e28945c90a7d5620bd9c6e1d",
+      "bounds_um": [
+        1710.67,
+        3158.44,
+        2869.01,
+        3543.52
+      ],
+      "width_um": 1158.34,
+      "height_um": 385.08,
+      "evidence": [
+        {
+          "path": "build/clock-integration/extracted-repair/realized-clock-filter-candidate/run-8ak1t5bu/checks.json",
+          "sha256": "bf739af5eb5d86a14f1413aa99791c2832892c68fd38cd964c97c0d03d1f52f9",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "stage": "complete",
+            "lvs": {
+              "matched_circuits": 1,
+              "top_ports": 7,
+              "instantiated_devices": 259,
+              "report": "/home/me/cpphdl/analog/build/clock-integration/extracted-repair/realized-clock-filter-candidate/run-8ak1t5bu/lvs/clock_unfilled.lvsdb",
+              "normalized_device_inventory": {
+                "sg13_lv_nmos": 85,
+                "sg13_hv_nmos": 5,
+                "sg13_lv_pmos": 71,
+                "sg13_hv_pmos": 4,
+                "dpantenna": 1,
+                "rppd": 8,
+                "cap_cmim": 68,
+                "ntap1": 16,
+                "ptap1": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "processing_oscillator",
+      "top": "ProcessingClockOscillator",
+      "title": "Processing clock oscillator",
+      "caption": "Narrow-layout candidate; standalone oscillator, integrated clock tree unfinished.",
+      "status": "Latest completed narrow processing oscillator layout. Published independently for inspection; not a signoff claim.",
+      "source": "build/clock-integration/oscillator-layout-narrow/run-n2ur_a6d/oscillator.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/oscillator-layout-narrow/run-n2ur_a6d/checks.json"
+      ],
+      "assembly_cell": "B15_ProcessingClockOscillator",
+      "source_sha256": "59673098307b37ce31e3e22cfe55440b07b308b26e9ee33bd6917a2fa1ea2a0b",
+      "geometry_sha256": "1f6f06358a9488d7659048e3f923cef738572789d93713c773b62b8e75dab018",
+      "bounds_um": [
+        2969.01,
+        3158.44,
+        5263.68,
+        3299.84
+      ],
+      "width_um": 2294.67,
+      "height_um": 141.4,
+      "evidence": [
+        {
+          "path": "build/clock-integration/oscillator-layout-narrow/run-n2ur_a6d/checks.json",
+          "sha256": "db53d723dbaefb52269f1917eaa897ef470e1683aaa77b35592a78c668906b41",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "lvs": {
+              "matched_circuits": 141,
+              "top_ports": 20,
+              "instantiated_devices": 294,
+              "report": "/home/me/cpphdl/analog/build/clock-integration/oscillator-layout-narrow/run-n2ur_a6d/lvs/oscillator.lvsdb"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "processing_gate",
+      "top": "ProcessingClockGate",
+      "title": "Processing clock gate",
+      "caption": "Recorded placement proof; clock distribution integration unfinished.",
+      "status": "Latest completed gate placement-proof layout; system clock distribution and reset crossing remain open.",
+      "source": "build/clock-integration/clock-gate-placement-proof/run-zikh0qsp/gate.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/clock-gate-placement-proof/run-zikh0qsp/checks.json"
+      ],
+      "assembly_cell": "B16_ProcessingClockGate",
+      "source_sha256": "0c5d0020f7e363dd0959d3819713d05be247e994264ad0c29104feecdbb6e86d",
+      "geometry_sha256": "cc670a2e0a004e031aeb3e60f1ddb749e74adfef86e30e1649ca287f9bb20fbf",
+      "bounds_um": [
+        0.0,
+        4662.34,
+        905.83,
+        4704.86
+      ],
+      "width_um": 905.83,
+      "height_um": 42.52,
+      "evidence": [
+        {
+          "path": "build/clock-integration/clock-gate-placement-proof/run-zikh0qsp/checks.json",
+          "sha256": "0e728b50330f9da0451fb859c34e65909c89060db2f9461d67e8cf1e376519fb",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "pass",
+            "lvs": {
+              "matched_circuits": 67,
+              "top_ports": 5,
+              "instantiated_devices": 104,
+              "report": "/home/me/cpphdl/analog/build/clock-integration/clock-gate-placement-proof/run-zikh0qsp/lvs/gate.lvsdb"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "processing_control_current",
+      "top": "ProcessingClockControl",
+      "title": "Processing clock controller / drift revision",
+      "caption": "Recorded setup/hold +0.0182/+0.0612 ns; DRC/LVS pass for this block only.",
+      "status": "Latest clock-drift controller revision. Recorded standalone nominal extracted timing +0.018183399/+0.061225358 ns, full-deck DRC zero violations, LVS 48 circuits/40 ports/20540 devices. Packaging does not rerun these checks.",
+      "source": "build/clock-integration/clock-drift-revision/physical/ProcessingClockControl-6j7d36rr/module_filled.gds",
+      "format": "gds",
+      "receipts": [
+        "build/clock-integration/clock-drift-revision/physical/ProcessingClockControl-6j7d36rr/physical_module.json"
+      ],
+      "assembly_cell": "B17_ProcessingClockControl",
+      "source_sha256": "5fccf634c9796b30145d35e018cf65f57246d57aa3a73727fe64005c93ea64ab",
+      "geometry_sha256": "a0f54ad39f1e0ae90255fb8e77b61bdd8bc96fa922d7be809bbb9f48ebed3660",
+      "bounds_um": [
+        1005.83,
+        4662.34,
+        1285.83,
+        4942.34
+      ],
+      "width_um": 280.0,
+      "height_um": 280.0,
+      "evidence": [
+        {
+          "path": "build/clock-integration/clock-drift-revision/physical/ProcessingClockControl-6j7d36rr/physical_module.json",
+          "sha256": "482bc1313691abd522e1a56c9934586c7c272a46643e729ba61284367159d183",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "component_checks_pass",
+            "timing": {
+              "setup_slack_ns": 0.018183399,
+              "hold_slack_ns": 0.061225358,
+              "extracted_nets": 2050,
+              "basis": "OpenRCX nominal routed RC, slow/fast IHP cells; fill coupling not extracted"
+            },
+            "drc": {
+              "violations": 0,
+              "report": "/home/me/cpphdl/analog/build/clock-integration/clock-drift-revision/physical/ProcessingClockControl-6j7d36rr/drc/module_filled_ProcessingClockControl_full.lyrdb",
+              "categories": 868,
+              "density_percent": {
+                "Activ": 39.33,
+                "GatPoly": 24.24,
+                "Metal1": 43.42,
+                "Metal2": 35.7,
+                "Metal3": 37.79,
+                "Metal4": 39.43,
+                "Metal5": 55.95,
+                "TopMetal1": 45.54,
+                "TopMetal2": 45.54
+              },
+              "completion": {
+                "main_tables": 37,
+                "maximum_rules_completed": true,
+                "density_completed": true
+              }
+            },
+            "lvs": {
+              "matched_circuits": 48,
+              "top_ports": 40,
+              "instantiated_devices": 20540,
+              "report": "/home/me/cpphdl/analog/build/clock-integration/clock-drift-revision/physical/ProcessingClockControl-6j7d36rr/lvs/module_filled.lvsdb"
+            },
+            "native_postroute_exact": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "phy_reset",
+      "top": "PHYResetControl",
+      "title": "PHY reset controller",
+      "caption": "Standalone physical reset controller; system CDC/reset qualification open.",
+      "status": "Latest available filled reset-control layout; not the entire PHY or its clock tree.",
+      "source": "build/regeneration-audit/1G/IHPSG13G2/tests/results/phy_reset_physical/PHYResetControl-yxqe9yb1/PHYResetControl.gds",
+      "format": "gds",
+      "receipts": [
+        "build/regeneration-audit/1G/IHPSG13G2/tests/results/phy_reset_physical/PHYResetControl-yxqe9yb1/physical_module.json"
+      ],
+      "assembly_cell": "B18_PHYResetControl",
+      "source_sha256": "fc3bab473e496c239124526ad6d272f5198f80c1079c83881faa385e3432def6",
+      "geometry_sha256": "5067e2b46dd3f3752d9ec983a06638037e35ee3c9566c223b58fa96cf63b16b5",
+      "bounds_um": [
+        1385.83,
+        4662.34,
+        1525.83,
+        4802.34
+      ],
+      "width_um": 140.0,
+      "height_um": 140.0,
+      "evidence": [
+        {
+          "path": "build/regeneration-audit/1G/IHPSG13G2/tests/results/phy_reset_physical/PHYResetControl-yxqe9yb1/physical_module.json",
+          "sha256": "e386261be612959a109aa126624aeba0c6b5ad847c528b4c6f6f4cec3a984a0c",
+          "source_hash_recorded": true,
+          "recorded": {
+            "status": "component_checks_pass",
+            "timing": {
+              "setup_slack_ns": 2.175714731,
+              "hold_slack_ns": 0.270413369,
+              "extracted_nets": 61,
+              "basis": "OpenRCX nominal routed RC, slow/fast IHP cells; fill coupling not extracted"
+            },
+            "drc": {
+              "violations": 0,
+              "report": "/home/me/cpphdl/analog/build/regeneration-audit/1G/IHPSG13G2/tests/results/phy_reset_physical/PHYResetControl-yxqe9yb1/drc/module_filled_PHYResetControl_full.lyrdb",
+              "categories": 868,
+              "density_percent": {
+                "Activ": 40.05,
+                "GatPoly": 29.75,
+                "Metal1": 48.1,
+                "Metal2": 55.46,
+                "Metal3": 55.3,
+                "Metal4": 47.16,
+                "Metal5": 56.25,
+                "TopMetal1": 43.37,
+                "TopMetal2": 43.37
+              },
+              "completion": {
+                "main_tables": 37,
+                "maximum_rules_completed": true,
+                "density_completed": true
+              }
+            },
+            "lvs": {
+              "matched_circuits": 12,
+              "top_ports": 13,
+              "instantiated_devices": 1710,
+              "report": "/home/me/cpphdl/analog/build/regeneration-audit/1G/IHPSG13G2/tests/results/phy_reset_physical/PHYResetControl-yxqe9yb1/lvs/module_filled.lvsdb"
+            },
+            "native_postroute_exact": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "forwarding_core",
+      "top": "RepeaterCore",
+      "title": "Forwarding core / retained implementation",
+      "caption": "Historical physical block retained; not connected to the other blocks.",
+      "status": "Most recent available standalone geometry is the October 24 revision. Padframe opening does not fit the current receiver hardware; review arrangement is not a chip floorplan.",
+      "source": "build/layout-publication/retained-inputs/repeater_core.gds",
+      "format": "gds",
+      "receipts": [
+        "build/layout-publication/retained-inputs/provenance.json"
+      ],
+      "assembly_cell": "B19_RepeaterCore",
+      "source_sha256": "b08470b4586ac2b30a67068ec43e221f0043d7bf913b15ec14ad3a7f1ddc5e6b",
+      "geometry_sha256": "e225b868b916c6887ab77974d3d407f6ddec0e9aad81b22a5169a0b27220431a",
+      "bounds_um": [
+        1625.83,
+        4662.34,
+        1745.83,
+        4782.34
+      ],
+      "width_um": 120.0,
+      "height_um": 120.0,
+      "evidence": [
+        {
+          "path": "build/layout-publication/retained-inputs/provenance.json",
+          "sha256": "9033f9808e1e3f97c161fe9fe222a4f4de66c5283646e553f44783bb5f60270d",
+          "source_hash_recorded": true,
+          "recorded": {}
+        }
+      ]
+    },
+    {
+      "name": "padframe_current",
+      "top": "RepeaterPadframe",
+      "title": "Padframe / retained implementation",
+      "caption": "Historical physical block retained; not connected to the other blocks.",
+      "status": "Most recent available standalone geometry is the October 24 revision. Padframe opening does not fit the current receiver hardware; review arrangement is not a chip floorplan.",
+      "source": "build/layout-publication/retained-inputs/repeater_padframe.gds.gz",
+      "format": "gds",
+      "receipts": [
+        "build/layout-publication/retained-inputs/provenance.json"
+      ],
+      "assembly_cell": "B20_RepeaterPadframe",
+      "source_sha256": "171fb53e5d94bff2f3f529491b763fab56c40771f5bdd0bb58c8a37807af9208",
+      "geometry_sha256": "581f20e23377929ed2f183b4bb42407baf6163a76b3fa12815153d8c742a4ebf",
+      "bounds_um": [
+        1845.83,
+        4662.34,
+        3125.83,
+        5942.34
+      ],
+      "width_um": 1280.0,
+      "height_um": 1280.0,
+      "evidence": [
+        {
+          "path": "build/layout-publication/retained-inputs/provenance.json",
+          "sha256": "9033f9808e1e3f97c161fe9fe222a4f4de66c5283646e553f44783bb5f60270d",
+          "source_hash_recorded": true,
+          "recorded": {}
+        }
+      ]
+    }
+  ],
+  "input_sha256": {
+    "build/layout-publication/selection.json": "10fa196b7b9a744312fd7f1a8f92425b6f8c4d11367c523c8956fccd23d6d1fb",
+    "pdk/1G_repeater_IHPSG13G2/package_development_layout.py": "f8c5d07463314fe7ebc69963f7958dfd8701055dc2ae03479a184c6fe2070868",
+    "pdk/1G_repeater_IHPSG13G2/package_receive_results.py": "1bfc6849048a4045626fde743a7beb1af19a1cde2624f0d968a504b7f7c2ba22",
+    "build/clock-integration/receiver-square-lookup-revision/pin-repair/global.odb": "9c19b9e0d1a0ad5dfe31db215ac5b92d6653e4572977a99931d21ced74c72b2e",
+    "out/repeater-toolchain/bin/openroad": "cf31b8a3cb6e6521fc5488fbf7dbf5ce6f72fdd3878192c4a54f068db06f7d56",
+    "out/repeater-toolchain/root/usr/bin/openroad": "585b40bf769370c0a56770c294f7103c26eff363c5b71e6e2525f39021ea69a3",
+    "pdk/1G_repeater_IHPSG13G2/route_tech.py": "c98b64a88b40d94c8b908b74b6b96f37f22ea5e38f4bb9c5a2f64ffb893b29a4",
+    "pdk/1G_repeater_IHPSG13G2/stream.py": "ad707deb774941a673e20e3ace2af951c152ceef2814299bfc753bac724a5785",
+    "pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell/gds/sg13g2_stdcell.gds": "ab9f2802c78935d4463093c24860f9d3f244057a839179fb19fc0243a18cf3f4",
+    "pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell/lef/sg13g2_stdcell.lef": "c9bbc02d0c2cba3b15cd89a208750d25de882f02a2927ae78ba6422109fb01d0",
+    "pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell/lef/sg13g2_tech.lef": "054f5b7b24d72365b4b1088be1331e04c1c2e3805de9f99c37e71938ed231efc",
+    "pdk/IHPSG13G2/ihp-sg13g2/libs.tech/klayout/tech/sg13g2.lyt": "a366de210602b93ffa1e48fd83abfd8b8247c63af545f08180387f53fc09fe1b",
+    "pdk/IHPSG13G2/ihp-sg13g2/libs.tech/klayout/tech/sg13g2.map": "7a359ddacd8f4517b5986e6cc46c436ba2232aaf6951f7d0f2849c920f338207",
+    "build/clock-integration/receiver-square-lookup-revision/pin-repair/checks.json": "fb3694a1d10885318fb3f11b10dee38fc5da6bc7ae19932e584ebb6098b55ae6",
+    "build/clock-integration/extracted-repair/embedded-sram-row-wells-v2/assembly.gds": "f3cac291b2f28e487318ef4a8cf158c64f614f1dcda37474f315ce2beee9bb9b",
+    "build/clock-integration/extracted-repair/embedded-sram-row-wells-v2/checks.json": "39ec8eaa7798e6722bbbad878eae22b8943246e56df10d22d5a9a28266987bd0",
+    "build/clock-integration/extracted-repair/receive-amplifier-stack-v2-candidate/results/run-y9iong_w/reference.gds": "08654963859f9022ca60f2c72d794ef48775a0805ca1863232df14983df1844a",
+    "build/clock-integration/extracted-repair/receive-amplifier-stack-v2-candidate/results/run-y9iong_w/checks.json": "5c63b43371f9a54df66341dcb6706bd313c811e4f7e5421d138c7f42092280d6",
+    "build/clock-integration/extracted-repair/sampler-separated-clock-shields-candidate/results/run-qjsa9h79/connected/sampler.gds": "b23414c695f0704c05c5b157a8d156856a8c1567eea696e1ebd228e08b3d45d9",
+    "build/clock-integration/extracted-repair/sampler-separated-clock-shields-candidate/results/run-qjsa9h79/checks.json": "1a5a1c86217d5c0ca4233c27e735bdd77639be7ad3302a53fb65ceb300a501f8",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_bias_reference_access/run-z4zuu92_/bias.gds": "0198c51eba337a8274f86644a952e4958b65d269aab33eeef770d5cf27fd1317",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_bias_reference_access/run-z4zuu92_/checks.json": "cca8d0d8b1b3fddc1663bc25cfe923641e0614f99659d3d9306fb9ad2e1555b3",
+    "build/clock-integration/extracted-repair/replica-mos-storage-geometry/run-uyvehl66/connected/replica.gds": "55a49547ecacc49a3d3c04ab448931704b5a01543cfd2c9ef3d69f710df647f3",
+    "build/clock-integration/extracted-repair/replica-mos-storage-geometry/run-uyvehl66/checks.json": "3a8490efa5418573b5569325c9b61bdc6d9903f2bcec210ea3889df4e84ec3eb",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/mos_gate_storage_adapter/run-72j2023w/connected/adapter.gds": "e8d85ac98a640676b65ec12418ec0ce4b570db28c5dc01489091adc08baa0bc5",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/mos_gate_storage_adapter/run-72j2023w/checks.json": "ae485562df17b2cd2984f30ac2de424a4940e8dd32701afa869bce5561ce334d",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_translator_psp_layout/run-nvjo35q8/translator.gds": "ff75aee0a15248d593df502cf7043b7b92075b8e9eda9b4de2de46b8e4d27f44",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_translator_psp_layout/run-nvjo35q8/checks.json": "3cf84e9091ef49f93242c78b59500d7f05ba03603dfdd5a887bf2fa9d5447da8",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/run-p3sz9p2k/main/cell.gds": "277807d7eab59cdec4f8ca74692b613e6b5c9c2f77bb598cedd0e661fc272fd6",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/checks.json": "7195c16381b69b307a3ceaa475243ffd3c70653049387f2552bdf8e7a9d83109",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_current_cell/run-p3sz9p2k/history/cell.gds": "05e3777cad963d284587827a7bcac87b7fb976ed906b2bb9fede9e0828ee9884",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_pullup/run-bo3s_8ft/pullup.gds": "0d43218acf9eed72ec0dd958f577cde59aef9016420b188e36093e3721e5444d",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_pullup/run-bo3s_8ft/checks.json": "5bd804c6d3e65603ccc9665dc77335ab347a38338b0bae1cfef0b913a7bfd595",
+    "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/main.gds": "4a3a828466e1e4407dcf1b03fb9af50f2b3de08786fb565ed56d589b0608333a",
+    "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/checks.json": "aa288323c9c1ac5ccea5db9f762657fcc490cc497d9a468954df8c70c05db22a",
+    "build/clock-integration/extracted-repair/transmitter-charge-storage-candidate/history.gds": "4b3cd9766034e7a2935bfb3d75e73d5e165aa742fb18e663696da7f91fc36a04",
+    "build/clock-integration/reference-clock-hierarchical/placement-v2/run-8epyrq68/reference.gds": "2bd30310b48e730c13b6c119ce338e25d93f1229ce1ce0f7473525ae0fc9c9cd",
+    "build/clock-integration/reference-clock-hierarchical/placement-v2/run-8epyrq68/checks.json": "e21457ac5345c19561a0463421ec52113915b4410bbf7a4c9ccef8b82930ad98",
+    "build/clock-integration/extracted-repair/realized-clock-filter-candidate/run-8ak1t5bu/clock_unfilled.gds": "f1ce3996b16111e2170802bfc37a62e92cfff2f0b46175ad93bdd5ef916df31a",
+    "build/clock-integration/extracted-repair/realized-clock-filter-candidate/run-8ak1t5bu/checks.json": "bf739af5eb5d86a14f1413aa99791c2832892c68fd38cd964c97c0d03d1f52f9",
+    "build/clock-integration/oscillator-layout-narrow/run-n2ur_a6d/oscillator.gds": "59673098307b37ce31e3e22cfe55440b07b308b26e9ee33bd6917a2fa1ea2a0b",
+    "build/clock-integration/oscillator-layout-narrow/run-n2ur_a6d/checks.json": "db53d723dbaefb52269f1917eaa897ef470e1683aaa77b35592a78c668906b41",
+    "build/clock-integration/clock-gate-placement-proof/run-zikh0qsp/gate.gds": "0c5d0020f7e363dd0959d3819713d05be247e994264ad0c29104feecdbb6e86d",
+    "build/clock-integration/clock-gate-placement-proof/run-zikh0qsp/checks.json": "0e728b50330f9da0451fb859c34e65909c89060db2f9461d67e8cf1e376519fb",
+    "build/clock-integration/clock-drift-revision/physical/ProcessingClockControl-6j7d36rr/module_filled.gds": "5fccf634c9796b30145d35e018cf65f57246d57aa3a73727fe64005c93ea64ab",
+    "build/clock-integration/clock-drift-revision/physical/ProcessingClockControl-6j7d36rr/physical_module.json": "482bc1313691abd522e1a56c9934586c7c272a46643e729ba61284367159d183",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/phy_reset_physical/PHYResetControl-yxqe9yb1/PHYResetControl.gds": "fc3bab473e496c239124526ad6d272f5198f80c1079c83881faa385e3432def6",
+    "build/regeneration-audit/1G/IHPSG13G2/tests/results/phy_reset_physical/PHYResetControl-yxqe9yb1/physical_module.json": "e386261be612959a109aa126624aeba0c6b5ad847c528b4c6f6f4cec3a984a0c",
+    "build/layout-publication/retained-inputs/repeater_core.gds": "b08470b4586ac2b30a67068ec43e221f0043d7bf913b15ec14ad3a7f1ddc5e6b",
+    "build/layout-publication/retained-inputs/provenance.json": "9033f9808e1e3f97c161fe9fe222a4f4de66c5283646e553f44783bb5f60270d",
+    "build/layout-publication/retained-inputs/repeater_padframe.gds.gz": "171fb53e5d94bff2f3f529491b763fab56c40771f5bdd0bb58c8a37807af9208"
+  },
+  "checks": {
+    "block_geometry_preserved": true,
+    "gds_round_trip": true,
+    "nonoverlapping_blocks": true,
+    "single_top": true,
+    "simulations_rerun": false,
+    "full_chip_drc_run": false,
+    "full_chip_lvs_run": false,
+    "full_chip_timing_run": false
+  },
+  "artifacts": {
+    "repeater_development.gds.gz": {
+      "sha256": "673e32b927872e0345bd5d07a6b14a6218db445949526641be9dbbc542bd789e",
+      "bytes": 15127531
+    },
+    "repeater_layers.png": {
+      "sha256": "617792a258f108db823d7327d18d7a17c8d06e86b2efdc3e54c3989de75401ef",
+      "bytes": 164224
+    },
+    "receiver_pcs.png": {
+      "sha256": "4632297c757f2952f97dabc2e64f18e602126f0a68c4dceeac2cb335d0e13cb0",
+      "bytes": 61937
+    },
+    "flow_control.png": {
+      "sha256": "6c6376f572003afbdf2f914d4938142f746acd3c9639326b73b913df88077268",
+      "bytes": 132775
+    },
+    "receive_reference_current.png": {
+      "sha256": "8fce64f6b2c8cac79ab772a878785a7d5a0909e472ba982c70f5cb665dcbe1ab",
+      "bytes": 28518
+    },
+    "receive_sampler.png": {
+      "sha256": "62e604c6a49c15f3337f388b31ecdd9da30257fda616e3af0b084d069e57e4bb",
+      "bytes": 26707
+    },
+    "transmit_bias.png": {
+      "sha256": "6fc3fe87b75b5392ae611294936dd4fce467aac58928914abaf739db0548be15",
+      "bytes": 24906
+    },
+    "transmit_replica.png": {
+      "sha256": "9e760fa8bcca016618c1887d5abc9eccf4a0895f399bdaafc44bc76538334da0",
+      "bytes": 31236
+    },
+    "storage_adapter.png": {
+      "sha256": "42600f58c60017d680e3edfdb2cac0b7dfaa90d36396c6227da9edd02e3ce516",
+      "bytes": 30725
+    },
+    "transmit_translator.png": {
+      "sha256": "f7964c1bafca3c0ea256a3400376bad5bbed1798d3de677229119c368d31da56",
+      "bytes": 25285
+    },
+    "transmit_main.png": {
+      "sha256": "51c6fb47caef4f3877a5baded7d95768be4e640889cd0d2c55b8f42d64d6c50b",
+      "bytes": 23683
+    },
+    "transmit_history.png": {
+      "sha256": "ace44b8a832c330f087722507e9f57ba0c44cefa5651fb54491e225cd66f149c",
+      "bytes": 25096
+    },
+    "transmit_pullup.png": {
+      "sha256": "8ab3c3950837e8a4a0cde82dbc6e4add8f292d9724d2c04181e6553cda8e4e0b",
+      "bytes": 21040
+    },
+    "transmit_main_storage.png": {
+      "sha256": "9ba48cc6ac23418a3ab5c9e929e59ab9f5b81b206af3f140dee2d759c7943c85",
+      "bytes": 24328
+    },
+    "transmit_history_storage.png": {
+      "sha256": "372f5794fab231c5bdda63687cadf94ac8b0f619f64bcdaf6b221b5601a10666",
+      "bytes": 24801
+    },
+    "reference_clock.png": {
+      "sha256": "eed573ab29f60e8696d090b34c6c52f4f91948ca7fdb625c619ff4c4cd9a7ae7",
+      "bytes": 39360
+    },
+    "realized_clock.png": {
+      "sha256": "25941a9ca7f0e3f42987eb21de702fcc907fc6e0653104478b3690596f2a64fc",
+      "bytes": 32452
+    },
+    "processing_oscillator.png": {
+      "sha256": "afe5a4392e014e5e5ad42165e03c34a860179da6f69ab4485061a9dea1e1fb9d",
+      "bytes": 29351
+    },
+    "processing_gate.png": {
+      "sha256": "cbb2ef17571c696c17e0c944ee8c4ff2b288171f81cea51027148e3e29c9e92e",
+      "bytes": 28229
+    },
+    "processing_control_current.png": {
+      "sha256": "b020fceab517993f1863ac8278120854b6a6a41f1b8dda13bd1fe4542a322162",
+      "bytes": 206760
+    },
+    "phy_reset.png": {
+      "sha256": "7aaa30321761dd55270c30d04041aa4d13389d27e0e071aa17ed416c2f965476",
+      "bytes": 52409
+    },
+    "forwarding_core.png": {
+      "sha256": "a28b9f0778d0c690c37d0a1c0a0f2c4926e6c36f1b0dec27e3d9bfb322ab8b63",
+      "bytes": 66933
+    },
+    "padframe_current.png": {
+      "sha256": "1ddd98f25384205e5161e68d74d11ec63edb75b32658d08c16871d33b4ebfde3",
+      "bytes": 29476
+    }
+  }
+}
