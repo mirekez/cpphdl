@@ -28,11 +28,20 @@ g.emit(std::string(argv[1])+"cached.h",7,6,false,false,true);
 g.emit(std::string(argv[1])+"delta.h",7,6,false,false,true,false,true);
 {
 auto bad=g;bad.attributes.push_back({"","native.cache_state_roots","1"});bool rejected=false;
-try{bad.emit(std::string(argv[1])+"bad_flags.h",7,6,false,false,true,false,true);}catch(const std::runtime_error& e){rejected=std::string(e.what()).find("requires parallel roots")!=std::string::npos;}
+try{bad.emit(std::string(argv[1])+"bad_flags.h",7,6,false,false,true,false,false);}catch(const std::runtime_error& e){rejected=std::string(e.what()).find("requires delta memoization")!=std::string::npos;}
 if(!rejected)throw std::runtime_error("state-cache prerequisite was not checked");
 }
-g.attributes.push_back({"","native.parallel_roots","1"});
 g.attributes.push_back({"","native.cache_state_roots","1"});
+// State caching supports caller-side roots too. Default write tracking makes
+// the flag redundant; scan_roots exercises the actual bank-observation cache.
+g.emit(std::string(argv[1])+"caller.h",7,6,false,false,true,false,true);
+{
+auto scan=g;scan.attributes.push_back({"","native.scan_roots","1"});
+scan.emit(std::string(argv[1])+"caller_scan.h",7,6,false,false,true,false,true);
+scan.attributes.push_back({"","native.parallel_roots","1"});
+scan.emit(std::string(argv[1])+"parallel_scan.h",7,6,false,false,true,false,true);
+}
+g.attributes.push_back({"","native.parallel_roots","1"});
 {
 auto bad=g;bad.add("host_random",32);bool rejected=false;
 try{bad.emit(std::string(argv[1])+"bad_host.h",7,6,false,false,true,false,true);}catch(const std::runtime_error& e){rejected=std::string(e.what()).find("pure named-edge")!=std::string::npos;}
@@ -61,6 +70,15 @@ RUN=r'''#define cpphdl_native plain
 #define cpphdl_native owned
 #include "owned.h"
 #undef cpphdl_native
+#define cpphdl_native caller
+#include "caller.h"
+#undef cpphdl_native
+#define cpphdl_native caller_scan
+#include "caller_scan.h"
+#undef cpphdl_native
+#define cpphdl_native parallel_scan
+#include "parallel_scan.h"
+#undef cpphdl_native
 #include <cstdio>
 template<class Model>void check(Model& m){uint64_t ram[16]{},q=0;
 for(unsigned i=0;i<16000;++i){unsigned a=(i/11)%16;uint64_t data=(uint64_t(i)*0x7138493a71ULL)^7;
@@ -73,9 +91,11 @@ if((uint64_t(m.row[1])<<32|m.row[0])!=ram[a]||(uint64_t(m.q[1])<<32|m.q[0])!=q)t
 m.eval(false);if((uint64_t(m.q[1])<<32|m.q[0])!=q)throw 3;
 }}
 int main(){plain::Model a;cached::Model b;delta::Model c;owned::Model d;
+caller::Model e;caller_scan::Model f;parallel_scan::Model g;
 d.__cpphdl_dispatch_policy=cpphdl::graph_runtime::DispatchPolicy::Parallel;
-check(a);check(b);check(c);check(d);
-puts("PASS mutable RAM memoization: 64000 clock transactions, held addresses, host mutations, read-before-write, settling and parallel owned-state roots");}'''
+g.__cpphdl_dispatch_policy=cpphdl::graph_runtime::DispatchPolicy::Parallel;
+check(a);check(b);check(c);check(d);check(e);check(f);check(g);
+puts("PASS mutable RAM memoization: 112000 clock transactions, held addresses, host mutations, read-before-write, settling, caller/parallel scans and write tracking");}'''
 
 
 def main():
@@ -85,7 +105,7 @@ def main():
     def run(command,label):
         r=subprocess.run(toolchain.command(command),env=toolchain.env,capture_output=True,text=True,timeout=240)
         (work/(label+'.log')).write_text(r.stdout+r.stderr)
-        if r.returncode:raise RuntimeError(label+' failed: '+str(work/(label+'.log')))
+        if r.returncode:raise RuntimeError(label+' failed: '+str(work/(label+'.log'))+'\n'+r.stdout+r.stderr)
         return r.stdout
     (work/'gen.cpp').write_text(GEN);(work/'run.cpp').write_text(RUN)
     run([a.cxx,'-std=c++23','-O1','-pthread','-I'+str(include),work/'gen.cpp','-o',work/'gen'],'build-gen')
