@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Repair an actual IHP hold failure and overloaded single-drive gate."""
 import argparse
+import os
 import re
 from pathlib import Path
 import subprocess
@@ -77,7 +78,7 @@ source {{{SOURCE}/finish_timing.tcl}}
 if {{[isolate_single_strength_outputs {{{work}/before.rpt}} smoke] != 1}} {{
     error "fixture no longer exercises the single-drive output repair"
 }}
-finish_route_update
+finish_route_update {{{work}/rebuilt.guide}}
 # Exercise direct cell edits, antenna/power connections and RC rebuild ordering.
 {final_repair}
 {restore_check}
@@ -87,11 +88,21 @@ puts "PASS: actual hold and slew failures repaired with legal IHP cells"
 exit
 '''
         (work / 'test.tcl').write_text(script)
+        environment = dict(os.environ)
+        if args.receiver:
+            environment['REPEATER_TOP'] = 'PCSReceiver'
+        else:
+            environment.pop('REPEATER_TOP', None)
         result = subprocess.run([str(args.tools.resolve() / 'bin/openroad'), '-no_init', '-exit',
-                                 str(work / 'test.tcl')], capture_output=True, text=True, timeout=30)
+                                 str(work / 'test.tcl')], env=environment,
+                                capture_output=True, text=True, timeout=30)
         output = result.stdout + result.stderr
         if result.returncode or '[ERROR' in output or 'PASS:' not in output:
             raise ValueError(output)
+        if any(marker in output for marker in ('EST-0026', 'EST-0027', 'GRT-0304', 'Missing route to pin')):
+            raise ValueError('repair omitted a routed pin: ' + output)
+        if args.receiver and not (work / 'rebuilt.guide').stat().st_size:
+            raise ValueError('receiver route rebuild omitted its guide')
         for name in ('global_electrical.rpt', 'global_setup.rpt', 'global_hold.rpt',
                      'finished_global.odb', 'finished_global.sdc'):
             if not (work / name).is_file():
@@ -116,4 +127,5 @@ if __name__ == '__main__':
     parser.add_argument('--pdk', type=Path, required=True)
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--clock-finish', type=Path, help='exercise the loaded admission-output repair policy')
+    parser.add_argument('--receiver', action='store_true', help='exercise full route rebuilding after receiver topology edits')
     check(parser.parse_args())

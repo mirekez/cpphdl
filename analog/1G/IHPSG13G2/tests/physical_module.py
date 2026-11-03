@@ -18,6 +18,121 @@ spec.loader.exec_module(timing)
 
 
 class PhysicalModule(unittest.TestCase):
+    def test_global_checkpoint_retains_failed_estimates_without_qualification(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            for name in ('finished_global.odb', 'finished_global.sdc'):
+                (work / name).write_text('retained ' + name)
+            (work / 'global-route-timing.log').write_text('global route finished\n')
+            (work / 'global_setup.rpt').write_text('worst slack max -0.928154469\n')
+            (work / 'global_hold.rpt').write_text('worst slack min 0.120607637\n')
+            (work / 'global_electrical.rpt').write_text('max_slew VIOLATED\n')
+            result = flow.global_checkpoint(work)
+            self.assertEqual(result['status'], 'global_checkpoint_only')
+            self.assertEqual(result['global_estimate']['setup_ns'], -0.928154469)
+            self.assertFalse(result['global_estimate']['electrical_pass'])
+            for key in ('timing_qualified', 'physical_qualified', 'full_chip_qualified'):
+                self.assertIs(result[key], False)
+            (work / 'global-route-timing.log').write_text('Missing route to pin place61510/X\n')
+            with self.assertRaisesRegex(ValueError, 'incomplete route estimates'):
+                flow.global_checkpoint(work)
+            (work / 'global-route-timing.log').write_text('global route finished\n')
+            (work / 'global_setup.rpt').write_text('worst slack max nan\n')
+            with self.assertRaisesRegex(ValueError, 'missing global setup slack'):
+                flow.global_checkpoint(work)
+
+    def test_global_checkpoint_accepts_only_the_expected_native_timing_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            for name in ('finished_global.odb', 'finished_global.sdc'):
+                (work / name).write_text('retained ' + name)
+            expected = 'Error: route_extract.tcl, 171 final global network fails timing/electrical limits; inspect retained reports\n'
+            (work / 'global-route-timing.log').write_text(expected)
+            (work / 'global_setup.rpt').write_text('worst slack max -0.091244347\n')
+            (work / 'global_hold.rpt').write_text('worst slack min 0.127878264\n')
+            (work / 'global_electrical.rpt').write_text('')
+            result = flow.global_checkpoint(work, 1)
+            self.assertEqual(result['global_native_returncode'], 1)
+            self.assertFalse(result['timing_qualified'])
+            self.assertEqual(result['global_checkpoint_sha256']['finished_global.odb'],
+                             flow.digest(work / 'finished_global.odb'))
+            for code, log in ((-9, expected), (2, expected), (0, expected),
+                              (1, ''), (1, '[ERROR GRT-0001] missing route\n' + expected)):
+                (work / 'global-route-timing.log').write_text(log)
+                with self.subTest(code=code, log=log), self.assertRaisesRegex(ValueError, 'unexpected native failure'):
+                    flow.global_checkpoint(work, code)
+            (work / 'global-route-timing.log').write_text(expected)
+            (work / 'global_setup.rpt').write_text('worst slack max 0.1\n')
+            with self.assertRaisesRegex(ValueError, 'disagrees'):
+                flow.global_checkpoint(work, 1)
+            (work / 'finished_global.odb').unlink()
+            with self.assertRaisesRegex(ValueError, 'database or constraints'):
+                flow.global_checkpoint(work, 1)
+
+    def test_global_stop_cannot_be_mixed_with_other_modes(self):
+        for options in (dict(module='ReceiveFilter'), dict(module='PCSReceiver', placement_only=True),
+                        dict(module='PCSReceiver', resume_routed_database=Path('routed.odb'))):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'global-route-only'):
+                flow.implement(SimpleNamespace(global_route_only=True, **options))
+
+    def test_global_stop_preserves_native_failure_and_never_routes_or_streams(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mapped = root / 'mapped'
+            mapped.mkdir()
+            source = root / 'design.hpp'
+            source.write_text('checked receiver')
+            for name in ('mapped.v', 'cells.v', 'cpp_trace.csv'):
+                (mapped / name).write_text('checked ' + name)
+            (mapped / 'mapped.json').write_text(json.dumps({'modules': {'PCSReceiver': {'ports': {}}}}))
+            (mapped / 'hardware_checks.json').write_text(json.dumps(dict(status='pass',
+                native_mapped_exact=True, module='PCSReceiver', mapped_sha256=flow.digest(mapped / 'mapped.v'),
+                source_sha256={str(source): flow.digest(source)})))
+            for name in ('pdk/.cpphdl/venv/bin/python', 'tools/bin/openroad', 'tools/root/usr/bin/openroad',
+                         'tools/bin/klayout', 'tools/root/usr/bin/klayout', 'tools/rcx_patterns.rules', 'verilator', 'cxx'):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            args = SimpleNamespace(module='PCSReceiver', global_route_only=True, work=root / 'run',
+                mapped_work=mapped, pdk=root / 'pdk', tools=root / 'tools',
+                verilator=str(root / 'verilator'), cxx=str(root / 'cxx'))
+
+            def execute(command, **options):
+                work, environment = Path(options['cwd']), options['env']
+                if Path(command[0]).name == 'openroad':
+                    if environment.get('REPEATER_STAGE') == 'place':
+                        for name in ('placed.odb', 'placed.sdc'):
+                            (work / name).write_text('placed ' + name)
+                    elif environment.get('REPEATER_STAGE') == 'global_route':
+                        for name in ('finished_global.odb', 'finished_global.sdc'):
+                            (work / name).write_text('finished ' + name)
+                        (work / 'global_setup.rpt').write_text('worst slack max -0.09\n')
+                        (work / 'global_hold.rpt').write_text('worst slack min 0.12\n')
+                        (work / 'global_electrical.rpt').write_text('')
+                        options['stdout'].write('Error: route_extract.tcl, 171 final global network fails '
+                                                'timing/electrical limits; inspect retained reports\n')
+                        return SimpleNamespace(returncode=1)
+                    else:
+                        self.fail('diagnostic global stop must not reach detailed routing')
+                return SimpleNamespace(returncode=0)
+
+            # Reuse the small fixture's file requirements; exercise the actual
+            # receiver orchestration path with a failing native global stage.
+            module_spec = dict(flow.MODULES['PAM5DriverControl'], large=True)
+            with patch.object(flow, 'execute', side_effect=execute), \
+                    patch.dict(flow.MODULES, {'PCSReceiver': module_spec}), \
+                    patch.object(flow, 'stream') as stream:
+                self.assertEqual(flow.implement(args), 0)
+                stream.assert_not_called()
+            report = json.loads((args.work / 'physical_module.json').read_text())
+            self.assertEqual(report['status'], 'global_checkpoint_only')
+            self.assertEqual(report['global_native_returncode'], 1)
+            self.assertEqual(report['stages'][-1]['returncode'], 1)
+            self.assertEqual(report['global_estimate']['setup_ns'], -0.09)
+            self.assertFalse(report['timing_qualified'])
+            self.assertFalse(report['full_chip_qualified'])
+            self.assertFalse((args.work / 'PCSReceiver.gds').exists())
+
     def test_resized_receiver_checkpoint_keeps_identity_and_timing_contract(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -154,13 +269,16 @@ class PhysicalModule(unittest.TestCase):
     def test_failed_extracted_timing_retains_route_and_stops_before_layout_checks(self):
         self.check_failed_route(False)
 
-    def test_routed_database_still_requires_equivalence_and_new_timing(self):
+    def test_routed_database_requires_new_timing_before_build(self):
         self.check_failed_route(True)
+
+    def test_passing_timing_still_requires_gate_model_build(self):
+        self.check_failed_route(True, timing_pass=True)
 
     def test_large_module_separates_global_detail_and_extraction(self):
         self.check_failed_route(False, large=True)
 
-    def check_failed_route(self, resume_routed, large=False):
+    def check_failed_route(self, resume_routed, large=False, timing_pass=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             mapped = root / 'mapped'
@@ -189,6 +307,10 @@ class PhysicalModule(unittest.TestCase):
 
             def execute(command, **options):
                 work, environment = Path(options['cwd']), options['env']
+                if Path(command[0]).name == 'verilator':
+                    if not timing_pass:
+                        self.fail('failed timing must not launch the gate model build')
+                    return SimpleNamespace(returncode=1)
                 if Path(command[0]).name == 'openroad':
                     if environment.get('REPEATER_STAGE') == 'place':
                         names = ('placed.odb', 'placed.sdc')
@@ -205,15 +327,18 @@ class PhysicalModule(unittest.TestCase):
                 return SimpleNamespace(returncode=0)
 
             with patch.object(flow, 'execute', side_effect=execute), \
-                    patch.object(flow, 'check_timing', side_effect=ValueError('setup timing failed: -0.09 ns')), \
+                    patch.object(flow, 'check_timing', return_value={'status': 'pass'},
+                                 side_effect=None if timing_pass else ValueError('setup timing failed: -0.09 ns')), \
                     patch.dict(flow.MODULES['PAM5DriverControl'], {'large': large}), \
                     patch.object(flow, 'stream') as stream:
-                with self.assertRaisesRegex(ValueError, 'setup timing failed'):
+                error_type = RuntimeError if timing_pass else ValueError
+                message = 'postroute-build failed' if timing_pass else 'setup timing failed'
+                with self.assertRaisesRegex(error_type, message):
                     flow.implement(args)
                 stream.assert_not_called()
             report = json.loads((args.work / 'physical_module.json').read_text())
             self.assertEqual(report['status'], 'failed')
-            self.assertTrue(report['native_postroute_exact'])
+            self.assertFalse(report.get('native_postroute_exact', False))
             expected_artifacts = {'postroute.v', 'core.cdl', 'core.spef', 'core.def'}
             if large:
                 self.assertEqual((args.work / 'core.odb').read_bytes(),
@@ -221,7 +346,7 @@ class PhysicalModule(unittest.TestCase):
                 stages = [stage['name'] for stage in report['stages']]
                 self.assertLess(stages.index('global-route-timing'), stages.index('detailed-route'))
                 self.assertLess(stages.index('detailed-route'), stages.index('extract-routed'))
-                self.assertLess(stages.index('extract-routed'), stages.index('postroute-vectors'))
+                self.assertNotIn('postroute-vectors', stages)
                 self.assertNotIn('route-extract', stages)
                 self.assertEqual(set(report['global_checkpoint_sha256']), {'global_repaired.odb', 'global_repaired.sdc'})
             self.assertEqual(set(report['artifact_sha256']), expected_artifacts)

@@ -1,5 +1,11 @@
 # Analog regression tests
 
+For fast solver development, use the bounded
+[native-first workload suite](workloads/README.md). Its reference flow runs
+C++RTL before ngspice and independently checks both outputs. Process-specific
+solver coverage is tracked in [IHPSG13G2/](IHPSG13G2/README.md). This short suite
+does not replace the complete circuit and ASIC qualification runs below.
+
 This directory is the regression entry point for the C++HDL analog framework.
 Tests use explicit failures rather than `assert`, so Release builds keep all checks.
 CTest requires CMake and a C++20 compiler. Tests build against the parent package's

@@ -44,3 +44,30 @@ ctest --test-dir analog/build/regeneration-audit \
 ```
 
 Results are regenerated under the build directory, rather than committed.
+
+## Reference-access candidate
+
+`transmit_bias_reference_access.py` adds parallel upper-metal rails, direct
+source/drain routes and via arrays across the reference transistor fingers.
+It preserves the devices, original connections and external Metal5 ports.
+The default macro remains unchanged until complete transmitter qualification.
+
+The registered candidate CTest passes local DRC/LVS, deliberate missing-switch
+rejection, conserved extraction and the same 64-code DC checks. At trim 27,
+3.3 V and TT/27 °C, its physical-versus-schematic bias difference is 4.862 mV,
+compared with 23.433 mV for the original layout. Across all codes the maximum
+bias difference is 6.515 mV. These local results do not establish compliance
+with the complete transmitter's 20 mV output-level limit or full-chip DRC.
+Minimum-density violations still require fill and requalification.
+
+```bash
+ctest --test-dir analog/build/regeneration-audit \
+  -R '^analog.1g.ihp_transmit.bias_reference_access(_guards)?$' --output-on-failure
+```
+
+The candidate receipt and GDS regenerate under
+`build/regeneration-audit/1G/IHPSG13G2/tests/results/transmit_bias_reference_access/`.
+
+Five registered routing guards verify device/port and existing-conductor
+preservation, and rejection before mutation for unsupported finger geometry,
+relocated ports, missing escapes and repeated application.

@@ -273,6 +273,9 @@ private:
     bool branch_better(unsigned a, unsigned b, unsigned c, unsigned d,
                        bool candidate_valid, bool current_valid) {
         // Carry-save reduction of a + b - c - d, followed by one prefix sum.
+        // Each shifted carry has a zero low bit. Inject one complement-correction
+        // bit there after each reduction: a + b + ~c + ~d + 2. This avoids a
+        // third full-width compressor on the recurrent metric-decision path.
         // The 21-bit circular bound is the same as for candidate metrics.
         unsigned x, y, z, sum, carry;
         x = a;
@@ -281,16 +284,11 @@ private:
         sum = x ^ y ^ z;
         carry = ((x & y) | (x & z) | (y & z)) << 1;
         x = sum;
-        y = carry;
+        y = carry | 1;
         z = ~d;
         sum = x ^ y ^ z;
         carry = ((x & y) | (x & z) | (y & z)) << 1;
-        x = sum;
-        y = carry;
-        z = 2;
-        sum = x ^ y ^ z;
-        carry = ((x & y) | (x & z) | (y & z)) << 1;
-        return candidate_valid && (!current_valid || ((add_metric(sum, carry) >> 20) & 1) != 0);
+        return candidate_valid && (!current_valid || ((add_metric(sum, carry | 1) >> 20) & 1) != 0);
     }
 
 public:
@@ -408,8 +406,16 @@ public:
                                          (candidates[1] & (0 - unsigned(choose1))) |
                                          (candidates[2] & (0 - unsigned(choose2))) |
                                          (candidates[3] & (0 - unsigned(choose3)));
-                winning_byte = candidate_bytes[unsigned(winner)];
-                if (candidate_valid[unsigned(winner)])
+                // Reuse the one-hot decision at the byte sinks.
+                // Encoding then decoding winner adds gates and fanout
+                // to the measured cost-register -> selected-byte path.
+                winning_byte = (candidate_bytes[0] & (0 - unsigned(choose0))) |
+                               (candidate_bytes[1] & (0 - unsigned(choose1))) |
+                               (candidate_bytes[2] & (0 - unsigned(choose2))) |
+                               (candidate_bytes[3] & (0 - unsigned(choose3)));
+                // A destination is reachable when any predecessor is reachable.
+                // This recurrence is independent of the winning path's metric.
+                if (candidate_valid[0] || candidate_valid[1] || candidate_valid[2] || candidate_valid[3])
                     next_reachable = next_reachable | (1 << destination);
                 // A registered choice separates ACS from the large survivor
                 // mux fanout. Survivor history trails the metric by one clock.

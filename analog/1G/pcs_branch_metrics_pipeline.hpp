@@ -143,6 +143,23 @@ private:
                  (((a >> 6) & 63) == ((b >> 6) & 63) && (a & 63) < (b & 63))));
     }
 
+    unsigned squared_cost(unsigned sample, unsigned code) {
+        unsigned result, difference;
+        result = 0;
+        difference = 0;
+        // Exact squared distance from an ADC byte to PAM level code - 2.
+        // Only one byte value matches. Synthesis unrolls constant byte values
+        // and level codes into a truth table, avoiding subtract/abs/multiply
+        // on the live sample path. No stored ROM or extra pipeline stage.
+        // Unsigned subtraction/squaring is modular; the low 16 bits equal
+        // the integer square throughout the distance range [-192, 191].
+        for (unsigned value = 0; value < 256; ++value) {
+            difference = value - 64 - code * 32;
+            result = result | (sample == value ? (difference * difference) & 65535 : 0);
+        }
+        return result;
+    }
+
 public:
     void _assign() {
         for (unsigned i = 0; i < 8; ++i) {
@@ -152,14 +169,11 @@ public:
     }
 
     void _work(bool reset) {
-        int sample, difference;
-        u<8> distance;
+        unsigned sample;
         unsigned choices, packed, fixed, level, point, bit_index;
         unsigned coordinates[4], pair_cost[3], pair_point[3], left_cost, left_point;
         bool choose_right;
         sample = 0;
-        difference = 0;
-        distance = 0;
         choices = 0;
         packed = 0;
         fixed = 0;
@@ -179,13 +193,11 @@ public:
         if (advance_in()) {
             polarity._next = negate_in();
             for (unsigned lane = 0; lane < 4; ++lane) {
-                sample = int((unsigned(samples_in()) >> (8 * lane)) & 255) - 128;
+                sample = (unsigned(samples_in()) >> (8 * lane)) & 255;
                 // (-sample - level)^2 == (sample + level)^2. Apply polarity
                 // by reversing the stored level costs in the next stage.
                 for (unsigned code = 0; code < 5; ++code) {
-                    difference = sample - (int(code) - 2) * 32;
-                    distance = unsigned(difference < 0 ? -difference : difference);
-                    squared[lane * 5 + code]._next = unsigned(distance) * unsigned(distance);
+                    squared[lane * 5 + code]._next = squared_cost(sample, code);
                 }
             }
         }

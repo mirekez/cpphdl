@@ -62,8 +62,12 @@ def pin_capacitance(text, cell, pin):
         maximum_characterized_pin_capacitance_pf=max([nominal] + [positive(v) for v in values]))
 
 
-def extract(spef, libraries, count=13):
+def extract(spef, libraries, count=13, *, ports=None):
     """Accept the pinned OpenRCX format; reject pin-inclusive or ambiguous data."""
+    wanted = list(ports) if ports is not None else [f'comparisons_in[{i}]' for i in range(count)]
+    if (not wanted or any(not isinstance(name, str) or not name for name in wanted)
+            or len(set(wanted)) != len(wanted) or not libraries):
+        raise ValueError('explicit unique input ports and timing libraries required')
     if not re.search(r'^\*C_UNIT 1 PF$', spef, re.M) or '"PIN_CAP NONE"' not in spef:
         raise ValueError('expected PF wire-only SPEF; pin capacitance must not be counted twice')
     if not re.search(r'^\*DELIMITER :$', spef, re.M):
@@ -78,11 +82,11 @@ def extract(spef, libraries, count=13):
     records, cache = [], {}
     for number, total, body in sections:
         name = names.get(number, '')
-        if not re.fullmatch(r'comparisons_in\[\d+\]', name):
+        if ports is None and re.fullmatch(r'comparisons_in\[\d+\]', name):
+            if int(re.search(r'\d+', name)[0]) >= count:
+                raise ValueError('unexpected connected compatibility input: ' + name)
+        if name not in wanted:
             continue
-        index = int(re.search(r'\d+', name)[0])
-        if index >= count:
-            raise ValueError('unexpected connected compatibility input: ' + name)
         parts = re.fullmatch(r'\*CONN\n(.*?)\*CAP\n(.*?)\*RES\n(.*)', body, re.S)
         if not parts:
             raise ValueError('unsupported extracted net sections')
@@ -129,9 +133,9 @@ def extract(spef, libraries, count=13):
                 opposite_equal_swing_characterized_total_pf=ground + 2 * coupling + maximum)
         records.append(dict(port=name, grounded_wire_pf=ground, coupled_wire_pf=coupling,
             reported_wire_pf=wire, pins=loads, corners=corners))
-    if {r['port'] for r in records} != {f'comparisons_in[{i}]' for i in range(count)}:
-        raise ValueError('missing comparator-return extraction')
-    return sorted(records, key=lambda r: int(re.search(r'\d+', r['port'])[0]))
+    if {r['port'] for r in records} != set(wanted):
+        raise ValueError('missing requested input-port extraction')
+    return sorted(records, key=lambda r: wanted.index(r['port']))
 
 
 def run(args):

@@ -59,6 +59,15 @@ if {[info exists ::env(REPEATER_STAGE)] && $::env(REPEATER_STAGE) == "prepare_ro
     # setup reserve in the saved placement before routed loads are introduced.
     # These are optimization targets; final extracted acceptance is unchanged.
     estimate_parasitics -placement
+    if {$::env(REPEATER_TOP) == "PCSReceiver"} {
+        # Prepare for the same slew target and enlarged wire C used by routing.
+        # Introducing those loads only after global routing made its first
+        # electrical repair insert tens of thousands of buffers into old routes.
+        set_max_transition $transition_target [current_design]
+        repair_design -slew_margin 20 -cap_margin $cap_margin
+        detailed_placement
+        estimate_parasitics -placement
+    }
     repair_timing -setup -setup_margin $::env(REPEATER_PRE_ROUTE_SETUP_MARGIN) -max_iterations 100 {*}$setup_repair_options
     detailed_placement
     estimate_parasitics -placement
@@ -70,6 +79,7 @@ if {[info exists ::env(REPEATER_STAGE)] && $::env(REPEATER_STAGE) == "prepare_ro
     report_checks -path_delay min_max -format full_clock_expanded -digits 9 > "$work/pre_route_timing.rpt"
     report_worst_slack -max -digits 9 > "$work/pre_route_setup.rpt"
     report_worst_slack -min -digits 9 > "$work/pre_route_hold.rpt"
+    report_check_types -max_slew -max_capacitance -max_fanout -violators > "$work/pre_route_electrical.rpt"
     global_connect
     write_db "$work/pre_route.odb"
     write_sdc "$work/pre_route.sdc"
@@ -98,6 +108,7 @@ if {!$resized_checkpoint} {
         puts "CPPHDL: receiver resized network checkpoint saved; rebuilding global routes"
         flush stdout
         global_route -guide_file "$work/core.guide" -verbose
+        estimate_parasitics -placement
     } else {
         global_route -start_incremental
         detailed_placement
@@ -110,17 +121,26 @@ repair_timing -hold -hold_margin 0.05 -max_iterations 100
 # Hold/setup repair changes drive strengths and inserts new loads. Repair
 # that network before committing the topology to detailed routing.
 repair_design -slew_margin 20 -cap_margin $cap_margin
-global_route -start_incremental
-detailed_placement
-global_route -end_incremental -guide_file "$work/core.guide"
+if {$::env(REPEATER_TOP) == "PCSReceiver"} {
+    source "$::env(REPEATER_SOURCE)/finish_timing.tcl"
+    finish_route_update "$work/core.guide"
+} else {
+    global_route -start_incremental
+    detailed_placement
+    global_route -end_incremental -guide_file "$work/core.guide"
+}
 if {[info exists ::env(REPEATER_FINAL_HOLD_MARGIN)] && $::env(REPEATER_FINAL_HOLD_MARGIN) > 0} {
     # Use the repaired and legalized network, including actual route estimates.
     # A final drive-strength repair must not silently undo inserted hold delay.
     estimate_parasitics -global_routing
     repair_timing -hold -hold_margin $::env(REPEATER_FINAL_HOLD_MARGIN) -max_iterations 100
-    global_route -start_incremental
-    detailed_placement
-    global_route -end_incremental -guide_file "$work/core.guide"
+    if {$::env(REPEATER_TOP) == "PCSReceiver"} {
+        finish_route_update "$work/core.guide"
+    } else {
+        global_route -start_incremental
+        detailed_placement
+        global_route -end_incremental -guide_file "$work/core.guide"
+    }
     estimate_parasitics -global_routing
     report_checks -path_delay min_max -format full_clock_expanded -digits 9 > "$work/global_timing.rpt"
     report_worst_slack -max -digits 9 > "$work/global_setup.rpt"

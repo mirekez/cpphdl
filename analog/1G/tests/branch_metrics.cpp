@@ -153,8 +153,14 @@ int main(int argc, char** argv) {
                 step(sample, true);
         }
         advance = true;
-        for (unsigned value = 0; value < 256; ++value)
-            step({int(value), int(value), int(value), int(value)});
+        // Exercise every ADC byte and polarity on every lane. Different
+        // permutations prevent a shared-lane wiring error from hiding behind
+        // identical samples. These also cover the unsigned square lookup's
+        // full input range, while the oracle still searches all 512 points.
+        for (signs = 0; signs < 16; ++signs)
+            for (unsigned value = 0; value < 256; ++value)
+                step({int(value), int((value * 3 + 17) & 255),
+                      int(255 - value), int((value * 5 + 83) & 255)});
         advance = false;
         for (unsigned i = 0; i < delay; ++i)
             step({128, 128, 128, 128});

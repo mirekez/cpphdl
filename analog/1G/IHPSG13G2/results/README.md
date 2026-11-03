@@ -1,14 +1,19 @@
 # 1G repeater ASIC development artifacts
 
-The October 28 update adds the receiver-reference storage-access layout and two
-views rendered from its actual GDSII masks. Its local geometry and LVS checks
-pass; electrical qualification remains open. **The integrated 1000BASE-T
+The November 3 update publishes the completed processing-clock controller
+macro and a view rendered from its actual GDSII masks. Its recorded standalone
+timing, full-deck DRC and transistor LVS pass. This packages the existing loaded
+controller implementation; it is not a newly integrated chip. **The integrated 1000BASE-T
 repeater ASIC is unfinished and is not released for fabrication.**
+
+The October 28 receiver-reference storage-access layout and its two views are
+also retained. Its local geometry and LVS checks pass; electrical qualification
+remains open.
 
 The digital forwarding core, separate unpopulated padframe, and their four
 images are retained October 24 snapshots. Their verification and timing figures
 below describe that historical revision, not the current integrated design.
-None of these three standalone layouts contains a complete repeater.
+None of these standalone layouts contains a complete repeater.
 
 Only selected layouts, images, provenance, documentation and the upstream
 license are committed here. Raw traces and verification databases stay in the
@@ -18,6 +23,9 @@ ignored build directory.
 
 | File | Content |
 | --- | --- |
+| [processing_clock_control.gds.gz](processing_clock_control.gds.gz) | Filled and routed `ProcessingClockControl`, 280 × 280 µm; 80 fF ready-output load |
+| [processing_clock_control_layers.png](processing_clock_control_layers.png) | Devices/lower routing, upper routing and complete drawing-layer views |
+| [processing_clock_control_provenance.json](processing_clock_control_provenance.json) | Original implementation hashes, retained-source audit, checked evidence and package hashes |
 | [receive_reference.gds.gz](receive_reference.gds.gz) | October 28 receiver reference with direct storage-plate and ground access; 1846.23 × 321.47 µm |
 | [receive_reference_layers.png](receive_reference_layers.png) | Whole macro, lower devices/routing, and upper routing masks |
 | [receive_reference_storage.png](receive_reference_storage.png) | Divider and output storage connection detail |
@@ -30,6 +38,32 @@ ignored build directory.
 | [receive_dsp_pcs.png](receive_dsp_pcs.png) | Receiver training, pair acquisition, PCS lock and byte-valid traces for all four functional cases |
 | [provenance.json](provenance.json) | Artifact hashes, source/PDK revisions, dimensions, pinout, recorded verification summaries and limitations |
 | [IHP-LICENSE.txt](IHP-LICENSE.txt) | Apache-2.0 license for the embedded IHP PDK geometry |
+
+## Processing clock controller: published November 3
+
+![Processing clock controller masks](processing_clock_control_layers.png)
+
+The packed GDS is byte-for-byte identical after decompression to the filled
+controller that passed full-deck DRC (zero violations) and transistor LVS
+(46 circuits, 40 ports, 20,404 devices). Recorded extracted setup/hold slack is
+**+0.037747696/+0.064936139 ns**, using the original nominal routed RC.
+Native and routed traces match for all 292,092 recorded events.
+
+The packager rechecks the saved reports, traces, GDS and source hashes. Original
+source snapshots cover later flow-script changes. The original native test
+executable has been overwritten by subsequent builds; its expected hash is
+reported explicitly, while its source and original native/routed traces are
+retained and checked. Packaging does not rerun simulation or renew signoff.
+Post-fill coupling, reset release, metastability and the connected receiver
+clock tree still require qualification.
+
+Regenerate the package using the PDK Python with Pillow available:
+
+```sh
+PYTHONPATH=out/pdf-renderer pdk/IHPSG13G2/.cpphdl/venv/bin/python \
+    pdk/1G_repeater_IHPSG13G2/package_clock_results.py \
+    --implementation build/clock-integration/controller-loaded-admission-v7/ProcessingClockControl-1jbz89kz/physical
+```
 
 ## Receiver reference: October 28
 

@@ -52,7 +52,7 @@ MODULES = {
                         pre_route_setup_margin=.35,
                         final_network_repair=True,
                         route_setup_margin=.35, route_cap_margin=30,
-                        route_transition_target=.2, routing_capacitance_margin=2.5,
+                        route_transition_target=.4, routing_capacitance_margin=2.5,
                         large=True, replay_timeout=900,
                         timing_driven_placement=True, placement_density=.6,
                         additional_checks=[('faults', 'receiver-fault-vectors.txt', 'cpp_fault_trace.csv'),
@@ -153,6 +153,38 @@ def changed_inputs(expected, retained=None):
     return changed
 
 
+def global_checkpoint(work, returncode=0):
+    """Retain estimated timing without presenting unfinished routing as signoff."""
+    log = (work / 'global-route-timing.log').read_text()
+    if any(marker in log for marker in ('EST-0026', 'EST-0027', 'GRT-0304', 'Missing route to pin')):
+        raise ValueError('global checkpoint has incomplete route estimates')
+    errors = [line for line in log.splitlines() if re.match(r'(Error:|\[ERROR\b)', line)]
+    expected_failure = (returncode == 1 and len(errors) == 1 and re.fullmatch(
+        r'Error: route_extract\.tcl, \d+ final global network fails timing/electrical limits; inspect retained reports',
+        errors[0]) is not None)
+    if (returncode or errors) and not expected_failure:
+        raise ValueError('global checkpoint has an unexpected native failure')
+    checkpoints = [work / name for name in ('finished_global.odb', 'finished_global.sdc')]
+    if any(not path.is_file() or path.stat().st_size == 0 for path in checkpoints):
+        raise ValueError('global checkpoint database or constraints are missing')
+    estimate = {}
+    for name, kind in (('setup', 'max'), ('hold', 'min')):
+        values = re.findall(r'worst slack ' + kind + r'\s+([-+\deE.]+)',
+                            (work / ('global_' + name + '.rpt')).read_text())
+        if len(values) != 1 or not math.isfinite(float(values[0])):
+            raise ValueError('missing global ' + name + ' slack')
+        estimate[name + '_ns'] = float(values[0])
+    estimate['electrical_pass'] = 'VIOLATED' not in (work / 'global_electrical.rpt').read_text().upper()
+    if expected_failure and estimate['setup_ns'] >= 0 and estimate['hold_ns'] >= 0 and estimate['electrical_pass']:
+        raise ValueError('native timing failure disagrees with retained reports')
+    return dict(status='global_checkpoint_only', global_estimate=estimate,
+                global_native_returncode=returncode,
+                global_checkpoint_sha256={path.name: digest(path) for path in checkpoints},
+                global_report_sha256={name: digest(work / name) for name in
+                    ('global_setup.rpt', 'global_hold.rpt', 'global_electrical.rpt', 'global-route-timing.log')},
+                timing_qualified=False, physical_qualified=False, full_chip_qualified=False)
+
+
 def import_placement(origin, work, top, constraints, checkpoint='placed'):
     """Resume geometry, never a previous pass result or changed design inputs."""
     origin = origin.resolve()
@@ -232,6 +264,9 @@ def implement(args):
     routed_checkpoint = getattr(args, 'resume_routed_database', None)
     resized_checkpoint = getattr(args, 'resume_resized_global', None)
     placement_only = getattr(args, 'placement_only', False)
+    global_only = getattr(args, 'global_route_only', False)
+    if global_only and (top != 'PCSReceiver' or placement_only or routed_checkpoint is not None):
+        raise ValueError('global-route-only requires the receiver and no other stop mode or routed database')
     if resized_checkpoint is not None and (top != 'PCSReceiver' or placement_only or
             routed_checkpoint is not None or getattr(args, 'resume_placement', None) is not None):
         raise ValueError('resized receiver checkpoint must be the sole resume mode')
@@ -512,8 +547,15 @@ set_load {module_spec['analog_control_load']} $analog_controls
                 environment['REPEATER_TIMING_PREPARED'] = '1'
             if module_spec.get('large') or module_spec.get('split_routing'):
                 environment['REPEATER_STAGE'] = 'global_route'
-                stage('global-route-timing', [tools / 'bin/openroad', '-no_init', '-exit',
-                                              COMMON / 'route_extract.tcl'], timeout=43200)
+                global_returncode = stage('global-route-timing', [tools / 'bin/openroad', '-no_init', '-exit',
+                                              COMMON / 'route_extract.tcl'], timeout=43200, fatal=not global_only)
+                if global_only:
+                    report.update(global_checkpoint(work, global_returncode))
+                    changed = changed_inputs(report['input_sha256'], report['retained_input_paths'])
+                    if changed:
+                        raise ValueError('global checkpoint inputs changed: ' + ', '.join(changed))
+                    save()
+                    return 0
                 report['global_checkpoint_sha256'] = {
                     name: digest(work / name) for name in ('global_repaired.odb', 'global_repaired.sdc')}
                 save()
@@ -527,6 +569,13 @@ set_load {module_spec['analog_control_load']} $analog_controls
                 stage('route-extract', [tools / 'bin/openroad', '-no_init', '-exit', COMMON / 'place_route.tcl'],
                       timeout=43200 if top in ('ReceiveFilter', 'PipelinedReceiveFilter') else
                               5400 if (top == 'ADCReceiveController' or module_spec.get('array_interface', False)) else 1800)
+        # Reject failed extracted timing before compiling a large gate model.
+        # Retain the routed evidence for repair; passing timing still requires
+        # every functional and physical qualification below.
+        report['artifact_sha256'] = {name: digest(work / name) for name in
+                                     ('postroute.v', 'core.cdl', 'core.spef', 'core.def')}
+        report['timing'] = check_timing(work)
+        save()
         # The exact independent oracle runs again on the routed netlist, using
         # the real Liberty-derived cell functions, before layout qualification.
         postroute_sources = [work / 'postroute.v']
@@ -567,12 +616,6 @@ set_load {module_spec['analog_control_load']} $analog_controls
                 raise ValueError('native and postroute ' + mode + ' trajectories differ')
             report['additional_postroute_checks'][mode] = dict(native_exact=True, sha256=digest(trace))
         report['native_postroute_exact'] = True
-        report['artifact_sha256'] = {name: digest(work / name) for name in
-                                     ('postroute.v', 'core.cdl', 'core.spef', 'core.def')}
-        # A timing-failed candidate cannot be promoted. Keep its routed
-        # evidence and return for correction before spending time on fill,
-        # full DRC and LVS. Every passing candidate still requires all checks.
-        report['timing'] = check_timing(work)
         failures = []
         report['stream'] = stream(pdk, work, top)
         stage('fill', [tools / 'bin/klayout', '-zz', '-r', COMMON / 'fill_core.py', '-rd',
@@ -630,6 +673,8 @@ if __name__ == '__main__':
                         help='small clock/reset controllers only: one build worker and 1 GiB per-process address-space cap')
     parser.add_argument('--placement-only', action='store_true',
                         help='retain placement/CTS for optimization; performs no routed or layout qualification')
+    parser.add_argument('--global-route-only', action='store_true',
+                        help='receiver only: stop after global routing/repair to inspect estimates before detailed routing')
     parser.add_argument('--die-size', type=float, help='override square macro die side in micrometres')
     parser.add_argument('--mapped-work', type=Path, default=ANALOG / 'build/1G/tests/hardware/filter_datapath')
     parser.add_argument('--work', type=Path, default=SOURCE / 'results/receive_filter')

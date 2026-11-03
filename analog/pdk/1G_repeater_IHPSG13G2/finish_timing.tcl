@@ -1,6 +1,20 @@
 # Close the actual post-antenna network. All replacements use real library
 # cells; extracted timing, gate replay and full DRC/LVS remain mandatory.
-proc finish_route_update {} {
+proc finish_route_update {{guide_file ""}} {
+    if {[info exists ::env(REPEATER_TOP)] && $::env(REPEATER_TOP) == "PCSReceiver"} {
+        # Repairs have already edited topology before this call. Starting
+        # incremental tracking now misses those edits and can omit new pins.
+        detailed_placement
+        check_placement -verbose
+        set options {}
+        if {$guide_file != ""} {set options [list -guide_file $guide_file]}
+        global_route {*}$options
+        # Clear the estimator's invalid-net set, then replace placement RC
+        # with the rebuilt global routes before reporting or optimizing timing.
+        estimate_parasitics -placement
+        estimate_parasitics -global_routing
+        return
+    }
     global_route -start_incremental
     detailed_placement
     global_route -end_incremental
@@ -8,6 +22,10 @@ proc finish_route_update {} {
 }
 
 proc trim_critical_hold_cells {} {
+    # A replacement changes input capacitance as well as cell delay. Rebuild
+    # reduced RC before each timing decision, including after a rejected trial.
+    estimate_parasitics -placement
+    estimate_parasitics -global_routing
     set tried [dict create]
     for {set pass 0} {$pass < 3} {incr pass} {
         set candidates [dict create]
@@ -30,6 +48,7 @@ proc trim_critical_hold_cells {} {
             set replacement sg13g2_buf_1
             if {$reduced > 0} {set replacement sg13g2_dlygate4sd${reduced}_1}
             replace_cell $name $replacement
+            estimate_parasitics -global_routing
             # STA's internal time unit is seconds. Preserve at least 50 ps
             # estimated hold margin while reducing excessive slow-corner delay.
             if {[sta::worst_slack_cmd min] >= 0.05e-9 &&
@@ -38,6 +57,7 @@ proc trim_critical_hold_cells {} {
                 incr accepted
             } else {
                 replace_cell $name $old
+                estimate_parasitics -global_routing
             }
         }
         if {$accepted == 0} {break}

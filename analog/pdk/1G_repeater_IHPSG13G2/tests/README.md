@@ -30,6 +30,9 @@ then exercises output isolation, placement, RC rebuilds and final network repair
 Acceptance requires legal placement, positive setup and hold, and no electrical
 violations. This small regression covers the repair mechanism; the complete
 receiver still needs detailed-route extraction and independent physical checks.
+The `--receiver` case rebuilds global routes after buffer insertion and cell
+repairs, verifies the emitted guide, and rejects missing-pin/RC warnings.
+CTest registers it as `analog.pdk.1g_repeater.finish_receiver_timing`.
 
 ```bash
 cd ~/cpphdl

@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 import json
+import math
 from pathlib import Path
 
 from hardware import TestToolchain, configure_cleanup, execute
@@ -11,7 +12,28 @@ from receive_sample_recovery import digest
 SOURCE = Path(__file__).resolve()
 
 
+def timing_mapping(delay_ps, load_ff):
+    if delay_ps is None:
+        return None
+    for name, value in (('delay target', delay_ps), ('output load', load_ff)):
+        if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+            raise ValueError('ABC ' + name + ' must be finite and positive')
+    return dict(delay_target_ps=delay_ps, output_load_ff=load_ff,
+                driving_cell='sg13g2_buf_4', scope='mapping estimates; physical STA remains mandatory')
+
+
+def write_abc_constraints(work, mapping):
+    if mapping is None:
+        return ''
+    (work / 'abc.constr').write_text('set_driving_cell sg13g2_buf_4\n'
+                                    f'set_load {mapping["output_load_ff"]:g}\n')
+    # Yosys's ABC -constr parser retains quotes as filename characters.
+    # Run synthesis in work and pass a fixed local filename without quotes.
+    return f' -D {mapping["delay_target_ps"]:g} -constr abc.constr'
+
+
 def run(args):
+    mapping = timing_mapping(getattr(args, 'abc_delay_ps', None), getattr(args, 'abc_load_ff', 15.0))
     work = args.work.resolve()
     proof = work / 'native_rtl_checks.json'
     evidence = json.loads(proof.read_text())
@@ -32,15 +54,16 @@ def run(args):
     hashes.update({str(p): digest(p) for p in inputs})
     toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     report = dict(status='running', module='PCSReceiver', source_sha256=hashes,
-                  fixture_sha256=evidence['fixture_sha256'], scope='functional mapped-gate equivalence')
+                  fixture_sha256=evidence['fixture_sha256'], scope='functional mapped-gate equivalence',
+                  timing_mapping=mapping)
 
     def save():
         (work / 'hardware_checks.json').write_text(json.dumps(report, indent=2) + '\n')
 
-    def command(name, argv, timeout):
+    def command(name, argv, timeout, cwd=None):
         with (work / (name + '.log')).open('w') as log:
             execute(toolchain.command(argv), env=toolchain.env, stdout=log, stderr=-2,
-                    check=True, timeout=timeout)
+                    check=True, timeout=timeout, cwd=cwd)
 
     def quote(path):
         if any(c in str(path) for c in '\n\\"'):
@@ -49,6 +72,10 @@ def run(args):
 
     save()
     try:
+        abc_options = write_abc_constraints(work, mapping)
+        if mapping:
+            constraints = work / 'abc.constr'
+            hashes[str(constraints)] = digest(constraints)
         with (work / 'design.v').open('w') as output:
             execute([str(tools / 'sv2v'), *map(str, rtl)], stdout=output, check=True, timeout=180)
         script = f'''read_liberty -lib {quote(library)}
@@ -56,7 +83,7 @@ read_verilog {quote(work / 'design.v')}
 hierarchy -check -top PCSReceiver
 synth -top PCSReceiver -flatten -noabc -noshare
 dfflibmap -liberty {quote(library)}
-abc -exe {quote(tools / 'abc')} -liberty {quote(library)}
+abc -exe {quote(tools / 'abc')} -liberty {quote(library)}{abc_options}
 hilomap -hicell sg13g2_tiehi L_HI -locell sg13g2_tielo L_LO
 clean
 check -assert
@@ -67,9 +94,11 @@ read_liberty -ignore_miss_func -ignore_miss_dir {quote(library)}
 write_verilog -noattr {quote(work / 'cells.v')}
 '''
         (work / 'synth.ys').write_text(script)
+        hashes[str(work / 'synth.ys')] = digest(work / 'synth.ys')
+        save()
         # Large flattened PCS mappings outgrow the generic unit runner's
         # ten-minute deadline; this stage gets its own bounded resource budget.
-        command('synthesis', [tools / 'yosys', '-Q', '-T', '-s', work / 'synth.ys'], 3600)
+        command('synthesis', [tools / 'yosys', '-Q', '-T', '-s', work / 'synth.ys'], 3600, cwd=work)
         module = json.loads((work / 'mapped.json').read_text())['modules']['PCSReceiver']
         counts = Counter(cell['type'] for cell in module['cells'].values())
         if not counts or any(not name.startswith('sg13g2_') for name in counts):
@@ -105,4 +134,8 @@ if __name__ == '__main__':
     for name in ('work', 'pdk', 'tools', 'verilator'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--cxx', default='/usr/bin/c++')
+    parser.add_argument('--abc-delay-ps', type=float,
+                        help='explicit ABC delay target in ps; enables constrained timing mapping')
+    parser.add_argument('--abc-load-ff', type=float, default=15.0,
+                        help='ABC primary-output load in fF when timing mapping is enabled (default 15)')
     run(parser.parse_args())
