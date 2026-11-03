@@ -1,4 +1,10 @@
 **/results/
+# Selected checked layout artifacts; simulation/build results remain ignored.
+!IHPSG13G2/results/
+IHPSG13G2/results/*
+!IHPSG13G2/results/processing_clock_control.gds.gz
+!IHPSG13G2/results/processing_clock_control_layers.png
+!IHPSG13G2/results/processing_clock_control_provenance.json
 *.osdi
 *.raw
 *.dat

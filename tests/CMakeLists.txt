@@ -25,6 +25,46 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
     "$<TARGET_FILE:cpphdl>" "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CMAKE_CXX_COMPILER}")
 find_package(Threads REQUIRED)
+add_test(NAME cpp_graph_native_quiet_probes COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeQuietProbesChecks.sh" "${CMAKE_CXX_COMPILER}")
+set_tests_properties(cpp_graph_native_quiet_probes PROPERTIES TIMEOUT 900)
+add_test(NAME cpp_graph_native_settle_tasks COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSettleTasksChecks.sh" "${CMAKE_CXX_COMPILER}")
+set_tests_properties(cpp_graph_native_settle_tasks PROPERTIES TIMEOUT 600)
+add_executable(cpp_graph_native_pending_events graph/NativePendingEvents.cc)
+target_include_directories(cpp_graph_native_pending_events PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_features(cpp_graph_native_pending_events PRIVATE cxx_std_23)
+target_link_libraries(cpp_graph_native_pending_events PRIVATE Threads::Threads)
+add_test(NAME cpp_graph_native_pending_events COMMAND cpp_graph_native_pending_events)
+set_tests_properties(cpp_graph_native_pending_events PROPERTIES TIMEOUT 60)
+add_executable(cpp_graph_native_thread_runtime graph/NativeThreadRuntime.cc)
+target_include_directories(cpp_graph_native_thread_runtime PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_features(cpp_graph_native_thread_runtime PRIVATE cxx_std_23)
+target_link_libraries(cpp_graph_native_thread_runtime PRIVATE Threads::Threads)
+foreach(spins 0 64 1024)
+    add_test(NAME cpp_graph_native_thread_runtime_${spins}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_SPIN=${spins}"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>")
+    set_tests_properties(cpp_graph_native_thread_runtime_${spins} PROPERTIES TIMEOUT 120)
+endforeach()
+foreach(workers 1 2 4 30)
+    add_test(NAME cpp_graph_native_task_workers_${workers}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_TASK_WORKERS=${workers}" "CPPHDL_NATIVE_SPIN=64"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>")
+    set_tests_properties(cpp_graph_native_task_workers_${workers} PROPERTIES TIMEOUT 120)
+endforeach()
+foreach(workers invalid 0 -1 257)
+    add_test(NAME cpp_graph_native_task_workers_invalid_${workers}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_TASK_WORKERS=${workers}"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>" --invalid-setting)
+    set_tests_properties(cpp_graph_native_task_workers_invalid_${workers} PROPERTIES TIMEOUT 10)
+endforeach()
+foreach(spins invalid -1 65537)
+    add_test(NAME cpp_graph_native_thread_invalid_spin_${spins}
+        COMMAND "${CMAKE_COMMAND}" -E env "CPPHDL_NATIVE_SPIN=${spins}"
+            "$<TARGET_FILE:cpp_graph_native_thread_runtime>" --invalid-spin)
+    set_tests_properties(cpp_graph_native_thread_invalid_spin_${spins} PROPERTIES TIMEOUT 10)
+endforeach()
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME optimizer_assign_initialization COMMAND "${Python3_EXECUTABLE}" -B
@@ -247,13 +287,17 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/PowerOfTwoFoldingChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_power_of_two_folding PROPERTIES TIMEOUT 120)
-    foreach(check Memoization Batch Broadcast Settle WidePort)
+    foreach(check Memoization Batch Broadcast Settle WidePort BitGather Link DependencyDepth RuntimeSplit ConeStorage WriteTracking MemoryTransactions ParallelMemory StateTransactions LocalTasks ManyWorkers)
         string(TOLOWER "${check}" check_name)
         add_test(NAME "cpp_graph_native_${check_name}" COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/graph/Native${check}Checks.py"
             --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties("cpp_graph_native_${check_name}" PROPERTIES TIMEOUT 600)
     endforeach()
+    add_test(NAME cpp_graph_native_active_memory_commits COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeParallelMemoryChecks.py"
+        --cxx "${CMAKE_CXX_COMPILER}" --active-commits --task-workers 1 4)
+    set_tests_properties(cpp_graph_native_active_memory_commits PROPERTIES TIMEOUT 600)
     add_test(NAME cpp_graph_native_ram_memoization COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeRamMemoizationChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/native-ram-memoization")
@@ -266,6 +310,11 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeResetEventsChecks.py"
         --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(cpp_graph_native_reset_events PROPERTIES TIMEOUT 120)
+    add_test(NAME cpp_graph_register_array_reset COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/RegisterArrayResetChecks.py"
+        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/register-array-reset")
+    set_tests_properties(cpp_graph_register_array_reset PROPERTIES TIMEOUT 300)
     add_test(NAME cpp_graph_word_helpers COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/WordHelpersChecks.py"
         --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
@@ -421,6 +470,16 @@ if(Python3_Interpreter_FOUND)
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"
             --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/array-write-bounds-graph")
         set_tests_properties(hdlcpp_array_write_bounds_graph PROPERTIES TIMEOUT 600)
+        add_test(NAME hdlcpp_whole_array_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/WholeArrayChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/whole-array-graph")
+        set_tests_properties(hdlcpp_whole_array_graph PROPERTIES TIMEOUT 300)
+        add_test(NAME hdlcpp_real_branches_graph COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/RealBranchesChecks.py"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/real-branches-graph")
+        set_tests_properties(hdlcpp_real_branches_graph PROPERTIES TIMEOUT 300)
         add_test(NAME hdlcpp_nested_packed_graph COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/NestedPackedChecks.py"
             --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "$<TARGET_FILE:hdlcpp>"

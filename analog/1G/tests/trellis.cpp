@@ -296,6 +296,48 @@ int main(int argc, char** argv) {
                 advance = true;
             }
         }
+        // Exercise both complement-correction bits, equal-cost choices, and
+        // repeated modular wraps using independent absolute-cost decisions.
+        // The alternating extremes cover carries through the low bits and
+        // across the 18-bit branch boundary without assuming a compressor.
+        const std::array<unsigned, 8> extremes{0, 1, 2, 3, 131071, 131072, 262142, 262143};
+        start = true;
+        step();
+        start = false;
+        for (unsigned index = 0; index < 8192; ++index) {
+            for (unsigned subset = 0; subset < 8; ++subset) {
+                metric[subset] = index % 4 == 0 ? extremes[(index / 4) % 8]
+                    : extremes[(subset + index + index / 256) % 8];
+                point[subset] = next_random(random) & 63;
+            }
+            step();
+        }
+        // Revisit the partially reachable startup states with extreme metrics
+        // and stalls between the first two symbols. Reachability must follow
+        // predecessor availability even when an unavailable path looks cheaper.
+        end = false;
+        for (unsigned restart = 0; restart < 32; ++restart) {
+            advance = false;
+            start = true;
+            step();
+            start = false;
+            for (unsigned index = 0; index < 40; ++index) {
+                for (unsigned subset = 0; subset < 8; ++subset) {
+                    metric[subset] = restart % 4 == 0 ? 262143
+                        : (((subset + restart + index) & 7) == 0 ? 0 : 262143);
+                    point[subset] = (restart * 7 + subset + index) & 63;
+                }
+                advance = true;
+                step();
+                if (index < 2) {
+                    advance = false;
+                    step();
+                }
+            }
+            advance = false;
+            step();
+            step();
+        }
         std::cout << cycles << " trellis/full-path oracle steps; 4096 clean bytes exact; noisy byte errors "
                   << soft_errors << " versus " << hard_errors << " without trellis decoding\n";
         std::cout << "Excessive-noise negative control: " << overload_errors << " erroneous bytes detected\n";

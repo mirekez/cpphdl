@@ -83,6 +83,7 @@ option(CPPHDL_BUILD_HLS_TESTS "Build experimental HLS tests (requires Clang and 
 option(CPPHDL_BUILD_SYNTH_TESTS "Build experimental shared-graph synthesis tests" ON)
 option(CPPHDL_BUILD_TRIBE "Build Tribe CPU models and tests" OFF)
 option(CPPHDL_BUILD_ANALOG "Build analog schemas, mixed-signal examples and Verilog-A exporter" ON)
+option(CPPHDL_BUILD_STATIC "Also build a fully static Linux cpphdl-static executable (requires static dependencies)" OFF)
 
 include(CTest)
 
@@ -452,4 +453,9 @@ if(CPPHDL_BUILD_ANALOG)
     add_dependencies(check-analog cpphdl)
     add_dependencies(check-veriloga cpphdl)
   endif()
+endif()
+
+if(CPPHDL_BUILD_STATIC)
+  include(cmake/CpphdlStatic.cmake)
+  cpphdl_add_static_converter()
 endif()

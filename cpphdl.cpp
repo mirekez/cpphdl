@@ -627,6 +627,14 @@ bool hasCpphdlReplacementAnnotation(const CXXRecordDecl* RD)
 
 }
 
+std::string cpphdlHlsReplacement(const CXXRecordDecl* record, const ASTContext& context) {
+    return cpphdlReplacementFromAnnotations(record,context);
+}
+
+std::string cpphdlHlsAnnotationValue(const CXXRecordDecl* record, const ASTContext& context, const std::string& value) {
+    return replaceAnnotationVariables(value,annotationTemplateVariables(record,context));
+}
+
 void updateExpr(cpphdl::Expr& expr1, const cpphdl::Expr& expr2)  // add correspondent abstract expressions to number parameters
 {
     auto isTemplateTypeParam = [](const cpphdl::Expr& expr) {

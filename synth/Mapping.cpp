@@ -217,6 +217,10 @@ public:
             bind(n, resize(result, width));
         }
         for (const auto& port : source.ports) out.ports.push_back({port.name, value(port.bits), port.input});
+        for (auto replacement : source.replacements) {
+            for (auto& [name,bits] : replacement.pins) bits=value(bits);
+            out.replacements.push_back(std::move(replacement));
+        }
         for (const auto& state : source.states)
             out.states.push_back({value(state.bits), value(state.next), value(state.trigger), state.clock, state.falling,
                                   value(state.reset), value(state.resetValue)});
@@ -293,6 +297,16 @@ void writeGateReport(Graph& graph, const std::string& path, const std::string& m
     for (size_t n = 0; n < boxes.boxes.size(); ++n) if (!boxes.boxes[n].outputs.empty()) {
         out << (comma ? "," : "") << std::quoted("box" + std::to_string(n)) << ":{\"type\":" << std::quoted(boxes.boxes[n].module) << ",\"connections\":{\"box_in\":";
         bits(boxes.boxes[n].inputs); out << ",\"box_out\":"; bits(boxes.boxes[n].outputs); out << "}}"; comma = true;
+    }
+    for (size_t n=0; n<graph.replacements.size(); ++n) {
+        const auto& r=graph.replacements[n];
+        out << (comma ? "," : "") << std::quoted("replacement"+std::to_string(n))
+            << ":{\"type\":" << std::quoted(r.module) << ",\"parameters\":{\"LATENCY\":" << r.latency << "},\"connections\":{";
+        bool pinComma=false;
+        for (const auto& [name,value] : r.pins) {
+            out << (pinComma ? "," : "") << std::quoted(name) << ':'; bits(value); pinComma=true;
+        }
+        out << "}}"; comma=true;
     }
     size_t serial = 0;
     for (const auto& state : graph.states) for (size_t i = 0; i < state.bits.size(); ++i) {

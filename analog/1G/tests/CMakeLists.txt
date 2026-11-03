@@ -2,6 +2,34 @@ if(NOT Python3_Interpreter_FOUND)
   message(FATAL_ERROR "1G independent checks require Python3")
 endif()
 find_program(ONE_G_VERILATOR verilator)
+add_test(NAME analog.1g.trellis.reachability_contract COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/trellis_reachability_contract.py")
+set_tests_properties(analog.1g.trellis.reachability_contract PROPERTIES LABELS "analog;1g;hardware" TIMEOUT 30)
+add_test(NAME analog.1g.receiver.mapping_options COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/receiver_mapping_options.py")
+set_tests_properties(analog.1g.receiver.mapping_options PROPERTIES LABELS "analog;1g;hardware" TIMEOUT 30)
+if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys"
+    AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.ref/sg13g2_stdcell/lib/sg13g2_stdcell_typ_1p20V_25C.lib")
+  add_test(NAME analog.1g.receiver.mapping_native COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/receiver_mapping_native.py"
+    --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --pdk "${CPPHDL_IHP_PDK_ROOT}")
+  set_tests_properties(analog.1g.receiver.mapping_native PROPERTIES
+    LABELS "analog;1g;hardware;mapped" TIMEOUT 120 RESOURCE_LOCK one_g_eda_memory)
+endif()
+add_test(NAME analog.1g.native_reference.contract COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/native_reference_contract.py")
+set_tests_properties(analog.1g.native_reference.contract PROPERTIES LABELS "analog;1g;solver" TIMEOUT 30)
+set(CPPHDL_1G_NGSPICE_RECEIPT "" CACHE FILEPATH "Completed reference run for native solver qualification")
+set(CPPHDL_1G_NATIVE_RECEIPT "" CACHE FILEPATH "Completed native run for the identical circuit and stimuli")
+if(CPPHDL_1G_NGSPICE_RECEIPT AND CPPHDL_1G_NATIVE_RECEIPT)
+  add_test(NAME analog.1g.native_reference.system COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/native_reference.py"
+    --output "${CMAKE_CURRENT_BINARY_DIR}/native-reference-system.json" system
+    --reference-receipt "${CPPHDL_1G_NGSPICE_RECEIPT}" --candidate-receipt "${CPPHDL_1G_NATIVE_RECEIPT}")
+  set_tests_properties(analog.1g.native_reference.system PROPERTIES LABELS "analog;1g;solver;qualification" TIMEOUT 600)
+elseif(CPPHDL_1G_NGSPICE_RECEIPT OR CPPHDL_1G_NATIVE_RECEIPT)
+  message(FATAL_ERROR "Native 1G qualification needs both completed run receipts")
+endif()
 foreach(contract programmable_transmit_contract transmit_state_contract_test transmit_reuse_contract comparison_revision_test)
   add_test(NAME analog.1g.${contract} COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/${contract}.py")
@@ -183,6 +211,10 @@ foreach(reset_case IN ITEMS phy_reset_release phy_reset_control)
       --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${reset_case}")
     set_tests_properties(analog.1g.${reset_case}.cells PROPERTIES
       LABELS "analog;1g;hardware;rtl;ihp;clock" TIMEOUT 1200)
+    if(reset_case STREQUAL "phy_reset_control")
+      set_tests_properties(analog.1g.${reset_case}.cells PROPERTIES
+        FIXTURES_SETUP one_g_phy_reset_control_cells)
+    endif()
   endif()
 endforeach()
 
@@ -581,6 +613,15 @@ foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics b
       ${block_hardware_args}
       --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${hardware_case}")
     set_tests_properties(analog.1g.${block}.rtl PROPERTIES LABELS "analog;1g;hardware;rtl" TIMEOUT 300)
+    if(block STREQUAL "trellis" AND one_g_hardware_args)
+      set_tests_properties(analog.1g.trellis.rtl PROPERTIES FIXTURES_SETUP one_g_trellis_mapped)
+      add_test(NAME analog.1g.trellis.reachability_cone COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/trellis_reachability.py"
+        --mapped-json "${CMAKE_CURRENT_BINARY_DIR}/hardware/trellis/mapped.json"
+        --output "${CMAKE_CURRENT_BINARY_DIR}/hardware/trellis/reachability.json")
+      set_tests_properties(analog.1g.trellis.reachability_cone PROPERTIES
+        LABELS "analog;1g;hardware;mapped" TIMEOUT 30 FIXTURES_REQUIRED one_g_trellis_mapped)
+    endif()
     if(block MATCHES "^(pma_control|pma_endpoint|pma_aligned|adc_interleave|adc_receive|pair_acquisition|normalizer|receive_calibration|pam5_driver)$")
       set_tests_properties(analog.1g.${block}.rtl PROPERTIES TIMEOUT 21600 RESOURCE_LOCK one_g_heavy_hardware)
     endif()

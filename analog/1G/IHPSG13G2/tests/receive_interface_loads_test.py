@@ -75,6 +75,17 @@ class Loads(unittest.TestCase):
             with self.subTest(old=old), self.assertRaises(ValueError):
                 self.report(library=LIBRARY.replace(old, new))
 
+    def test_clock_root_uses_same_pin_and_wire_accounting(self):
+        clock = SPEF.replace('comparisons_in[0]', 'clk')
+        report = extract(clock, {'slow': LIBRARY}, ports=['clk'])[0]
+        self.assertEqual(report['port'], 'clk')
+        self.assertAlmostEqual(report['corners']['slow']['opposite_equal_swing_characterized_total_pf'], .024)
+        for requested in ([], ['clk', 'clk'], ['missing']):
+            with self.subTest(ports=requested), self.assertRaises(ValueError):
+                extract(clock, {'slow': LIBRARY}, ports=requested)
+        with self.assertRaises(ValueError):
+            extract(clock, {}, ports=['clk'])
+
 
 if __name__ == '__main__':
     unittest.main()

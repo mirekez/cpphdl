@@ -62,6 +62,61 @@ capacitance. The series junction remains a separate electrical node with its
 own substrate load. A second copy of the MIM device capacitance would exceed
 the allowed stray budget and fail this regression.
 
+## MOS junction geometry
+
+The sampler exposes a separate junction-area problem. Its dummy NMOS has
+10.60 µm² of channel-adjacent diffusion in GDS, but Magic exports 5.30 µm²;
+the dummy PMOS has 18.48 µm², but the export totals 9.24 µm². All seven dummy
+fingers have `as=0`. The pinned IHP wrapper interprets `as <= 1e-50` as a
+request for default geometry, replacing the explicit drain geometry too.
+A direct ngspice parameter probe confirms this: a 10 µm finger declared with
+`ad=1.9p`, `as=0` receives 3.4 µm² on both terminals from the default branch.
+
+[`mos_junction_extraction.py`](mos_junction_extraction.py) provides an opt-in
+correction for independently verified, straight-finger HV MOS macros. It
+measures actual active-minus-poly polygons in GDS and locates each channel
+and D/S terminal using the extraction coordinates. Each end diffusion belongs
+to one finger; each interior diffusion is divided between its two adjacent
+fingers. Both area and perimeter must sum to the measured polygons exactly.
+It rejects ambiguous positions, mismatched placement/dimensions, missing or
+duplicated fingers, and repeated attribution. The resulting positive source
+areas select the PDK's explicit-geometry branch without modifying the PDK.
+
+For both the 25-finger baseline and 34-finger sizing candidate, only the seven
+dummy fingers need changes. Widths, lengths, models, terminal nodes and all
+wire resistors/capacitors remain unchanged. Six regression tests cover the
+independent area totals, preservation, idempotence and invalid evidence.
+The maintained `sampler_junction_geometry` CTest regenerates extraction from
+its layout fixture; `sampler_junction_extracted` retains the original sampler
+electrical contract and a separate raw extraction alongside the correction.
+
+This repairs geometry accounting, not the sampler's closing error. Full
+five-level testing still fails comparison at 28.018 mV for the maintained
+baseline and 19.681 mV for the stronger-driver/source-contact candidate,
+against the unchanged 5 mV limit. Each flow passes its independent checks.
+The correction is not applied to already-running jobs or promoted to generic
+extraction. It requires suitable geometry and unambiguous terminal evidence;
+the receiver reference's duplicate coordinate records are not yet supported.
+
+[`mos_hierarchy_junction_extraction.py`](mos_hierarchy_junction_extraction.py)
+extends this accounting to repeated nested MOS macros. The caller supplies
+each native cell's MOS geometry and expected instance count. A temporary
+view exposes those macros at the top level; every drawing/marker layer must
+remain polygon-equivalent to the original GDS. The existing restorer then
+uses the original extraction's terminal coordinates. The view is only an
+accounting aid and does not replace the original layout or its LVS proof.
+Missing, extra, rotated, mirrored and overlapping selections are rejected.
+
+For the HV-storage replica, all 35 geometry layers match and the resulting
+netlist is byte-identical to the independently tested hierarchical prototype.
+It repairs 2,200 junction records among 2,220 MOS fingers. Seven regression
+guards pass in the `analog.1g.ihp_transmit.hierarchical_junction_geometry`
+CTest, including conservation of 41 µm² diffusion and 228.2 µm perimeter per
+storage unit, preservation of all other circuit records, idempotence and
+invalid counts, geometry, fingers and transforms. The registered test
+regenerates its layout and extraction prerequisites; `--extraction` permits
+reuse of attested raw extraction for isolated regression runs.
+
 ## Qualification boundary
 
 The preparation script also corrects the pinned Magic SI formatter. Its
@@ -327,3 +382,41 @@ already proven after full-chip routing. Run the registered
 `analog.1g.ihp_processing_clock_gate.extracted_charge` CTest with the same cache
 paths. Completed raw cases can be rechecked only if their regenerated stimulus
 decks match byte for byte; the original failed header-parsing receipt is kept.
+
+## Optional full-precision serialization
+
+`prepare-ihp-extraction-precise` creates a separate tool under
+`out/magic-precise/` using `prepare_magic.py --clip-tile-area --full-sidewall
+--precise-values`. The optional formatter preserves nine significant digits
+at each SI scale instead of five fixed decimal places. A small PFD node exposed
+an accumulated rounding error: its emitted 3.44 aF ground load plus 4.33951 aF
+coupling differed from the emitted 7.79 aF distributed load by 0.01049 aF.
+The original EXT records retain enough precision to explain that discrepancy.
+The new formatter allows the unchanged conservation checks to pass for that
+candidate; it does not change extraction coefficients or electrical limits.
+
+`analog.1g.ihp_extraction.format` extracts the actual upstream C function from
+the hash-verified source archive, applies the reviewed correction, compiles it,
+and checks 97 values across SI boundaries, the failing PFD charge sum and
+rejection of an unreviewed source change. The old installed extractor and
+ongoing jobs remain separate. This formatting check does not qualify the
+candidate PFD electrically or establish field-solver accuracy.
+
+`prepare-ihp-extraction-double` additionally retains double precision in the
+SPICE geometry scale and SI output function. Increasing decimal precision alone
+exposed their earlier float conversions: a 0.45 µm channel could appear as
+0.449999988 µm and fail the unchanged model-range guard. This option preserves
+the actual scale expression; it does not snap dimensions or relax that guard.
+`analog.1g.ihp_extraction.double_format` checks 102 values, including the actual
+grid-to-length expressions for minimum LV and HV channels. Both formatter
+CTests pass. The isolated `out/magic-double-scale/` build also passes the new
+unfilled PLL's geometry inventory and capacitance-conservation checks.
+
+That PLL combines native clock cells with physical resistors. Its diagnostic
+named extraction preserves the eight explicitly identified `pres` resistor
+body anchors for the existing R3 body-partition adapter, while naming 38
+anonymous transistor conductors. Relabeling must preserve all 415 extracted
+devices and all 744 capacitance-matrix entries. The conserved parasitic total
+is 2.02978172755 pF; exact resistor-only elimination retains all 2,615 capacitor
+records. These checks establish conservation and identity, not calibrated
+field accuracy or successful PLL operation. Its extracted transient is running.

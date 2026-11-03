@@ -1,0 +1,13 @@
+trial	policy	variant	evaluations	seconds	evaluations_per_second
+1	serial	base	100000	2.267356	44104.225/s
+1	serial	new	100000	2.213074	45186.011/s
+1	parallel	base	100000	2.761589	36211.033/s
+1	parallel	new	100000	0.799868	125020.589/s
+2	serial	new	100000	2.464224	40580.729/s
+2	serial	base	100000	2.258700	44273.259/s
+2	parallel	new	100000	0.819813	121979.021/s
+2	parallel	base	100000	2.589673	38614.914/s
+3	serial	base	100000	2.271998	44014.126/s
+3	serial	new	100000	2.166257	46162.570/s
+3	parallel	base	100000	2.813751	35539.753/s
+3	parallel	new	100000	0.805905	124084.148/s

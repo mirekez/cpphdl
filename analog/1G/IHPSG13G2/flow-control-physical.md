@@ -62,7 +62,34 @@ then proceeds through these scripts:
    crossings using the extracted parasitics. It deliberately does not load the
    asynchronous clock-group cuts from the synchronous timing analysis.
 4. `flow_control_verify.py`: stream the actual SRAM and standard-cell GDS,
-   add fill, and run the full IHP DRC and transistor LVS decks.
+   add fill, and run the full IHP DRC and transistor LVS decks. Its required
+   `--sram-lvs` argument selects `checks.json` from a completed filled
+   `sram_lvs_flow.py` run. The exact layout/reference pair, independent audit,
+   native database and upstream hashes are checked before assembly. This
+   carries the physical-width reference and SRAM fill into all eight banks.
+   The replacement must retain the original macro boundary and top pin labels.
+   SRAM graph verification alone does not qualify the assembled macro: full
+   assembly DRC/LVS, post-fill RC and electrical acceptance remain required.
+
+For a retained routed layout whose full DRC passed but SRAM LVS failed,
+`flow_control_sram_flow.py` preserves its physical geometry, applies the
+verified SRAM reference/hierarchy normalization, extracts again and audits the
+complete assembly. SRAMs remain transistor-level circuits throughout comparison.
+The enclosing bank connections, other devices, top ports and antenna diodes
+are included. Full DRC runs again after the graph audit passes. The command
+waits for a running SRAM dependency and serializes heavy tools with routing:
+
+```sh
+python3 1G/IHPSG13G2/flow_control_sram_flow.py \
+    --geometry path/to/retained-geometry/checks.json \
+    --routed path/to/routed-proof.json \
+    --sram-lvs build/sram-lvs-qualified/checks.json \
+    --output build/frame-buffer-geometry
+```
+
+The real assembly run remains pending. A graph/DRC pass from this flow would
+qualify geometry correspondence, with SRAM electrical characterization,
+post-fill interconnect timing and complete-chip acceptance still separate.
 
 The crossing audit resolves each semantic state bit through the exact synthesized
 netlist. This is necessary because streaming the netlist into OpenROAD discards

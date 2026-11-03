@@ -220,6 +220,96 @@ delayed reaction, partition independent state, or use `ClockedDelayer` when each
 call must observe its predecessor's update. Increasing pipeline latency can
 change decisions, not just delay otherwise identical answers.
 
+#### Latency-parameterized class replacements
+
+A stateless method class used as `ClockedPipeline<T, STAGES, Argument, Result>`
+can provide a sequential RTL implementation with these class annotations:
+
+```cpp
+struct [[clang::annotate("CPPHDL_REPLACEMENT_MODULE=MyDspPipeline")]]
+       [[clang::annotate("CPPHDL_REPLACEMENT_MIN_LATENCY=2")]]
+       [[clang::annotate("CPPHDL_REPLACEMENT_FILE=MyDspPipeline.sv;")]] Methods {
+    uint64_t command(uint32_t a, uint32_t tag, uint32_t b) const {
+        return (uint64_t(tag) << 32) | uint32_t(a*b + tag);
+    }
+};
+```
+
+Inline `CPPHDL_REPLACEMENT` and `CPPHDL_REPLACEMENT_SCRIPT` bodies use the same
+annotation resolver as ordinary C++RTL replacements. The annotated class remains
+ordinary executable C++; its command body is the synthesis/timing reference.
+Synthesis first schedules and retimes that reference, then links the replacement
+with `.LATENCY(reported_latency)`. Mapping preserves the linked module instead
+of expanding its arithmetic. The original `retimed_graph.cc` remains available
+for equivalence testing. `timing.json` records `pipeline_replacements`.
+
+The replacement implements the complete ClockedPipeline interface: `clk`,
+`reset`, `command_valid_in`, `response_ready_in`, `operation_in`, `index_in`,
+`value_in`, `command_ready_out`, `response_valid_out`, `result_out`, and
+`fault_out`. It must sustain II=1, freeze its data and validity on output stalls,
+and discard pending work on synchronous reset. `LATENCY` counts enabled pipeline
+advances. Include a constant assertion rejecting values below the primitive's
+minimum. The scheduler adds delay stages when the initial STAGES is smaller than
+that minimum. A native C++ ClockedPipeline reference still uses its explicit
+STAGES, so select an adequate STAGES when comparing its cycle timing.
+
+This contract currently supports stateless command classes and the default
+rising clock. It applies at a ClockedPipeline boundary, not to arbitrary inlined
+helper calls. The replacement body is assumed to implement the selected latency;
+the timing estimate describes the synthesized reference, not a physical timing
+proof for an independently supplied DSP macro. Its internal resource usage is
+not counted in the surrounding generic-gate report.
+
+For Verilog-only replacements, convert the linked `gates.v` with hdlcpp and
+compile that graph. A replacement implemented in C++RTL can instead be lowered
+directly with `--native-graph` and connected through its checked module ABI.
+Use the reported LATENCY and compare it with the retimed reference and generated
+RTL before integration. Do not simulate opaque replacement outputs as ordinary
+uninitialized registers; direct emission of an unbound opaque graph is rejected. The regression
+`PipelineReplacementChecks.py` compares the original retimed graph against the
+converted replacement at different timing targets, with stalls, reset and tags.
+
+`hls/math/Fp32MacPipeline.h` supplies `Fp32MacMethods`, a separately rounded
+FP32 multiply/add command with an annotated implementation. Its C++RTL
+`Fp32Mac.h` primitive reuses `FpAdd.h`; checked-in operation-level RTL lives in
+`hls/math/rtl/`. Regenerate it with `regenerate_mac_rtl.py --cpphdl ...` and use
+`--check` in validation. `PipelineReplacementChecks.py --fp32` compares its
+retimed reference with hdlcpp-converted replacement RTL, including raw FP32
+bit patterns. `Fp32Mac.cpp` checks the primitive's two enabled stages directly.
+
+The MAC replacement script emits the generated FpAdd/Fp32Mac implementation
+under SystemVerilog `ifdef SYNTHESIS` and `Fp32MacSimulation.sv` under `else`.
+The latter uses `real a, b, c; c = a * b;` and a separate real addition, converting
+and rounding to FP32 at each registered stage. It preserves the HLS FTZ,
+canonical-NaN, signed-zero and underflow-rounding contract. Both implementations
+use the same original Verilog latency and handshake wrappers.
+
+For this replacement, use `hdlcpp --native-graph --preserve-synthesis` on the
+linked Verilog. The converted C++ retains `#ifdef SYNTHESIS` and `#else`, each
+with its independently elaborated graph. Compile without `-DSYNTHESIS` to emit
+the fast simulation model; compile with the define to emit the hardware branch
+for comparison. `Fp32MacBranchesChecks.py` compares both with the FP32 oracle
+and checks that the simulation graph actually contains the real arithmetic.
+The optional direct-C++RTL wrappers remain useful for independent regression,
+but are not required by this generic replacement simulation flow.
+
+`hls/math/Reduction.h` supports the same flow for `ReductionMethods<Rows,Cols>`
+when compiled with `-DCPPHDL_HLS_REDUCTION_REPLACEMENT`. The C++ command remains
+the explicit pairwise FP32 tree, including odd-column carries and the final
+addition of zero. `generate_reduction_replacement.py` accepts 1–64 rows and
+columns. Its synthesis branch uses clocked `FpAdd<32,8>` hardware with canonical
+NaNs; the simulation branch uses `real` addition and FP32 rounding at each node.
+Generate the linked Verilog through synthesis/retiming, then use hdlcpp's
+`--preserve-synthesis` conversion as above.
+
+The reduction tree needs `ceil(log2(Cols))+1` enabled stages. The annotation
+uses a conservative seven-stage minimum for the supported column range; a
+retimer-selected larger `LATENCY` delays results and tags together. The wrapper
+rejects a latency smaller than the actual tree and stalls every stage together.
+Tests cover 1, 3, 8 and 64 columns, raw FP32 edge cases, reset/backpressure, and
+both branches. `Fp32ReductionPipelineChecks.py` additionally compares the linked
+replacement against an independently synthesized and retimed HLS graph.
+
 #### Scheduling and Timing Are Separate
 
 `pipeline_scheduler.h/.cpp` chooses initial stages from operation dependency
@@ -1924,3 +2014,27 @@ are overlapped within loading. A caller must fence accepted external writes
 when the surrounding memory controller permits delayed write visibility.
 FP16 conversion reuses `math::FloatConvertMethods::from_half`; the free
 `fp16_to_fp32_narrow` wrapper remains available to software and HLS methods.
+
+### Cached binary maps
+
+`hls/CachedBinaryMap.h` supplies `CachedBinaryMap<Compute>`, a reusable C++ RTL
+memory stage for a bounded contiguous two-input operation. `Compute` is an
+ordered elastic module with `valid_in`, `ready_out`, `a_in`, `b_in`,
+`operation_in`, `valid_out`, `ready_in`, `value_out` and `fault_out` ports. It
+may compose independently retimed `ClockedPipeline` workers. No arithmetic
+latency is encoded in the memory controller.
+
+Commands provide two FP32 source addresses, a destination, count (1–8192),
+and operation. Addresses are 64-byte aligned. Two explicit
+`SynchronousRam<16,512>` member banks consume 64 KiB of BRAM. Up to 64 reads
+are outstanding; both inputs are loaded before calculation starts, allowing
+source/destination overlap. Synchronous reads feed the callable at up to one
+element per clock, while results accumulate into byte-enabled 512-bit writes.
+Load and compute are sequential; cache reads, compute, and output draining
+overlap. The caller fences accepted writes before issuing dependent work.
+
+The compute module must hold a response until accepted, preserve order, and
+continue returning accepted operations after a fault so the controller can
+drain. It sees a stable operation for the complete command. Different layouts
+need an affine loader or a separate fallback. This is an explicit component,
+not automatic conversion of arbitrary pointer loops into burst transfers.

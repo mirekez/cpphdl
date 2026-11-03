@@ -10,6 +10,11 @@ The namespace is `analog`, also available as `cpphdl::analog`. Link the CMake
 target `cpphdl::analog`. The [specification](specification.md) defines the detailed
 semantics; [requirements](requirements.md) states the design requirements.
 
+The opt-in [class-based simulation backend](behavior.md) adds inherited device
+behavior and replaceable solver, integration and timestep-control classes. It
+shares the existing `IC` and wire definitions; it is not yet the default solver
+or a qualified replacement for the IHP PSP flow.
+
 ## Components and purpose declarations
 
 An IC is a class derived from `IC`. Declare `_PORT(...)` members and put device

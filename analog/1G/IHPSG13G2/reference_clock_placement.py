@@ -19,7 +19,7 @@ def routing_cost(order, widths, nets, net_weights, *, row_width_um=None,
             x = 0
         locations[index] = (row, x + width / 2)
         x += width
-    total = 0.
+    costs = []
     for net, indices in nets.items():
         rows = defaultdict(list)
         for index in indices:
@@ -34,8 +34,10 @@ def routing_cost(order, widths, nets, net_weights, *, row_width_um=None,
         else:
             length = sum(max(points) for points in rows.values())
             length += (max(rows) - min(rows)) * row_pitch_um
-        total += net_weights.get(net, 1) * length
-    return total
+        costs.append(net_weights.get(net, 1) * length)
+    # Tiny summation differences can change an annealing acceptance decision
+    # and then the entire placement. Net traversal order is not a constraint.
+    return math.fsum(costs)
 
 
 def placement_order(parts, dbu, *, power_nets, net_weights, row_width_um=None,
@@ -49,7 +51,7 @@ def placement_order(parts, dbu, *, power_nets, net_weights, row_width_um=None,
         raise ValueError('invalid folded placement dimensions')
     nets = defaultdict(list)
     for index, (_, _, connections, _) in enumerate(parts):
-        for net in set(connections.values()) - set(power_nets):
+        for net in sorted(set(connections.values()) - set(power_nets)):
             nets[net].append(index)
 
     def cost(order):

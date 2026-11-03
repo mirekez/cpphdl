@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import json
 import os
 import pathlib
 import shutil
@@ -109,6 +110,77 @@ class ReferenceModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             model = self.executable(pathlib.Path(directory), "sail", "echo 0.13.1")
             self.assertEqual(deps.check_sail_version(str(model)), "0.13.1")
+
+    def test_sail_loader_keeps_selected_python_through_dependency_install(self):
+        lock = deps.load_lock()
+        for selection in ("path", "empty", "absolute", "command"):
+            with self.subTest(selection=selection), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                tests = root / "tribe_cpu" / "tests"
+                tests.mkdir(parents=True)
+                loader = pathlib.Path(__file__).resolve().parent.parent / ".load_sail_riscv_sim.sh"
+                shutil.copy(loader, tests)
+                tools = root / "tools"
+                tools.mkdir()
+                trace = root / "python-calls.jsonl"
+                # Exercise the actual shell loader without fetching repositories,
+                # compiling Sail, or installing packages into the host environment.
+                body = (f"#!{sys.executable}\n"
+                        "import json, os, sys\n"
+                        "with open(os.environ['TRACE'], 'a') as log:\n"
+                        "    log.write(json.dumps(sys.argv) + '\\n')\n"
+                        f"versions = {lock!r}\n"
+                        "if len(sys.argv) == 4 and sys.argv[2] == 'value':\n"
+                        "    print(versions[sys.argv[3]])\n"
+                        "elif sys.argv[1:3] == ['-m', 'pip']:\n"
+                        "    assert 'uv' in sys.argv and '--target' in sys.argv\n"
+                        "elif sys.argv[1].endswith('ensure_git_repo.py'):\n"
+                        "    pass\n"
+                        "elif sys.argv[2] == 'check-sail':\n"
+                        "    pass\n"
+                        "else:\n"
+                        "    raise RuntimeError(sys.argv)\n")
+                for name in ("python3", "custom-python", "override python"):
+                    path = tools / name
+                    path.write_text(body)
+                    path.chmod(0o755)
+                for name in ("git", "make", "cmake", "curl", "tar"):
+                    self.executable(tools, name, "exit 99")
+                for name in ("dirname", "mkdir", "install", "awk"):
+                    (tools / name).symlink_to(shutil.which(name))
+                self.executable(tools, "mise", "exit 0")
+                self.executable(tools, "sail", "echo Sail " + lock["sail_compiler_version"])
+                pydeps = root / "pydeps"
+                pydeps.mkdir()
+                repo = tests / "sail-riscv"
+                emulator = repo / "build" / "c_emulator"
+                emulator.mkdir(parents=True)
+                self.executable(emulator, "sail_riscv_sim", "echo " + lock["sail_model_version"])
+                self.executable(repo, "build_simulator.sh", "exit 0")
+                prefix = root / "install"
+                (prefix / "bin").mkdir(parents=True)
+                # This directory is prepended later by the loader. It must not
+                # change the Python used for the final pip invocation.
+                self.executable(prefix / "bin", "python3", "exit 98")
+                env = {"PATH": str(tools), "HOME": str(root),
+                       "CONDA_PREFIX": str(tools.parent), "TRACE": str(trace),
+                       "SAIL_RISCV_PREFIX": str(prefix), "TRIBE_PYDEPS_DIR": str(pydeps)}
+                expected = tools / "python3"
+                if selection == "empty":
+                    env["PYTHON_BIN"] = ""
+                elif selection == "absolute":
+                    expected = tools / "override python"
+                    env["PYTHON_BIN"] = str(expected)
+                elif selection == "command":
+                    expected = tools / "custom-python"
+                    env["PYTHON_BIN"] = expected.name
+                result = subprocess.run(["/bin/bash", str(tests / loader.name)], env=env,
+                                        text=True, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = [json.loads(line) for line in trace.read_text().splitlines()]
+                self.assertTrue(all(call[0] == str(expected) for call in calls), calls)
+                self.assertEqual(calls[-1][1:4], ["-m", "pip", "install"])
+                self.assertIn("uv", calls[-1])
 
     def test_spike_conda_library_path_and_missing_soname(self):
         with tempfile.TemporaryDirectory() as directory:

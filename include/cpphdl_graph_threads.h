@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -25,26 +27,35 @@ inline DispatchPolicy nativeDispatchPolicy() {
     throw std::invalid_argument("CPPHDL_NATIVE_DISPATCH must be auto, serial or parallel");
 }
 
-// Read once per executor, never in the transaction hot path. Short hardware
-// cycles need enough spin time to catch the next handoff without a futex round
-// trip. Long-idle or oversubscribed workloads can choose a shorter window.
+// Read once per executor, before starting workers. CPPHDL_NATIVE_SPIN takes
+// precedence over CPPHDL_NATIVE_SPIN_LIMIT; each setting retains its supported
+// range. Zero skips our spin window and goes directly to atomic waiting.
 inline unsigned nativeSpinLimit() {
-    const char* value = std::getenv("CPPHDL_NATIVE_SPIN_LIMIT");
+    const char* value = std::getenv("CPPHDL_NATIVE_SPIN");
+    const bool extended = !value;
+    if (extended) value = std::getenv("CPPHDL_NATIVE_SPIN_LIMIT");
     if (!value) return 4096;
-    unsigned limit = 0;
     const std::string_view text(value);
-    if (!text.empty()) {
-        for (const char digit : text) {
-            if (digit < '0' || digit > '9')
-                throw std::invalid_argument("CPPHDL_NATIVE_SPIN_LIMIT must be an integer from 0 to 1000000");
-            limit = limit * 10 + unsigned(digit - '0');
-            // Checking each digit bounds the next multiplication as well.
-            if (limit > 1000000)
-                throw std::invalid_argument("CPPHDL_NATIVE_SPIN_LIMIT must be an integer from 0 to 1000000");
-        }
-        return limit;
-    }
-    throw std::invalid_argument("CPPHDL_NATIVE_SPIN_LIMIT must be an integer from 0 to 1000000");
+    unsigned count = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), count);
+    if (error != std::errc{} || end != text.data() + text.size() || count > (extended ? 1000000u : 65536u))
+        throw std::invalid_argument(extended
+            ? "CPPHDL_NATIVE_SPIN_LIMIT must be an integer from 0 to 1000000"
+            : "CPPHDL_NATIVE_SPIN must be an integer from 0 to 65536");
+    return count;
+}
+
+// Independent tasks can use fewer workers than the compiled pool. Fixed-lane
+// dependency stages must keep all their lanes and deliberately ignore this cap.
+inline unsigned nativeTaskWorkers(unsigned capacity) {
+    const char* value = std::getenv("CPPHDL_NATIVE_TASK_WORKERS");
+    if (!value) return capacity;
+    const std::string_view text(value);
+    unsigned count = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), count);
+    if (error != std::errc{} || end != text.data() + text.size() || !count || count > 256)
+        throw std::invalid_argument("CPPHDL_NATIVE_TASK_WORKERS must be an integer from 1 to 256");
+    return std::min(capacity, count);
 }
 
 // Persistent workers for one graph transaction. Generated tasks are noexcept:
@@ -77,6 +88,46 @@ public:
     }
     void run(void* model, Function function, unsigned activeLanes) {
         run(model, function, activeLanes, [] {});
+    }
+    // Independent generated evaluation groups can outnumber physical workers.
+    // Group zero stays on the caller (foreign effects may be pinned there).
+    // Each group has private scratch/next-state storage; publication still
+    // happens only after run() joins every worker. No cross-group waits are
+    // allowed in this entry point.
+    void runTasks(void* model, Function function, unsigned count) {
+        runTasks(model, function, count, lanes_);
+    }
+    void runTasks(void* model, Function function, unsigned count, unsigned requestedWorkers) {
+        if (!count) return;
+        if (!requestedWorkers) throw std::invalid_argument("native task worker budget must be positive");
+        const unsigned active = std::min({taskWorkers_, count, requestedWorkers});
+        if (active == count) {
+            run(model, function, active);
+            return;
+        }
+        struct Work {
+            void* model;
+            Function function;
+            unsigned count;
+            std::atomic<unsigned> next;
+        } work{model, function, count, active};
+        if (active == 1) {
+            run(&work, [](void* opaque, Threads& executor, unsigned, uint32_t epoch) noexcept {
+                auto& work = *static_cast<Work*>(opaque);
+                for (unsigned task = 0; task < work.count; ++task)
+                    work.function(work.model, executor, task, epoch);
+            }, 1u);
+            return;
+        }
+        run(&work, [](void* opaque, Threads& executor, unsigned lane, uint32_t epoch) noexcept {
+            auto& work = *static_cast<Work*>(opaque);
+            work.function(work.model, executor, lane, epoch);
+            for (;;) {
+                const unsigned task = work.next.fetch_add(1, std::memory_order_relaxed);
+                if (task >= work.count) break;
+                work.function(work.model, executor, task, epoch);
+            }
+        }, active);
     }
     // Run a caller-only continuation before joining the register workers.
     // Always drain workers before propagating an exception or releasing the
@@ -159,6 +210,7 @@ private:
     }
     unsigned lanes_;
     const unsigned spinLimit_;
+    const unsigned taskWorkers_ = nativeTaskWorkers(lanes_);
     std::unique_ptr<Slot[]> commands_, completed_, tasks_;
     std::vector<std::thread> workers_;
     std::mutex mutex_;

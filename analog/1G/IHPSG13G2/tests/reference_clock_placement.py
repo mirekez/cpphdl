@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Reject linear-distance shortcuts across physical PLL row boundaries."""
 from pathlib import Path
+import itertools
+import os
+import subprocess
 import sys
 import unittest
 
@@ -21,6 +24,28 @@ class Cell:
 
 
 class FoldedPlacement(unittest.TestCase):
+    def test_cost_is_independent_of_net_iteration_order(self):
+        weights = {'large': 1e16, 'small_a': 1, 'small_b': 1}
+        for names in itertools.permutations(weights):
+            self.assertEqual(routing_cost([0, 1], [1, 1],
+                {name: [0, 1] for name in names}, weights), 1e16 + 2)
+
+    def test_placement_is_independent_of_python_hash_seed(self):
+        script = '''
+import json, runpy
+fixture = runpy.run_path(''' + repr(str(Path(__file__).resolve())) + ''')
+Cell = fixture['Cell']
+parts = [(Cell(str(i)), {}, {'G': 'n' + str(i % 3),
+          'D': 'n' + str((i + 1) % 4), 'S': 'VSS'}, 'mos') for i in range(8)]
+print(json.dumps(fixture['placement_order'](parts, .001, power_nets={'VSS'},
+    net_weights={'n1': .3, 'n2': 1.1}, row_width_um=50, row_pitch_um=17)))
+'''
+        outputs = [subprocess.check_output([sys.executable, '-c', script],
+            env=dict(os.environ, PYTHONHASHSEED=str(seed)), timeout=30)
+            for seed in (1, 17, 1302)]
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(outputs[0], outputs[2])
+
     def test_external_connection_reaches_left_spine(self):
         self.assertEqual(routing_cost([0, 1], [100, 100], {'reset': [1]}, {},
             row_width_um=250, left_anchored_nets={'reset'}), 150)

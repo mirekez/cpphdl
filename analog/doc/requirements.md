@@ -143,3 +143,51 @@ primitives such as `pmos`, `nmos`, `resistor` and `capacitor` retain their names
 their model approximations remain documented separately. A `sim_sense` purpose
 interprets a voltage and provides no physical receiver circuit. Compound hardware
 functions still require explicit classes in `basic/`.
+
+## 11. Simulation behavior and numerical control use C++ classes and inherited traits
+
+Each simulated object owns an overridable behavior implementation. Derived
+device classes inherit ports, parameters and traits, and specialize their
+physical equations or internal state through virtual overrides and ordinary
+C++ overloads. Traits describe capabilities and model limits; inheritance alone
+does not establish accuracy or equivalence.
+
+Linear solving, nonlinear solving, integration, timestep control and overall
+simulation coordination must also have replaceable class interfaces. Device
+objects contribute to a shared coupled solve so their connections retain mutual
+influence. Stateful objects commit once on acceptance and restore state on a
+rejected trial; an object must not independently advance past connected objects.
+
+The [class-based backend](behavior.md) implements an opt-in prototype and
+regressions. Complete legacy mixed-signal integration and the IHP PSP/ngspice
+replacement remain unfinished. Replacement requires the same model inputs,
+independent electrical checks on both outputs, complete waveform comparison and
+measured performance; a declared speed target is not a benchmark result.
+
+## 12. Native simulation first; short development and full qualification profiles
+
+C++RTL is the primary simulation engine. Ngspice supplies an independent
+correctness reference, using the same circuit, model parameters, initial state,
+stimuli, loads and physical time window. Check each output against the same
+independent circuit requirements before comparing the outputs. A native failure
+must not fall back to ngspice and report native success. Process-model
+equivalence requires the actual PSP/MOSVAR models, not a generic MOS surrogate.
+
+Cover distinct numerical workloads, not merely many parameter variations of
+one circuit: DC bias/sweeps, charge and flux storage, nonlinear devices, source
+breakpoints, switching, coupled parasitics, feedback, oscillators, digital/analog
+events, ADC conversion, transmitter/receiver signal paths and process corners.
+Unsupported workloads remain explicit coverage gaps.
+
+Development regressions use small representative circuits, short event windows
+and a few sweep points, with bounded runtime and retained waveform size. Preserve
+edge resolution, sampling apertures and required dynamics; reducing saved output
+alone does not reduce integration work. Long startup, lock, drift and complete
+ASIC qualification remain separate profiles with their full original contracts.
+Smoke success cannot satisfy those qualification requirements.
+
+Use [tests/workloads](../tests/workloads/README.md) for process-independent
+solver checks and [tests/IHPSG13G2](../tests/IHPSG13G2/README.md) for process
+solver coverage. Circuit-level and full-chip verification keep their existing
+locations. Record build/queue/solver/checker timings separately where available;
+never interpret total CTest elapsed time as measured solver CPU time.

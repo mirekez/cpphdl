@@ -1,12 +1,14 @@
 #include "Verilog.h"
 #include "KeepBoxes.h"
 #include "BlackBox.h"
+#include "PipelineReplacement.h"
 #include <filesystem>
 
 namespace cpphdl::synth {
 using namespace graph;
 
 static std::string buildVerilog(Graph& graph, const std::string& module, std::string* boxImplementations) {
+    linkPipelineReplacements(graph);
     graph.validateClocks();
     if (graph.clockContract != ClockContract::RisingEdgeStep && graph.clockContract != ClockContract::NamedEdges)
         throw std::runtime_error("synthesis requires a rising-edge lifecycle graph");
@@ -36,6 +38,9 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
     graph.optimize();
     auto order = graph.dependencyOrder();
     KeepBoxes boxes(graph);
+    std::set<size_t> replacementOutputs;
+    for (const auto& r : graph.replacements) for (const auto& [name,value] : r.pins)
+        if (!pipelineInput(name)) for (auto bit : graph.resolved(value)) if (bit>1) replacementOutputs.insert(Graph::owner(bit));
     auto nodeName = [](size_t index) { return "__cpphdl_node_" + std::to_string(index); };
     // Batch independent bit muxes, never a chain with dependencies inside it.
     // The mapped graph/cell inventory stays bit-level; only its spelling changes.
@@ -119,7 +124,7 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
     for (const auto& state : graph.states) for (auto bit : graph.resolved(state.bits))
         if (bit > 1) declarations.insert(Graph::owner(bit));
     for (size_t i : declarations) if (!bundled.count(i))
-        out << (graph.nodes[i].op == "state" ? "reg" : "wire") << " [" << graph.nodes[i].width-1
+        out << (graph.nodes[i].op == "state" && !replacementOutputs.count(i) ? "reg" : "wire") << " [" << graph.nodes[i].width-1
             << ":0] " << nodeName(i) << ";\n";
     for (size_t i = 0; i < bundles.size(); ++i)
         out << "wire [" << bundles[i].size() - 1 << ":0] " << bundleName(i) << ";\n";
@@ -249,7 +254,18 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
         }
         if (opened) out << "end\n";
     }
+    std::map<std::string,std::string> replacementBodies;
+    for (size_t i=0; i<graph.replacements.size(); ++i) {
+        const auto& r=graph.replacements[i];
+        auto [it,inserted]=replacementBodies.emplace(r.module,r.verilog);
+        if (!inserted && it->second!=r.verilog) throw std::runtime_error("conflicting replacement module bodies: "+r.module);
+        out << "(* keep_hierarchy = 1 *) " << identifier(r.module) << "#(.LATENCY(" << r.latency
+            << ")) replacement_" << i << "(.clk(" << identifier(clocks[0].name) << ")";
+        for (const auto& [name,value] : r.pins) out << ",." << identifier(name) << '(' << bits(value) << ')';
+        out << ");\n";
+    }
     out << "endmodule\n";
+    for (const auto& [name,body] : replacementBodies) out << body << '\n';
     out << implementations.str();
     if (boxImplementations) *boxImplementations = implementations.str();
     return out.str();

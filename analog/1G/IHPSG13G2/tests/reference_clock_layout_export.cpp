@@ -2,6 +2,7 @@
 #include <VerilogA/export.hpp>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <set>
 
 using namespace analog;
@@ -25,6 +26,13 @@ int main(int argc, char** argv) {
         const std::vector<named_port> ports{{"Vdd", clock.Vdd}, {"Vss", clock.Vss},
             {"Vlogic", clock.Vlogic}, {"REF", clock.REF}, {"CLEAR", clock.CLEAR},
             {"OUT", clock.OUT}, {"OUT_N", clock.OUT_N}};
+        const auto node_name = [&](const electrical& terminal) {
+            const auto node = sim.root(terminal.id());
+            for (const auto& port : ports)
+                if (sim.root(port.terminal.id()) == node)
+                    return port.name;
+            return std::string("cpphdl_n") + std::to_string(node);
+        };
         verilog_a::detail::write_file(destination / "reference.va",
             verilog_a::render_simulation_model(sim, "OneGIHPReferenceClockGenerator", ports));
         const std::vector<named_port> probes{{"LOW", clock.multiplier.OUT}, {"OUT", clock.OUT},
@@ -37,11 +45,7 @@ int main(int argc, char** argv) {
         output << "{\n";
         bool first = true;
         for (const auto& probe : probes) {
-            const auto root = sim.root(probe.terminal.id());
-            std::string name = "cpphdl_n" + std::to_string(root);
-            for (const auto& port : ports)
-                if (sim.root(port.terminal.id()) == root)
-                    name = port.name;
+            const auto name = node_name(probe.terminal);
             if (!first)
                 output << ",\n";
             output << "  \"" << probe.name << "\": \"" << name << "\"";
@@ -56,6 +60,7 @@ int main(int argc, char** argv) {
         std::ofstream hierarchy(destination / "hierarchy.json");
         hierarchy << "{\n";
         bool first_group = true;
+        std::map<std::string, std::set<std::size_t>> group_owners;
         const std::vector<std::pair<std::string, cmos_dff*>> groups{
             {"divider", &clock.multiplier.feedback.storage},
             {"reference_detector", &clock.multiplier.detector.reference},
@@ -71,6 +76,7 @@ int main(int argc, char** argv) {
                         &latch->storage.gates[0], &latch->storage.gates[1]})
                     owners.insert(component->id());
             }
+            group_owners[name] = owners;
             if (!first_group)
                 hierarchy << ",\n";
             hierarchy << "  \"" << name << "\": [";
@@ -89,6 +95,55 @@ int main(int argc, char** argv) {
         hierarchy << "\n}\n";
         if (!hierarchy)
             throw std::runtime_error("incomplete clock hierarchy export");
+
+        // Process realizations replace whole owned ICs through explicit ports.
+        // Keep this separate from placement groups: the detector includes its
+        // reset network as well as both flip-flops, and owns unmerged storage.
+        auto detector_owners = group_owners.at("reference_detector");
+        detector_owners.insert(group_owners.at("feedback_detector").begin(),
+                               group_owners.at("feedback_detector").end());
+        for (const IC* component : std::vector<const IC*>{&clock.multiplier.detector,
+                &clock.multiplier.detector.both, &clock.multiplier.detector.reset,
+                &clock.multiplier.detector.clear_inverter})
+            detector_owners.insert(component->id());
+        auto divider_owners = group_owners.at("divider");
+        divider_owners.insert(clock.multiplier.feedback.id());
+        std::ofstream realizations(destination / "realizations.json");
+        realizations << "{\n";
+        const auto block = [&](const std::string& name, const std::set<std::size_t>& owners,
+                               const std::vector<named_port>& terminals) {
+            realizations << "  \"" << name << "\": {\"ports\": {";
+            bool first = true;
+            for (const auto& terminal : terminals) {
+                if (!first)
+                    realizations << ", ";
+                realizations << "\"" << terminal.name << "\": \""
+                             << node_name(terminal.terminal) << "\"";
+                first = false;
+            }
+            realizations << "}, \"elements\": [";
+            first = true;
+            for (std::size_t index = 0; index < sim.elements.size(); ++index) {
+                if (!owners.count(sim.elements[index].component))
+                    continue;
+                if (!first)
+                    realizations << ", ";
+                realizations << index;
+                first = false;
+            }
+            realizations << "]}";
+        };
+        const auto& detector = clock.multiplier.detector;
+        block("detector", detector_owners, {{"VDD", detector.Vdd}, {"VSS", detector.Vss},
+            {"REF", detector.REF}, {"FEEDBACK", detector.FEEDBACK}, {"CLEAR", detector.CLEAR},
+            {"UP", detector.UP}, {"UP_N", detector.UP_N}, {"DOWN", detector.DOWN}, {"DOWN_N", detector.DOWN_N}});
+        realizations << ",\n";
+        const auto& divider = clock.multiplier.feedback;
+        block("divider", divider_owners, {{"VDD", divider.Vdd}, {"VSS", divider.Vss},
+            {"CLOCK", divider.CLOCK}, {"CLEAR", divider.CLEAR}, {"Q", divider.Q}, {"Q_N", divider.Q_N}});
+        realizations << "\n}\n";
+        if (!realizations)
+            throw std::runtime_error("incomplete clock realization ownership export");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

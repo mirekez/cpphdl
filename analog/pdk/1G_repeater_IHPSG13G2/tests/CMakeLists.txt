@@ -3,6 +3,10 @@ add_test(NAME analog.pdk.1g_repeater.native COMMAND analog_1g_repeater_core_test
 set_tests_properties(analog.pdk.1g_repeater.native PROPERTIES LABELS "analog;pdk;repeater;cpp" TIMEOUT 30
   FIXTURES_SETUP repeater_native_vectors)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME analog.pdk.1g_repeater.package_clock_results COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/package_clock_results.py")
+  set_tests_properties(analog.pdk.1g_repeater.package_clock_results PROPERTIES
+    LABELS "analog;pdk;repeater" TIMEOUT 15)
   add_test(NAME analog.pdk.1g_repeater.drc_reuse COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/drc_reuse.py")
   set_tests_properties(analog.pdk.1g_repeater.drc_reuse PROPERTIES LABELS "analog;pdk;repeater" TIMEOUT 15)
@@ -63,6 +67,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/finish_timing.py" --pdk "${repeater_pdk}"
         --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")
       set_tests_properties(analog.pdk.1g_repeater.finish_timing PROPERTIES LABELS "analog;pdk;repeater;timing" TIMEOUT 45)
+      add_test(NAME analog.pdk.1g_repeater.finish_receiver_timing COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/finish_timing.py" --pdk "${repeater_pdk}"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --receiver)
+      set_tests_properties(analog.pdk.1g_repeater.finish_receiver_timing PROPERTIES LABELS "analog;pdk;repeater;timing" TIMEOUT 45)
       add_test(NAME analog.pdk.1g_repeater.finish_clock_timing COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/finish_timing.py" --pdk "${repeater_pdk}"
         --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"

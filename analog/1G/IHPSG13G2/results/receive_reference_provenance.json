@@ -1,0 +1,209 @@
+{
+  "package": "receiver-reference storage-access revision",
+  "generated_utc": "2026-10-28T19:43:39.479130+00:00",
+  "source_base_commit": "8aefe18f4d8ea4b41fe1d944f2760a7bdc116d0f",
+  "source_worktree_included": true,
+  "top": "ReceiveCommonReference",
+  "database_unit_um": 0.001,
+  "bounds_um": [
+    5.0,
+    -51.9,
+    1851.23,
+    269.57
+  ],
+  "width_um": 1846.23,
+  "height_um": 321.47,
+  "area_um2": 593507.5581,
+  "gds_uncompressed_sha256": "4bf2148ca57126decd84156b25aa5c000f05469709cc020285a1cddc8e1b5227",
+  "geometry_evidence": {
+    "path": "/home/me/cpphdl/analog/build/regeneration-audit/1G/IHPSG13G2/tests/results/receive_common_storage_layout/checks.json",
+    "sha256": "cb3b82efb6e378bb1466676e02138b07fffebcfa86e7654e0c2a8d32a7dc6042",
+    "status": "pass",
+    "local_drc_violations": 0,
+    "retained_minimum_density_violations": {
+      "AFil.g": 1,
+      "GFil.g": 1,
+      "M1.j": 1,
+      "M2.j": 1,
+      "M3.j": 1,
+      "M4.j": 1,
+      "M5.j": 1,
+      "TM1.c": 1,
+      "TM2.c": 1
+    },
+    "lvs": {
+      "matched_circuits": 46,
+      "top_ports": 3,
+      "instantiated_devices": 81
+    },
+    "missing_device_rejected": true,
+    "source_files_checked": 648,
+    "source_manifest_sha256": "2436b057179daa9cf347aac502b5ad7e1705b76ffe299a487110463bda845134"
+  },
+  "storage_access": {
+    "banks": [
+      {
+        "component": "ReceiveCommonStorage9",
+        "rows": 4,
+        "ground_column_um": 546.5400000000001,
+        "row_y_um": [
+          33.44,
+          97.32,
+          161.2,
+          225.08
+        ],
+        "topvia1_per_row": 8,
+        "topvia2_per_row": 2,
+        "direct_top_plate_access": true
+      },
+      {
+        "component": "ReceiveCommonStorage17",
+        "rows": 1,
+        "ground_column_um": 179.95999999999998,
+        "row_y_um": [
+          33.44
+        ],
+        "topvia1_per_row": 8,
+        "topvia2_per_row": 2,
+        "direct_top_plate_access": false
+      }
+    ],
+    "scope": "additional physical conductors only; unchanged devices, MIM plates, sense paths and source declarations"
+  },
+  "pins": {
+    "OUT": {
+      "layer": 126,
+      "x_um": 500.09,
+      "y_um": -2.76
+    },
+    "VDD": {
+      "layer": 126,
+      "x_um": 165.28,
+      "y_um": -40.14
+    },
+    "VSS": {
+      "layer": 134,
+      "x_um": 128.95999999999998,
+      "y_um": -45.9
+    }
+  },
+  "electrical_qualified": false,
+  "full_chip_qualified": false,
+  "fabrication_release": false,
+  "limitations": [
+    "Unfilled standalone receiver-reference macro, not an assembled repeater.",
+    "Minimum-density rules remain for chip fill. Local geometry checks are not full-chip DRC.",
+    "The repaired transient is pending; clock, transmitter and receiver integration remain open.",
+    "Earlier core/padframe artifacts in this directory are separate historical layouts."
+  ],
+  "rendering": {
+    "palette": {
+      "Active": [
+        1,
+        "#60db7c"
+      ],
+      "Poly": [
+        5,
+        "#e77773"
+      ],
+      "Contact": [
+        6,
+        "#d6f3fa"
+      ],
+      "Metal1": [
+        8,
+        "#54b9f2"
+      ],
+      "Via1": [
+        19,
+        "#e6effb"
+      ],
+      "Metal2": [
+        10,
+        "#d4cedf"
+      ],
+      "Via2": [
+        29,
+        "#efbaa0"
+      ],
+      "Metal3": [
+        30,
+        "#f57e87"
+      ],
+      "Via3": [
+        49,
+        "#c5d49a"
+      ],
+      "Metal4": [
+        50,
+        "#9bdd63"
+      ],
+      "Via4": [
+        66,
+        "#e7b57a"
+      ],
+      "Metal5": [
+        67,
+        "#e9ce5b"
+      ],
+      "TopVia1": [
+        125,
+        "#ffe3be"
+      ],
+      "TopMetal1": [
+        126,
+        "#ffe3be"
+      ],
+      "TopVia2": [
+        133,
+        "#f8ad61"
+      ],
+      "TopMetal2": [
+        134,
+        "#f8ad61"
+      ]
+    },
+    "mask_datatype": 0,
+    "physical_geometry": true,
+    "artificial_geometry": false
+  },
+  "source_files": {
+    "pdk/1G_repeater_IHPSG13G2/package_receive_results.py": "1bfc6849048a4045626fde743a7beb1af19a1cde2624f0d968a504b7f7c2ba22",
+    "1G/IHPSG13G2/receive_common_layout.py": "28032ed5c2506ea23468c80a450fe07a9c218047a0d10a3da1d94174f86b573f",
+    "1G/IHPSG13G2/transmit_translator_layout.py": "caf0736a7e61a2aa057d1e4b48ee06f0cb1d2b87b7fec35a77479c36432b248b",
+    "1G/IHPSG13G2/reference_clock_row.py": "e189d741d0215edd066e4e7b767d1971f17f30d40df37375f5337a4c8f68b2c8",
+    "1G/IHPSG13G2/reference_clock_placement.py": "3a701aa924ecfebaa828f7237c545967785ff239141919e3afae1dd63b6dfeda",
+    "1G/IHPSG13G2/processing_clock_gate_layout.py": "80ff605a608eeb73a72ecfe767545481d8064941ae5d4f18478eeb4c67e7c41e",
+    "1G/IHPSG13G2/resistor_layout.py": "a5a3f3759832b0f075879ad198017b0b270204f66743c0374a1cc813c0c706b4",
+    "1G/IHPSG13G2/mos_layout.py": "7a2e06dfec75aa6eda9c2b74f26eeb23564808d8122f996059326df358b11278",
+    "1G/IHPSG13G2/extract_analog.py": "59763ffc6dcdd98ddb038ee45241dfa775089db9347c33ee1bb3f1af7d6754fd",
+    "1G/IHPSG13G2/named_node_extraction.py": "8ae8f0a5abae416812270de72a3f1bad4a5895175897abb3a4869d92fbf2085c",
+    "1G/IHPSG13G2/resistor_body_extraction.py": "9c440e7a067af6b2346e8268a88f8832de1120a70f2a6860a0302fc58a04fffa",
+    "1G/IHPSG13G2/resistor_body_model.py": "2ad43705d7136e9eed5d9d0d83969267f04d0c0da76a0b5c67d9ad66acdd8da1",
+    "1G/IHPSG13G2/extracted_connections.py": "46574f29163ea5be3fa5826e25402b7cc3ada44a56921b63806b04b06faf955f",
+    "1G/IHPSG13G2/capacitor_layout.py": "8a44ab244352bc314ec1600fd6735b461cc7dfc981eb21fdc7edf790adecbb0a",
+    "1G/IHPSG13G2/capacitor_bank_layout.py": "735d3f909d75d05a9bdd0c338b5938c3201a0849db1ef3ca1f6c426c8e39dcbe",
+    "1G/IHPSG13G2/core_driver_process.py": "86d077717bf9c595eff3465640380b896168f2b96e677193c522cc3c90e2dcfd",
+    "1G/IHPSG13G2/lead_receive_common_reference.hpp": "1eaccd99fdf62b0d240b20c45f82838cf116f7f4533c93fe51acda2fa249dfa8",
+    "1G/IHPSG13G2/receive_common_current_routes.py": "5ef8b27e385c2d60d4f2249e79c9e5fdab38ead5fd58b40df832e95ca383964f",
+    "1G/IHPSG13G2/receive_common_drain_contacts.py": "82f6a2056c40822523b8bd10d835c125fbf4737e012fde8b06059c029d952e30",
+    "1G/IHPSG13G2/receive_common_sense_routes.py": "db520a8e1b8408c1051a82a4cca274e86e8ce3d209e6c39e0526a1acd413e409",
+    "1G/IHPSG13G2/receive_common_upper_current_routes.py": "59ef8267b230e5e1ed7a9b258433bd633f50ce5850305df574f5b4a489efe114",
+    "1G/IHPSG13G2/receive_common_storage_routes.py": "9018c1ee95f1428b9d2ad46dc9302db8133476f6144ba8d9189361f990525875",
+    "1G/IHPSG13G2/extraction_capacitance.py": "74fbe0d5e7bba2f5761795e98da15c298de1f7afc480ae04febb5770d5ba100a"
+  },
+  "artifacts": {
+    "receive_reference.gds.gz": {
+      "bytes": 514704,
+      "sha256": "1527d6bcc8dcef08a7bcde16830494f174e5f493cda45c7b11ea4b30c9eeb6a9"
+    },
+    "receive_reference_layers.png": {
+      "bytes": 71692,
+      "sha256": "e089ca04d3c0e397430abbde7a6583d089d68a7107c862f6acd843016848ff7c"
+    },
+    "receive_reference_storage.png": {
+      "bytes": 65367,
+      "sha256": "999d479adb6bd071d72de0d540239053a87bd99e0e6d04f5196b3a09f4a68984"
+    }
+  }
+}

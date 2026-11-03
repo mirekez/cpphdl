@@ -26,6 +26,8 @@ def run(args):
     lines += ['sg13g2_inv_1 clock_load(.A(buffer_clock), .Y(inverted));',
               'sg13g2_buf_4 signal_source(.A(data), .X(long_signal));',
               'sg13g2_buf_8 signal_sink(.A(long_signal), .X(signal_out));',
+              'sg13g2_antennanp signal_diode0(.A(long_signal));',
+              'sg13g2_antennanp signal_diode1(.A(long_signal));',
               'sg13g2_dfrbpq_1 state(.CLK(mixed_clock), .D(data_branch), .RESET_B(reset_branch), .Q(q));',
               'endmodule']
     fixture = work / 'fixture.v'

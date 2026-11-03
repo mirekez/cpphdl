@@ -16,14 +16,16 @@ from checks import check_drc, check_lvs
 from extract_analog import digest
 from flow_control_stream import stream, TOP, MACRO
 from input_charge import verify_files
+from sram_library import verified_library
 from tool_process import configure_cleanup, execute
 
 
 def run(args):
+    sram = verified_library(args.sram_lvs)
     routed = json.loads(args.routed.read_text())
     if routed.get('status') != 'routed_timing_replay_pass':
         raise ValueError('passing routed timing and native/cell replay required')
-    hashes = {}
+    hashes = dict(sram['source_sha256'])
     for key in ('source_sha256', 'artifact_sha256'):
         verify_files(routed[key])
         hashes.update(routed[key])
@@ -64,7 +66,7 @@ def run(args):
             shutil.copyfile(origin / name, work / name)
         environment = dict(os.environ, REPEATER_PDK=str(pdk), REPEATER_TOP=TOP, REPEATER_SOURCE=str(COMMON),
                            PATH=str(tools / 'bin') + os.pathsep + os.environ['PATH'], MALLOC_ARENA_MAX='2')
-        report['stream'] = stream(pdk, work)
+        report['stream'] = stream(pdk, work, sram)
         gds = work / 'flow_control.gds'
         if command('fill', [tools / 'bin/klayout', '-zz', '-r', COMMON / 'fill_core.py', '-rd',
                            'output_file=' + str(gds), work / 'flow_control_unfilled.gds'], 3600):
@@ -79,7 +81,7 @@ def run(args):
         except Exception as error:
             errors.append('DRC: ' + str(error))
         (work / 'lvs.cir').write_text('\n'.join('.include "' + str(p) + '"' for p in
-            (libraries / 'sg13g2_stdcell/cdl/sg13g2_stdcell.cdl', libraries / ('sg13g2_sram/cdl/' + MACRO + '.cdl'),
+            (libraries / 'sg13g2_stdcell/cdl/sg13g2_stdcell.cdl', sram['reference'],
              work / 'core.cdl')) + '\n')
         command('lvs', [sys.executable, technology / 'tech/lvs/run_lvs.py', '--layout', gds, '--netlist', work / 'lvs.cir',
                        '--topcell', TOP, '--run_mode', 'deep', '--run_dir', work / 'lvs'], 7200)
@@ -108,6 +110,6 @@ def run(args):
 if __name__ == '__main__':
     configure_cleanup()
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('routed', 'pdk', 'tools', 'work'):
+    for name in ('routed', 'pdk', 'tools', 'work', 'sram-lvs'):
         parser.add_argument('--' + name, type=Path, required=True)
     run(parser.parse_args())

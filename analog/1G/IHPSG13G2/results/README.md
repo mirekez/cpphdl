@@ -1,21 +1,35 @@
 # 1G repeater ASIC development artifacts
 
-This package contains newly regenerated IHP SG13G2 digital forwarding core and a
-**separate, unpopulated padframe prototype**. These are real physical layouts.
-**The integrated 1000BASE-T repeater ASIC is unfinished and is not released for
-fabrication.** The core and padframe were rebuilt from the current sources,
-with fresh standalone physical verification. The new receiver is committed as
-source and generated RTL; it is not part of either GDS hierarchy.
+The November 3 update publishes the completed processing-clock controller
+macro and a view rendered from its actual GDSII masks. Its recorded standalone
+timing, full-deck DRC and transistor LVS pass. This packages the existing loaded
+controller implementation; it is not a newly integrated chip. **The integrated 1000BASE-T
+repeater ASIC is unfinished and is not released for fabrication.**
 
-Only the two final layouts, four images, provenance and the upstream license
-are committed here. Build logs, raw traces and verification databases stay in
-the ignored build directory. Images use actual KLayout geometry and checked
-simulation samples.
+The October 28 receiver-reference storage-access layout and its two views are
+also retained. Its local geometry and LVS checks pass; electrical qualification
+remains open.
+
+The digital forwarding core, separate unpopulated padframe, and their four
+images are retained October 24 snapshots. Their verification and timing figures
+below describe that historical revision, not the current integrated design.
+None of these standalone layouts contains a complete repeater.
+
+Only selected layouts, images, provenance, documentation and the upstream
+license are committed here. Raw traces and verification databases stay in the
+ignored build directory.
 
 ## Files
 
 | File | Content |
 | --- | --- |
+| [processing_clock_control.gds.gz](processing_clock_control.gds.gz) | Filled and routed `ProcessingClockControl`, 280 × 280 µm; 80 fF ready-output load |
+| [processing_clock_control_layers.png](processing_clock_control_layers.png) | Devices/lower routing, upper routing and complete drawing-layer views |
+| [processing_clock_control_provenance.json](processing_clock_control_provenance.json) | Original implementation hashes, retained-source audit, checked evidence and package hashes |
+| [receive_reference.gds.gz](receive_reference.gds.gz) | October 28 receiver reference with direct storage-plate and ground access; 1846.23 × 321.47 µm |
+| [receive_reference_layers.png](receive_reference_layers.png) | Whole macro, lower devices/routing, and upper routing masks |
+| [receive_reference_storage.png](receive_reference_storage.png) | Divider and output storage connection detail |
+| [receive_reference_provenance.json](receive_reference_provenance.json) | Current macro hashes, geometry evidence, source fingerprints and qualification limits |
 | [repeater_core.gds](repeater_core.gds) | Filled, routed `RepeaterCore`, 120 × 120 µm; 1 nm database unit |
 | [repeater_padframe.gds.gz](repeater_padframe.gds.gz) | Losslessly compressed `RepeaterPadframe`, 1280 × 1280 µm; independent of the core |
 | [core_layers.png](core_layers.png) | Six views of actual core masks, with scale bars |
@@ -24,6 +38,60 @@ simulation samples.
 | [receive_dsp_pcs.png](receive_dsp_pcs.png) | Receiver training, pair acquisition, PCS lock and byte-valid traces for all four functional cases |
 | [provenance.json](provenance.json) | Artifact hashes, source/PDK revisions, dimensions, pinout, recorded verification summaries and limitations |
 | [IHP-LICENSE.txt](IHP-LICENSE.txt) | Apache-2.0 license for the embedded IHP PDK geometry |
+
+## Processing clock controller: published November 3
+
+![Processing clock controller masks](processing_clock_control_layers.png)
+
+The packed GDS is byte-for-byte identical after decompression to the filled
+controller that passed full-deck DRC (zero violations) and transistor LVS
+(46 circuits, 40 ports, 20,404 devices). Recorded extracted setup/hold slack is
+**+0.037747696/+0.064936139 ns**, using the original nominal routed RC.
+Native and routed traces match for all 292,092 recorded events.
+
+The packager rechecks the saved reports, traces, GDS and source hashes. Original
+source snapshots cover later flow-script changes. The original native test
+executable has been overwritten by subsequent builds; its expected hash is
+reported explicitly, while its source and original native/routed traces are
+retained and checked. Packaging does not rerun simulation or renew signoff.
+Post-fill coupling, reset release, metastability and the connected receiver
+clock tree still require qualification.
+
+Regenerate the package using the PDK Python with Pillow available:
+
+```sh
+PYTHONPATH=out/pdf-renderer pdk/IHPSG13G2/.cpphdl/venv/bin/python \
+    pdk/1G_repeater_IHPSG13G2/package_clock_results.py \
+    --implementation build/clock-integration/controller-loaded-admission-v7/ProcessingClockControl-1jbz89kz/physical
+```
+
+## Receiver reference: October 28
+
+![Receiver-reference masks](receive_reference_layers.png)
+
+![Storage connections](receive_reference_storage.png)
+
+The `ReceiveCommonReference` macro retains the original devices and intentional
+capacitors. Direct upper-metal access connects the 16 output MIM plates (80 pF)
+and two divider MIM plates (10 pF), with additional ground-return connections.
+The footprint is **0.5935 mm²**. The maintained layout test passed with 46
+matched LVS circuits, three top ports and 81 instantiated devices.
+
+The local DRC check found zero non-density violations. Minimum-density rules
+`AFil.g`, `GFil.g`, `M1.j`, `M2.j`, `M3.j`, `M4.j`, `M5.j`, `TM1.c` and `TM2.c`
+remain for fill during chip integration. This is an unfilled standalone macro;
+these checks do not establish full-chip DRC or electrical acceptance. The
+extracted transient for the storage-access repair is still pending.
+
+The packager verifies source and artifact hashes against the completed geometry
+receipt and checks lossless GDS compression before publishing. Its separate
+provenance preserves the older core/padframe package history.
+
+## Historical October 24 snapshots
+
+The remaining layout, timing and functional evidence below belongs to the
+October 24 package. Consult [qualification-status.md](../qualification-status.md)
+for subsequent implementation work and unresolved checks.
 
 ## Digital forwarding core
 
@@ -78,14 +146,14 @@ This is a digital core illustration, not a PAM5 waveform or eye diagram.
 
 ## Evidence and release boundary
 
-The regenerated forwarding core passed native C++, generated RTL, mapped-gate
+The October 24 forwarding core passed native C++, generated RTL, mapped-gate
 and routed-gate checks, full-deck KLayout DRC (zero violations) and deep
 transistor LVS (48 top-level ports). Routed-RC setup/hold slack is
 **+5.95388031 / +0.787586033 ns**. Timing uses nominal extracted routing with
 slow/fast IHP cell corners; post-fill coupling and full-chip/package effects
 were not extracted.
 
-The newly assembled and filled padframe passed fresh full-deck KLayout DRC
+The October 24 assembled and filled padframe passed full-deck KLayout DRC
 (zero violations). Deep transistor LVS passes with 43 top-level ports using
 the PDK's documented **ideal ohmic tap-contact model**, applied independently
 to the schematic and layout. Default extracted-tap LVS failed with unmatched
@@ -97,14 +165,14 @@ Neither standalone check verifies an integrated repeater.
 
 ![Receive DSP and PCS functional traces](receive_dsp_pcs.png)
 
-The new [ReceiveDSP and ReceiveDSPPCS](../../receive_dsp.md) sources, generated
+The October 24 [ReceiveDSP and ReceiveDSPPCS](../../receive_dsp.md) sources, generated
 RTL, independent reference models and CTest tests accompany this package.
 Native C++, generated RTL and IHP gate simulation each pass the same independent
 checks and match exactly: four composed cases, eight frames and 6,392 bytes.
 The image shows training, acquisition and decoded-data availability from the
 checked trace. It does not assert an achieved clock frequency.
 
-The receiver still fails the requested 4 ns cell-timing limit: DSP **−2.13 ns**,
+That receiver revision failed the requested 4 ns cell-timing limit: DSP **−2.13 ns**,
 DSP + PCS **−3.13 ns**. Its mapped cell area is **2.550 mm² per receive path**,
 before routing and analog integration. External supervised training targets,
 recovered-symbol samples and aligned local transmit references remain required.
@@ -125,9 +193,10 @@ physical qualification. See the project's
 
 ## Viewing
 
-Open either layout in KLayout; the compressed GDS is directly readable:
+Open a layout in KLayout; the compressed GDS is directly readable:
 
 ```sh
+klayout receive_reference.gds.gz
 klayout repeater_core.gds
 klayout repeater_padframe.gds.gz
 ```
@@ -137,7 +206,7 @@ load `ihp-sg13g2/libs.tech/klayout/tech/sg13g2.lyp` for the full technology laye
 palette. Alternatively, `gzip -dk repeater_padframe.gds.gz` creates an ordinary
 GDS file. Neither viewing nor decompression runs verification.
 
-The four PNGs can be viewed directly without the PDK or EDA tools. Their colors
+The six PNGs can be viewed directly without the PDK or EDA tools. Their colors
 are a simplified display palette; dimensions and shapes come from the GDS.
 
 ## Attribution
@@ -149,7 +218,23 @@ distributed under [Apache-2.0](IHP-LICENSE.txt). The custom circuit arrangement,
 routing and package illustrations are cpphdl project work. The original PDK
 cell geometry is preserved in the generated layouts.
 
-## Reproducing this package
+## Reproducing the receiver update
+
+From `analog/`, use an IHP-enabled CMake build configured as described in
+[analog-extraction.md](../analog-extraction.md). The Python environment needs
+KLayout and Pillow. Run the maintained geometry test, then package its receipt:
+
+```sh
+ctest --test-dir build/regeneration-audit -R '^analog\.1g\.ihp_receive_common_reference\.storage_layout$' --output-on-failure
+pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/package_receive_results.py --layout-evidence build/regeneration-audit/1G/IHPSG13G2/tests/results/receive_common_storage_layout/checks.json
+```
+
+If Pillow is installed separately, provide its directory through `PYTHONPATH`
+(the local render environment uses `PYTHONPATH=out/pdf-renderer`). Packaging
+reads completed verification evidence and does not run a simulation. Its
+source-hash checks reject stale evidence.
+
+## Reproducing the historical core/padframe package
 
 From `analog/`, with the local IHP PDK, toolchain and root converter installed:
 

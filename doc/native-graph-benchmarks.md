@@ -134,3 +134,39 @@ execution; uneven jobs can benefit from dynamic assignment; larger worker
 counts need enough work to cover their synchronization cost. Automatic
 admission and worker-count selection require separate implementation and
 validation before a default-on improvement can be claimed.
+
+## Bounded worker waits, 2026-11-01
+
+`tests/graph/BenchmarkNativeSpin.sh` compares one executable with different
+`CPPHDL_NATIVE_SPIN` values. The fixture contains 24 scoped units with cyclic
+register and RAM dependencies, 96 arithmetic steps per unit, reset, memory
+commits and cached transactions. The independent scalar oracle also checks
+copies sharing an executor. Timing includes complete simulated clock steps,
+not an isolated dispatch loop. Six workers and 24 automatically grouped tasks
+were compiled with GCC 15, `-O1 -pthread`. Three two-second trials alternated
+setting order; the host exposes six CPUs.
+
+Median rates under automatic dispatch:
+
+| Activity | 64 spins, clocks/s | 1024 spins, clocks/s | Ratio |
+| --- | ---: | ---: | ---: |
+| Idle registers | 188,915 | 230,605 | 1.22x |
+| One enabled unit | 146,336 | 234,031 | 1.60x |
+| All units enabled | 161,251 | 187,564 | 1.16x |
+| Alternating half of the units | 171,047 | 207,665 | 1.21x |
+
+[Raw measurements](validation/native-spin-20261101.tsv) include forced parallel
+dispatch and 256/4096-spin settings. Samples vary with OS scheduling, so these
+short trials establish a useful tuning option, not universal speedups. The
+longer window approaches six CPU equivalents; that count includes spin waits.
+Throughput, rather than occupancy, is the improvement measured here. A separate
+same-graph experiment using `time` showed much less kernel CPU consumption at
+1024 spins. Neither experiment measures full Llama or 30-worker scaling.
+
+The default remains 64 for shared and oversubscribed hosts. Configure a newly
+compiled native executable with `CPPHDL_NATIVE_SPIN=1024`, and compare against
+64 on the target workload. No graph regeneration is needed to switch settings
+after compiling this runtime once. The 0/64/1024/4096 settings also passed the
+runtime regression with 1/2/6/30 workers, including changing active subsets,
+cross-task dependencies, concurrent clients, continuation exceptions and
+shutdown. All settings fall back to sleeping after a bounded spin window.

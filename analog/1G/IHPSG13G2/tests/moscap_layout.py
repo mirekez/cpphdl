@@ -66,7 +66,11 @@ def run(args):
             if damage == 'gate':
                 top.shapes(layout.layer(info['terminals']['G']['layer'], 0)).clear()
             elif damage == 'sub':
-                layout.cell('StorageBank_unit').shapes(layout.layer(29, 0)).clear()
+                # Retain gate lifts; disconnect only the two return bars.
+                unit = layout.cell('StorageBank_unit')
+                for shape in list(unit.each_shape(layout.layer(29, 0))):
+                    if shape.bbox().center().x < 0 or shape.bbox().center().x > round(info['length_um'] / layout.dbu):
+                        shape.delete()
             gds, netlist = case / 'device.gds', case / 'device.cir'
             layout.write(str(gds))
             netlist.write_text('* Every intended MOSCAP is explicit\n' + info['schematic'])

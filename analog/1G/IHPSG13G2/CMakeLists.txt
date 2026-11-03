@@ -2,6 +2,90 @@ add_test(NAME analog.1g.ihp_reference_clock.placement_guards COMMAND "${Python3_
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_placement.py")
 set_tests_properties(analog.1g.ihp_reference_clock.placement_guards PROPERTIES
   LABELS "analog;1g;ihp;physical;clock" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.checkpoint_choice COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_checkpoint_choice.py")
+set_tests_properties(analog.1g.ihp_receiver.checkpoint_choice PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30 SKIP_RETURN_CODE 77)
+add_test(NAME analog.1g.ihp_receiver.buffer_equivalence COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/buffer_equivalence.py")
+set_tests_properties(analog.1g.ihp_receiver.buffer_equivalence PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.sizing_equivalence COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/sizing_equivalence.py")
+set_tests_properties(analog.1g.ihp_receiver.sizing_equivalence PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.path_sizing_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_path_sizing.py")
+set_tests_properties(analog.1g.ihp_receiver.path_sizing_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.local_path_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_local_paths.py")
+set_tests_properties(analog.1g.ihp_receiver.local_path_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.route_resume_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_route_resume.py")
+set_tests_properties(analog.1g.ihp_receiver.route_resume_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.clock_load_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_clock_load.py")
+set_tests_properties(analog.1g.ihp_receiver.clock_load_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver;clock" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.gate_replay_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_gate_replay.py")
+set_tests_properties(analog.1g.ihp_receiver.gate_replay_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.layout_handoff_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_layout.py")
+set_tests_properties(analog.1g.ihp_receiver.layout_handoff_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.routed_seed_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_routed_seed.py")
+set_tests_properties(analog.1g.ihp_receiver.routed_seed_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.repair_equivalence COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/repair_equivalence.py")
+set_tests_properties(analog.1g.ihp_receiver.repair_equivalence PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.rebuffer_equivalence COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/rebuffer_equivalence.py")
+set_tests_properties(analog.1g.ihp_receiver.rebuffer_equivalence PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.pin_swap_equivalence COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/pin_swap_equivalence.py")
+set_tests_properties(analog.1g.ihp_receiver.pin_swap_equivalence PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.output_selection COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_output_stage.py")
+set_tests_properties(analog.1g.ihp_receiver.output_selection PROPERTIES
+  LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.global_measurement COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_global_measurement.py")
+set_tests_properties(analog.1g.ihp_receiver.global_measurement PROPERTIES
+  LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.pin_stage_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_pin_stage.py")
+set_tests_properties(analog.1g.ihp_receiver.pin_stage_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.margin_screen_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_margin_screen.py")
+set_tests_properties(analog.1g.ihp_receiver.margin_screen_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.final_repair_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_final_repair.py")
+set_tests_properties(analog.1g.ihp_receiver.final_repair_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.continuation_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_continue.py")
+set_tests_properties(analog.1g.ihp_receiver.continuation_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;receiver" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_sram.reference_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/sram_reference.py")
+set_tests_properties(analog.1g.ihp_sram.reference_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_sram.library_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/sram_library.py")
+set_tests_properties(analog.1g.ihp_sram.library_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
 
 add_custom_target(prepare-ihp-extraction
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_magic.py"
@@ -12,8 +96,34 @@ add_custom_target(prepare-ihp-extraction-sidewall
     --destination "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-sidewall"
     --clip-tile-area --full-sidewall
   COMMENT "Build isolated Magic candidate with bounded tile area and full sidewall coefficients")
+add_custom_target(prepare-ihp-extraction-precise
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_magic.py"
+    --destination "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-precise"
+    --clip-tile-area --full-sidewall --precise-values
+  COMMENT "Build isolated Magic with precise SPICE value serialization")
+add_custom_target(prepare-ihp-extraction-double
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_magic.py"
+    --destination "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-double"
+    --clip-tile-area --full-sidewall --precise-values --double-values
+  COMMENT "Build isolated Magic retaining double precision through SPICE serialization")
+if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-sidewall/source.tar.gz")
+  add_test(NAME analog.1g.ihp_extraction.format
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/magic_format.py"
+      --archive "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-sidewall/source.tar.gz")
+  set_tests_properties(analog.1g.ihp_extraction.format PROPERTIES
+    LABELS "analog;1g;ihp;extraction" TIMEOUT 120)
+  add_test(NAME analog.1g.ihp_extraction.double_format
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/magic_double_format.py"
+      --archive "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-sidewall/source.tar.gz")
+  set_tests_properties(analog.1g.ihp_extraction.double_format PROPERTIES
+    LABELS "analog;1g;ihp;extraction" TIMEOUT 120)
+endif()
 set(CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-sidewall/install/bin/magic"
   CACHE FILEPATH "Magic candidate for the independent sidewall coefficient oracle")
+set(CPPHDL_IHP_CLOCK_CELL_MAGIC_EXECUTABLE "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-precise/install/bin/magic"
+  CACHE FILEPATH "Precise-value Magic for LV standard-cell clock macro extraction")
+set(CPPHDL_IHP_PLL_MAGIC_EXECUTABLE "${CPPHDL_ANALOG_REAL_ROOT}/out/magic-double/install/bin/magic"
+  CACHE FILEPATH "Double-value Magic for composed PLL extraction; prepare-ihp-extraction-double")
 if(EXISTS "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
   add_test(NAME analog.1g.ihp_extraction.sidewall
     COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/magic_sidewall.py"
@@ -64,6 +174,14 @@ set_tests_properties(analog.1g.ihp_extraction.connected_capacitors PROPERTIES
   LABELS "analog;1g;ihp;physical" TIMEOUT 30)
 add_test(NAME analog.1g.ihp_extraction.resistor_body_connections COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/resistor_body_extraction.py")
+add_test(NAME analog.1g.ihp_extraction.resistor_array_connections COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/resistor_array_extraction.py")
+set_tests_properties(analog.1g.ihp_extraction.resistor_array_connections PROPERTIES
+  LABELS "analog;1g;ihp;extraction;transmitter" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_transmit.switching_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_cell_switching_guards.py")
+set_tests_properties(analog.1g.ihp_transmit.switching_guards PROPERTIES
+  LABELS "analog;1g;ihp;transmitter" TIMEOUT 30)
 set_tests_properties(analog.1g.ihp_extraction.resistor_body_connections PROPERTIES
   LABELS "analog;1g;ihp;physical" TIMEOUT 30)
 add_test(NAME analog.1g.ihp_processing_clock_oscillator.acquisition_guards COMMAND "${Python3_EXECUTABLE}"
@@ -74,6 +192,18 @@ set_tests_properties(analog.1g.ihp_extraction.capacitance_guards PROPERTIES
   LABELS "analog;1g;ihp;physical" TIMEOUT 30)
 add_test(NAME analog.1g.ihp_processing_clock_gate.pex_guards COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_gate_pex_guards.py")
+add_test(NAME analog.1g.ihp_processing_clock_gate.buffer_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_buffer.py")
+set_tests_properties(analog.1g.ihp_processing_clock_gate.buffer_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_receiver.allocator_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_allocator.py")
+set_tests_properties(analog.1g.ihp_receiver.allocator_guards PROPERTIES
+  LABELS "analog;1g;ihp;physical" TIMEOUT 30)
+add_test(NAME analog.1g.ihp_processing_clock_gate.slew_guards COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/processing_clock_slew.py")
+set_tests_properties(analog.1g.ihp_processing_clock_gate.slew_guards PROPERTIES
+  LABELS "analog;1g;ihp;clock;physical" TIMEOUT 30)
 set_tests_properties(analog.1g.ihp_processing_clock_gate.pex_guards PROPERTIES
   LABELS "analog;1g;ihp;clock;physical" TIMEOUT 30)
 add_test(NAME analog.1g.ihp_processing_clock.physical_input_guards COMMAND "${Python3_EXECUTABLE}"
@@ -106,6 +236,90 @@ add_test(NAME analog.1g.ihp_receive.dc_surface_guards COMMAND "${Python3_EXECUTA
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_dc_surface.py")
 set_tests_properties(analog.1g.ihp_receive.dc_surface_guards PROPERTIES LABELS "analog;1g;ihp;frontend" TIMEOUT 30)
 set(CPPHDL_IHP_PDK_ROOT "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2" CACHE PATH "Prepared IHP SG13G2 checkout")
+if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_sram.lvs_preparation
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/sram_lvs_prepare.py"
+    --pdk "${CPPHDL_IHP_PDK_ROOT}")
+  set_tests_properties(analog.1g.ihp_sram.lvs_preparation PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 60)
+  add_test(NAME analog.1g.ihp_sram.embedded_lvs
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedded_sram_lvs.py")
+  set_tests_properties(analog.1g.ihp_sram.embedded_lvs PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.lvs_comparison_reset
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/lvs_comparison_reset.py")
+  set_tests_properties(analog.1g.ihp_sram.lvs_comparison_reset PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.embedded_bootstrap
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedded_sram_bootstrap.py")
+  set_tests_properties(analog.1g.ihp_sram.embedded_bootstrap PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.unused_output_ports
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedded_sram_ports.py")
+  set_tests_properties(analog.1g.ihp_sram.unused_output_ports PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.row_end_wells
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/row_end_wells.py")
+  set_tests_properties(analog.1g.ihp_sram.row_end_wells PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.row_end_well_flow
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/row_end_well_flow.py")
+  set_tests_properties(analog.1g.ihp_sram.row_end_well_flow PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.lvs_correspondence
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/sram_lvs_compare.py")
+  set_tests_properties(analog.1g.ihp_sram.lvs_correspondence PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.lvs_graph_audit
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/sram_lvs_audit.py")
+  set_tests_properties(analog.1g.ihp_sram.lvs_graph_audit PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 30)
+  add_test(NAME analog.1g.ihp_sram.fill_guards
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/sram_fill.py")
+  set_tests_properties(analog.1g.ihp_sram.fill_guards PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 60)
+  add_test(NAME analog.1g.ihp_sram.reference_geometry
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/sram_reference.py" --pdk "${CPPHDL_IHP_PDK_ROOT}"
+    --output "${CMAKE_CURRENT_BINARY_DIR}/tests/results/sram_reference/reference.cir"
+    --report "${CMAKE_CURRENT_BINARY_DIR}/tests/results/sram_reference/reference.json")
+  set_tests_properties(analog.1g.ihp_sram.reference_geometry PROPERTIES
+    LABELS "analog;1g;ihp;physical;sram" TIMEOUT 60)
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/veriloga-toolchain/install/bin/ngspice")
+    add_test(NAME analog.1g.ihp_sram.bitcell_sensitivity
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/sram_bitcell_sensitivity.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}"
+      --ngspice "${CPPHDL_ANALOG_REAL_ROOT}/out/veriloga-toolchain/install/bin/ngspice"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/sram_bitcell_sensitivity")
+    set_tests_properties(analog.1g.ihp_sram.bitcell_sensitivity PROPERTIES
+      LABELS "analog;1g;ihp;sram;spice" TIMEOUT 240 RESOURCE_LOCK one_g_closed_adc_memory)
+  endif()
+  add_test(NAME analog.1g.ihp_flow_control.stream_guards
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/flow_control_stream.py" --pdk "${CPPHDL_IHP_PDK_ROOT}")
+  set_tests_properties(analog.1g.ihp_flow_control.stream_guards PROPERTIES
+    LABELS "analog;1g;ihp;physical;flow-control" TIMEOUT 30)
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/klayout")
+    add_test(NAME analog.1g.ihp_flow_control.leaf_lvs
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/flow_control_leaf_lvs.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/flow_control_leaf_lvs")
+    set_tests_properties(analog.1g.ihp_flow_control.leaf_lvs PROPERTIES
+      LABELS "analog;1g;ihp;physical;flow-control" TIMEOUT 600 RESOURCE_LOCK one_g_closed_adc_memory)
+  endif()
+endif()
 add_test(NAME analog.1g.ihp_flow_control.crossing_guards COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/flow_control_crossings.py")
 set_tests_properties(analog.1g.ihp_flow_control.crossing_guards PROPERTIES
@@ -166,8 +380,10 @@ if(CPPHDL_1G_PROCESSING_GATE_EXTRACTION AND CPPHDL_1G_PROCESSING_GATE_LAYOUT_PRO
    NGSPICE_EXECUTABLE AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
   foreach(mode IN ITEMS startup complete)
     set(delivery_options)
+    set(delivery_timeout 172800)
     if(mode STREQUAL "startup")
       list(APPEND delivery_options --startup-only)
+      set(delivery_timeout 2400)
     endif()
     add_test(NAME analog.1g.ihp_processing_clock_delivery.extracted_${mode}
       COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
@@ -180,7 +396,7 @@ if(CPPHDL_1G_PROCESSING_GATE_EXTRACTION AND CPPHDL_1G_PROCESSING_GATE_LAYOUT_PRO
         --cxx "${CMAKE_CXX_COMPILER}" ${delivery_options}
         --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/processing_clock_extracted_${mode}")
     set_tests_properties(analog.1g.ihp_processing_clock_delivery.extracted_${mode} PROPERTIES
-      LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT 43800 RESOURCE_LOCK one_g_closed_adc_memory)
+      LABELS "analog;1g;ihp;clock;physical;psp" TIMEOUT ${delivery_timeout} RESOURCE_LOCK one_g_closed_adc_memory)
   endforeach()
 endif()
 if(CPPHDL_1G_PROCESSING_OSCILLATOR_EXTRACTION AND CPPHDL_1G_PROCESSING_OSCILLATOR_LAYOUT_PROOF AND
@@ -268,6 +484,11 @@ set_tests_properties(analog.1g.ihp_processing_clock_delivery.compact_trace PROPE
 add_test(NAME analog.1g.ihp_area.evidence_guards COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/mapped_area.py")
 set_tests_properties(analog.1g.ihp_area.evidence_guards PROPERTIES LABELS "analog;1g;ihp;area" TIMEOUT 30)
+if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_area.mim_budget
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/mim_area_budget.py")
+  set_tests_properties(analog.1g.ihp_area.mim_budget PROPERTIES LABELS "analog;1g;ihp;area" TIMEOUT 30)
+endif()
 add_test(NAME analog.1g.ihp_route.guide_guards COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/route_eco.py")
 set_tests_properties(analog.1g.ihp_route.guide_guards PROPERTIES LABELS "analog;1g;ihp;physical" TIMEOUT 30)
@@ -342,6 +563,38 @@ if(Eigen3_FOUND)
   add_executable(analog_1g_ihp_reference_clock_generator tests/reference_clock_generator.cpp)
   add_executable(analog_1g_ihp_reference_clock_layout_export tests/reference_clock_layout_export.cpp)
   target_link_libraries(analog_1g_ihp_reference_clock_layout_export PRIVATE cpphdl::analog)
+  add_executable(analog_1g_ihp_receive_sampler_export tests/receive_sampler_export.cpp)
+  target_link_libraries(analog_1g_ihp_receive_sampler_export PRIVATE cpphdl::analog)
+  add_dependencies(check-1g analog_1g_ihp_receive_sampler_export)
+  add_dependencies(check-analog analog_1g_ihp_receive_sampler_export)
+  add_executable(analog_1g_ihp_transmit_translator_export tests/transmit_translator_export.cpp)
+  target_link_libraries(analog_1g_ihp_transmit_translator_export PRIVATE cpphdl::analog)
+  add_dependencies(check-1g analog_1g_ihp_transmit_translator_export)
+  add_dependencies(check-analog analog_1g_ihp_transmit_translator_export)
+  add_executable(analog_1g_ihp_transmit_translation_bias_export tests/transmit_translation_bias_export.cpp)
+  target_link_libraries(analog_1g_ihp_transmit_translation_bias_export PRIVATE cpphdl::analog)
+  add_dependencies(check-1g analog_1g_ihp_transmit_translation_bias_export)
+  add_dependencies(check-analog analog_1g_ihp_transmit_translation_bias_export)
+  add_executable(analog_1g_ihp_transmit_translation_bank_export tests/transmit_translation_bank_export.cpp)
+  target_link_libraries(analog_1g_ihp_transmit_translation_bank_export PRIVATE cpphdl::analog)
+  add_dependencies(check-1g analog_1g_ihp_transmit_translation_bank_export)
+  add_dependencies(check-analog analog_1g_ihp_transmit_translation_bank_export)
+  add_executable(analog_1g_ihp_transmit_physical_export tests/transmit_physical_export.cpp)
+  target_link_libraries(analog_1g_ihp_transmit_physical_export PRIVATE cpphdl::analog)
+  add_dependencies(check-1g analog_1g_ihp_transmit_physical_export)
+  add_dependencies(check-analog analog_1g_ihp_transmit_physical_export)
+  add_test(NAME analog.1g.ihp_transmit.physical_partition
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_physical_partition.py"
+      --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>")
+  set_tests_properties(analog.1g.ihp_transmit.physical_partition PROPERTIES
+    LABELS "analog;1g;ihp;transmitter;physical" TIMEOUT 60)
+  add_test(NAME analog.1g.ihp_reference_clock.realization
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_realization.py"
+      --exporter "$<TARGET_FILE:analog_1g_ihp_reference_clock_layout_export>"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_realization")
+  set_tests_properties(analog.1g.ihp_reference_clock.realization PROPERTIES
+    LABELS "analog;1g;ihp;clock;binding" TIMEOUT 120)
   target_link_libraries(analog_1g_ihp_reference_clock_generator PRIVATE cpphdl::analog Eigen3::Eigen)
   add_dependencies(check-1g analog_1g_ihp_reference_clock_generator)
   add_dependencies(check-analog analog_1g_ihp_reference_clock_generator)
@@ -867,15 +1120,284 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
       LABELS "analog;1g;ihp;physical" TIMEOUT 120)
   endif()
   if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+    add_test(NAME analog.1g.ihp_receiver.route_probe_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_route_probe.py")
+    set_tests_properties(analog.1g.ihp_receiver.route_probe_guards PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 30)
+    add_test(NAME analog.1g.ihp_receiver.route_probe_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_global_unbuffer_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --route-probe)
+    set_tests_properties(analog.1g.ihp_receiver.route_probe_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.route_handoff_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_global_unbuffer_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --full-route)
+    set_tests_properties(analog.1g.ihp_receiver.route_handoff_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/root/usr/lib/x86_64-linux-gnu/libjemalloc.so.2")
+      add_test(NAME analog.1g.ihp_receiver.route_allocator_native
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_global_unbuffer_native.py"
+          --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --full-route
+          --allocator "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/root/usr/lib/x86_64-linux-gnu/libjemalloc.so.2")
+      set_tests_properties(analog.1g.ihp_receiver.route_allocator_native PROPERTIES
+        LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    endif()
+    add_test(NAME analog.1g.ihp_receiver.buffer_guards
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_buffers.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+    set_tests_properties(analog.1g.ihp_receiver.buffer_guards PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 90)
+    add_test(NAME analog.1g.ihp_receiver.local_buffer_guards
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_local_buffers.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+    set_tests_properties(analog.1g.ihp_receiver.local_buffer_guards PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 90)
+    add_test(NAME analog.1g.ihp_receiver.clock_path_guards
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_clock_path_trials.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+    set_tests_properties(analog.1g.ihp_receiver.clock_path_guards PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 90)
     add_test(NAME analog.1g.ihp_mos.layout
       COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_layout.py"
         --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
         --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/mos_layout")
     set_tests_properties(analog.1g.ihp_mos.layout PROPERTIES LABELS "analog;1g;ihp;geometry" TIMEOUT 600)
+    add_test(NAME analog.1g.ihp_transmit.mos_layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_layout.py"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --case tx_steering --case tx_sink --case tx_cascode --case tx_history_cascode
+        --case tx_history_steering --case tx_history_sink --case tx_missing_bank
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_mos_collectors")
+    set_tests_properties(analog.1g.ihp_transmit.mos_layout PROPERTIES
+      LABELS "analog;1g;ihp;geometry;transmitter" TIMEOUT 600
+      FIXTURES_SETUP one_g_transmit_mos_layout)
+    if(EXISTS "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}")
+      add_test(NAME analog.1g.ihp_transmit.mos_extraction
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_bank_extraction.py"
+          --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_mos_collectors/checks.json"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_mos_extraction")
+      set_tests_properties(analog.1g.ihp_transmit.mos_extraction PROPERTIES
+        LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 600
+        FIXTURES_REQUIRED one_g_transmit_mos_layout
+        FIXTURES_SETUP one_g_transmit_mos_extraction)
+      set(ihp_transmit_ngspice "${NGSPICE_EXECUTABLE}")
+      if(NOT ihp_transmit_ngspice)
+        set(ihp_transmit_ngspice "${CPPHDL_ANALOG_REAL_ROOT}/out/veriloga-toolchain/install/bin/ngspice")
+      endif()
+      if(EXISTS "${ihp_transmit_ngspice}")
+        add_test(NAME analog.1g.ihp_transmit.current_cell
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_cell.py"
+            --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+            --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" --ngspice "${ihp_transmit_ngspice}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_current_cell")
+        set_tests_properties(analog.1g.ihp_transmit.current_cell PROPERTIES
+          LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 1200
+          FIXTURES_SETUP one_g_transmit_current_cell)
+        if(TARGET analog_1g_ihp_transmit_physical_export)
+          add_test(NAME analog.1g.ihp_transmit.storage
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_storage.py"
+              --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+              --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+              --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}"
+              --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_storage")
+          set_tests_properties(analog.1g.ihp_transmit.storage PROPERTIES
+            LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 1800
+            FIXTURES_SETUP one_g_transmit_storage)
+          add_test(NAME analog.1g.ihp_transmit.current_binding
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_current_binding.py"
+              --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+              --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_current_cell/checks.json")
+          set_tests_properties(analog.1g.ihp_transmit.current_binding PROPERTIES
+            LABELS "analog;1g;ihp;physical;transmitter" TIMEOUT 60
+            FIXTURES_REQUIRED one_g_transmit_current_cell)
+          add_test(NAME analog.1g.ihp_transmit.charge_ownership
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_charge_realization.py"
+              --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+              --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_current_cell/checks.json")
+          set_tests_properties(analog.1g.ihp_transmit.charge_ownership PROPERTIES
+            LABELS "analog;1g;ihp;physical;transmitter" TIMEOUT 60
+            FIXTURES_REQUIRED one_g_transmit_current_cell)
+          add_test(NAME analog.1g.ihp_transmit.charge_storage
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_charge_storage.py"
+              --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+              --current-proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_current_cell/checks.json"
+              --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+              --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}"
+              --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_charge_storage")
+          set_tests_properties(analog.1g.ihp_transmit.charge_storage PROPERTIES
+            LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 1800
+            FIXTURES_REQUIRED one_g_transmit_current_cell
+            FIXTURES_SETUP one_g_transmit_charge_storage)
+          add_test(NAME analog.1g.ihp_transmit.charge_switching
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_charge_switching.py"
+              --current-proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_current_cell/checks.json"
+              --storage-proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_charge_storage/checks.json"
+              --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_transmit_ngspice}"
+              --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_charge_switching")
+          set_tests_properties(analog.1g.ihp_transmit.charge_switching PROPERTIES
+            LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 172800
+            FIXTURES_SETUP one_g_transmit_charge_switching
+            FIXTURES_REQUIRED "one_g_transmit_current_cell;one_g_transmit_charge_storage")
+        endif()
+        add_test(NAME analog.1g.ihp_transmit.current_cell_switching
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_cell_switching.py"
+            --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_current_cell/checks.json"
+            --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_transmit_ngspice}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_current_cell_switching")
+        set_tests_properties(analog.1g.ihp_transmit.current_cell_switching PROPERTIES
+          LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 3600
+          FIXTURES_REQUIRED one_g_transmit_current_cell)
+        add_test(NAME analog.1g.ihp_transmit.pullup
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_pullup.py"
+            --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+            --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" --ngspice "${ihp_transmit_ngspice}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_pullup")
+        set_tests_properties(analog.1g.ihp_transmit.pullup PROPERTIES
+          LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 600
+          FIXTURES_SETUP one_g_transmit_pullup)
+        add_test(NAME analog.1g.ihp_transmit.mos_dc
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_bank_dc.py"
+            --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_mos_extraction/checks.json"
+            --pdk "${CPPHDL_IHP_PDK_ROOT}"
+            --ngspice "${ihp_transmit_ngspice}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_mos_dc")
+        set_tests_properties(analog.1g.ihp_transmit.mos_dc PROPERTIES
+          LABELS "analog;1g;ihp;physical;psp;transmitter" TIMEOUT 600
+          FIXTURES_REQUIRED one_g_transmit_mos_extraction)
+      endif()
+    endif()
   endif()
   add_test(NAME analog.1g.ihp_filter.physical_guards
     COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/physical_module.py")
   set_tests_properties(analog.1g.ihp_filter.physical_guards PROPERTIES LABELS "analog;1g;hardware;ihp" TIMEOUT 30)
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+    add_test(NAME analog.1g.ihp_receiver.hold_trim_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_hold_trim_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.hold_trim_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.global_unbuffer_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_global_unbuffer_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.global_unbuffer_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.global_unbuffer_branch_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_global_unbuffer_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --buffer-sinks 4)
+    set_tests_properties(analog.1g.ihp_receiver.global_unbuffer_branch_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.global_unbuffer_repair_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_global_unbuffer_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --electrical-repair)
+    set_tests_properties(analog.1g.ihp_receiver.global_unbuffer_repair_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.prepare_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_prepare_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.prepare_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.pin_repair_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_pin_repair_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.pin_repair_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.final_repair_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_final_repair_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.final_repair_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.final_isolation_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_final_repair_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --isolate)
+    set_tests_properties(analog.1g.ihp_receiver.final_isolation_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.data_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_data_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.data_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.skew_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_skew_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.skew_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.branch_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_branch_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.branch_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.output_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_output_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.output_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.pin_hold_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_pin_hold_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.pin_hold_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.rebuffer_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_final_repair_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --rebuffer)
+    set_tests_properties(analog.1g.ihp_receiver.rebuffer_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.routed_sizing
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/routed_sizing.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.routed_sizing PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 150)
+    add_test(NAME analog.1g.ihp_receiver.timing_tradeoffs
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/routed_sizing.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tradeoffs)
+    set_tests_properties(analog.1g.ihp_receiver.timing_tradeoffs PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 150)
+    add_test(NAME analog.1g.ihp_receiver.routing_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_routing.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+    set_tests_properties(analog.1g.ihp_receiver.routing_guards PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 90)
+  endif()
   add_test(NAME analog.1g.ihp_adc_lane.physical_guards
     COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/adc_lane_physical.py")
   set_tests_properties(analog.1g.ihp_adc_lane.physical_guards PROPERTIES LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 30)
@@ -905,6 +1427,19 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
       WORKING_DIRECTORY "${CPPHDL_ANALOG_PACKAGE_ROOT}" USES_TERMINAL VERBATIM)
   endforeach()
   option(CPPHDL_1G_PHYSICAL_TESTS "Run full standalone receive DSP/timing GDS regressions" OFF)
+  if(CPPHDL_1G_PHYSICAL_TESTS AND ONE_G_VERILATOR AND
+     EXISTS "${CPPHDL_1G_CONVERTER}")
+    add_test(NAME analog.1g.ihp_reset.physical
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/phy_reset_physical.py"
+        --proof "${CMAKE_CURRENT_BINARY_DIR}/../tests/hardware/phy_reset_control/checks.json"
+        --work-root "${CMAKE_CURRENT_BINARY_DIR}/tests/results/phy_reset_physical"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --verilator "${ONE_G_VERILATOR}" --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(analog.1g.ihp_reset.physical PROPERTIES
+      LABELS "analog;1g;ihp;physical;clock;reset" TIMEOUT 7200
+      FIXTURES_REQUIRED one_g_phy_reset_control_cells)
+  endif()
   if(CPPHDL_1G_PHYSICAL_TESTS)
     if(TEST analog.1g.processing_clock_control.cells)
       set_tests_properties(analog.1g.processing_clock_control.cells PROPERTIES
@@ -1545,7 +2080,125 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
       --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
       --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/moscap_layout")
   set_tests_properties(analog.1g.ihp_moscap_bias_storage.layout PROPERTIES
-    LABELS "analog;1g;ihp;area;geometry" TIMEOUT 1800)
+    LABELS "analog;1g;ihp;area;geometry" TIMEOUT 1800
+    FIXTURES_SETUP one_g_moscap_storage_layout)
+endif()
+
+foreach(storage_guard moscap_extraction passive_network_reduction)
+  add_test(NAME analog.1g.ihp_storage.${storage_guard}
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/${storage_guard}.py")
+  set_tests_properties(analog.1g.ihp_storage.${storage_guard} PROPERTIES
+    LABELS "analog;1g;ihp;extraction" TIMEOUT 120)
+endforeach()
+
+set(ihp_clock_cell_ngspice "${NGSPICE_EXECUTABLE}")
+add_test(NAME analog.1g.ihp_extraction.named_nodes
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/named_node_extraction.py")
+set_tests_properties(analog.1g.ihp_extraction.named_nodes PROPERTIES
+  LABELS "analog;1g;ihp;extraction" TIMEOUT 120)
+add_test(NAME analog.1g.ihp_reference_clock.realized_evidence
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_realized_evidence.py")
+set_tests_properties(analog.1g.ihp_reference_clock.realized_evidence PROPERTIES
+  LABELS "analog;1g;ihp;clock;extraction" TIMEOUT 120)
+if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" AND EXISTS "${CPPHDL_IHP_CLOCK_CELL_MAGIC_EXECUTABLE}")
+  add_test(NAME analog.1g.ihp_reference_clock_cells.macro_access
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/clock_macro_layout.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --magic "${CPPHDL_IHP_CLOCK_CELL_MAGIC_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/clock_macro_access")
+  set_tests_properties(analog.1g.ihp_reference_clock_cells.macro_access PROPERTIES
+    LABELS "analog;1g;ihp;clock;geometry;extraction" TIMEOUT 1800)
+  if(TARGET analog_1g_ihp_reference_clock_layout_export)
+    add_test(NAME analog.1g.ihp_reference_clock.realized_layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_realized_layout.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_reference_clock_layout_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_realized_layout")
+    set_tests_properties(analog.1g.ihp_reference_clock.realized_layout PROPERTIES
+      LABELS "analog;1g;ihp;clock;geometry" TIMEOUT 86400
+      FIXTURES_SETUP one_g_reference_clock_realized_layout)
+  endif()
+  add_test(NAME analog.1g.ihp_reference_clock_cells.layout
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_cell_layout.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --magic "${CPPHDL_IHP_CLOCK_CELL_MAGIC_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_cell_layout")
+  set_tests_properties(analog.1g.ihp_reference_clock_cells.layout PROPERTIES
+    LABELS "analog;1g;ihp;clock;geometry;extraction" TIMEOUT 1800
+    FIXTURES_SETUP one_g_clock_cell_layout)
+  add_test(NAME analog.1g.ihp_reference_clock_divider_cells.layout
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_cell_layout.py" --module divider
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --magic "${CPPHDL_IHP_CLOCK_CELL_MAGIC_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_divider_layout")
+  set_tests_properties(analog.1g.ihp_reference_clock_divider_cells.layout PROPERTIES
+    LABELS "analog;1g;ihp;clock;geometry;extraction" TIMEOUT 1800
+    FIXTURES_SETUP one_g_clock_divider_layout)
+endif()
+if(NOT ihp_clock_cell_ngspice)
+  set(ihp_clock_cell_ngspice "${CPPHDL_ANALOG_REAL_ROOT}/out/veriloga-toolchain/install/bin/ngspice")
+endif()
+if(TEST analog.1g.ihp_reference_clock.realized_layout AND EXISTS "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}"
+    AND EXISTS "${ihp_clock_cell_ngspice}")
+  add_test(NAME analog.1g.ihp_reference_clock.realized_extracted
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_realized_extracted.py"
+      --layout-proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_realized_layout/checks.json"
+      --exporter "$<TARGET_FILE:analog_1g_ihp_reference_clock_layout_export>"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_clock_cell_ngspice}"
+      --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_realized_extracted")
+  set_tests_properties(analog.1g.ihp_reference_clock.realized_extracted PROPERTIES
+    LABELS "analog;1g;ihp;clock;extraction;psp" TIMEOUT 21600
+    FIXTURES_REQUIRED one_g_reference_clock_realized_layout)
+endif()
+if(EXISTS "${ihp_clock_cell_ngspice}" AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.ref/sg13g2_stdcell/spice/sg13g2_stdcell.spice")
+  foreach(clock_cell_corner mos_tt mos_ss mos_ff)
+    add_test(NAME analog.1g.ihp_reference_clock_cells.${clock_cell_corner}
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_cells.py"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_clock_cell_ngspice}"
+        --corner "${clock_cell_corner}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_cells_${clock_cell_corner}")
+    set_tests_properties(analog.1g.ihp_reference_clock_cells.${clock_cell_corner} PROPERTIES
+      LABELS "analog;1g;ihp;clock;psp" TIMEOUT 10800
+      FIXTURES_SETUP "one_g_clock_cells_${clock_cell_corner}")
+    if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" AND EXISTS "${CPPHDL_IHP_CLOCK_CELL_MAGIC_EXECUTABLE}")
+      add_test(NAME analog.1g.ihp_reference_clock_cells.extracted_${clock_cell_corner}
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_cells_extracted.py"
+          --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_cell_layout/checks.json"
+          --schematic "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_cells_${clock_cell_corner}/checks.json"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_clock_cell_ngspice}"
+          --corner "${clock_cell_corner}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_cells_extracted_${clock_cell_corner}")
+      set_tests_properties(analog.1g.ihp_reference_clock_cells.extracted_${clock_cell_corner} PROPERTIES
+        LABELS "analog;1g;ihp;clock;physical;extraction" TIMEOUT 14400
+        FIXTURES_REQUIRED "one_g_clock_cell_layout;one_g_clock_cells_${clock_cell_corner}")
+    endif()
+    add_test(NAME analog.1g.ihp_reference_clock_divider_cells.${clock_cell_corner}
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_divider_cells.py"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_clock_cell_ngspice}"
+        --corner "${clock_cell_corner}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_divider_cells_${clock_cell_corner}")
+    set_tests_properties(analog.1g.ihp_reference_clock_divider_cells.${clock_cell_corner} PROPERTIES
+      LABELS "analog;1g;ihp;clock;psp" TIMEOUT 1800
+      FIXTURES_SETUP "one_g_clock_divider_${clock_cell_corner}")
+    if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" AND EXISTS "${CPPHDL_IHP_CLOCK_CELL_MAGIC_EXECUTABLE}")
+      add_test(NAME analog.1g.ihp_reference_clock_divider_cells.extracted_${clock_cell_corner}
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_cells_extracted.py"
+          --module divider
+          --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_divider_layout/checks.json"
+          --schematic "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_divider_cells_${clock_cell_corner}/checks.json"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_clock_cell_ngspice}"
+          --corner "${clock_cell_corner}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/reference_clock_divider_extracted_${clock_cell_corner}")
+      set_tests_properties(analog.1g.ihp_reference_clock_divider_cells.extracted_${clock_cell_corner} PROPERTIES
+        LABELS "analog;1g;ihp;clock;physical;extraction" TIMEOUT 2400
+        FIXTURES_REQUIRED "one_g_clock_divider_layout;one_g_clock_divider_${clock_cell_corner}")
+    endif()
+  endforeach()
 endif()
 
 if(NGSPICE_EXECUTABLE AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib")
@@ -1601,7 +2254,310 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
       --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
       --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/mos_gate_storage_layout")
   set_tests_properties(analog.1g.ihp_mos_gate_storage.layout PROPERTIES
-    LABELS "analog;1g;ihp;area;geometry" TIMEOUT 1800)
+    LABELS "analog;1g;ihp;area;geometry" TIMEOUT 1800
+    FIXTURES_SETUP one_g_hv_storage_layout)
+  add_test(NAME analog.1g.ihp_mos_gate_storage.adapter
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_gate_storage_adapter.py"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/mos_gate_storage_adapter")
+  set_tests_properties(analog.1g.ihp_mos_gate_storage.adapter PROPERTIES
+    LABELS "analog;1g;ihp;area;geometry" TIMEOUT 1800
+    FIXTURES_SETUP one_g_hv_storage_adapter)
+  if(TARGET analog_1g_ihp_transmit_translation_bias_export)
+    add_test(NAME analog.1g.ihp_transmit.translation_bias_mos_layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translation_bias_mos.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translation_bias_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias_mos_layout")
+    set_tests_properties(analog.1g.ihp_transmit.translation_bias_mos_layout PROPERTIES
+      LABELS "analog;1g;ihp;transmitter;area;geometry" TIMEOUT 1800
+      FIXTURES_SETUP one_g_transmit_translation_bias_mos_layout)
+  endif()
+  set(ihp_storage_ngspice "${NGSPICE_EXECUTABLE}")
+  if(NOT ihp_storage_ngspice)
+    set(ihp_storage_ngspice "${CPPHDL_ANALOG_REAL_ROOT}/out/veriloga-toolchain/install/bin/ngspice")
+  endif()
+  if(EXISTS "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" AND EXISTS "${ihp_storage_ngspice}")
+    if(TEST analog.1g.ihp_transmit.translation_bias_mos_layout AND EXISTS "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}")
+      add_test(NAME analog.1g.ihp_transmit.translation_bias_mos_extracted
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translation_bias_mos_extracted.py"
+          --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias_mos_layout/checks.json"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}"
+          --ngspice "${ihp_storage_ngspice}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias_mos_extracted")
+      set_tests_properties(analog.1g.ihp_transmit.translation_bias_mos_extracted PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;extraction;psp" TIMEOUT 28800
+        FIXTURES_REQUIRED one_g_transmit_translation_bias_mos_layout
+        FIXTURES_SETUP one_g_transmit_translation_bias_mos_extracted)
+      add_test(NAME analog.1g.ihp_transmit.hierarchical_junction_geometry
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_hierarchy_junction_extraction.py"
+          --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias_mos_layout/checks.json"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_hierarchical_junction_geometry")
+      set_tests_properties(analog.1g.ihp_transmit.hierarchical_junction_geometry PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;geometry;extraction" TIMEOUT 172800
+        FIXTURES_REQUIRED one_g_transmit_translation_bias_mos_layout)
+      if(TARGET analog_1g_ihp_transmit_translation_bank_export)
+        foreach(corner IN ITEMS mos_tt mos_ss mos_ff)
+          if(corner STREQUAL "mos_ss")
+            set(replica_temperature 125)
+          elseif(corner STREQUAL "mos_ff")
+            set(replica_temperature -40)
+          else()
+            set(replica_temperature 27)
+          endif()
+          add_test(NAME analog.1g.ihp_transmit.translation_bank_mos_storage.${corner}
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translation_bank_mos.py"
+              --translator "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_psp_layout/checks.json"
+              --replica "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias_mos_extracted/checks.json"
+              --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translation_bank_export>"
+              --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+              --corner "${corner}" --temperature "${replica_temperature}"
+              --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bank_mos_storage_${corner}")
+          set_tests_properties(analog.1g.ihp_transmit.translation_bank_mos_storage.${corner} PROPERTIES
+            LABELS "analog;1g;ihp;transmitter;extraction;psp" TIMEOUT 100000
+            FIXTURES_REQUIRED "one_g_transmit_translator_psp_layout;one_g_transmit_translation_bias_mos_extracted")
+        endforeach()
+      endif()
+    endif()
+    if(TARGET analog_1g_ihp_transmit_translation_bias_export AND EXISTS "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}")
+      add_test(NAME analog.1g.ihp_transmit.translation_bias_guards
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translation_bias_guards.py"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translation_bias_export>")
+      set_tests_properties(analog.1g.ihp_transmit.translation_bias_guards PROPERTIES
+        LABELS "analog;1g;ihp;transmitter" TIMEOUT 60)
+      add_test(NAME analog.1g.ihp_transmit.translation_bias
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translation_bias.py"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translation_bias_export>"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+          --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}" --ngspice "${ihp_storage_ngspice}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias")
+      set_tests_properties(analog.1g.ihp_transmit.translation_bias PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical;extraction;psp" TIMEOUT 3600
+        FIXTURES_SETUP one_g_transmit_translation_bias)
+    endif()
+    if(TARGET analog_1g_ihp_transmit_translator_export)
+      add_test(NAME analog.1g.ihp_transmit.translator_guards
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translator_guards.py"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translator_export>")
+      set_tests_properties(analog.1g.ihp_transmit.translator_guards PROPERTIES
+        LABELS "analog;1g;ihp;transmitter" TIMEOUT 60)
+      add_test(NAME analog.1g.ihp_transmit.translator_layout
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translator.py"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+          --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translator_export>"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_layout")
+      set_tests_properties(analog.1g.ihp_transmit.translator_layout PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical;extraction" TIMEOUT 1800
+        FIXTURES_SETUP one_g_transmit_translator_layout)
+      add_test(NAME analog.1g.ihp_transmit.translator_extracted
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translator_extracted.py"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+          --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_layout/checks.json"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_extracted")
+      set_tests_properties(analog.1g.ihp_transmit.translator_extracted PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical;extraction" TIMEOUT 5400
+        FIXTURES_REQUIRED one_g_transmit_translator_layout)
+      add_test(NAME analog.1g.ihp_transmit.translator_psp_layout
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translator.py"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+          --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" --storage psp-charge
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translator_export>"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_psp_layout")
+      set_tests_properties(analog.1g.ihp_transmit.translator_psp_layout PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical;extraction" TIMEOUT 1800
+        FIXTURES_SETUP one_g_transmit_translator_psp_layout)
+      if(TEST analog.1g.ihp_transmit.translation_bias)
+        add_test(NAME analog.1g.ihp_transmit.translator_replica_guards
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translator_replica_guards.py")
+        set_tests_properties(analog.1g.ihp_transmit.translator_replica_guards PROPERTIES
+          LABELS "analog;1g;ihp;transmitter" TIMEOUT 120)
+        add_test(NAME analog.1g.ihp_transmit.translation_bank_guards
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translation_bank_guards.py"
+            --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translation_bank_export>"
+            --ngspice "${ihp_storage_ngspice}")
+        set_tests_properties(analog.1g.ihp_transmit.translation_bank_guards PROPERTIES
+          LABELS "analog;1g;ihp;transmitter" TIMEOUT 180)
+      endif()
+      foreach(translator_corner mos_tt mos_ss mos_ff)
+        set(translator_temperature 27)
+        if(translator_corner STREQUAL "mos_ss")
+          set(translator_temperature 125)
+        elseif(translator_corner STREQUAL "mos_ff")
+          set(translator_temperature -40)
+        endif()
+        add_test(NAME analog.1g.ihp_transmit.translator_psp_${translator_corner}
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translator_extracted.py"
+            --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+            --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_psp_layout/checks.json"
+            --corner "${translator_corner}" --temperature "${translator_temperature}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_psp_${translator_corner}")
+        set_tests_properties(analog.1g.ihp_transmit.translator_psp_${translator_corner} PROPERTIES
+          LABELS "analog;1g;ihp;transmitter;physical;extraction;psp" TIMEOUT 5400
+          FIXTURES_REQUIRED one_g_transmit_translator_psp_layout)
+        if(TEST analog.1g.ihp_transmit.translation_bias)
+          add_test(NAME analog.1g.ihp_transmit.translator_replica_${translator_corner}
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translator_replica.py"
+              --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+              --translator "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_psp_layout/checks.json"
+              --replica "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias/checks.json"
+              --corner "${translator_corner}" --temperature "${translator_temperature}"
+              --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_replica_${translator_corner}")
+          set_tests_properties(analog.1g.ihp_transmit.translator_replica_${translator_corner} PROPERTIES
+            LABELS "analog;1g;ihp;transmitter;physical;extraction;psp" TIMEOUT 14400
+            FIXTURES_REQUIRED "one_g_transmit_translator_psp_layout;one_g_transmit_translation_bias")
+          add_test(NAME analog.1g.ihp_transmit.translation_bank_${translator_corner}
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_translation_bank.py"
+              --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_translation_bank_export>"
+              --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+              --translator "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translator_psp_layout/checks.json"
+              --replica "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bias/checks.json"
+              --corner "${translator_corner}" --temperature "${translator_temperature}"
+              --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_translation_bank_${translator_corner}")
+          set_tests_properties(analog.1g.ihp_transmit.translation_bank_${translator_corner} PROPERTIES
+            LABELS "analog;1g;ihp;transmitter;physical;extraction;psp" TIMEOUT 86400
+            FIXTURES_REQUIRED "one_g_transmit_translator_psp_layout;one_g_transmit_translation_bias")
+        endif()
+      endforeach()
+    endif()
+    add_test(NAME analog.1g.ihp_transmit.bias
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_bias.py"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" --ngspice "${ihp_storage_ngspice}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_bias")
+    set_tests_properties(analog.1g.ihp_transmit.bias PROPERTIES
+      LABELS "analog;1g;ihp;transmitter;physical;extraction" TIMEOUT 1800
+      FIXTURES_SETUP one_g_transmit_bias)
+    if(TARGET analog_1g_ihp_transmit_physical_export)
+      add_test(NAME analog.1g.ihp_transmit.bias_binding
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_bias_binding.py"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+          --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_bias/checks.json")
+      set_tests_properties(analog.1g.ihp_transmit.bias_binding PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical" TIMEOUT 60
+        FIXTURES_REQUIRED one_g_transmit_bias)
+    endif()
+    add_test(NAME analog.1g.ihp_transmit.bias_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_bias_guards.py")
+    set_tests_properties(analog.1g.ihp_transmit.bias_guards PROPERTIES
+      LABELS "analog;1g;ihp;transmitter" TIMEOUT 60)
+    add_test(NAME analog.1g.ihp_transmit.bias_reference_access
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_bias_reference_access.py"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}" --ngspice "${ihp_storage_ngspice}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_bias_reference_access")
+    set_tests_properties(analog.1g.ihp_transmit.bias_reference_access PROPERTIES
+      LABELS "analog;1g;ihp;transmitter;physical;extraction;candidate" TIMEOUT 1800)
+    add_test(NAME analog.1g.ihp_transmit.bias_reference_access_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_bias_reference_access_guards.py"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_transmit.bias_reference_access_guards PROPERTIES
+      LABELS "analog;1g;ihp;transmitter;candidate" TIMEOUT 60)
+    add_test(NAME analog.1g.ihp_mos_gate_storage.extracted_charge
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_gate_storage_extraction.py"
+        --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/mos_gate_storage_layout/checks.json"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}"
+        --ngspice "${ihp_storage_ngspice}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/mos_gate_storage_extraction")
+    set_tests_properties(analog.1g.ihp_mos_gate_storage.extracted_charge PROPERTIES
+      LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 1800
+      FIXTURES_REQUIRED one_g_hv_storage_layout FIXTURES_SETUP one_g_hv_storage_extraction)
+    add_test(NAME analog.1g.ihp_moscap_bias_storage.extracted_charge
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_gate_storage_extraction.py" --profile dedicated
+        --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/moscap_layout/checks.json"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_SIDEWALL_MAGIC_EXECUTABLE}"
+        --ngspice "${ihp_storage_ngspice}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/moscap_storage_extraction")
+    set_tests_properties(analog.1g.ihp_moscap_bias_storage.extracted_charge PROPERTIES
+      LABELS "analog;1g;ihp;physical;extraction;transmitter" TIMEOUT 1800
+      FIXTURES_REQUIRED one_g_moscap_storage_layout FIXTURES_SETUP one_g_moscap_storage_extraction)
+    if(TARGET analog_1g_ihp_transmit_physical_export AND
+       TEST analog.1g.ihp_transmit.storage AND TEST analog.1g.ihp_transmit.translator_psp_layout)
+      add_test(NAME analog.1g.ihp_transmit.connected_guards
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_connected_guards.py"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+          --fixture "${CMAKE_CURRENT_BINARY_DIR}/../tests/results/transmit_controls/checks.json")
+      set_tests_properties(analog.1g.ihp_transmit.connected_guards PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical" TIMEOUT 60
+        FIXTURES_REQUIRED one_g_transmit_controls)
+      add_test(NAME analog.1g.ihp_transmit.connected_startup
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_connected_startup.py"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+          --fixture "${CMAKE_CURRENT_BINARY_DIR}/../tests/results/transmit_controls/checks.json"
+          --proofs "${CMAKE_CURRENT_BINARY_DIR}/tests/results"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_connected_startup")
+      set_tests_properties(analog.1g.ihp_transmit.connected_startup PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical;psp" TIMEOUT 172800
+        FIXTURES_SETUP one_g_transmit_connected_startup
+        FIXTURES_REQUIRED "one_g_transmit_controls;one_g_transmit_translator_psp_layout;one_g_transmit_translation_bias;one_g_transmit_bias;one_g_transmit_current_cell;one_g_transmit_pullup;one_g_transmit_storage;one_g_hv_storage_extraction;one_g_moscap_storage_extraction")
+      add_test(NAME analog.1g.ihp_transmit.connected_mos_tt
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_connected.py"
+          --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+          --fixture "${CMAKE_CURRENT_BINARY_DIR}/../tests/results/transmit_controls/checks.json"
+          --proofs "${CMAKE_CURRENT_BINARY_DIR}/tests/results"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+          --corner mos_tt --temperature 27 --trim-code 44
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_connected_mos_tt")
+      set_tests_properties(analog.1g.ihp_transmit.connected_mos_tt PROPERTIES
+        LABELS "analog;1g;ihp;transmitter;physical;extraction;psp" TIMEOUT 172800
+        FIXTURES_REQUIRED "one_g_transmit_connected_startup;one_g_transmit_controls;one_g_transmit_translator_psp_layout;one_g_transmit_translation_bias;one_g_transmit_bias;one_g_transmit_current_cell;one_g_transmit_pullup;one_g_transmit_storage;one_g_hv_storage_extraction;one_g_moscap_storage_extraction")
+      if(TEST analog.1g.ihp_transmit.charge_switching)
+        get_property(charge_connected_fixtures TEST analog.1g.ihp_transmit.connected_startup PROPERTY FIXTURES_REQUIRED)
+        list(APPEND charge_connected_fixtures one_g_transmit_charge_storage one_g_transmit_charge_switching)
+        foreach(phase IN ITEMS startup mos_tt)
+          set(charge_phase_args)
+          set(charge_phase_fixtures ${charge_connected_fixtures})
+          if(phase STREQUAL "startup")
+            list(APPEND charge_phase_args --startup)
+          else()
+            list(APPEND charge_phase_fixtures one_g_transmit_charge_connected_startup)
+          endif()
+          add_test(NAME analog.1g.ihp_transmit.charge_connected_${phase}
+            COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/transmit_connected_charge.py"
+              --exporter "$<TARGET_FILE:analog_1g_ihp_transmit_physical_export>"
+              --fixture "${CMAKE_CURRENT_BINARY_DIR}/../tests/results/transmit_controls/checks.json"
+              --proofs "${CMAKE_CURRENT_BINARY_DIR}/tests/results"
+              --charge-storage "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_charge_storage/checks.json"
+              --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+              --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/transmit_charge_connected_${phase}"
+              ${charge_phase_args})
+          set_tests_properties(analog.1g.ihp_transmit.charge_connected_${phase} PROPERTIES
+            LABELS "analog;1g;ihp;transmitter;physical;extraction;psp" TIMEOUT 172800
+            FIXTURES_REQUIRED "${charge_phase_fixtures}")
+        endforeach()
+        set_tests_properties(analog.1g.ihp_transmit.charge_connected_startup PROPERTIES
+          FIXTURES_SETUP one_g_transmit_charge_connected_startup)
+      endif()
+    endif()
+  endif()
 endif()
 
 if(TARGET analog_1g_cascoded_core_transmit_driver)
@@ -1966,6 +2922,164 @@ add_executable(analog_1g_ihp_receive_common_reference tests/receive_common_refer
 target_link_libraries(analog_1g_ihp_receive_common_reference PRIVATE cpphdl::analog)
 add_executable(analog_1g_ihp_lead_receive_common_reference tests/lead_receive_common_reference.cpp)
 target_link_libraries(analog_1g_ihp_lead_receive_common_reference PRIVATE cpphdl::analog)
+add_executable(analog_1g_ihp_receive_common_layout_export tests/receive_common_layout_export.cpp)
+target_link_libraries(analog_1g_ihp_receive_common_layout_export PRIVATE cpphdl::analog)
+if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_receive_common_reference.layout_guards
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_common_layout_guards.py"
+      --exporter "$<TARGET_FILE:analog_1g_ihp_receive_common_layout_export>"
+      --bench "$<TARGET_FILE:analog_1g_ihp_lead_receive_common_reference>"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}")
+  set_tests_properties(analog.1g.ihp_receive_common_reference.layout_guards PROPERTIES
+    LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60)
+  add_test(NAME analog.1g.ihp_receive_common_reference.extracted_guards
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_common_extracted_guards.py"
+      --exporter "$<TARGET_FILE:analog_1g_ihp_receive_common_layout_export>"
+      --bench "$<TARGET_FILE:analog_1g_ihp_lead_receive_common_reference>"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}")
+  set_tests_properties(analog.1g.ihp_receive_common_reference.extracted_guards PROPERTIES
+    LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60)
+  if(EXISTS "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}")
+    add_test(NAME analog.1g.ihp_receive_common_reference.layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_common_layout.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_receive_common_layout_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_layout")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.layout PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 3600
+      FIXTURES_SETUP one_g_receive_common_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.current_route_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_current_routes.py"
+        --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_layout/checks.json")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.current_route_guards PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60
+      FIXTURES_REQUIRED one_g_receive_common_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.sense_route_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sense_routes.py"
+        --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_layout/checks.json")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.sense_route_guards PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60
+      FIXTURES_REQUIRED one_g_receive_common_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.sense_layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sense_layout.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_receive_common_layout_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_sense_layout")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.sense_layout PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 3600
+      FIXTURES_SETUP one_g_receive_common_sense_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.upper_current_route_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_upper_current_routes.py"
+        --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_layout/checks.json")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.upper_current_route_guards PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60
+      FIXTURES_REQUIRED one_g_receive_common_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.upper_current_layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_upper_current_layout.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_receive_common_layout_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_layout")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.upper_current_layout PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 3600
+      FIXTURES_SETUP one_g_receive_common_upper_current_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.storage_route_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_storage_routes.py"
+        --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_layout/checks.json")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.storage_route_guards PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 120
+      FIXTURES_REQUIRED one_g_receive_common_upper_current_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.storage_layout
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_storage_layout.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_receive_common_layout_export>"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+        --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_storage_layout")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.storage_layout PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 3600
+      FIXTURES_SETUP one_g_receive_common_storage_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.storage_ground_access
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_storage_ground_access.py"
+        --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_storage_layout/checks.json")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.storage_ground_access PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 120
+      FIXTURES_REQUIRED one_g_receive_common_storage_layout)
+    add_test(NAME analog.1g.ihp_receive_common_reference.upper_current_dc_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_upper_current_dc_guards.py")
+    set_tests_properties(analog.1g.ihp_receive_common_reference.upper_current_dc_guards PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60)
+    if(EXISTS "${ihp_storage_ngspice}")
+      add_test(NAME analog.1g.ihp_receive_common_reference.upper_current_emission
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_upper_current_extracted.py"
+          --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_layout/checks.json"
+          --bench "$<TARGET_FILE:analog_1g_ihp_lead_receive_common_reference>"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+          --corner mos_tt --temperature 27 --cxx "${CMAKE_CXX_COMPILER}" --emit-only
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_emission")
+      set_tests_properties(analog.1g.ihp_receive_common_reference.upper_current_emission PROPERTIES
+        LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 600
+        FIXTURES_REQUIRED one_g_receive_common_upper_current_layout
+        FIXTURES_SETUP one_g_receive_common_upper_current_emission)
+      add_test(NAME analog.1g.ihp_receive_common_reference.upper_current_dc_screen
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_upper_current_dc.py"
+          --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_layout/checks.json"
+          --emitted "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_emission/checks.json"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_dc")
+      set_tests_properties(analog.1g.ihp_receive_common_reference.upper_current_dc_screen PROPERTIES
+        LABELS "analog;1g;ihp;receiver;physical;extraction;psp" TIMEOUT 86400
+        FIXTURES_REQUIRED one_g_receive_common_upper_current_emission)
+      foreach(receive_corner mos_tt mos_ss mos_ff)
+        set(receive_temperature 27)
+        if(receive_corner STREQUAL "mos_ss")
+          set(receive_temperature 125)
+        elseif(receive_corner STREQUAL "mos_ff")
+          set(receive_temperature -40)
+        endif()
+        add_test(NAME analog.1g.ihp_receive_common_reference.extracted_${receive_corner}
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_common_extracted.py"
+            --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_layout/checks.json"
+            --bench "$<TARGET_FILE:analog_1g_ihp_lead_receive_common_reference>"
+            --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+            --corner "${receive_corner}" --temperature "${receive_temperature}"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_extracted_${receive_corner}")
+        set_tests_properties(analog.1g.ihp_receive_common_reference.extracted_${receive_corner} PROPERTIES
+          LABELS "analog;1g;ihp;receiver;physical;extraction;psp" TIMEOUT 86400
+          FIXTURES_REQUIRED one_g_receive_common_layout)
+        add_test(NAME analog.1g.ihp_receive_common_reference.upper_current_extracted_${receive_corner}
+          COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_upper_current_extracted.py"
+            --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_layout/checks.json"
+            --bench "$<TARGET_FILE:analog_1g_ihp_lead_receive_common_reference>"
+            --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+            --corner "${receive_corner}" --temperature "${receive_temperature}"
+            --cxx "${CMAKE_CXX_COMPILER}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_common_upper_current_extracted_${receive_corner}")
+        set_tests_properties(analog.1g.ihp_receive_common_reference.upper_current_extracted_${receive_corner} PROPERTIES
+          LABELS "analog;1g;ihp;receiver;physical;extraction;psp" TIMEOUT 86400
+          FIXTURES_REQUIRED one_g_receive_common_upper_current_layout)
+      endforeach()
+    endif()
+  endif()
+endif()
 add_test(NAME analog.1g.ihp_receive_common_reference.contract COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_common_contract.py")
 set_tests_properties(analog.1g.ihp_receive_common_reference.contract PROPERTIES
@@ -1982,6 +3096,7 @@ foreach(check check-1g check-analog check-veriloga)
   if(TARGET ${check})
     add_dependencies(${check} analog_1g_ihp_receive_common_reference)
     add_dependencies(${check} analog_1g_ihp_lead_receive_common_reference)
+    add_dependencies(${check} analog_1g_ihp_receive_common_layout_export)
   endif()
 endforeach()
 
@@ -2151,4 +3266,95 @@ if(NGSPICE_EXECUTABLE AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.tech/ng
     set_tests_properties(analog.1g.ihp_core_receive_dac.${profile} PROPERTIES
       LABELS "analog;1g;ihp;receiver;psp" TIMEOUT 18600 RESOURCE_LOCK one_g_closed_adc_memory)
   endforeach()
+endif()
+
+if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_reference_clock.supply_pin_guards
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_supply_ports.py")
+  set_tests_properties(analog.1g.ihp_reference_clock.supply_pin_guards PROPERTIES
+    LABELS "analog;1g;ihp;clock;physical" TIMEOUT 60)
+endif()
+
+add_test(NAME analog.1g.ihp_reference_clock.buffer_placement_guards
+  COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_clock_buffer_stable_placement.py")
+set_tests_properties(analog.1g.ihp_reference_clock.buffer_placement_guards PROPERTIES
+  LABELS "analog;1g;ihp;clock;physical" TIMEOUT 60)
+
+if(TARGET analog_1g_ihp_receive_sampler_export AND EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
+  add_test(NAME analog.1g.ihp_receive.sampler_guards
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sampler_guards.py"
+      --exporter "$<TARGET_FILE:analog_1g_ihp_receive_sampler_export>")
+  set_tests_properties(analog.1g.ihp_receive.sampler_guards PROPERTIES
+    LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60)
+  add_test(NAME analog.1g.ihp_receive.sampler_geometry
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sampler_layout.py"
+      --exporter "$<TARGET_FILE:analog_1g_ihp_receive_sampler_export>"
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_layout")
+  set_tests_properties(analog.1g.ihp_receive.sampler_geometry PROPERTIES
+    LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 172800
+    FIXTURES_SETUP one_g_receive_sampler_layout)
+  add_test(NAME analog.1g.ihp_receive.sampler_check_guards
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sampler_checks.py")
+  set_tests_properties(analog.1g.ihp_receive.sampler_check_guards PROPERTIES
+    LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60)
+  if(TARGET analog_1g_ihp_differential_receive_conversion)
+    add_test(NAME analog.1g.ihp_receive.sampler_integration_guards
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sampler_integration.py"
+        --exporter "$<TARGET_FILE:analog_1g_ihp_receive_sampler_export>"
+        --bench "$<TARGET_FILE:analog_1g_ihp_differential_receive_conversion>")
+    set_tests_properties(analog.1g.ihp_receive.sampler_integration_guards PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical" TIMEOUT 60)
+  endif()
+  if(EXISTS "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}" AND EXISTS "${ihp_storage_ngspice}")
+    add_test(NAME analog.1g.ihp_receive.sampler_junction_geometry
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/mos_junction_extraction.py"
+        --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_layout/checks.json"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_junction_geometry")
+    set_tests_properties(analog.1g.ihp_receive.sampler_junction_geometry PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 172800
+      FIXTURES_REQUIRED one_g_receive_sampler_layout)
+    add_test(NAME analog.1g.ihp_receive.sampler_junction_extracted
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sampler_junction_extracted.py"
+        --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_layout/checks.json"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}"
+        --ngspice "${ihp_storage_ngspice}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_junction_extracted")
+    set_tests_properties(analog.1g.ihp_receive.sampler_junction_extracted PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 172800
+      FIXTURES_REQUIRED one_g_receive_sampler_layout)
+    add_test(NAME analog.1g.ihp_receive.sampler_extracted
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sampler_extracted.py"
+        --proof "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_layout/checks.json"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --magic "${CPPHDL_IHP_PLL_MAGIC_EXECUTABLE}"
+        --ngspice "${ihp_storage_ngspice}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_extracted")
+    set_tests_properties(analog.1g.ihp_receive.sampler_extracted PROPERTIES
+      LABELS "analog;1g;ihp;receiver;physical;extraction" TIMEOUT 172800
+      FIXTURES_REQUIRED one_g_receive_sampler_layout FIXTURES_SETUP one_g_receive_sampler_extracted)
+    if(TARGET analog_1g_ihp_differential_receive_conversion)
+      add_test(NAME analog.1g.ihp_receive.sampler_conversion
+        COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_sampler_conversion.py"
+          --layout "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_layout/checks.json"
+          --extraction "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_extracted/checks.json"
+          --bench "$<TARGET_FILE:analog_1g_ihp_differential_receive_conversion>"
+          --pdk "${CPPHDL_IHP_PDK_ROOT}" --ngspice "${ihp_storage_ngspice}"
+          --cxx "${CMAKE_CXX_COMPILER}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/tests/results/receive_sampler_conversion")
+      set_tests_properties(analog.1g.ihp_receive.sampler_conversion PROPERTIES
+        LABELS "analog;1g;ihp;receiver;physical;closed" TIMEOUT 172800
+        FIXTURES_REQUIRED one_g_receive_sampler_extracted)
+    endif()
+  endif()
 endif()

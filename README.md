@@ -32,6 +32,115 @@ Then for both Win&Lin:
  - conda create -p ./.conda; source activate base; conda activate ./.conda; conda env update --file requirements.yaml
  - mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" ..; make
 
+### Build cpphdl and hdlcpp together
+
+`cpphdl` converts C++ RTL to Verilog. `hdlcpp` converts Verilog/SystemVerilog
+back to C++ and also provides the `--native-graph` simulation conversion mode.
+The `hdlcpp` target is optional and must be enabled explicitly.
+
+Run the following from the **cpphdl repository root**, with the compiler
+environment activated. Building hdlcpp requires **CMake 3.28 or newer**, a
+C++23 compiler, and Git. Building cpphdl also requires the LLVM/Clang development
+packages described above. The current `requirements.yaml` pins CMake 3.26.4;
+if you use that Conda environment, upgrade CMake first:
+
+```sh
+conda install -p ./.conda -c conda-forge 'cmake>=3.28,<4'
+conda activate ./.conda
+cmake --version
+```
+
+Fetch the Slang revision pinned by `hdlcpp/slang-revision.txt`, configure both
+converters, and build them:
+
+```sh
+bash ./hdlcpp/setup_slang.sh
+
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS_RELEASE='-O1 -DNDEBUG -g0' \
+  -DCPPHDL_BUILD_HDLCPP=ON \
+  -DCPPHDL_BUILD_EXAMPLES=OFF \
+  -DCPPHDL_BUILD_TESTS=OFF \
+  -DCPPHDL_BUILD_HLS_TESTS=OFF \
+  -DCPPHDL_BUILD_SYNTH_TESTS=OFF \
+  -DCPPHDL_BUILD_TRIBE=OFF \
+  -DCPPHDL_BUILD_ANALOG=OFF
+
+cmake --build build --config Release --target cpphdl hdlcpp -j2
+```
+
+With Unix Makefiles or Ninja, the executables are:
+
+```text
+build/cpphdl
+build/hdlcpp/hdlcpp
+```
+
+Multi-configuration generators place them in `build/Release/cpphdl` and
+`build/hdlcpp/Release/hdlcpp`. The commands above select only the converter
+targets; they do not run FPGA builds or RTL simulation tests. `-O1` keeps
+conversion optimized while limiting compiler memory use, and `-j2` limits
+concurrent compilation jobs.
+
+For example, convert a SystemVerilog top to a native graph:
+
+```sh
+./build/hdlcpp/hdlcpp --native-graph --top MyTop \
+  --output /tmp/mytop-native.cc /path/to/MyTop.sv
+```
+
+The output path must not already exist. The regular `hdlcpp` executable handles
+native graph conversion; no separate executable named `hdlcpp-native` or
+`hdlcpp-toolchain/toolchain.json` is required by this CMake build.
+
+When using this repository through the `cpphdl` symlink in `harpy/hlsgen`,
+configure with `cmake -S ./cpphdl -B ./cpphdl/build` and the options above, then
+use `--cpphdl ./cpphdl/build/cpphdl` and
+`--hdlcpp ./cpphdl/build/hdlcpp/hdlcpp` in the Llama build command. Run the Slang
+setup as `bash ./cpphdl/hdlcpp/setup_slang.sh` from that directory.
+
+### Build only hdlcpp
+
+The standalone converter build needs CMake 3.28+, Git, and a C++23 compiler;
+it does not need the cpphdl frontend's LLVM/Clang development libraries.
+From the cpphdl repository root:
+
+```sh
+bash ./hdlcpp/setup_slang.sh
+cmake -S hdlcpp -B build-hdlcpp \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS_RELEASE='-O1 -DNDEBUG -g0' \
+  -DCMAKE_CXX_COMPILER="$(command -v g++)"
+cmake --build build-hdlcpp --config Release --target hdlcpp -j2
+```
+
+The executable is `build-hdlcpp/hdlcpp` for Unix Makefiles or Ninja, or
+`build-hdlcpp/Release/hdlcpp` for a multi-configuration generator.
+
+### Fully static Linux converter
+
+To also build `build/cpphdl-static`, install the static dependencies and enable
+the optional target (commands run from the repository root):
+
+```sh
+conda install -p ./.conda -c conda-forge zstd-static
+cmake -S . -B build -DCPPHDL_BUILD_STATIC=ON -DCPPHDL_BUILD_HLS_TESTS=OFF
+cmake --build build --target cpphdl-static -j2
+ctest --test-dir build -R '^cpphdl_static_cli_' --output-on-failure
+```
+
+This requires static Clang, LLVM, zlib, zstd and C/C++ runtime libraries.
+The normal `cpphdl` target remains available. The static target verifies that
+its ELF binary has no interpreter or shared-library dependencies and applies
+the same GNU ISA-note workaround as `cpphdl`. Static linkage does not remove
+unsupported CPU instructions from dependency archives. Headers, Python scripts
+and external tools used by particular conversion modes are still required;
+this target does not bundle them or support loading shared Clang plugins.
+Static glibc can still load NSS modules for account lookups (for example,
+expanding `~user`); a static ELF does not guarantee those optional operations
+work on a filesystem without shared libraries.
+
 ## tests
 
 ```

@@ -62,6 +62,13 @@ struct StreamPipeline {
     unsigned stages = 1, latency = 1, generation = 0;
 };
 
+// Linked sequential implementation selected after pipeline scheduling.
+struct PipelineReplacement {
+    std::string scope, module, verilog;
+    unsigned latency = 1;
+    std::map<std::string, Value> pins;
+};
+
 // RisingEdgeStep means one lifecycle transaction per rising edge. Reset and
 // enable are next-state logic; ExplicitEvents preserves frontend event logic.
 enum class ClockContract { ExplicitEvents, RisingEdgeStep, NamedEdges };
@@ -112,6 +119,7 @@ public:
     std::string currentScope;
     std::vector<ScopeAttribute> attributes;
     std::vector<StreamPipeline> pipelines;
+    std::vector<PipelineReplacement> replacements;
 
     void validateClocks() const {
         for (const auto& state : states) if (!state.reset.empty()) {
@@ -668,7 +676,7 @@ public:
     // Partition files retain only live, resolved values. In particular, dead
     // locals and memoization aliases must not accumulate across instances.
     void compact() {
-        if (!pipelines.empty()) throw std::runtime_error("cannot compact scheduled streaming regions");
+        if (!pipelines.empty() || !replacements.empty()) throw std::runtime_error("cannot compact scheduled streaming/replacement regions");
         auto order = dependencyOrder();
         std::set<size_t> keep(order.begin(), order.end());
         for (const auto& port : ports) if (port.input)
@@ -726,6 +734,8 @@ public:
                 collision |= attribute.scope.find(marker) != std::string::npos || attribute.name.find(marker) != std::string::npos || attribute.value.find(marker) != std::string::npos;
             for (const auto& pipeline : pipelines)
                 collision |= pipeline.scope.find(marker) != std::string::npos || pipeline.logic.find(marker) != std::string::npos;
+            for (const auto& replacement : replacements)
+                collision |= replacement.scope.find(marker) != std::string::npos || replacement.verilog.find(marker) != std::string::npos;
             if (!collision) break;
             delimiter = "cpphdl_" + std::to_string(++suffix);
             if (delimiter.size() > 16) throw std::runtime_error("cannot delimit graph records");
@@ -802,10 +812,24 @@ public:
             for (auto word : memories[i].contents) output << ' ' << word;
             output << '\n';
         }
+        if (!replacements.empty()) {
+            output << "replacements_v1 " << replacements.size() << '\n';
+            for (const auto& r : replacements) {
+                output << std::quoted(r.scope) << ' ' << std::quoted(r.module) << ' '
+                       << std::quoted(r.verilog) << ' ' << r.latency << ' ' << r.pins.size() << '\n';
+                for (const auto& [name,bits] : r.pins) output << std::quoted(name) << ' ' << valueText(bits) << '\n';
+            }
+        }
     }
 
     void load(const char* text) {
         std::istringstream input(text);
+        load(input);
+    }
+
+    // Large linked designs need not retain two copies of their serialized
+    // records while constructing the executable graph.
+    void load(std::istream& input) {
         input.exceptions(std::ios::failbit | std::ios::badbit);
         auto readValue = [&]() {
             size_t count; input >> count;
@@ -918,6 +942,18 @@ public:
                 auto& contents = memories[identity].contents;
                 contents.resize(words);
                 for (auto& word : contents) input >> word;
+            }
+        }
+        if (!input.eof()) input >> std::ws;
+        if (!input.eof()) {
+            std::string tag; input >> tag >> count;
+            if (tag != "replacements_v1" || count > 65536) throw std::runtime_error("invalid replacement metadata");
+            for (size_t i=0; i<count; ++i) {
+                PipelineReplacement r; size_t size;
+                input >> std::quoted(r.scope) >> std::quoted(r.module) >> std::quoted(r.verilog) >> r.latency >> size;
+                if (!r.latency || size != 10) throw std::runtime_error("invalid replacement interface");
+                for (size_t j=0; j<size; ++j) { std::string name; input >> std::quoted(name); r.pins[name]=readValue(); }
+                replacements.push_back(std::move(r));
             }
         }
         validateClocks();
@@ -1086,7 +1122,9 @@ public:
             std::vector<size_t> cyclePath;
             bool outputCone = true;
             order.clear();
-            std::function<void(Bit)> visit = [&](Bit raw) {
+            struct DependencyFrame { size_t index; unsigned operand = 0; size_t offset = 0; };
+            std::vector<DependencyFrame> traversal;
+            auto enter = [&](Bit raw) {
                 auto bit = resolve(raw);
                 if (bit < 2 || cycle) return;
                 auto index = owner(bit);
@@ -1156,11 +1194,32 @@ public:
                     throw std::runtime_error("transactional host effect reaches a combinational output");
                 marks[index] = 1;
                 stack.push_back(index);
-                for (auto* value : {&node.left, &node.right, &node.select}) for (auto input : *value) visit(input);
-                marks[index] = 2; order.push_back(index);
-                stack.pop_back();
+                traversal.push_back({index});
+            };
+            // Whole linked designs can contain very deep control reductions.
+            // Keep the DFS frames on the heap, preserving operand order and
+            // the same cycle path used by bitwise-cycle refinement.
+            auto visit = [&](Bit raw) {
+                enter(raw);
+                while (!traversal.empty() && !cycle) {
+                    auto& frame = traversal.back();
+                    if (frame.operand == 3) {
+                        marks[frame.index] = 2; order.push_back(frame.index);
+                        stack.pop_back(); traversal.pop_back();
+                        continue;
+                    }
+                    const auto& node = nodes[frame.index];
+                    const auto& value = frame.operand == 0 ? node.left : frame.operand == 1 ? node.right : node.select;
+                    if (frame.offset == value.size()) { ++frame.operand; frame.offset = 0; }
+                    else {
+                        auto input = value[frame.offset++];
+                        enter(input);
+                    }
+                }
             };
             for (const auto& port : ports) if (!port.input) for (auto bit : port.bits) visit(bit);
+            for (const auto& r : replacements) for (const auto& [name,bits] : r.pins)
+                for (auto bit : bits) visit(bit);
             for (const auto& access : memoryAccesses) if (!access.transaction) {
                 for (auto bit : access.address) visit(bit);
                 for (auto bit : access.enabled) visit(bit);

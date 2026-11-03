@@ -1,0 +1,240 @@
+ASIC DEVELOPMENT TASK AND TIME AUDIT
+Snapshot: 2026-11-03
+
+Times describe selected recorded runs, not total engineering effort per task.
+Some elapsed times include queueing, compilation and checking. Runs can overlap;
+do not sum this table as calendar development time. Unrecorded effort is marked.
+The first recorded 1G implementation commit is dated 2026-10-17.
+ASIC completion and full-chip GDSII qualification remain pending at this snapshot.
+
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| Task                                | Programs used                          | Recorded elapsed time       | Problems found                                   | Action / result                                     | Status / remaining work                          |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 1. C++ intention classes and analog | C++RTL; C++ compiler; CMake; CTest     | Not recorded                | Needed composable electrical behavior, physical  | Implemented class-based framework and regression    | Foundation implemented; complete ngspice         |
+| solver                              |                                        |                             | equations and analog/digital scheduling          | tests                                               | replacement and speed target are not established |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 2. Verilog-A conversion and         | C++ exporter; OpenVAF; ngspice; Python | Not recorded                | Needed an independent simulator and consistent   | Generated Verilog-A and separate checks plus        | Model/test infrastructure implemented            |
+| independent simulation              |                                        |                             | output checks                                    | waveform comparison                                 |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 3. IHP PDK and physical toolchain   | IHP SG13G2; Python/shell; Yosys;       | Not recorded                | Needed available process models, physical        | Prepared reproducible tools/PDK and physical        | Toolchain available; not a completed ASIC        |
+|                                     | OpenROAD; KLayout                      |                             | libraries, extraction and verification decks     | generation flow                                     |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 4. Integrated receiver DSP/PCS,     | C++RTL; cpphdl converter; Verilator;   | 4m 20s                      | Alignment, enable/pause/reset and composed       | Exact agreement over 1,876,382 events, 16 frames    | Functional fixture passes; physical chip remains |
+| clocks and reset behavior           | CTest                                  |                             | receiver behavior                                | and 12,784 bytes                                    | open                                             |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 5. Analog input, sample/hold and    | C++RTL; Verilog-A; ngspice/PSP; Python | 5m 45s                      | Acquisition and hold error; extracted loading    | Nominal parent conversion agrees on code 112;       | Limited characterization; full PHY qualification |
+| SAR conversion                      |                                        |                             | and conversion disagreement                      | capture-target difference 0.293275 mV               | not established                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 6. Transmitter failed physical      | ngspice/PSP; extracted component RC;   | 18h 13m 29s                 | Physical output levels fail weighted-level       | Failure exposed bias/reference-access sensitivity;  | Historical failed attempt                        |
+| retry                               | CTest                                  |                             | contract                                         | candidate rejected                                  |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 7. Transmitter reference-access     | ngspice/PSP; Python checker; CTest     | 17h 38m 6s                  | Bias/reference-access parasitics changed PAM-5   | Complete 1.544 us nominal physical transient        | Nominal component-RC fixture passes; routed TX,  |
+| repair                              |                                        |                             | levels                                           | passes; 8.770312 mV schematic/physical plateau      | automatic calibration and PVT remain open        |
+|                                     |                                        |                             |                                                  | difference below 10 mV                              |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 8. Processing-clock controller      | C++RTL; Verilator; Yosys;              | 1h 2m 57s                   | Acquisition/drift logic, loaded ready output and | Controller macro passes timing, replay, DRC and LVS | Standalone controller qualified; full connected  |
+| physical implementation             | OpenROAD/OpenSTA; KLayout              |                             | setup timing                                     |                                                     | clock not qualified                              |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 9. Complete extracted               | ngspice/PSP; C++ controller; Python;   | 25h 53m 12s                 | Earlier timeout and disk-exhausted waveform;     | Complete 64 us run and 13,687,377 samples pass      | Excludes physical controller drivers, receiver   |
+| oscillator/gate simulation          | CTest                                  |                             | need full closed-loop transient                  | nominal fixture checks                              | tree and inter-macro routing                     |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 10. Clock-gate slew/load            | ngspice/PSP; Liberty/SPEF accounting;  | Not recorded                | 200/100 fF loads fail 100 ps slew; added buffer  | Original gate passes TT/SS/FF at 55 fF; rejected    | Conditional load result; connected route still   |
+| qualification                       | Python                                 |                             | fails 400 ps delay budget                        | buffer alternative                                  | open                                             |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 11. Three-domain reset macro        | C++RTL; Verilator; Yosys; OpenROAD;    | Not recorded                | Clock-domain reset release and physical reset    | Standalone 140 x 140 um macro passes replay,        | Downstream recovery/removal, MTBF and chip       |
+|                                     | KLayout                                |                             | output loading                                   | DRC/LVS; setup/hold +2.176/+0.270 ns                | distribution open                                |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 12. Flow control and frame          | C++RTL; Verilator; OpenROAD/OpenSTA;   | Not recorded                | Rate mismatch, FIFO/PAUSE crossing and clock     | 240 intact frames, six pauses/resumes;              | Routed block checks pass; full-chip/post-fill    |
+| buffering                           | KLayout                                |                             | skew                                             | 630,084-cycle replay; setup/hold +95.416/+113.400   | timing open                                      |
+|                                     |                                        |                             |                                                  | ps                                                  |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 13. SRAM layout, fill and           | KLayout DRC/LVS; Python geometry and   | 2h 17m 2s                   | Density, resistor widths, unused ports,          | Repaired row-end wells; complete assembly has zero  | Assembly geometry/connectivity pass; full SRAM   |
+| connectivity                        | graph checks                           |                             | ambiguous matching and 24 NWell violations;      | DRC violations across 868 categories and passes     | electrical characterization open                 |
+|                                     |                                        |                             | earlier >3h comparison without verdict           | correspondence/audits                               |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 14. Receiver congested physical     | OpenROAD placement/CTS/global routing  | 9h 37m 26s                  | Heavy buffering, growth and routing congestion   | Failure retained; subsequent floorplan/buffering    | Historical failed workflow, not a solved         |
+| attempt                             |                                        |                             |                                                  | strategies revised                                  | receiver                                         |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 15. Another receiver physical       | OpenROAD                               | 7h 49m 40s                  | Placement/route repair did not reach an accepted | Candidate rejected; later checkpoints and repair    | Historical failed workflow                       |
+| attempt                             |                                        |                             | result                                           | strategies used                                     |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 16. Receiver full route with timing | OpenROAD; OpenRCX; OpenSTA             | 3h 50m                      | Estimated timing improvement did not survive     | Zero router violations, but setup -0.266305208 ns   | Timing closure still failed                      |
+| margin optimization                 |                                        |                             | extracted wire RC                                | and capacitance violations                          |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 17. Receiver early route killed for | OpenROAD; Linux OOM diagnostics        | 2h 53m 12s                  | Router about 3.79 GiB RSS plus unrelated         | Resource sharing, allocator controls and memory     | No routed output from this attempt               |
+| memory                              |                                        |                             | compiler about 1.13 GiB on 5.7 GiB host          | measurements added                                  |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 18. Receiver early-route allocator  | OpenROAD; jemalloc; OpenRCX/OpenSTA    | 2h 43m 54s                  | Needed measurable routing result under           | Run completes near 3.63 GiB peak; setup             | Resource completion improved; receiver remains   |
+| retry                               |                                        |                             | constrained memory                               | -0.928154469 ns and 17,335 router violations        | unqualified                                      |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 19. Latest receiver one-hot         | C++RTL; Verilator; Yosys; OpenSTA;     | 21m 49s                     | Winner encoding/decoding on selected-byte timing | Native/RTL/mapped comparisons pass; receiver        | Routed improvement pending                       |
+| selection change                    | CTest                                  |                             | paths                                            | cell-only setup +1.51 to +1.76 ns; 71,198 cells     |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 20. Repair route/parasitic refresh  | Tcl; OpenROAD; Python; CTest           | 2.50s                       | Incremental tracking began after topology edits  | Receiver rebuilds routes and refreshes RC after     | Flow bug fixed and regression-tested; does not   |
+| sequencing                          |                                        |                             | and could omit new pins                          | legalization; all three regressions pass            | establish receiver timing                        |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 21. Storage and execution           | Python; gzip; SHA256; EDA resource     | Not recorded                | Disk full, truncated traces, memory contention,  | Reserved output space, verified archives,           | Mitigations implemented; constrained host        |
+| management                          | lock; allocator controls               |                             | stale evidence and repeated builds               | regenerated-header cleanup, input hashes and staged | remains a bottleneck                             |
+|                                     |                                        |                             |                                                  | checks                                              |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+| 22. Current revised receiver        | OpenROAD; subsequent OpenRCX/OpenSTA   | 11m 39s completed stages;   | Need to verify new netlist and repaired flow     | Placement and preparation completed; global-route   | In progress; full-chip GDSII not qualified       |
+| physical run                        |                                        | still running               | against physical wires                           | stage active at audit time                          |                                                  |
++-------------------------------------+----------------------------------------+-----------------------------+--------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+
+
+TIME SCOPE AND EVIDENCE
+
+1. C++ intention classes and analog solver
+   Time scope: Engineering effort not logged
+   Recorded seconds: Not recorded
+   Evidence: /home/me/cpphdl/analog/doc/language.md
+
+2. Verilog-A conversion and independent simulation
+   Time scope: Engineering effort not logged
+   Recorded seconds: Not recorded
+   Evidence: /home/me/cpphdl/analog/VerilogA/README.md
+
+3. IHP PDK and physical toolchain
+   Time scope: Setup and debugging effort not logged
+   Recorded seconds: Not recorded
+   Evidence: /home/me/cpphdl/analog/pdk/1G_repeater_IHPSG13G2/README.md
+
+4. Integrated receiver DSP/PCS, clocks and reset behavior
+   Time scope: One documented full native/RTL regression
+   Recorded seconds: 260
+   Evidence: /home/me/cpphdl/analog/1G/IHPSG13G2/qualification-status.md
+
+5. Analog input, sample/hold and SAR conversion
+   Time scope: One maintained sampler parent-conversion test; not all AFE work
+   Recorded seconds: 345.11
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/extracted-repair/receive-sampler-conversion/Testing/Temporary/LastTest.log
+
+6. Transmitter failed physical retry
+   Time scope: Whole failed CTest wall time
+   Recorded seconds: 65609.37
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/extracted-repair/charge-trim27-physical-recovery-v2/Testing/Temporary/LastTest.log
+
+7. Transmitter reference-access repair
+   Time scope: Whole passing CTest wall time
+   Recorded seconds: 63486.26
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/extracted-repair/charge-trim27-reference-access/Testing/Temporary/LastTest.log
+
+8. Processing-clock controller physical implementation
+   Time scope: Sum of recorded stages for loaded-admission-v7, including possible resource waits
+   Recorded seconds: 3776.831
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/controller-loaded-admission-v7/ProcessingClockControl-1jbz89kz/physical/physical_module.json
+
+9. Complete extracted oscillator/gate simulation
+   Time scope: Whole passing CTest wall time; log explicitly includes EDA-slot wait
+   Recorded seconds: 93192.07
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/extracted-repair/processing-clock-reserved-rerun/Testing/Temporary/LastTest.log
+
+10. Clock-gate slew/load qualification
+   Time scope: No reliable elapsed-time field in selected receipt
+   Recorded seconds: Not recorded
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/clock-gate-input-slew-55/checks.json
+
+11. Three-domain reset macro
+   Time scope: Total effort not reconstructed
+   Recorded seconds: Not recorded
+   Evidence: /home/me/cpphdl/analog/1G/IHPSG13G2/phy-reset-physical.md
+
+12. Flow control and frame buffering
+   Time scope: Total runtime not reconstructed
+   Recorded seconds: Not recorded
+   Evidence: /home/me/cpphdl/analog/1G/IHPSG13G2/qualification-status.md
+
+13. SRAM layout, fill and connectivity
+   Time scope: Latest assembly DRC 4903.507s + extraction 3198.338s + correspondence 120.237s
+   Recorded seconds: 8222.082283
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/extracted-repair/embedded-sram-row-wells-v2-qualification/checks.json
+
+14. Receiver congested physical attempt
+   Time scope: Sum of one failed physical workflow stages; includes possible resource waits
+   Recorded seconds: 34645.625
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/extracted-repair/receiver-physical/PCSReceiver-s7nfx_n7/physical_module.json
+
+15. Another receiver physical attempt
+   Time scope: Sum of one failed physical workflow stages; includes possible resource waits
+   Recorded seconds: 28180.324
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/receiver-timing-route-1800/PCSReceiver-232llsta/physical_module.json
+
+16. Receiver full route with timing margin optimization
+   Time scope: Sizing 369.188s + detail route 13341.299s + extraction 95.112s
+   Recorded seconds: 13805.598951207008
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/extracted-repair/receiver-margin-route-v5/checks.json
+
+17. Receiver early route killed for memory
+   Time scope: Recorded detailed-route stage before kernel kill
+   Recorded seconds: 10392.089480333962
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/trellis-compressor-revision/early-route-200/checks.json
+
+18. Receiver early-route allocator retry
+   Time scope: Detailed route plus extraction; incomplete routing diagnostic
+   Recorded seconds: 9833.619127394166
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/trellis-compressor-revision/early-route-200-jemalloc/checks.json
+
+19. Latest receiver one-hot selection change
+   Time scope: Seven validation stages; includes build and possible slot waits
+   Recorded seconds: 1309.009591340553
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/receiver-onehot-revision/checks.json
+
+20. Repair route/parasitic refresh sequencing
+   Time scope: Three real-cell repair regressions only; excludes development time
+   Recorded seconds: 2.5
+   Evidence: /home/me/cpphdl/analog/pdk/1G_repeater_IHPSG13G2/tests/finish_timing.py
+
+21. Storage and execution management
+   Time scope: Operations effort not logged
+   Recorded seconds: Not recorded
+   Evidence: /home/me/cpphdl/analog/1G/IHPSG13G2/receiver-routing-memory.md
+
+22. Current revised receiver physical run
+   Time scope: Placement/CTS 540.813s + preparation 158.504s + technology 0.067s; snapshot, not total
+   Recorded seconds: 699.384
+   Evidence: /home/me/cpphdl/analog/build/clock-integration/receiver-onehot-revision/physical-global/physical_module.json
+
+WHY THE NGSPICE ROWS RANGE FROM MINUTES TO HOURS
+
+These are whole test wall times, not measured ngspice CPU times. In particular,
+row 5 really does use ngspice; its short duration is not a digital-only shortcut.
+
+Row 5 (5m 45s): One ADC slice and one conversion, with both schematic and
+extracted-sampler simulations. The retained ngspice logs report 65,148 and
+64,865 output rows. The deck simulates startup to 16 us and records the final
+100 ns conversion window, stopping at 16.1 us. Recorded samples therefore do
+not describe all internal integration work during startup.
+
+Rows 6 and 7 (18h 13m 29s and 17h 38m 6s): Different transmitter circuits and
+component-RC candidates, not repeats of the ADC fixture. Their physical runs
+report 216,236 and 216,117 output rows. Row 7 covers 1.544 us. Its shorter
+simulated interval does not imply less work per step or less total wall time.
+The retained logs do not separate queueing, solver computation and checking,
+or report enough convergence/matrix statistics to establish why row 7 took
+about 184 times the wall time of row 5. Sample count alone does not explain it.
+
+Row 9 (25h 53m 12s): A 64 us closed-loop oscillator/gate transient, with
+13,687,377 output rows. Its CTest log explicitly records waiting for the shared
+EDA memory slot. That wait is included in the table; its duration was not
+separately recorded.
+
+In general, nonlinear transistor simulation cost depends on circuit equations,
+device models, adaptive internal steps, convergence iterations and rejected
+steps, in addition to simulated duration and waveform I/O. Output rows are not
+solver-iteration counts. These are possible runtime factors, not measured
+attributions of the hours in this audit. See the ngspice manual:
+https://ngspice.sourceforge.io/docs/ngspice-manual.pdf
+
+A reliable performance comparison needs separate queue/build/solver/checker
+wall times, solver CPU time, circuit size and integration/convergence counters.
+This historical table does not contain that profiling and cannot establish a
+100x C++RTL speedup or equivalent simulation accuracy.
+
+WHY IT HAS TAKEN SO LONG
+
+Long transistor-level simulations and repeated physical timing failures dominate
+many retained runs. Three long clock/transmitter tests recorded 61 h 45 m of
+combined elapsed test time, including waiting/checking where applicable.
+Framework, exporter, circuit and physical-flow development proceeded together.
+Avoidable rework included late interface checks, incomplete route updates, and
+a gate-model build that ran despite failed extracted timing. These workflow
+problems have required additional fixes and regression tests.

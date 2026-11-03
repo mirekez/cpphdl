@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
     assert(nativeSpinLimit() == std::stoul(argv[1]));
     Threads executor(4, 4);
     // A constructed executor must never read the setting again.
+    setenv("CPPHDL_NATIVE_SPIN", "invalid-after-construction", 1);
     setenv("CPPHDL_NATIVE_SPIN_LIMIT", "invalid-after-construction", 1);
     Work work;
     auto lane = [](void* opaque, Threads& pool, unsigned index, uint32_t epoch) noexcept {
@@ -73,16 +74,23 @@ int main(int argc, char** argv) {
                '-fno-sanitize-recover=all', '-I' + str(root / 'include'),
                str(source), '-o', str(work / 'check')]
     subprocess.run(toolchain.command(command), env=toolchain.env, check=True, timeout=120)
-    for value, expected in [(None, '4096'), ('0', '0'), ('1', '1'), ('64', '64'),
-                            ('4096', '4096'), ('1000000', '1000000')]:
-        env = dict(toolchain.env)
-        env.pop('CPPHDL_NATIVE_SPIN_LIMIT', None)
-        if value is not None:
-            env['CPPHDL_NATIVE_SPIN_LIMIT'] = value
+    base_env = dict(toolchain.env)
+    for name in ('CPPHDL_NATIVE_SPIN', 'CPPHDL_NATIVE_SPIN_LIMIT'):
+        base_env.pop(name, None)
+    for name, maximum in (('CPPHDL_NATIVE_SPIN', 65536), ('CPPHDL_NATIVE_SPIN_LIMIT', 1000000)):
+        for value, expected in [(None, '4096'), ('0', '0'), ('1', '1'), ('64', '64'),
+                                ('4096', '4096'), (str(maximum), str(maximum))]:
+            env = dict(base_env)
+            if value is not None:
+                env[name] = value
+            subprocess.run(toolchain.command([str(work / 'check'), expected]),
+                           env=env, check=True, timeout=30)
+        for value in ('', '-1', '+64', '64x', ' 64', str(maximum + 1), '4294967296', '9999999999999999999999'):
+            env = dict(base_env, **{name: value})
+            subprocess.run(toolchain.command([str(work / 'check'), 'invalid']),
+                           env=env, check=True, timeout=30)
+    for primary, expected in (('0', '0'), ('64', '64'), ('invalid', 'invalid')):
+        env = dict(base_env, CPPHDL_NATIVE_SPIN=primary, CPPHDL_NATIVE_SPIN_LIMIT='4096')
         subprocess.run(toolchain.command([str(work / 'check'), expected]),
-                       env=env, check=True, timeout=30)
-    for value in ('', '-1', '+64', '64x', ' 64', '1000001', '4294967296', '9999999999999999999999'):
-        env = dict(toolchain.env, CPPHDL_NATIVE_SPIN_LIMIT=value)
-        subprocess.run(toolchain.command([str(work / 'check'), 'invalid']),
                        env=env, check=True, timeout=30)
     print('native wait policy: defaults, bounds, snapshot, parked/skipped workers, task dependencies, slow/throwing hosts and shutdown PASS')

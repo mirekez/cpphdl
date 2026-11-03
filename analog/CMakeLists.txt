@@ -26,6 +26,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(cpphdl_analog INTERFACE -Wall -Wextra)
 endif()
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Osdi.cmake")
 add_subdirectory(VerilogA)
 
 set(analog_example_targets "")
