@@ -202,6 +202,10 @@ endmodule
 
 module dependency_parent(input logic value_i);
     dependency_leaf child_i(.value_i(value_i));
+    for (genvar i=0; i<2; i++) begin : generated_children
+        // Cross-file metadata does not yet know this child's ports.
+        external_dependency_leaf child(.value_i(value_i));
+    end
 endmodule
 )");
 
@@ -213,6 +217,7 @@ endmodule
     assert(rc == 0);
     auto metadata = readFile(dependencies);
     expectContains(metadata, "dependency_parent\tdependency_leaf\n");
+    expectContains(metadata, "dependency_parent\texternal_dependency_leaf\n");
     expectNotContains(metadata, "dependency_leaf\tdependency_parent");
 }
 
@@ -238,6 +243,19 @@ endmodule
                            "configured_zero_delay.FixedDelay\t0\n");
     expectContains(h, "value_i_in()");
     expectNotContains(h, "~(uint64_t)");
+}
+
+static void testExternalPortSuffixIsNotDoubled(const char* argv0)
+{
+    auto h = convertModule(argv0, "external_suffix", R"(
+module external_suffix(input logic value_i, output logic value_o);
+    suffix_child child(.data_in(value_i), .data_out(value_o));
+endmodule
+)", "", "", "", "", "", "suffix_child.data_in\tinput:logic<1>\nsuffix_child.data_out\toutput:logic<1>\n");
+    expectContains(h, "child.data_in =");
+    expectContains(h, "child.data_out()");
+    expectNotContains(h, "data_in_in");
+    expectNotContains(h, "data_out_out");
 }
 
 static void testDelayedNetDeclarationInitializerIsContinuousComb(const char* argv0)
@@ -7374,7 +7392,7 @@ endmodule
     auto h = convertModule(argv0, "nested_generate_module_array", sv, "");
     expectContains(h, "array<((uint64_t)(ROWS)");
     expectContains(h, "array<((uint64_t)(COLS)");
-    expectContains(h, ",::generated_grid_leaf>> leaf_i;");
+    expectContains(h, ",class ::generated_grid_leaf>> leaf_i;");
     expectContains(h, "leaf_i[(unsigned)(uint64_t)((uint64_t)(i))][(unsigned)(uint64_t)((uint64_t)(k))].data_i_in");
     expectContains(h, "leaf_i[(unsigned)(uint64_t)((uint64_t)(i))][(unsigned)(uint64_t)((uint64_t)(k))]._work(reset);");
     expectContains(h, "leaf_i[(unsigned)(uint64_t)((uint64_t)(i))][(unsigned)(uint64_t)((uint64_t)(k))]._assign();");
@@ -8247,7 +8265,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "generate_bound_division_expression", sv, "");
-    expectContains(h, ",::leaf> u_leaf;");
+    expectContains(h, ",class ::leaf> u_leaf;");
     expectContains(h, "for (unsigned i = 0;");
     expectNotContains(h, "))));k++)");
     expectNotContains(h, "))));i++)");
@@ -8538,7 +8556,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "iface_array_dim", sv, "");
-    expectContains(h, ",::simple_bus<8>> master;");
+    expectContains(h, ",class ::simple_bus<8>> master;");
     expectContains(h, "dim_pkg::N");
     expectContains(h, "> master;");
     expectContains(h, "master[(unsigned)(uint64_t)((uint64_t)(i))]._work(reset);");
@@ -11034,6 +11052,7 @@ int main(int argc, char** argv)
     testContinuousStructFieldUsesFinalProceduralFieldValue(argv[0]);
     testModuleDependencyMetadataUsesParsedInstances(argv[0]);
     testConfiguredGenerateSelectsZeroDelayPassThrough(argv[0]);
+    testExternalPortSuffixIsNotDoubled(argv[0]);
     testDelayedNetDeclarationInitializerIsContinuousComb(argv[0]);
     testExternalChildOutputDemandIsPublished(argv[0]);
     testConfiguredOutputFieldDemandMaterializesDependentPort(argv[0]);

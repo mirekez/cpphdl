@@ -119,7 +119,10 @@ public:
 //    }
 \
     template<typename T> using remove_cvref_t = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
-    template<typename F> using invoke_result_t = typename std::invoke_result_t<F&>;
+    // Ports invoke a callable with no arguments. The direct expression has the
+    // same substitution rules here, without instantiating std::invoke's member
+    // pointer dispatch for every generated binding in a large HDL hierarchy.
+    template<typename F> using invoke_result_t = decltype(std::declval<F&>()());
 
     template<typename F> using enable_if_pointer =
         typename std::enable_if<std::is_pointer<invoke_result_t<F>>::value && !std::is_same<remove_cvref_t<F>,function_ref>::value>::type;

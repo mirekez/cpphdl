@@ -1,4 +1,7 @@
 #include "cpphdl.h"
+#ifndef GETTER_MEMORY_DEPTH
+#define GETTER_MEMORY_DEPTH 32
+#endif
 
 class MemoryGetters : public cpphdl::Module {
 public:
@@ -11,7 +14,7 @@ public:
     cpphdl::reg<cpphdl::logic<1>> held;
     cpphdl::reg<cpphdl::logic<5>> cursor;
     cpphdl::reg<cpphdl::logic<64>> first, second, forwarded;
-    cpphdl::memory<cpphdl::logic<64>, 1, 32> rows;
+    cpphdl::memory<cpphdl::logic<64>, 1, GETTER_MEMORY_DEPTH> rows;
     cpphdl::logic<64> committed_comb, pending_comb;
     cpphdl::logic<64>& committed_func() {
         committed_comb = rows[uint64_t(cursor._next)];
@@ -26,7 +29,7 @@ public:
         cursor._next = address_in();
         first._next = committed_func();
         rows[uint64_t(cursor._next)] = data_in();
-        cursor._next = cursor._next + 1;
+        cursor._next = (uint64_t(cursor._next) + 1) % GETTER_MEMORY_DEPTH;
         second._next = committed_func();
         cursor._next = address_in();
         forwarded._next = pending_func();
@@ -41,11 +44,11 @@ extern MemoryGetters cpphdl_top;
 #include <cstdio>
 int main() {
     cpphdl_native::Model model;
-    std::array<uint64_t, 32> rows{};
+    std::array<uint64_t, GETTER_MEMORY_DEPTH> rows{};
     for (unsigned sample = 0; sample < 4096; ++sample) {
-        unsigned address = sample % 32;
+        unsigned address = sample % GETTER_MEMORY_DEPTH;
         uint64_t data = uint64_t(sample + 1) * 0x123456789abcdefULL;
-        uint64_t first = rows[address], second = rows[(address + 1) % 32];
+        uint64_t first = rows[address], second = rows[(address + 1) % GETTER_MEMORY_DEPTH];
         model.address[0] = address; model.data[0] = data; model.data[1] = data >> 32;
         model.work_reset[0] = 0;
         model.eval(false); model.eval(true); model.eval(false);

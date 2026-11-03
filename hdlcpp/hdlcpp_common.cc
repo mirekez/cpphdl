@@ -82,6 +82,8 @@ struct ModuleGen {
     std::vector<std::pair<std::string, std::string>> constants;
     std::vector<std::string> members;
     std::vector<std::string> memberTypes;
+    std::set<std::string> instanceModuleTypes;
+    std::set<std::string> implicitClockPorts;
     std::vector<std::string> memberNames;
     std::map<std::string, std::string> memberArraySizes;
     std::map<std::string, std::vector<std::string>> memberArrayDimensions;
@@ -92,6 +94,7 @@ struct ModuleGen {
     std::vector<std::pair<std::string, std::string>> assigns;
     std::vector<std::string> assignLines;
     std::set<std::string> portNames;
+    std::set<std::string> sourcePortNames;
     std::set<std::string> varNames;
     std::set<std::string> combAssignedVars;
     std::set<std::string> seqAssignedVars;
@@ -362,12 +365,15 @@ static bool isClockPortName(const std::string& name)
     auto n = name;
     std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     return n == "clk" || n == "clk_i" || n == "clock" || n == "clock_i" ||
-           n == "hclk" || n == "aclk" || n == "clk_in" || n == "clock_in" ||
+           // APB's pclk follows the same implicit system-clock convention as
+           // AHB hclk and AXI aclk, including connections from a *_clk parent.
+           n == "hclk" || n == "aclk" || n == "pclk" || n == "clk_in" || n == "clock_in" ||
            n.rfind("clk_", 0) == 0 || n.rfind("clock_", 0) == 0 ||
            (n.size() > 4 && n.substr(n.size() - 4) == "_clk") ||
            (n.size() > 6 && n.substr(n.size() - 6) == "_clk_i") ||
            (n.size() > 5 && n.substr(n.size() - 5) == "_hclk") ||
            (n.size() > 5 && n.substr(n.size() - 5) == "_aclk") ||
+           (n.size() > 5 && n.substr(n.size() - 5) == "_pclk") ||
            (n.size() > 6 && n.substr(n.size() - 6) == "_clock");
 }
 
@@ -701,7 +707,7 @@ static std::string configuredPortType(const std::string& module,
                                       const std::string& port,
                                       const std::string& direction)
 {
-    auto ports = configuredTextMap("HDLCPP_PORT_TYPES");
+    const auto& ports = configuredTextMap("HDLCPP_PORT_TYPES");
     auto found = ports.find(module + "." + port);
     if (found == ports.end()) {
         return {};
@@ -720,7 +726,7 @@ static bool configuredPortTypeDependsOnTypeParameter(const std::string& module,
                                                      const std::string& port,
                                                      const std::string& direction)
 {
-    auto ports = configuredTextMap("HDLCPP_PORT_TYPES");
+    const auto& ports = configuredTextMap("HDLCPP_PORT_TYPES");
     auto found = ports.find(module + "." + port);
     if (found == ports.end()) {
         return false;
@@ -749,7 +755,7 @@ static bool configuredPortTypeRejectsNamedFields(const std::string& module,
                                                  const std::string& port,
                                                  const std::string& direction)
 {
-    auto ports = configuredTextMap("HDLCPP_PORT_TYPES");
+    const auto& ports = configuredTextMap("HDLCPP_PORT_TYPES");
     auto found = ports.find(module + "." + port);
     if (found == ports.end()) {
         return false;
@@ -1520,6 +1526,9 @@ static bool configuredNameEquals(const char* envName, const std::string& value)
 
 static const std::map<std::string, std::string>& configuredTextMap(const char* envName)
 {
+    // Callers doing lookups must retain this immutable reference. Copying a
+    // whole-design port table for each expression or connection is quadratic
+    // in the design size and dominates conversion of large parent modules.
     static std::map<std::string, std::map<std::string, std::string>> cache;
     auto pathValue = std::getenv(envName) ? std::string(std::getenv(envName)) : std::string();
     auto key = std::string(envName) + "=" + pathValue;

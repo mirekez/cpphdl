@@ -8,6 +8,22 @@ using namespace cpphdl;
 
 long _system_clock = 0;
 
+// Keep binding overloads available for zero-argument callables, including
+// lvalue-only and mutable functors; invalid calls must fail by substitution.
+struct LvaluePointerSource { logic<8>* operator()() &; };
+struct MutableValueSource { logic<8> operator()(); };
+struct NeedsArgument { logic<8> operator()(int); };
+struct RvalueOnlySource { logic<8> operator()() &&; };
+using TestPort = function_ref<logic<8>>;
+static_assert(std::is_constructible_v<TestPort, LvaluePointerSource>);
+static_assert(std::is_constructible_v<TestPort, MutableValueSource>);
+static_assert(std::is_constructible_v<TestPort, logic<8>(*)()>);
+static_assert(std::is_constructible_v<TestPort, logic<8>(*)() noexcept>);
+static_assert(std::is_constructible_v<TestPort, TestPort&>);
+static_assert(!std::is_constructible_v<TestPort, NeedsArgument>);
+static_assert(!std::is_constructible_v<TestPort, RvalueOnlySource>);
+static_assert(!std::is_constructible_v<TestPort, decltype(&MutableValueSource::operator())>);
+
 template<typename T, typename Raw>
 struct PointerPortProbe
 {

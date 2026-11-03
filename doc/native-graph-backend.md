@@ -218,10 +218,16 @@ Invalid values fail at construction. Each model also exposes
 can have more workers than one graph needs: generated calls pass their active
 lane count, and only those workers receive commands or participate in the join.
 Workers skipped for many transactions rejoin using independent command stamps.
-Workers and joins spin for at most 64 iterations before sleeping, rather than
-keeping spare cores busy for 4,096 iterations. This bounds dispatch overhead
-on hosts running other simulations or compilers; it does not change the graph
-schedule or its synchronization guarantees.
+Workers and joins default to a bounded 4,096-iteration spin window before
+entering atomic wait. This avoids frequent futex sleep/wakeup transitions for
+short hardware cycles. Set `CPPHDL_NATIVE_SPIN_LIMIT` before constructing an
+executor to override the window with an integer from 0 to 1,000,000. For example,
+`64` retains the previous short window for long-idle or oversubscribed workloads;
+`0` enters atomic wait immediately (the standard library may still spin briefly).
+The value is read once per executor, applies to both worker and caller waits,
+and does not change lane count, graph scheduling or synchronization guarantees.
+Invalid values fail at construction before workers are started. Existing
+executors keep their setting if the environment later changes.
 
 For independent module instances, outer parallelism can avoid the repeated
 barriers and duplicated fan-in of splitting each instance into worker cones.
@@ -294,6 +300,14 @@ including nested arrays and packed-struct field offsets, without interpreting
 the library's `.data` or element storage. Constant slices support wide values;
 dynamic slices remain limited to 64-bit receivers. Compiler-proved aggregates
 use native element storage by default in C++20+; no layout flag is required.
+
+Final native lowering uses Clang's translation-unit prefix mode to defer the
+end-of-file instantiation of simulation library code, including `std::function`
+bodies for port bindings. The graph frontend still asks Sema to instantiate each
+hardware function body it consumes. This reduces frontend memory without changing
+the generated C++ model or its port API. The graph regression also checks that a
+failing `static_assert` inside a reachable template body remains an error and
+does not leave a native model behind.
 
 Nonempty concatenations accept temporary `logic<0>` operands, including
 zero-count `repeat()` results produced by hdlcpp for parameterized sign extension.
@@ -436,7 +450,32 @@ A sequential comparison of the saved old runner and rebuilt runner measured
 These are single runs on the shared host; raw logs, hashes and regression
 results are under `firtool/benchmarks/20261008-memory-preserved/`.
 
+### Shared memory getters
+
+Committed-memory getters share their data even when the address width includes
+out-of-range values. Bounds validation is recorded relative to each getter's
+entry and replayed under the caller's current condition and evaluation phase.
+Conditions for the same memory/address pair are combined, avoiding a separate
+producer tree or validation record for every path through shared getters.
+Pending-memory getters still refresh against the current write history.
+`CppGraphGuardedMemory.cc` checks shared reads, disabled and enabled invalid
+addresses, work-phase reuse and one/four-thread execution; `NativeMemoryGetters.cc`
+also checks next-state address changes and pending writes at a non-power-of-two
+depth.
+
 ### Switches and early exits
+
+Final native lowering can prove incomplete FSM decodes safe when all executions
+from value-initialized state stay in the defined cases. A bounded decision-diagram
+analysis preserves correlations between state bits, computes a closed transition
+set, includes asynchronous reset values, and checks every affected output,
+next-state value, memory operation and host effect. Only an unobservable fallback
+is then replaced. The proof currently considers state groups of up to six bits;
+if its resource bounds are reached or the proof fails, the original undriven-value
+diagnostic remains. This runs automatically on the ordinary C++ graph and does not
+apply initialization assumptions to synthesis, partitions or streaming regions.
+`NativeStateReachability.cc` checks rejection cases; `CppGraphClosedFsm.sv` checks
+the OpenC910 PMU pattern against ordinary C++ and one/four-thread native execution.
 
 The ordinary C++ graph frontend supports value and void returns from switches,
 conditional early returns, grouped labels, fall-through, no-default switches,
@@ -445,9 +484,14 @@ inside a switch targets its enclosing loop. Exit predicates guard subsequent
 writes and host effects, not just the function's returned value. Callee exits
 do not terminate the caller, and each switch selector is evaluated once.
 
-Loops still require statically evaluable bounds and a local induction increment;
-this is not support for arbitrary runtime-bounded C++ loops. Dynamic control in
-structural assignment or register-commit phases remains unsupported.
+Loops require statically evaluable bounds. The induction variable may be a local
+or a whole scalar module field, including the native integer wrappers emitted by
+HDLCPP. Field counters keep their observable value after a runtime break and hold
+when the enclosing process branch is disabled. Increment expressions cannot
+mutate other storage or perform host effects. `CppGraphFieldLoop.cc` checks these
+rules against ordinary C++ and an independent oracle. Arbitrary runtime-bounded
+loops and dynamic control in structural assignment or register-commit phases
+remain unsupported.
 
 The `switch_control_cpp`, `switch_control_graph`, and `switch_control_verilator`
 regressions run the same source over exhaustive selectors, branch flags and

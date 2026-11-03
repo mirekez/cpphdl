@@ -35,6 +35,18 @@ target_link_libraries(hdlcpp PRIVATE slang::slang)
 add_executable(test_combs tests/test_combs.cpp)
 target_include_directories(test_combs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_combs COMMAND test_combs)
+add_test(NAME hdlcpp_nonansi_ports COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/nonansi_ports.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+add_test(NAME hdlcpp_legacy_operators COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/legacy_operators.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+add_test(NAME hdlcpp_wildcard_cases COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/wildcard_cases.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+add_test(NAME hdlcpp_legacy_ports COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/legacy_ports.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
 add_test(NAME hdlcpp_indexed_comb_proof COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/indexed_comb_proof.sh"
     "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")

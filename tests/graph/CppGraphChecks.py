@@ -33,6 +33,28 @@ def main():
                 raise AssertionError((command, result.returncode, result.stdout, result.stderr, logs))
             return result
 
+        include = fixtures.parents[1] / 'include'
+        run([args.cxx, '-std=c++23', '-O1', '-I' + str(fixtures.parents[1]),
+             '-I' + str(include), fixtures / 'NativeStateReachability.cc',
+             '-fsanitize=address,undefined', '-o', work / 'state-proof'])
+        print(run([work / 'state-proof']).stdout, end='')
+        rtl = work / 'CppGraphClosedFsm.sv'
+        shutil.copyfile(fixtures / rtl.name, rtl)
+        run([args.hdlcpp, rtl])
+        source = work / 'closed-fsm.cc'
+        source.write_text('#include "generated/CppGraphClosedFsm.h"\nextern ClosedFsm cpphdl_top;\n')
+        runner = fixtures / 'CppGraphClosedFsm.cc'
+        run([args.cxx, '-std=c++23', '-O1', '-I' + str(include), '-I' + str(work),
+             runner, '-o', work / 'ordinary-fsm'])
+        expected = run([work / 'ordinary-fsm']).stdout
+        for threads in (1, 4):
+            destination = work / ('closed-fsm-' + str(threads))
+            run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+                 '--optimize-threads=' + str(threads), '--runner', runner,
+                 '--output', destination, source, '--', '-DUSE_NATIVE',
+                 '-fsanitize=address,undefined'])
+            assert run([destination / 'run']).stdout == expected
+        print('ordinary SV-to-C++ graph: closed FSM matches 10000 cycles before/after reset, one/four threads')
         rtl = work / 'CppGraph.sv'
         shutil.copyfile(fixtures / rtl.name, rtl)
         run([args.hdlcpp, rtl])
@@ -58,6 +80,34 @@ def main():
              fixtures / 'CppGraphFeatures.cc', '--', '-DCPP_GRAPH_FEATURES_RUN',
              '-I' + str(fixtures.parents[1] / 'include'), '-fsanitize=address,undefined'])
         print(run([work / 'features/run']).stdout, end='')
+        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+             '--runner', fixtures / 'CppGraphFieldLoop.cc', '--output', work / 'field-loop',
+             fixtures / 'CppGraphFieldLoop.cc', '--', '-DCPP_GRAPH_FIELD_LOOP_RUN',
+             '-I' + str(fixtures.parents[1] / 'include'), '-fsanitize=address,undefined'])
+        print(run([work / 'field-loop/run']).stdout, end='')
+        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+             '--frontend-flag=-DCPP_GRAPH_FIELD_LOOP_EFFECT', '--output', work / 'field-loop-effect',
+             fixtures / 'CppGraphFieldLoop.cc'], success=False)
+        assert 'effectful C++ static loop increment unsupported' in (work / 'field-loop-effect/cpp-to-graph.log').read_text()
+        # Large HDLCPP designs import chained headers to bound frontend RAM.
+        # Check deserialized template bodies/bindings against the same ordinary
+        # C++ reference, rather than checking only that a PCH can be loaded.
+        cached_header = work / 'features-cache.h'
+        cached_header.write_text('#pragma once\n' + (fixtures / 'CppGraphFeatures.cc').read_text())
+        cached_pch = work / 'features-cache.pch'
+        run([args.cxx, '-std=c++23', '-fno-pch-instantiate-templates',
+             '-I' + str(fixtures.parents[1] / 'include'), '-x', 'c++-header',
+             cached_header, '-o', cached_pch])
+        cached_source = work / 'features-cache.cc'
+        cached_source.write_text('#include "features-cache.h"\n')
+        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+             '--frontend-flag=-include-pch', '--frontend-flag=' + str(cached_pch),
+             '--runner', fixtures / 'CppGraphFeatures.cc', '--output', work / 'cached-features',
+             cached_source, '--', '-DCPP_GRAPH_FEATURES_RUN',
+             '-I' + str(fixtures.parents[1] / 'include'), '-fsanitize=address,undefined'])
+        print(run([work / 'cached-features/run']).stdout, end='')
+        shutil.rmtree(work / 'cached-features')
+        cached_pch.unlink()
         run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
              '--runner', fixtures / 'CppGraphDependencies.cc', '--output', work / 'dependencies',
              fixtures / 'CppGraphDependencies.cc', '--', '-DCPP_GRAPH_DEPENDENCIES_RUN',
@@ -96,6 +146,18 @@ def main():
         assert not (work / 'depth-limit/model.h').exists()
         shutil.rmtree(work / 'depth')
         shutil.rmtree(work / 'depth-limit')
+        # Deferring simulation-only template instantiation must not hide an
+        # error in a hardware body requested by the native graph lowerer.
+        source = work / 'invalid-reachable-template.cc'
+        source.write_text('#include "cpphdl.h"\n'
+                          'template<unsigned N> class Invalid: public cpphdl::Module { public: '
+                          'void _work(bool) { static_assert(N == 0, "invalid reachable hardware body"); } '
+                          'void _strobe() {} }; extern Invalid<1> cpphdl_top;\n')
+        destination = work / 'invalid-reachable-template'
+        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+             '--output', destination, source], success=False)
+        assert 'invalid reachable hardware body' in (destination / 'cpp-to-graph.log').read_text()
+        assert not (destination / 'model.h').exists()
         for width in (1, 7, 8, 9, 16, 24, 32, 64, 65, 128):
             destination = work / ('byteswap-' + str(width))
             define = '-DGRAPH_BYTESWAP_WIDTH=' + str(width)
@@ -165,6 +227,31 @@ def main():
             log = (work / name / 'cpp-to-graph.log').read_text()
             assert diagnostic in log, (name, log)
             assert not (work / name / 'model.h').exists()
+        guarded_sizes = []
+        for depth, threads in ((8, 1), (12, 4)):
+            destination = work / ('guarded-memory-' + str(depth))
+            define = '-DGRAPH_GETTER_DEPTH=' + str(depth)
+            source = fixtures / 'CppGraphGuardedMemory.cc'
+            run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+                 '--optimize-threads=' + str(threads), '--frontend-flag=' + define,
+                 '--runner', source, '--output', destination, source, '--', define,
+                 '-DCPP_GRAPH_GUARDED_MEMORY_RUN', '-I' + str(fixtures.parents[1] / 'include'),
+                 '-fsanitize=address,undefined'])
+            print(run([destination / 'run']).stdout, end='')
+            # Repeated getter calls must share data and coalesce equivalent
+            # relative bounds checks instead of expanding exponentially.
+            guarded_sizes.append((destination / 'graph.cc').stat().st_size)
+            shutil.rmtree(destination)
+        assert guarded_sizes[1] < 2 * guarded_sizes[0], guarded_sizes
+        destination = work / 'unbounded-memory-getters'
+        source = fixtures / 'NativeMemoryGetters.cc'
+        define = '-DGETTER_MEMORY_DEPTH=17'
+        run([args.cpphdl, '--native-graph', '--top', 'cpphdl_top', '--cxx', args.cxx,
+             '--frontend-flag=' + define, '--runner', source, '--output', destination,
+             source, '--', define, '-DCHECK_MEMORY_GETTERS',
+             '-I' + str(fixtures.parents[1] / 'include'), '-fsanitize=address,undefined'])
+        print(run([destination / 'run']).stdout, end='')
+        shutil.rmtree(destination)
         for words, depth in ((1, 17), (2, 17), (2, 32)):
             destination = work / ('memory-' + str(words) + '-' + str(depth))
             defines = ['-DGRAPH_MEMORY_WORDS=' + str(words), '-DGRAPH_MEMORY_DEPTH=' + str(depth)]

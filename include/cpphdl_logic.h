@@ -239,7 +239,14 @@ struct logic : public bitops<logic<WIDTH>>, public detail::logic_conversions<WID
     template<size_t WIDTH1>
     constexpr logic(const logic_bits<WIDTH1>& other);
 
+    // Clang retains per-use enable_if substitution ASTs until lowering ends.
+    // Constraints let it cache eligibility instead. Keep exactly the same
+    // predicates and the original signatures for C++17 consumers.
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    template<typename T> requires (std::is_integral_v<T> || std::is_enum_v<T>)
+#else
     template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+#endif
     __attribute__((always_inline)) constexpr logic(T other) : bytes{}
     {
         assign_uint64(static_cast<uint64_t>(other));
@@ -248,7 +255,11 @@ struct logic : public bitops<logic<WIDTH>>, public detail::logic_conversions<WID
     // A packed value such as cat can be a valid SystemVerilog constant expression.
     // Mark the generic pack-aware constructor constexpr so that its constexpr pack()
     // result can initialize logic without falling back to a runtime-only conversion.
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    template<typename T> requires (!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>)
+#else
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
+#endif
     constexpr logic(const T& other) : bytes{}
     {
         if constexpr (detail::has_pack_method<T>::value) {
@@ -278,14 +289,22 @@ struct logic : public bitops<logic<WIDTH>>, public detail::logic_conversions<WID
 
     constexpr logic& operator=(const logic& other) = default;
 
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    template<typename T> requires (std::is_integral_v<T> || std::is_enum_v<T>)
+#else
     template<typename T, typename std::enable_if_t<std::is_integral_v<T> || std::is_enum_v<T>, int> = 0>
+#endif
     __attribute__((always_inline)) constexpr logic& operator=(T other)
     {
         assign_uint64(static_cast<uint64_t>(other));
         return *this;
     }
 
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    template<typename T> requires (!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>)
+#else
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
+#endif
     logic& operator=(const T& other)
     {
         if constexpr (detail::has_pack_method<T>::value) {
@@ -737,7 +756,11 @@ struct logic_bits : public logic<WIDTH>
         return *this;
     }
 
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    template<typename T> requires (!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>)
+#else
     template<typename T, typename std::enable_if_t<!std::is_integral_v<T> && !std::is_enum_v<T> && !is_logic_v<T> && !is_logic_bits_v<T>, int> = 0>
+#endif
     logic_bits& operator=(const T& other)
     {
         *(logic<WIDTH>*)this = other;

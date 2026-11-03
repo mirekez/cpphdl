@@ -2,6 +2,7 @@
 
 #include "include/cpphdl_graph.h"
 #include "CppGraphEnvironment.h"
+#include "CppGraphReachability.h"
 #include "hls/AstClocked.h"
 #include "synth/BlackBox.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -77,10 +78,12 @@ class Lowering {
     struct GetterReads {
         Environment fields;
         std::set<std::shared_ptr<const GetterReads>> producers;
+        std::vector<MemoryAccess> guardedMemoryReads;
     };
     std::map<std::string, std::shared_ptr<GetterReads>> getterReads;
     Environment originalReadVersions;
     std::vector<std::string> activeGetters;
+    std::vector<size_t> getterPathDepth;
     std::map<QualType, unsigned> widths;
     std::vector<std::string> stack;
     bool reportProgress = std::getenv("CPPHDL_GRAPH_PROGRESS") != nullptr;
@@ -479,11 +482,38 @@ class Lowering {
         memories[item.key] = index;
         return index;
     }
-    Value executionGuard() {
+    Value executionGuard(size_t begin = 0) {
         Value enabled{1};
-        for (const auto& [condition, positive] : effectPath)
+        for (size_t index = begin; index < effectPath.size(); ++index) {
+            const auto& [condition, positive] = effectPath[index];
             enabled = graph.binary("and", enabled, positive ? condition : graph.unary("not", condition), 1);
+        }
         return enabled;
+    }
+    void guardedMemoryRead(size_t identity, const Value& address, const Value& localGuard = Value{1}) {
+        if (resetting) fail("asynchronous reset cannot access memory");
+        if (structural || committing) fail("C++ memory access outside evaluation");
+        graph.memoryAccesses.push_back({identity, address,
+            graph.binary("and", executionGuard(), localGuard, 1), working,
+            working && activeProcess >= 0 ? activeProcess / 2 : -1,
+            working && activeProcess >= 0 && bool(activeProcess % 2)});
+        // Cache data independently of bounds validation. A getter's guard is
+        // relative to its entry: reusing it under a different caller branch
+        // must check that branch, without rebuilding the entire producer cone.
+        for (size_t index = 0; index < activeGetters.size(); ++index) {
+            auto guard = graph.binary("and", executionGuard(getterPathDepth[index]), localGuard, 1);
+            auto& accesses = getterReads.at(activeGetters[index])->guardedMemoryReads;
+            auto found = std::find_if(accesses.begin(), accesses.end(), [&](const auto& access) {
+                return access.memory == identity && access.address == address;
+            });
+            // A shared RAM read needs one validity condition: any path that
+            // executes it. Keeping one record per caller path recreates the
+            // exponential producer tree in validation metadata instead.
+            if (found == accesses.end())
+                accesses.push_back({identity, address, std::move(guard), false});
+            else
+                found->enabled = graph.binary("or", found->enabled, guard, 1);
+        }
     }
     Item memoryRow(Item base, Item index, QualType type, bool pending) {
         if (resetting) fail("asynchronous reset cannot access memory");
@@ -492,21 +522,24 @@ class Lowering {
         auto identity = memoryId(base);
         auto address = resize(read(index), 64);
         auto count = graph.memories[identity].width;
-        auto enabled = executionGuard();
-        graph.memoryAccesses.push_back({identity, address, enabled, working,
-            working && activeProcess >= 0 ? activeProcess / 2 : -1, working && activeProcess >= 0 && bool(activeProcess % 2)});
         if (pending && activeProcess >= 0) {
             auto [entry, fresh] = pendingReaders.emplace(identity, activeProcess);
             if (!fresh && entry->second != activeProcess) fail("cross-clock pending memory read");
         }
         // Committed RAM is immutable during one work transaction. A bounded
-        // read can reuse its getter cone; only unchecked bounds guards and
-        // pending-row forwarding depend on this invocation's path/history.
+        // read can reuse its getter cone. Replay unchecked bounds guards on
+        // cache hits; pending-row forwarding still needs the write history.
         uint64_t maximumAddress = 0;
         auto resolvedAddress = graph.resolved(address);
         for (unsigned bit = 0; bit < resolvedAddress.size(); ++bit)
             if (resolvedAddress[bit] != 0) maximumAddress |= uint64_t(1) << bit;
-        if (pending || maximumAddress >= graph.memories[identity].depth)
+        if (maximumAddress >= graph.memories[identity].depth)
+            guardedMemoryRead(identity, address);
+        else
+            graph.memoryAccesses.push_back({identity, address, executionGuard(), working,
+                working && activeProcess >= 0 ? activeProcess / 2 : -1,
+                working && activeProcess >= 0 && bool(activeProcess % 2)});
+        if (pending)
             for (const auto& getter : activeGetters) memoryGetters.insert(getter);
         Value bits;
         for (unsigned offset = 0; offset < count; offset += 64) {
@@ -1327,14 +1360,19 @@ class Lowering {
         bool refresh = false;
         if (cache && results.count(key)) {
             if (effectfulResults.count(key)) fail("repeated effectful C++ getter unsupported: " + key);
-            // Bounds guards and pending-row forwarding belong to this call's
-            // path and write history. Re-lower them; pure read nodes still CSE.
+            // Pending-row forwarding depends on the current write history.
+            // Committed reads are shared, with bounds guards replayed below.
             refresh = memoryGetters.count(key);
             // Share pure producers until an observed blocking-state version
             // changes. Rebuilding only those getters preserves sequential
             // visibility without duplicating the whole combinational graph.
             refresh |= staleGetter(getterReads.at(key));
             if (!refresh) {
+                // Copy before replay: forward-reference getters may be active,
+                // and recording a caller's access must not mutate this iteration.
+                auto accesses = getterReads.at(key)->guardedMemoryReads;
+                for (const auto& access : accesses)
+                    guardedMemoryRead(access.memory, access.address, access.enabled);
                 inheritGetterReads(key);
                 return value(results.at(key), function->getReturnType());
             }
@@ -1376,7 +1414,10 @@ class Lowering {
             if (concurrent) netWrites.push_back({receiver.key + "." + storageName, std::vector<unsigned>(output.size(), 0)});
         }
         stack.push_back(key);
-        if (cache) activeGetters.push_back(key);
+        if (cache) {
+            activeGetters.push_back(key);
+            getterPathDepth.push_back(effectPath.size());
+        }
         if (cache) producerStorage.push_back(receiver.key + "." + returnStorage->getNameAsString());
         auto result = statement(function->getBody()).result;
         if (oneClock && effectCount != effectsBefore) fail("CPPHDL_ONE_CLOCK requires a pure combinational function");
@@ -1398,6 +1439,7 @@ class Lowering {
             graph.connect(output, read(cast(*result, function->getReturnType())));
             if (effectCount != effectsBefore) effectfulResults.insert(key);
             activeGetters.pop_back();
+            getterPathDepth.pop_back();
             inheritGetterReads(key);
         }
         stack.pop_back(); object = savedObject; locals = std::move(savedLocals);
@@ -2445,12 +2487,12 @@ class Lowering {
         if (auto loop = dyn_cast<ForStmt>(body)) {
             statement(loop->getInit());
             // Separate the compile-time unrolling cursor from the observable
-            // local. A runtime break must leave i at the breaking iteration,
+            // storage. A runtime break must leave i at the breaking iteration,
             // not at the final statically unrolled bound.
             std::string inductionKey;
             Value inductionValue;
             if (loop->getInc()) {
-                const auto* increment = loop->getInc()->IgnoreParenImpCasts();
+                const auto* increment = loop->getInc()->IgnoreImplicit()->IgnoreParenImpCasts();
                 const Expr* destination = nullptr;
                 if (auto unary = dyn_cast<UnaryOperator>(increment))
                     if (unary->isIncrementDecrementOp()) destination = unary->getSubExpr();
@@ -2459,11 +2501,34 @@ class Lowering {
                     if (binary->getRHS()->HasSideEffects(context))
                         fail("effectful C++ static loop increment unsupported", loop->getInc());
                 }
+                if (auto operation = dyn_cast<CXXOperatorCallExpr>(increment)) {
+                    const auto op = operation->getOperator();
+                    if ((op == OO_Equal || op == OO_PlusPlus || op == OO_MinusMinus ||
+                         op == OO_PlusEqual || op == OO_MinusEqual) &&
+                        operation->getNumArgs() && integerWrapperWidth(operation->getArg(0)->getType()))
+                        destination = operation->getArg(0);
+                }
                 auto reference = destination ? dyn_cast<DeclRefExpr>(destination->IgnoreParenImpCasts()) : nullptr;
-                if (!reference || !locals.count(reference->getDecl()) ||
-                    !locals.at(reference->getDecl()).key.starts_with("$local"))
-                    fail("C++ static loop requires a local induction increment", loop->getInc());
-                inductionKey = locals.at(reference->getDecl()).key;
+                if (reference && locals.count(reference->getDecl()) &&
+                    locals.at(reference->getDecl()).key.starts_with("$local")) {
+                    inductionKey = locals.at(reference->getDecl()).key;
+                } else if (destination && isa<MemberExpr>(destination->IgnoreParenImpCasts()) &&
+                           (clean(destination->getType())->isIntegralOrEnumerationType() ||
+                            integerWrapperWidth(destination->getType())) &&
+                           !destination->HasSideEffects(context)) {
+                    // HDL loop counters can be module fields whose final value
+                    // is observable. The initializer already went through write(),
+                    // including its state/configuration ownership checks. Reuse
+                    // the same cursor/exit handling as a local for a whole scalar
+                    // field; do not accept slices, memory rows or register proxies.
+                    auto target = expr(destination);
+                    if (moduleFields.count(target.key) && cells.count(target.key) &&
+                        !target.selectedWidth && !target.bitSelection && !target.memory &&
+                        target.rangeMask.empty() && number(graph.resolved(target.offset)) == 0)
+                        inductionKey = target.key;
+                }
+                if (inductionKey.empty())
+                    fail("C++ static loop requires a local or scalar-field induction increment", loop->getInc());
                 inductionValue = cells.at(inductionKey);
             }
             Flow flow;
@@ -2485,8 +2550,14 @@ class Lowering {
                 // Side-effecting/dynamic loop increments are not static loops.
                 if (loop->getInc()) {
                     auto effects = effectCount;
+                    auto beforeIncrement = cells;
                     expr(loop->getInc());
                     if (effectCount != effects) fail("effectful C++ static loop increment unsupported", loop->getInc());
+                    // Wrapper assignment/increment may create conversion
+                    // temporaries, but cannot mutate any other existing storage.
+                    for (const auto& key : cells.changedKeys(beforeIncrement))
+                        if (key != inductionKey && (beforeIncrement.count(key) || !key.starts_with("$")))
+                            fail("effectful C++ static loop increment unsupported", loop->getInc());
                     inductionValue = graph.mux(flow.normal, cells.at(inductionKey), inductionValue);
                 }
             }
@@ -2659,6 +2730,9 @@ public:
                 // leave partition/synthesis graphs available for later consumers.
                 graph.validateClocks();
                 const auto removed = graph.pruneUnusedState();
+                const auto unreachable = NativeStateReachability(graph).run();
+                if (reportProgress && unreachable)
+                    llvm::errs() << "C++ graph native reachability: proved_unreachable_fallbacks=" << unreachable << '\n';
                 if (reportProgress)
                     llvm::errs() << "C++ graph final native pruning: removed_state_groups=" << removed
                                  << " retained_state_groups=" << graph.states.size() << '\n';
@@ -2744,6 +2818,14 @@ class Action : public ASTFrontendAction {
 public:
     Action(std::string root, std::string output, bool& success, std::vector<Clock> clocks)
         : root(std::move(root)), output(std::move(output)), success(success), clocks(std::move(clocks)) {}
+    TranslationUnitKind getTranslationUnitKind() override {
+        // Native lowering requests reachable hardware bodies through Sema itself.
+        // A complete TU also instantiates pending std::function implementations
+        // for every port binding before we can lower anything. Defer that work
+        // as Clang does for PCH: preserve the declarations and template patterns,
+        // then instantiate the bodies actually consumed by the graph frontend.
+        return finalNativeGraph ? TU_Prefix : TU_Complete;
+    }
     bool BeginSourceFileAction(CompilerInstance& compiler) override {
         compiler.getDiagnostics().setSeverity(diag::err_cannot_open_file, diag::Severity::Ignored, SourceLocation());
         return true;
