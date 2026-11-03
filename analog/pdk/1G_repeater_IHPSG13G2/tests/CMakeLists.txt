@@ -44,6 +44,11 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(analog.pdk.1g_repeater.ideal_contacts PROPERTIES LABELS "analog;pdk;repeater" TIMEOUT 90)
   endif()
   if(EXISTS "${repeater_pdk}/.cpphdl/venv/bin/python")
+    add_test(NAME analog.pdk.1g_repeater.package_development_layout
+      COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/package_development_layout.py")
+    set_tests_properties(analog.pdk.1g_repeater.package_development_layout PROPERTIES
+      LABELS "analog;pdk;repeater;geometry" TIMEOUT 90 SKIP_RETURN_CODE 77)
     add_test(NAME analog.pdk.1g_repeater.fill_remainder COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
       "${CMAKE_CURRENT_SOURCE_DIR}/fill_remainder.py")
     set_tests_properties(analog.pdk.1g_repeater.fill_remainder PROPERTIES LABELS "analog;pdk;repeater;geometry" TIMEOUT 30)

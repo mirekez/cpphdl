@@ -1,10 +1,33 @@
 **/results/
-# Selected checked layout artifacts; simulation/build results remain ignored.
+# Selected current physical snapshots; raw build/test results remain ignored.
 !IHPSG13G2/results/
 IHPSG13G2/results/*
-!IHPSG13G2/results/processing_clock_control.gds.gz
-!IHPSG13G2/results/processing_clock_control_layers.png
-!IHPSG13G2/results/processing_clock_control_provenance.json
+!IHPSG13G2/results/README.md
+!IHPSG13G2/results/IHP-LICENSE.txt
+!IHPSG13G2/results/repeater_development.gds.gz
+!IHPSG13G2/results/repeater_layers.png
+!IHPSG13G2/results/development_provenance.json
+!IHPSG13G2/results/receiver_pcs.png
+!IHPSG13G2/results/flow_control.png
+!IHPSG13G2/results/receive_reference_current.png
+!IHPSG13G2/results/receive_sampler.png
+!IHPSG13G2/results/transmit_bias.png
+!IHPSG13G2/results/transmit_replica.png
+!IHPSG13G2/results/storage_adapter.png
+!IHPSG13G2/results/transmit_translator.png
+!IHPSG13G2/results/transmit_main.png
+!IHPSG13G2/results/transmit_history.png
+!IHPSG13G2/results/transmit_pullup.png
+!IHPSG13G2/results/transmit_main_storage.png
+!IHPSG13G2/results/transmit_history_storage.png
+!IHPSG13G2/results/reference_clock.png
+!IHPSG13G2/results/realized_clock.png
+!IHPSG13G2/results/processing_oscillator.png
+!IHPSG13G2/results/processing_gate.png
+!IHPSG13G2/results/processing_control_current.png
+!IHPSG13G2/results/phy_reset.png
+!IHPSG13G2/results/forwarding_core.png
+!IHPSG13G2/results/padframe_current.png
 *.osdi
 *.raw
 *.dat

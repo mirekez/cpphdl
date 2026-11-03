@@ -1,259 +1,192 @@
-# 1G repeater ASIC development artifacts
+# Current 1G physical layouts
 
-The November 3 update publishes the completed processing-clock controller
-macro and a view rendered from its actual GDSII masks. Its recorded standalone
-timing, full-deck DRC and transistor LVS pass. This packages the existing loaded
-controller implementation; it is not a newly integrated chip. **The integrated 1000BASE-T
-repeater ASIC is unfinished and is not released for fabrication.**
+One combined GDSII contains the current available physical blocks, including failed and unfinished candidates.
+**This is a development assembly, not an electrically integrated or fabrication-qualified repeater.**
+The merge adds no signal, clock or power connections between blocks. Separate clock alternatives and standalone constituent blocks are included for review.
 
-The October 28 receiver-reference storage-access layout and its two views are
-also retained. Its local geometry and LVS checks pass; electrical qualification
-remains open.
+- [Combined GDSII](repeater_development.gds.gz): open `RepeaterDevelopmentAssembly` in KLayout.
+- [Layer overview](repeater_layers.png): actual drawing-layer masks, regenerated from that GDSII.
+- [Provenance and recorded checks](development_provenance.json): source hashes, status, placements and namespace mapping.
 
-The digital forwarding core, separate unpopulated padframe, and their four
-images are retained October 24 snapshots. Their verification and timing figures
-below describe that historical revision, not the current integrated design.
-None of these standalone layouts contains a complete repeater.
+![Current layout layers](repeater_layers.png)
 
-Only selected layouts, images, provenance, documentation and the upstream
-license are committed here. Raw traces and verification databases stay in the
-ignored build directory.
+## Current contents
 
-## Files
+The receiver export uses the latest completed pin-repair candidate, even though its timing screen fails. Global-route guides are not converted into metal: only geometry actually present in the OpenROAD checkpoint is exported. The receiver therefore contains placement/CTS/power geometry and still needs detailed signal routing.
+The PCS includes soft branch metrics and the trellis decoder. The receive equalizer/echo-canceller DSP, complete ADC/AFE and complete transmitter do not yet have integrated layouts in this package; their separate available physical constituents are listed below.
+The old forwarding core and padframe have no newer physical revisions, so their latest available October 24 geometry is retained. The padframe opening is too small for this collection. The combined bounding box is a review arrangement, not a proposed die size.
 
-| File | Content |
-| --- | --- |
-| [processing_clock_control.gds.gz](processing_clock_control.gds.gz) | Filled and routed `ProcessingClockControl`, 280 × 280 µm; 80 fF ready-output load |
-| [processing_clock_control_layers.png](processing_clock_control_layers.png) | Devices/lower routing, upper routing and complete drawing-layer views |
-| [processing_clock_control_provenance.json](processing_clock_control_provenance.json) | Original implementation hashes, retained-source audit, checked evidence and package hashes |
-| [receive_reference.gds.gz](receive_reference.gds.gz) | October 28 receiver reference with direct storage-plate and ground access; 1846.23 × 321.47 µm |
-| [receive_reference_layers.png](receive_reference_layers.png) | Whole macro, lower devices/routing, and upper routing masks |
-| [receive_reference_storage.png](receive_reference_storage.png) | Divider and output storage connection detail |
-| [receive_reference_provenance.json](receive_reference_provenance.json) | Current macro hashes, geometry evidence, source fingerprints and qualification limits |
-| [repeater_core.gds](repeater_core.gds) | Filled, routed `RepeaterCore`, 120 × 120 µm; 1 nm database unit |
-| [repeater_padframe.gds.gz](repeater_padframe.gds.gz) | Losslessly compressed `RepeaterPadframe`, 1280 × 1280 µm; independent of the core |
-| [core_layers.png](core_layers.png) | Six views of actual core masks, with scale bars |
-| [padframe.png](padframe.png) | Actual padframe geometry and its unpopulated opening |
-| [forwarding_waveforms.png](forwarding_waveforms.png) | Selected samples from the fresh digital forwarding capture |
-| [receive_dsp_pcs.png](receive_dsp_pcs.png) | Receiver training, pair acquisition, PCS lock and byte-valid traces for all four functional cases |
-| [provenance.json](provenance.json) | Artifact hashes, source/PDK revisions, dimensions, pinout, recorded verification summaries and limitations |
-| [IHP-LICENSE.txt](IHP-LICENSE.txt) | Apache-2.0 license for the embedded IHP PDK geometry |
+| ID / cell in combined GDS | Current module view | Recorded state |
+| --- | --- | --- |
+| 01 / `B00_PCSReceiver` | [Receiver PCS / current placed checkpoint](receiver_pcs.png) | Placement + CTS; signal detailed routing pending. Timing margin screen fails. |
+| 02 / `B01_FlowControlledRepeater` | [Flow control / SRAM assembly candidate](flow_control.png) | Routed block with SRAM well repair; candidate, DRC/LVS qualification incomplete. |
+| 03 / `B02_ReceiveCommonReference` | [Receive common reference / amplifier repair](receive_reference_current.png) | Recorded local DRC + LVS pass; unfilled, electrical qualification incomplete. |
+| 04 / `B03_ReceiveSampler` | [Receive sample-and-hold](receive_sampler.png) | Clock-shield separation candidate; recorded geometry test pass, electrical work open. |
+| 05 / `B04_TransmitBias` | [Transmit bias / reference access](transmit_bias.png) | Recorded geometry receipt; electrical qualification and full-chip integration open. |
+| 06 / `B05_TransmitTranslationBias` | [Transmit translation bias / replica](transmit_replica.png) | MOS storage candidate; physical block, full electrical acceptance incomplete. |
+| 07 / `B06_HVStorageAdapter` | [High-voltage storage adapter](storage_adapter.png) | Recorded geometry test; standalone storage-access block. |
+| 08 / `B07_TransmitTranslator` | [Transmit level translator](transmit_translator.png) | PSP layout candidate; recorded local checks, system qualification incomplete. |
+| 09 / `B08_TransmitCell` | [Transmit main current cell](transmit_main.png) | Current-cell geometry; standalone device array, system qualification incomplete. |
+| 10 / `B09_TransmitCell` | [Transmit history current cell](transmit_history.png) | Current-cell geometry; standalone device array, system qualification incomplete. |
+| 11 / `B10_TransmitPullup` | [Transmit pullup](transmit_pullup.png) | Standalone pullup geometry; full transmitter integration incomplete. |
+| 12 / `B11_TransmitMainChargeStorage` | [Transmit main charge storage](transmit_main_storage.png) | Standalone intended storage, not extracted parasitic capacitance. |
+| 13 / `B12_TransmitHistoryChargeStorage` | [Transmit history charge storage](transmit_history_storage.png) | Standalone intended storage, not extracted parasitic capacitance. |
+| 14 / `B13_ReferenceClockGenerator` | [Reference clock generator / hierarchical layout](reference_clock.png) | Recorded hierarchy/LVS checks; connected-system electrical qualification open. |
+| 15 / `B14_RealizedReferenceClock` | [Reference clock / realized-loop candidate](realized_clock.png) | Unfilled realized-loop layout; recorded local checks, electrical acceptance open. |
+| 16 / `B15_ProcessingClockOscillator` | [Processing clock oscillator](processing_oscillator.png) | Narrow-layout candidate; standalone oscillator, integrated clock tree unfinished. |
+| 17 / `B16_ProcessingClockGate` | [Processing clock gate](processing_gate.png) | Recorded placement proof; clock distribution integration unfinished. |
+| 18 / `B17_ProcessingClockControl` | [Processing clock controller / drift revision](processing_control_current.png) | Recorded setup/hold +0.0182/+0.0612 ns; DRC/LVS pass for this block only. |
+| 19 / `B18_PHYResetControl` | [PHY reset controller](phy_reset.png) | Standalone physical reset controller; system CDC/reset qualification open. |
+| 20 / `B19_RepeaterCore` | [Forwarding core / retained implementation](forwarding_core.png) | Historical physical block retained; not connected to the other blocks. |
+| 21 / `B20_RepeaterPadframe` | [Padframe / retained implementation](padframe_current.png) | Historical physical block retained; not connected to the other blocks. |
 
-## Processing clock controller: published November 3
+## Per-module details
 
-![Processing clock controller masks](processing_clock_control_layers.png)
+### Receiver PCS / current placed checkpoint
 
-The packed GDS is byte-for-byte identical after decompression to the filled
-controller that passed full-deck DRC (zero violations) and transistor LVS
-(46 circuits, 40 ports, 20,404 devices). Recorded extracted setup/hold slack is
-**+0.037747696/+0.064936139 ns**, using the original nominal routed RC.
-Native and routed traces match for all 292,092 recorded events.
+Current square-lookup revision, including branch metrics and trellis decoder. Nominal global-route estimate setup/hold +0.412071288/+0.123619340 ns; 1.75x capacitance estimate -0.661499321/+0.140293896 ns. GDS includes placed cells, physical clock/power wires present in the ODB; global-route guides are not signal metal. No receiver equalizer/echo-canceller DSP is included in this PCS block. Latest completed equivalent-input pin repair; enlarged-capacitance clock-pin limits also fail. This failed candidate is published as-is, without replacing the repair driver's retained checkpoint.
 
-The packager rechecks the saved reports, traces, GDS and source hashes. Original
-source snapshots cover later flow-script changes. The original native test
-executable has been overwritten by subsequent builds; its expected hash is
-reported explicitly, while its source and original native/routed traces are
-retained and checked. Packaging does not rerun simulation or renew signoff.
-Post-fill coupling, reset release, metastability and the connected receiver
-clock tree still require qualification.
+![Receiver PCS / current placed checkpoint](receiver_pcs.png)
 
-Regenerate the package using the PDK Python with Pillow available:
+### Flow control / SRAM assembly candidate
 
-```sh
-PYTHONPATH=out/pdf-renderer pdk/IHPSG13G2/.cpphdl/venv/bin/python \
-    pdk/1G_repeater_IHPSG13G2/package_clock_results.py \
-    --implementation build/clock-integration/controller-loaded-admission-v7/ProcessingClockControl-1jbz89kz/physical
-```
+Latest row-well repair candidate. Preceding filled assembly had failing LVS. Current modified assembly has no completed full DRC/LVS qualification; no pass is inherited from the earlier revision.
 
-## Receiver reference: October 28
+![Flow control / SRAM assembly candidate](flow_control.png)
 
-![Receiver-reference masks](receive_reference_layers.png)
+### Receive common reference / amplifier repair
 
-![Storage connections](receive_reference_storage.png)
+Latest amplifier-stack candidate. Recorded local geometry and LVS pass; density/fill and electrical acceptance remain separate.
 
-The `ReceiveCommonReference` macro retains the original devices and intentional
-capacitors. Direct upper-metal access connects the 16 output MIM plates (80 pF)
-and two divider MIM plates (10 pF), with additional ground-return connections.
-The footprint is **0.5935 mm²**. The maintained layout test passed with 46
-matched LVS circuits, three top ports and 81 instantiated devices.
+![Receive common reference / amplifier repair](receive_reference_current.png)
 
-The local DRC check found zero non-density violations. Minimum-density rules
-`AFil.g`, `GFil.g`, `M1.j`, `M2.j`, `M3.j`, `M4.j`, `M5.j`, `TM1.c` and `TM2.c`
-remain for fill during chip integration. This is an unfilled standalone macro;
-these checks do not establish full-chip DRC or electrical acceptance. The
-extracted transient for the storage-access repair is still pending.
+### Receive sample-and-hold
 
-The packager verifies source and artifact hashes against the completed geometry
-receipt and checks lossless GDS compression before publishing. Its separate
-provenance preserves the older core/padframe package history.
+Latest separated-clock-shield sampler candidate. Geometry receipt passes; not a complete ADC or receive AFE.
 
-## Historical October 24 snapshots
+![Receive sample-and-hold](receive_sampler.png)
 
-The remaining layout, timing and functional evidence below belongs to the
-October 24 package. Consult [qualification-status.md](../qualification-status.md)
-for subsequent implementation work and unresolved checks.
+### Transmit bias / reference access
 
-## Digital forwarding core
+Latest maintained finger-access bias geometry. Saved checks are included as evidence, not rerun at publication.
 
-![Core mask layers](core_layers.png)
+![Transmit bias / reference access](transmit_bias.png)
 
-The C++RTL source is
-[`RepeaterCore`](../../../pdk/1G_repeater_IHPSG13G2/repeater.hpp).
-An external 125 MHz reference clocks both directions. Each input word contains
-eight data bits, a valid bit and an error bit. The core registers A's received
-word onto B's transmit interface and vice versa when both links and the enable
-input are asserted. Reset or a lost link suppresses forwarding. Input streams
-must already be aligned to the reference clock by the PHYs.
+### Transmit translation bias / replica
 
-The block uses a nominal 1.2 V supply and contains 21 mapped state bits. Its
-120 × 120 µm footprint is **0.0144 mm²**, not the area of a complete repeater.
-It has no copper receivers, transmitters, pads, seal ring or integrated PHYs.
+Latest replica MOS-storage physical candidate, separate from translator and line driver.
 
-The masks are rendered with KLayout. Panels 01–05 show drawing-purpose geometry;
-panel 06 also shows TopMetal1/TopMetal2 filler. Some upper layers serve only fill
-in this core. Colors identify layers rather than physical material appearance.
-Hidden layers and filler remain in the unchanged GDSII. The panel titles and
-`visualization.palette` in the provenance identify the selected GDS layers.
+![Transmit translation bias / replica](transmit_replica.png)
 
-## Standalone padframe
+### High-voltage storage adapter
 
-![Standalone padframe](padframe.png)
+Maintained connected adapter geometry; disconnected fault variants excluded.
 
-The common-ground padframe contains 32 pads, four corners, the PDK seal ring and
-32 decoupling cells. Sixteen pads serve the planned two four-pair MDI ports;
-four serve reference clock, reset, enable and active status; twelve are supply
-pads. Core power is 1.2 V, I/O power is 3.3 V, and VSS/I/O ground are joined.
-The package provenance records the individual placements and exposed ports.
+![High-voltage storage adapter](storage_adapter.png)
 
-The 640 × 640 µm central opening has no integrated forwarding core or PHYs.
-This opening is too small for the complete receive hardware already estimated
-in the project. The **1.6384 mm²** padframe footprint is a prototype dimension,
-not a qualified full-chip die size. Its existing ESD structures do not establish
-an HBM/CDM or system surge rating. The image hides filler to expose the ring;
-the GDS retains it.
+### Transmit level translator
 
-## Recorded digital behavior
+Latest maintained PSP translator geometry; standalone, not a connected complete transmitter.
 
-![Recorded forwarding samples](forwarding_waveforms.png)
+![Transmit level translator](transmit_translator.png)
 
-The first panel displays the first 24 captured cycles as packed 10-bit hex
-words. The second displays the final 24 cycles of the recorded control sequence.
-The source capture contains 20,513 rows. Each row records inputs before a clock
-edge and registered outputs after that same edge. Equal horizontal positions
-therefore do not mean zero-delay combinational forwarding. Lines connect saved
-samples; they do not represent measured propagation delay or analog voltage.
-This is a digital core illustration, not a PAM5 waveform or eye diagram.
+### Transmit main current cell
 
-## Evidence and release boundary
+Maintained current-cell geometry with intentional device connectivity; no complete MDI driver assembly.
 
-The October 24 forwarding core passed native C++, generated RTL, mapped-gate
-and routed-gate checks, full-deck KLayout DRC (zero violations) and deep
-transistor LVS (48 top-level ports). Routed-RC setup/hold slack is
-**+5.95388031 / +0.787586033 ns**. Timing uses nominal extracted routing with
-slow/fast IHP cell corners; post-fill coupling and full-chip/package effects
-were not extracted.
+![Transmit main current cell](transmit_main.png)
 
-The October 24 assembled and filled padframe passed full-deck KLayout DRC
-(zero violations). Deep transistor LVS passes with 43 top-level ports using
-the PDK's documented **ideal ohmic tap-contact model**, applied independently
-to the schematic and layout. Default extracted-tap LVS failed with unmatched
-circuits; that diagnostic receipt is retained in the provenance. The ideal
-mode preserves non-tap devices and their parameters, but does not validate tap
-area/perimeter parameters. This is the same model used by the earlier passing
-padframe package; see [the tap-model explanation](../../../pdk/1G_repeater_IHPSG13G2/chip.md).
-Neither standalone check verifies an integrated repeater.
+### Transmit history current cell
 
-![Receive DSP and PCS functional traces](receive_dsp_pcs.png)
+Maintained current-cell geometry with intentional device connectivity; no complete MDI driver assembly.
 
-The October 24 [ReceiveDSP and ReceiveDSPPCS](../../receive_dsp.md) sources, generated
-RTL, independent reference models and CTest tests accompany this package.
-Native C++, generated RTL and IHP gate simulation each pass the same independent
-checks and match exactly: four composed cases, eight frames and 6,392 bytes.
-The image shows training, acquisition and decoded-data availability from the
-checked trace. It does not assert an achieved clock frequency.
+![Transmit history current cell](transmit_history.png)
 
-That receiver revision failed the requested 4 ns cell-timing limit: DSP **−2.13 ns**,
-DSP + PCS **−3.13 ns**. Its mapped cell area is **2.550 mm² per receive path**,
-before routing and analog integration. External supervised training targets,
-recovered-symbol samples and aligned local transmit references remain required.
-The timing tests intentionally retain their failing constraint.
+### Transmit pullup
 
-`provenance.json` records the fresh physical receipts, the existing receiver
-functional/timing receipts with inputs rechecked, and hashes of the shipped
-files. `source_base_commit` identifies the parent revision; the accompanying
-source changes and exact input hashes identify the worktree used for generation.
-This compact package is not a complete signoff archive.
+Maintained pullup layout. System behavior is not established by this physical snapshot.
 
-A complete product still requires physical receive AFE/ADC/DSP implementation,
-qualified continuous PCS/training and role negotiation, transmit-driver layout,
-receive timing recovery and clock/reset/CDC integration, a suitably sized and
-routed chip, full-chip extraction, and package/channel/interoperability and
-physical qualification. See the project's
-[implementation requirements](../../../pdk/1G_repeater_IHPSG13G2/requirements.md).
+![Transmit pullup](transmit_pullup.png)
 
-## Viewing
+### Transmit main charge storage
 
-Open a layout in KLayout; the compressed GDS is directly readable:
+Latest transmitter storage candidate; a constituent block, not a complete transmitter.
+
+![Transmit main charge storage](transmit_main_storage.png)
+
+### Transmit history charge storage
+
+Latest transmitter storage candidate; a constituent block, not a complete transmitter.
+
+![Transmit history charge storage](transmit_history_storage.png)
+
+### Reference clock generator / hierarchical layout
+
+Latest completed hierarchical placement-v2 generator. Distinct from the realized-loop alternative; both retained for review.
+
+![Reference clock generator / hierarchical layout](reference_clock.png)
+
+### Reference clock / realized-loop candidate
+
+Latest realized clock filter candidate. An alternative clock macro; not connected in series with the reference-generator alternative.
+
+![Reference clock / realized-loop candidate](realized_clock.png)
+
+### Processing clock oscillator
+
+Latest completed narrow processing oscillator layout. Published independently for inspection; not a signoff claim.
+
+![Processing clock oscillator](processing_oscillator.png)
+
+### Processing clock gate
+
+Latest completed gate placement-proof layout; system clock distribution and reset crossing remain open.
+
+![Processing clock gate](processing_gate.png)
+
+### Processing clock controller / drift revision
+
+Latest clock-drift controller revision. Recorded standalone nominal extracted timing +0.018183399/+0.061225358 ns, full-deck DRC zero violations, LVS 48 circuits/40 ports/20540 devices. Packaging does not rerun these checks.
+
+![Processing clock controller / drift revision](processing_control_current.png)
+
+### PHY reset controller
+
+Latest available filled reset-control layout; not the entire PHY or its clock tree.
+
+![PHY reset controller](phy_reset.png)
+
+### Forwarding core / retained implementation
+
+Most recent available standalone geometry is the October 24 revision. Padframe opening does not fit the current receiver hardware; review arrangement is not a chip floorplan.
+
+![Forwarding core / retained implementation](forwarding_core.png)
+
+### Padframe / retained implementation
+
+Most recent available standalone geometry is the October 24 revision. Padframe opening does not fit the current receiver hardware; review arrangement is not a chip floorplan.
+
+![Padframe / retained implementation](padframe_current.png)
+
+## What publication checks
+
+The publisher checks source hashes, rejects missing or empty tops, namespaces cells, preserves each block's hierarchical geometry through merge and compressed-GDS round trip, and checks that block bounding boxes do not overlap. Saved verification statuses are retained, including failures; packaging does not rerun electrical simulation, timing, DRC or LVS. A historical passing block receipt does not qualify the assembled layout.
+
+Only the combined GDS, current module/overview PNGs, compact provenance and license are published. Build checkpoints, generated HDL and raw logs remain outside Git.
+
+## Regeneration
+
+From `analog/`, with the original checkpoints listed in the provenance available:
 
 ```sh
-klayout receive_reference.gds.gz
-klayout repeater_core.gds
-klayout repeater_padframe.gds.gz
+PYTHONPATH=out/pdf-renderer pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/package_development_layout.py --selection 1G/IHPSG13G2/results/development_provenance.json
+ctest --test-dir build/behavior -R '^analog.pdk.1g_repeater.package_development_layout$' --output-on-failure
 ```
 
-Select the named top cell and expand its hierarchy. If the IHP PDK is installed,
-load `ihp-sg13g2/libs.tech/klayout/tech/sg13g2.lyp` for the full technology layer
-palette. Alternatively, `gzip -dk repeater_padframe.gds.gz` creates an ordinary
-GDS file. Neither viewing nor decompression runs verification.
+The selection records the source checkpoint and producer receipt for every block. This command republishes existing checkpoints; it does not recreate the PnR runs. The retained forwarding-core/padframe inputs and their historical provenance can be recovered from commit `ea6cf21`, under `analog/1G/IHPSG13G2/results/`, into `build/layout-publication/retained-inputs/`.
 
-The six PNGs can be viewed directly without the PDK or EDA tools. Their colors
-are a simplified display palette; dimensions and shapes come from the GDS.
+The earlier standalone GDS files and images remain available in Git history. Their current available geometry is included here.
 
 ## Attribution
 
-The GDS hierarchies embed standard-cell, I/O and seal-ring geometry from the
-[IHP Open PDK](https://github.com/IHP-GmbH/IHP-Open-PDK), revision
-`89d42ee6d2fd9b50b86a1aada6fee6673c3e6008`. Copyright IHP PDK Authors;
-distributed under [Apache-2.0](IHP-LICENSE.txt). The custom circuit arrangement,
-routing and package illustrations are cpphdl project work. The original PDK
-cell geometry is preserved in the generated layouts.
-
-## Reproducing the receiver update
-
-From `analog/`, use an IHP-enabled CMake build configured as described in
-[analog-extraction.md](../analog-extraction.md). The Python environment needs
-KLayout and Pillow. Run the maintained geometry test, then package its receipt:
-
-```sh
-ctest --test-dir build/regeneration-audit -R '^analog\.1g\.ihp_receive_common_reference\.storage_layout$' --output-on-failure
-pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/package_receive_results.py --layout-evidence build/regeneration-audit/1G/IHPSG13G2/tests/results/receive_common_storage_layout/checks.json
-```
-
-If Pillow is installed separately, provide its directory through `PYTHONPATH`
-(the local render environment uses `PYTHONPATH=out/pdf-renderer`). Packaging
-reads completed verification evidence and does not run a simulation. Its
-source-hash checks reject stale evidence.
-
-## Reproducing the historical core/padframe package
-
-From `analog/`, with the local IHP PDK, toolchain and root converter installed:
-
-```sh
-python3 pdk/1G_repeater_IHPSG13G2/flow.py --target core --work build/asic-refresh/core
-pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/padframe.py --common-ground --work build/asic-refresh/padframe
-pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/fill_padframe.py --layout build/asic-refresh/padframe/repeater_padframe.gds --output build/asic-refresh/padframe/repeater_padframe_filled.gds --work build/asic-refresh/padframe/fill
-pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/verify_physical.py --layout build/asic-refresh/padframe/repeater_padframe_filled.gds --netlist build/asic-refresh/padframe/lvs.cir --interface build/asic-refresh/padframe/interface.json --top RepeaterPadframe --work build/asic-refresh/padframe/verification
-# The default extracted-tap LVS run above records a mismatch. Reuse its passing
-# DRC only after the verification runner checks identical layout and rule hashes.
-pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/verify_physical.py --layout build/asic-refresh/padframe/repeater_padframe_filled.gds --netlist build/asic-refresh/padframe/lvs.cir --interface build/asic-refresh/padframe/interface.json --top RepeaterPadframe --work build/asic-refresh/padframe/verification_ideal --ideal-tap-contacts --drc-evidence build/asic-refresh/padframe/verification/physical_checks.json
-pdk/IHPSG13G2/.cpphdl/venv/bin/python pdk/1G_repeater_IHPSG13G2/package_results.py --work build/asic-refresh
-```
-
-The first command needs `verilator` on `PATH`. The final renderer needs KLayout,
-Pillow and matplotlib in its Python environment (or on `PYTHONPATH`). It also
-requires receiver functional, mapped-gate and timing receipts in
-`build/1G/tests/hardware`; reproduce those with the CTests documented in
-[receive_dsp.md](../../receive_dsp.md). Timing failures remain recorded failures.
-The packager rejects changed verification inputs or layout bytes and does not
-run tests itself. It replaces the artifacts in this directory only after its
-input checks pass.
+Embedded IHP PDK cell geometry is distributed under [Apache-2.0](IHP-LICENSE.txt). Custom circuit layout, assembly and publication tooling are cpphdl project work.
