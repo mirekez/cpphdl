@@ -13,7 +13,7 @@ SAIL_COMPILER_REPO="${SAIL_COMPILER_REPO:-https://github.com/rems-project/sail}"
 MISE_PREFIX="${MISE_PREFIX:-${HOME}/.local}"
 MISE_INSTALL_URL="${MISE_INSTALL_URL:-https://mise.jdx.dev/install.sh}"
 PYDEPS_DIR="${TRIBE_PYDEPS_DIR:-${ROOT_DIR}/build/pydeps}"
-PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_DIR="${ROOT_DIR}/build"
 
 RISCV_ARCH_TEST_PYTHON_DEPS=(
@@ -43,6 +43,10 @@ need_tool cmake
 need_tool curl
 need_tool tar
 need_tool "${PYTHON_BIN}"
+# Keep the active Conda/virtualenv interpreter (or explicit override) even
+# after adding the Sail and mise installation directories to PATH below.
+PYTHON_BIN="$(command -v "${PYTHON_BIN}")"
+PYTHON_BIN="$(cd -- "$(dirname -- "${PYTHON_BIN}")" && pwd)/${PYTHON_BIN##*/}"
 
 LOCK_HELPER="${SCRIPT_DIR}/scripts/riscv_dependencies.py"
 LOCKED_SAIL_MODEL="$("${PYTHON_BIN}" "${LOCK_HELPER}" value sail_model_version)"
