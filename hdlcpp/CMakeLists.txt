@@ -35,7 +35,8 @@ endif()
 add_executable(hdlcpp hdlcpp.cpp)
 target_compile_definitions(hdlcpp PRIVATE HDLCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(hdlcpp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_link_libraries(hdlcpp PRIVATE slang::slang)
+find_package(Threads REQUIRED)
+target_link_libraries(hdlcpp PRIVATE slang::slang Threads::Threads)
 set(hdlcpp_static_default OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(hdlcpp_static_default ON)
@@ -46,12 +47,24 @@ if(HDLCPP_STATIC)
         message(FATAL_ERROR "HDLCPP_STATIC requires Linux and static C/C++ runtime libraries")
     endif()
     target_link_options(hdlcpp PRIVATE -static)
+    # Boost's spinlocks use pthread cancellation even with SLANG_USE_THREADS=OFF.
+    # FindThreads can be empty when its probe finds pthread symbols in libc;
+    # explicitly request the thread runtime for older static libc/sysroots too.
+    target_link_libraries(hdlcpp PRIVATE -pthread)
     set_target_properties(hdlcpp PROPERTIES SKIP_BUILD_RPATH TRUE)
     find_program(HDLCPP_READELF NAMES llvm-readelf readelf REQUIRED)
     add_custom_command(TARGET hdlcpp POST_BUILD
         COMMAND "${CMAKE_COMMAND}" "-DBINARY=$<TARGET_FILE:hdlcpp>" "-DREADELF=${HDLCPP_READELF}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/VerifyStatic.cmake" VERBATIM)
     if(BUILD_TESTING)
+        file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/static-thread-libraries.txt"
+            CONTENT "$<TARGET_PROPERTY:hdlcpp,LINK_LIBRARIES>\n")
+        add_test(NAME hdlcpp_static_threads COMMAND "${CMAKE_COMMAND}"
+            "-DCXX=${CMAKE_CXX_COMPILER}" "-DREADELF=${HDLCPP_READELF}"
+            "-DLIBRARIES=${CMAKE_CURRENT_BINARY_DIR}/static-thread-libraries.txt"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/static-threads"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/StaticThreads.cmake")
+        set_tests_properties(hdlcpp_static_threads PROPERTIES TIMEOUT 60)
         add_test(NAME hdlcpp_static_linkage COMMAND "${CMAKE_COMMAND}"
             "-DBINARY=$<TARGET_FILE:hdlcpp>" "-DREADELF=${HDLCPP_READELF}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/VerifyStatic.cmake")
