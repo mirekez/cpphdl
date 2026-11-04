@@ -1,5 +1,6 @@
 channels:
     - conda-forge
+    - nodefaults
 
 #platforms:
 #    - win-64
@@ -21,7 +22,7 @@ dependencies:
     - yaml>=0.2.3
     - libboost-devel
     - libxml2-devel
-    - zstd-static
+    - zstd-static=1.5.7
 #    - lld==14.0.6
     - git==2.45
     - verilator=5.034
