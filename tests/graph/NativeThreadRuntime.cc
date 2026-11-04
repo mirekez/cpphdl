@@ -116,6 +116,23 @@ int main(int argc, char**) {
         catch (const std::invalid_argument&) { return 0; }
         return 1;
     }
+    const char* memorySetting=std::getenv("CPPHDL_NATIVE_MEMORY_WORKERS");
+    const bool hadMemorySetting=memorySetting;
+    const std::string savedMemorySetting=memorySetting?memorySetting:"";
+    unsetenv("CPPHDL_NATIVE_MEMORY_WORKERS");
+    require(cpphdl::graph_runtime::nativeMemoryWorkers(6)==6);
+    setenv("CPPHDL_NATIVE_MEMORY_WORKERS","2",1);
+    require(cpphdl::graph_runtime::nativeMemoryWorkers(6)==2);
+    require(cpphdl::graph_runtime::nativeMemoryWorkers(1)==1);
+    for(const char* invalid:{"0","-1","257","","oops"}) {
+        setenv("CPPHDL_NATIVE_MEMORY_WORKERS",invalid,1);
+        bool rejected=false;
+        try { (void)cpphdl::graph_runtime::nativeMemoryWorkers(6); }
+        catch(const std::invalid_argument&) { rejected=true; }
+        require(rejected);
+    }
+    if(hadMemorySetting)setenv("CPPHDL_NATIVE_MEMORY_WORKERS",savedMemorySetting.c_str(),1);
+    else unsetenv("CPPHDL_NATIVE_MEMORY_WORKERS");
     for (unsigned count : {1u, 2u, 6u, 30u}) {
         Threads pool(count, 120);
         bool invalidBudget = false;

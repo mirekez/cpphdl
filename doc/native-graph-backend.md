@@ -2762,3 +2762,68 @@ large shared cones and regress performance; measure both throughput and CPU
 work before selecting a configuration. The task queue only accepts independent
 groups, with no cross-task waits. This does not yet introduce an active-group
 queue or skip all bookkeeping for inactive groups.
+
+### Measuring dispatch granularity and worker balance
+
+Compile every model translation unit with `-DCPPHDL_NATIVE_DISPATCH_PROFILE`
+to enable executor timing. Ordinary builds omit this instrumentation. In an
+instrumented build, `CPPHDL_NATIVE_PROFILE_EVERY=N` selects approximately one
+in N dispatches per callback/worker/task configuration; the default is 1024.
+Zero disables recording. The first call of each configuration is sampled;
+later samples scramble the call index to avoid aliasing periodic phases.
+
+The executor reports `cpphdl_dispatch_profile` and `cpphdl_dispatch_lane`
+records to stderr when destroyed. Profiling preserves callback identity
+through the independent-task queue. Totals include calls, elapsed time inside
+dispatch and gaps before dispatch. Sampled records separate command wake-up,
+caller callback, caller continuation and final join time. Worker records give
+start delays, callback durations and executed task counts. Aggregation takes
+place after workers join, under the executor lock; each worker owns its timing
+slot. Profiling supports changing active-worker counts and shared executors.
+
+Callback durations are **elapsed host time**, including preemption, dependency
+waits and queue overhead. They are not useful CPU time. Gaps include host work,
+publication, automatic serial evaluation and other activity between executor
+calls. Timing begins after acquiring the executor lock; gaps do not separately
+measure lock contention between concurrent callers. Aggregate timing
+bookkeeping adds overhead, so use ordinary builds or recording-disabled runs
+for final throughput comparisons. Sparse configurations may have too few
+samples to characterize performance; the report includes sample counts.
+
+Resolve callback addresses and summarize the measurements with GNU `nm` and
+GNU `awk` through the Bash helper:
+
+```bash
+CPPHDL_NATIVE_PROFILE_EVERY=1024 ./model >run.log 2>dispatch.log
+bash tools/report_native_dispatch.sh ./model dispatch.log
+bash tools/report_native_dispatch.sh ./model dispatch.log --lanes
+```
+
+The log contains an anchor address so the helper handles PIE/ASLR. It requires
+the matching, unstripped executable. Summaries report microseconds per call
+for total duration/gaps, and per sampled call for wake/callback/join/service
+figures. Per-worker service time and task counts distinguish late starts from
+uneven task allocation. Long caller gaps need additional caller profiling;
+worker idle percentages alone do not identify their cause.
+
+### Independent RAM commit worker limit
+
+`CPPHDL_NATIVE_MEMORY_WORKERS=1..256` limits workers used by generated parallel
+RAM commits. It defaults to the compiled memory ownership capacity, and is
+also bounded by `CPPHDL_NATIVE_TASK_WORKERS`. The memory limit is read when a
+model is constructed and preserved by model copies. Setting it to one runs
+the prepared RAM owners directly on the caller after validation; computation
+keeps its own worker budget. Fixed-lane dependency stages are unaffected.
+
+This permits a controlled comparison of tiny memory commits against parallel
+commits without regenerating the model. For example:
+
+```bash
+CPPHDL_NATIVE_TASK_WORKERS=30 CPPHDL_NATIVE_MEMORY_WORKERS=1 ./model
+```
+
+Changing this limit does not alter RAM priority, snapshots, failed-transaction
+rollback or simulated clock counts. Choose it using complete simulation
+throughput: small commit batches can cost less than a worker wake/join, while
+large batches can benefit from more workers. The default scheduling policy is
+unchanged; there is no automatic size threshold inferred from small fixtures.
