@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.28...3.31)
 
 project(hdlcpp LANGUAGES CXX)
 
+if(NOT DEFINED CPPHDL_TEST_CXX)
+    set(CPPHDL_TEST_CXX "${CMAKE_CXX_COMPILER}")
+    set(CPPHDL_TEST_TARGET cpphdl)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 
@@ -31,22 +36,43 @@ add_executable(hdlcpp hdlcpp.cpp)
 target_compile_definitions(hdlcpp PRIVATE HDLCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(hdlcpp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(hdlcpp PRIVATE slang::slang)
+set(hdlcpp_static_default OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(hdlcpp_static_default ON)
+endif()
+option(HDLCPP_STATIC "Build hdlcpp without shared-library dependencies" ${hdlcpp_static_default})
+if(HDLCPP_STATIC)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR "HDLCPP_STATIC requires Linux and static C/C++ runtime libraries")
+    endif()
+    target_link_options(hdlcpp PRIVATE -static)
+    set_target_properties(hdlcpp PROPERTIES SKIP_BUILD_RPATH TRUE)
+    find_program(HDLCPP_READELF NAMES llvm-readelf readelf REQUIRED)
+    add_custom_command(TARGET hdlcpp POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" "-DBINARY=$<TARGET_FILE:hdlcpp>" "-DREADELF=${HDLCPP_READELF}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/VerifyStatic.cmake" VERBATIM)
+    if(BUILD_TESTING)
+        add_test(NAME hdlcpp_static_linkage COMMAND "${CMAKE_COMMAND}"
+            "-DBINARY=$<TARGET_FILE:hdlcpp>" "-DREADELF=${HDLCPP_READELF}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/VerifyStatic.cmake")
+    endif()
+endif()
 
 add_executable(test_combs tests/test_combs.cpp)
 target_include_directories(test_combs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_combs COMMAND test_combs)
 add_test(NAME hdlcpp_indexed_comb_proof COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/indexed_comb_proof.sh"
-    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CPPHDL_TEST_CXX}")
 add_test(NAME hdlcpp_blocking_array_update COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/blocking_array_update.sh"
-    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CPPHDL_TEST_CXX}")
 add_test(NAME hdlcpp_packed_struct_array_expr COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/packed_struct_array_expr.sh"
-    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CPPHDL_TEST_CXX}")
 add_test(NAME hdlcpp_native_packed_layout COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_packed_layout.sh"
-    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}")
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CPPHDL_TEST_CXX}")
 find_program(HDLCPP_WIDTHS_VERILATOR verilator)
 set(HDLCPP_WIDTHS_REFERENCE_ARGS)
 if(HDLCPP_WIDTHS_VERILATOR)
@@ -54,11 +80,11 @@ if(HDLCPP_WIDTHS_VERILATOR)
 endif()
 add_test(NAME hdlcpp_constant_widths COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/constant_widths.sh"
-    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CPPHDL_TEST_CXX}"
     ${HDLCPP_WIDTHS_REFERENCE_ARGS})
 add_test(NAME hdlcpp_expression_helpers COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/expression_helpers.sh"
-    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CMAKE_CXX_COMPILER}"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CPPHDL_TEST_CXX}"
     ${HDLCPP_WIDTHS_REFERENCE_ARGS})
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -69,83 +95,83 @@ if(Python3_Interpreter_FOUND)
     endif()
     add_test(NAME hdlcpp_native_infrastructure COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NativeInfrastructureChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/native-infrastructure" ${native_infrastructure_args})
     set_tests_properties(hdlcpp_native_infrastructure PROPERTIES TIMEOUT 300)
     add_test(NAME hdlcpp_wide_select_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/WideSelectChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/wide-select")
     set_tests_properties(hdlcpp_wide_select_cpp PROPERTIES TIMEOUT 300)
     if(HDLCPP_WIDTHS_VERILATOR)
         add_test(NAME hdlcpp_wide_select_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/WideSelectChecks.py"
-            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HDLCPP_WIDTHS_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/wide-select")
         set_tests_properties(hdlcpp_wide_select_verilator PROPERTIES TIMEOUT 300)
     endif()
     add_test(NAME hdlcpp_byte_string_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ByteStringChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/byte-string")
     set_tests_properties(hdlcpp_byte_string_cpp PROPERTIES TIMEOUT 240)
     if(HDLCPP_WIDTHS_VERILATOR)
         add_test(NAME hdlcpp_byte_string_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ByteStringChecks.py"
-            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HDLCPP_WIDTHS_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/byte-string")
         set_tests_properties(hdlcpp_byte_string_verilator PROPERTIES TIMEOUT 240)
     endif()
     add_test(NAME hdlcpp_array_write_bounds_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ArrayWriteBoundsChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/array-write-bounds")
     set_tests_properties(hdlcpp_array_write_bounds_cpp PROPERTIES TIMEOUT 600)
     if(HDLCPP_WIDTHS_VERILATOR)
         add_test(NAME hdlcpp_array_write_bounds_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/ArrayWriteBoundsChecks.py"
-            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HDLCPP_WIDTHS_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/array-write-bounds")
         set_tests_properties(hdlcpp_array_write_bounds_verilator PROPERTIES TIMEOUT 600)
     endif()
     add_test(NAME hdlcpp_nested_packed_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NestedPackedChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/nested-packed")
     set_tests_properties(hdlcpp_nested_packed_cpp PROPERTIES TIMEOUT 600)
     if(HDLCPP_WIDTHS_VERILATOR)
         add_test(NAME hdlcpp_nested_packed_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NestedPackedChecks.py"
-            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HDLCPP_WIDTHS_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/nested-packed")
         set_tests_properties(hdlcpp_nested_packed_verilator PROPERTIES TIMEOUT 600)
     endif()
     add_test(NAME hdlcpp_declared_ranges_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/DeclaredRangesChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/declared-ranges")
     set_tests_properties(hdlcpp_declared_ranges_cpp PROPERTIES TIMEOUT 240)
     if(HDLCPP_WIDTHS_VERILATOR)
         add_test(NAME hdlcpp_declared_ranges_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/DeclaredRangesChecks.py"
-            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HDLCPP_WIDTHS_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/declared-ranges")
         set_tests_properties(hdlcpp_declared_ranges_verilator PROPERTIES TIMEOUT 240)
     endif()
     add_test(NAME hdlcpp_xperm_cpp COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/XpermChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/xperm")
     set_tests_properties(hdlcpp_xperm_cpp PROPERTIES TIMEOUT 240)
     if(HDLCPP_WIDTHS_VERILATOR)
         add_test(NAME hdlcpp_xperm_verilator COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/XpermChecks.py"
-            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HDLCPP_WIDTHS_VERILATOR}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/xperm")
         set_tests_properties(hdlcpp_xperm_verilator PROPERTIES TIMEOUT 240)
@@ -155,6 +181,7 @@ endif()
 add_executable(test_modules tests/test_modules.cpp)
 target_include_directories(test_modules PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hdlcpp_test_modules COMMAND test_modules)
+set_tests_properties(hdlcpp_test_modules PROPERTIES ENVIRONMENT "CXX=${CPPHDL_TEST_CXX}")
 
 add_executable(test_structs tests/test_structs.cpp)
 target_include_directories(test_structs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -169,7 +196,7 @@ endforeach()
 if(Python3_Interpreter_FOUND)
     add_test(NAME hdlcpp_native_returns COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../tests/hdlcpp/NativeReturnChecks.py"
-        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CMAKE_CXX_COMPILER}"
+        --hdlcpp "$<TARGET_FILE:hdlcpp>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/native-returns")
     set_tests_properties(hdlcpp_native_returns PROPERTIES TIMEOUT 300)
 endif()

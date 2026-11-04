@@ -59,7 +59,7 @@ foreach(src ${EXAMPLE_SOURCES})
     add_custom_command(
         TARGET ${target_name}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E env bash -c "../cpphdl ${cpphdl_clock_args} ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
+        COMMAND ${CMAKE_COMMAND} -E env bash -c "'$<TARGET_FILE:${CPPHDL_TEST_TARGET}>' ${cpphdl_clock_args} ${CMAKE_CURRENT_SOURCE_DIR}/${rel_path} -I${CMAKE_SOURCE_DIR}/include ${CPPHDL_TOOLCHAIN_ARGS}"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/tuple/rv32i.bin ${CMAKE_BINARY_DIR}/examples/"
         COMMAND ${CMAKE_COMMAND} -E env bash -c "cp ${CMAKE_CURRENT_SOURCE_DIR}/tuple/rv32i.log ${CMAKE_BINARY_DIR}/examples/"
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/examples
@@ -99,10 +99,10 @@ foreach(src ${EXAMPLE_SOURCES})
         if(CPPHDL_TRANSPOSER_VERILATOR)
             add_test(NAME math_Transposer_mlab_rdw
                 COMMAND ${CMAKE_COMMAND}
-                    -DCPPHDL=$<TARGET_FILE:cpphdl>
+                    -DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>
                     -DTEST_EXE=$<TARGET_FILE:${target_name}>
                     -DVERILATOR=${CPPHDL_TRANSPOSER_VERILATOR}
-                    -DCXX=${CMAKE_CXX_COMPILER}
+                    -DCXX=${CPPHDL_TEST_CXX}
                     -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/transposer_mlab_rdw
                     -P ${CMAKE_SOURCE_DIR}/tests/math/TransposerMlabRdw.cmake)

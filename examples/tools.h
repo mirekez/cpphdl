@@ -88,7 +88,11 @@ inline std::filesystem::path CpphdlBuildRootFrom(const std::filesystem::path& so
 
 inline std::filesystem::path CpphdlToolFrom(const std::filesystem::path& source_root)
 {
+#ifdef CPPHDL_TEST_CONVERTER
+    return CPPHDL_TEST_CONVERTER;
+#else
     return CpphdlBuildRootFrom(source_root) / "cpphdl";
+#endif
 }
 
 inline std::filesystem::path VerilatorGeneratedDir(std::string cpp_name, const std::string& top_name)

@@ -73,7 +73,6 @@ project(cpphdl
 
 include(cmake/CpphdlRuntime.cmake)
 
-add_compile_definitions(CPPHDL_CMAKE_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
 add_compile_definitions(CPPHDL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-C++HDL converter" OFF)
@@ -86,6 +85,9 @@ option(CPPHDL_BUILD_ANALOG "Build analog schemas, mixed-signal examples and Veri
 option(CPPHDL_BUILD_STATIC "Also build a fully static Linux cpphdl-static executable (requires static dependencies)" OFF)
 
 include(CTest)
+include(cmake/CpphdlTestToolchain.cmake)
+add_compile_definitions(CPPHDL_CMAKE_CXX_COMPILER="${CPPHDL_TEST_CXX}")
+add_compile_definitions(CPPHDL_TEST_CONVERTER="${CMAKE_BINARY_DIR}/${CPPHDL_TEST_TARGET}")
 
 set(CPPHDL_TEST_ALL_SCRIPT "${CMAKE_BINARY_DIR}/.test_all.sh")
 file(WRITE "${CPPHDL_TEST_ALL_SCRIPT}" [=[
@@ -423,8 +425,8 @@ cpphdl_strip_gnu_property_after_build(cpphdl)
 function(cpphdl_add_converter_dependency target)
   # POST_BUILD conversion runs only when the owning executable links. Make a
   # rebuilt converter invalidate that link so generated RTL cannot stay stale.
-  add_dependencies(${target} cpphdl)
-  set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${CMAKE_BINARY_DIR}/cpphdl")
+  add_dependencies(${target} ${CPPHDL_TEST_TARGET})
+  set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${CMAKE_BINARY_DIR}/${CPPHDL_TEST_TARGET}")
 endfunction()
 
 if(CPPHDL_BUILD_EXAMPLES)
@@ -450,8 +452,8 @@ if(CPPHDL_BUILD_ANALOG)
   target_link_libraries(cpphdl PRIVATE cpphdl_veriloga_driver)
   target_compile_definitions(cpphdl PRIVATE CPPHDL_HAS_ANALOG_VERILOGA=1)
   if(TARGET check-analog)
-    add_dependencies(check-analog cpphdl)
-    add_dependencies(check-veriloga cpphdl)
+    add_dependencies(check-analog ${CPPHDL_TEST_TARGET})
+    add_dependencies(check-veriloga ${CPPHDL_TEST_TARGET})
   endif()
 endif()
 

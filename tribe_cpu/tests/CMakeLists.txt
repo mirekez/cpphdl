@@ -12,12 +12,12 @@ set_tests_properties(scripts_RiscvDependencies PROPERTIES TIMEOUT 60)
 
 add_test(NAME scripts_RiscvToolchain
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_riscv_toolchain.py"
-        --cxx "${CMAKE_CXX_COMPILER}" --work "${CMAKE_CURRENT_BINARY_DIR}/toolchain-checks")
+        --cxx "${CPPHDL_TEST_CXX}" --work "${CMAKE_CURRENT_BINARY_DIR}/toolchain-checks")
 set_tests_properties(scripts_RiscvToolchain PROPERTIES TIMEOUT 120)
 
 add_test(NAME L1Cache_test_lifecycle
     COMMAND "${CMAKE_COMMAND}"
-        -DCPPHDL=$<TARGET_FILE:cpphdl>
+        -DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DWORK=${CMAKE_CURRENT_BINARY_DIR}/ctest/L1Cache_test_lifecycle
         -P ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_l1_lifecycle.cmake)
@@ -261,7 +261,7 @@ foreach(src ${TRIBE_TEST_SOURCES})
         TARGET ${target_name}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory generated
-        COMMAND ${CMAKE_BINARY_DIR}/cpphdl ${src} ${CPPHDL_TOOLCHAIN_ARG_LIST}
+        COMMAND $<TARGET_FILE:${CPPHDL_TEST_TARGET}> ${src} ${CPPHDL_TOOLCHAIN_ARG_LIST}
                 ${TRIBE_CPPHDL_CLOCK_ARGS}
                 ${TRIBE_CPPHDL_FEATURE_ARGS}
                 ${cpphdl_extra_defines}

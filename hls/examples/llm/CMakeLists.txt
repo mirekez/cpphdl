@@ -30,7 +30,7 @@ foreach(config depth1 depth13 window2)
                 list(APPEND options --gates)
             endif()
             add_test(NAME hls_llm_StreamingMatVec_${config}_${flow} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Run.py"
-                --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+                --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
                 --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/StreamingMatVec_${config}_${flow}" ${options})
             set_tests_properties(hls_llm_StreamingMatVec_${config}_${flow} PROPERTIES TIMEOUT 2400 LABELS "hls;llm")
         endforeach()
@@ -46,7 +46,7 @@ if(HLS_VERILATOR)
             list(APPEND options --gates)
         endif()
         add_test(NAME hls_llm_${example}_${flow} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Run.py"
-            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/${example}_${flow}" ${options})
         set_tests_properties(hls_llm_${example}_${flow} PROPERTIES TIMEOUT 2400 LABELS "hls;llm")
       endforeach()
@@ -59,7 +59,7 @@ if(HLS_VERILATOR)
             list(APPEND options --gates)
         endif()
         add_test(NAME hls_llm_${flow} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Run.py"
-            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/${flow}" ${options})
         set_tests_properties(hls_llm_${flow} PROPERTIES TIMEOUT 2400 LABELS "hls;llm")
     endforeach()

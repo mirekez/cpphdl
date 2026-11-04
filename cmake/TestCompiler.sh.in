@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Only executable links need runtime archives. Keep compiler discovery,
+# preprocessing, object builds and shared-library ABI tests unchanged.
+link=1
+libcxx=0
+for arg in "$@"; do
+    case "$arg" in
+        -c|-S|-E|-fsyntax-only|-shared|-M|-MM|c++-header|c-header|--version|-dump*|-print*|--print*) link=0 ;;
+        -stdlib=libc++) libcxx=1 ;;
+    esac
+done
+if (( ! link )); then
+    exec "@CPPHDL_TEST_REAL_CXX@" "$@"
+fi
+args=()
+if [[ -n "@CPPHDL_TEST_RUNTIME_DIR@" ]]; then
+    args+=("-L@CPPHDL_TEST_RUNTIME_DIR@")
+fi
+for arg in "$@"; do
+    case "$arg" in
+        -lstdc++|-lc++|-lc++abi)
+            args+=(-Wl,-Bstatic "$arg" -Wl,-Bdynamic) ;;
+        *) args+=("$arg") ;;
+    esac
+done
+if (( libcxx )); then
+    args+=(-Wl,-Bstatic -Wl,--start-group -lc++ -lc++abi -Wl,--end-group -Wl,-Bdynamic)
+fi
+exec "@CPPHDL_TEST_REAL_CXX@" "${args[@]}" -static-libstdc++ -static-libgcc

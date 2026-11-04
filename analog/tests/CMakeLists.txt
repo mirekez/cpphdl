@@ -31,7 +31,7 @@ if(Python3_Interpreter_FOUND)
   foreach(flow IN LISTS pfd_flows)
     add_test(NAME analog.basic.phase_frequency_detector.${flow} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/phase_frequency_detector.py" --flow "${flow}"
-      --bench "$<TARGET_FILE:analog_phase_frequency_detector>" --cxx "${CMAKE_CXX_COMPILER}"
+      --bench "$<TARGET_FILE:analog_phase_frequency_detector>" --cxx "${CPPHDL_TEST_CXX}"
       --work "${CMAKE_CURRENT_BINARY_DIR}/phase-frequency-detector/${flow}"
       --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
     set_tests_properties(analog.basic.phase_frequency_detector.${flow} PROPERTIES LABELS "analog;basic;${flow}"
@@ -53,7 +53,7 @@ if(Python3_Interpreter_FOUND)
   foreach(flow IN LISTS storage_flows)
     add_test(NAME analog.basic.cmos_storage.${flow} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/cmos_storage.py" --flow "${flow}"
-      --bench "$<TARGET_FILE:analog_cmos_storage>" --cxx "${CMAKE_CXX_COMPILER}"
+      --bench "$<TARGET_FILE:analog_cmos_storage>" --cxx "${CPPHDL_TEST_CXX}"
       --work "${CMAKE_CURRENT_BINARY_DIR}/cmos-storage/${flow}"
       --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
     set_tests_properties(analog.basic.cmos_storage.${flow} PROPERTIES LABELS "analog;basic;${flow}"
@@ -76,7 +76,7 @@ if(Python3_Interpreter_FOUND AND OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE
   set_tests_properties(analog.basic.nand_latch PROPERTIES LABELS "analog;basic;veriloga" TIMEOUT 600)
   add_test(NAME analog.basic.buffered_nand_latch COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/nand_latch.py" --bench "$<TARGET_FILE:analog_buffered_nand_latch>"
-    --fixture-source "${CMAKE_CURRENT_SOURCE_DIR}/buffered_nand_latch.cpp" --cxx "${CMAKE_CXX_COMPILER}"
+    --fixture-source "${CMAKE_CURRENT_SOURCE_DIR}/buffered_nand_latch.cpp" --cxx "${CPPHDL_TEST_CXX}"
     --step-ps 0.5
     --work "${CMAKE_CURRENT_BINARY_DIR}/buffered-nand-latch"
     --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}")
@@ -85,7 +85,7 @@ if(Python3_Interpreter_FOUND AND OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE
     "${CMAKE_CURRENT_SOURCE_DIR}/differential_source_follower.py"
     --bench "$<TARGET_FILE:analog_differential_source_follower>"
     --work "${CMAKE_CURRENT_BINARY_DIR}/differential-source-follower"
-    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}")
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}" --cxx "${CPPHDL_TEST_CXX}")
   set_tests_properties(analog.basic.differential_source_follower PROPERTIES LABELS "analog;basic;veriloga" TIMEOUT 2400)
 endif()
 target_link_libraries(analog_semantics PRIVATE cpphdl::analog)
@@ -192,7 +192,7 @@ foreach(example ldo pll agc)
 endforeach()
 foreach(fixture wrong_units wide_bridge static_ports)
   add_test(NAME analog.reject_${fixture} COMMAND "${CMAKE_COMMAND}"
-    "-DCXX=${CMAKE_CXX_COMPILER}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/negative/${fixture}.cpp"
+    "-DCXX=${CPPHDL_TEST_CXX}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/negative/${fixture}.cpp"
     "-DPACKAGE_ROOT=${CPPHDL_ANALOG_PACKAGE_ROOT}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/negative/${fixture}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/CompileFail.cmake")
   list(APPEND analog_regression_tests analog.reject_${fixture})

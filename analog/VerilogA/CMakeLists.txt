@@ -2,7 +2,7 @@ add_library(cpphdl_veriloga_driver STATIC Driver.cpp)
 target_compile_features(cpphdl_veriloga_driver PRIVATE cxx_std_20)
 target_compile_definitions(cpphdl_veriloga_driver PRIVATE
   CPPHDL_ANALOG_PACKAGE_ROOT="${CPPHDL_ANALOG_PACKAGE_ROOT}"
-  CPPHDL_ANALOG_CXX="${CMAKE_CXX_COMPILER}")
+  CPPHDL_ANALOG_CXX="${CPPHDL_TEST_CXX}")
 add_executable(cpphdl-veriloga "${CPPHDL_ANALOG_PACKAGE_ROOT}/cpphdl-veriloga.cpp")
 target_link_libraries(cpphdl-veriloga PRIVATE cpphdl_veriloga_driver)
 
@@ -21,7 +21,7 @@ if(BUILD_TESTING)
   set_tests_properties(analog.veriloga.exporter analog.veriloga.cli PROPERTIES LABELS "analog;veriloga" TIMEOUT 90)
   if(TARGET cpphdl)
     add_test(NAME analog.veriloga.root_cli COMMAND "${CMAKE_COMMAND}"
-      "-DCONVERTER=$<TARGET_FILE:cpphdl>" "-DROOT_DRIVER=ON"
+      "-DCONVERTER=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT_DRIVER=ON"
       "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_fixture.hpp"
       "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/root-cli-results"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/RunExport.cmake")
@@ -84,7 +84,7 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   set_tests_properties(analog.veriloga.compiler_runtime PROPERTIES LABELS "analog;veriloga" TIMEOUT 45)
   if(TARGET cpphdl)
     add_test(NAME analog.veriloga.root_compiler_runtime COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_runtime.py" --converter "$<TARGET_FILE:cpphdl>" --root-driver)
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_runtime.py" --converter "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --root-driver)
     set_tests_properties(analog.veriloga.root_compiler_runtime PROPERTIES LABELS "analog;veriloga" TIMEOUT 45)
   endif()
   add_test(NAME analog.veriloga.trace_storage COMMAND "${Python3_EXECUTABLE}"
@@ -115,7 +115,7 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME analog.veriloga.hierarchy_equations COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/hierarchy_equations.py"
       --bench "$<TARGET_FILE:analog_veriloga_hierarchy>" --driver "$<TARGET_FILE:cpphdl-veriloga>"
-      --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+      --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}" --cxx "${CPPHDL_TEST_CXX}"
       --work "${CMAKE_CURRENT_BINARY_DIR}/results/hierarchy")
     set_tests_properties(analog.veriloga.hierarchy_equations PROPERTIES LABELS "analog;veriloga" TIMEOUT 1200)
   endif()

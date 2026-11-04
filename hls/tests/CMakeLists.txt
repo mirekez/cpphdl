@@ -1,46 +1,46 @@
 find_program(HLS_VERILATOR NAMES verilator HINTS "${CMAKE_SOURCE_DIR}/.conda/bin")
 find_program(HLS_MAKE NAMES gmake make REQUIRED)
-add_custom_target(hls_tests DEPENDS cpphdl)
+add_custom_target(hls_tests DEPENDS ${CPPHDL_TEST_TARGET})
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME hls_fp32_mac_direct_native_graph
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32MacDirectChecks.py"
-        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-direct")
 set_tests_properties(hls_fp32_mac_direct_native_graph PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
 find_program(HLS_HDLCPP NAMES hdlcpp HINTS "${CMAKE_BINARY_DIR}/hdlcpp" "${CMAKE_SOURCE_DIR}/build/hdlcpp")
 if(HLS_HDLCPP)
     add_test(NAME hls_fp32_reduction_retimed_replacement
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32ReductionPipelineChecks.py"
-            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "${HLS_HDLCPP}" --cxx "${CMAKE_CXX_COMPILER}"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --hdlcpp "${HLS_HDLCPP}" --cxx "${CPPHDL_TEST_CXX}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-reduction-retimed")
     set_tests_properties(hls_fp32_reduction_retimed_replacement PROPERTIES TIMEOUT 1800 LABELS "hls;retiming;replacement")
     add_test(NAME hls_fp32_reduction_simulation_branches
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32ReductionBranchesChecks.py"
-            --hdlcpp "${HLS_HDLCPP}" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "${HLS_HDLCPP}" --cxx "${CPPHDL_TEST_CXX}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-reduction-branches")
     set_tests_properties(hls_fp32_reduction_simulation_branches PROPERTIES TIMEOUT 1800 LABELS "hls;native;replacement")
     add_test(NAME hls_fp32_mac_simulation_branches
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32MacBranchesChecks.py"
-            --hdlcpp "${HLS_HDLCPP}" --cxx "${CMAKE_CXX_COMPILER}"
+            --hdlcpp "${HLS_HDLCPP}" --cxx "${CPPHDL_TEST_CXX}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-branches")
     set_tests_properties(hls_fp32_mac_simulation_branches PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
     add_test(NAME hls_fp32_mac_direct_rtl_equivalence
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32MacDirectChecks.py"
-            --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}" --hdlcpp "${HLS_HDLCPP}"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}" --hdlcpp "${HLS_HDLCPP}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-direct-rtl")
     set_tests_properties(hls_fp32_mac_direct_rtl_equivalence PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME hls_pipeline_replacement_native_graph
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/PipelineReplacementChecks.py"
-            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "${HLS_HDLCPP}"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --hdlcpp "${HLS_HDLCPP}"
             --work "${CMAKE_CURRENT_BINARY_DIR}/pipeline-replacement"
-            --cxx "${CMAKE_CXX_COMPILER}")
+            --cxx "${CPPHDL_TEST_CXX}")
     set_tests_properties(hls_pipeline_replacement_native_graph PROPERTIES TIMEOUT 600 LABELS "hls;retiming;replacement")
     add_test(NAME hls_fp32_mac_replacement_native_graph
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/PipelineReplacementChecks.py"
-            --cpphdl "$<TARGET_FILE:cpphdl>" --hdlcpp "${HLS_HDLCPP}" --fp32
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --hdlcpp "${HLS_HDLCPP}" --fp32
             --work "${CMAKE_CURRENT_BINARY_DIR}/fp32-mac-replacement"
-            --cxx "${CMAKE_CXX_COMPILER}")
+            --cxx "${CPPHDL_TEST_CXX}")
     set_tests_properties(hls_fp32_mac_replacement_native_graph PROPERTIES TIMEOUT 1200 LABELS "hls;retiming;replacement")
 endif()
 include(Libcxx.cmake)
@@ -79,7 +79,7 @@ if(HLS_VERILATOR)
             set(narrow_synth ON)
         endif()
         add_test(NAME hls_narrow_math_pipeline_${flow} COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/narrow-math-${flow}" -DSTAGES=3
             "-DSYNTH=${narrow_synth}" -DSOURCE=NarrowMathPipeline.cpp
             "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
@@ -106,7 +106,7 @@ foreach(top BankedRamTop RamPrimitiveTop MatrixTransferTop)
     endif()
     foreach(flow IN LISTS ram_flows)
         add_test(NAME hls_${top}_${flow} COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/${top}-${flow}"
             "-DVERILATOR=${HLS_VERILATOR}" "-DSOURCE=${ram_source}" "-DTOP=${ram_top}" "-DFLOW=${flow}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/Ram.cmake")
@@ -118,7 +118,7 @@ foreach(stages 1 3)
     add_test(NAME hls_pipeline_array_${stages}_native COMMAND "${HLS_NATIVE_BINARY}")
     if(HLS_VERILATOR)
         add_test(NAME hls_pipeline_array_${stages}_verilator COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-array-${stages}" "-DSTAGES=${stages}"
             -DSOURCE=PipelineArray.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
@@ -127,7 +127,7 @@ foreach(stages 1 3)
 endforeach()
 if(HLS_VERILATOR)
     add_test(NAME hls_pipeline_array_synth_verilator COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-array-synth" -DSTAGES=3 -DSYNTH=ON -DPERIOD_NS=2.0
         -DSOURCE=PipelineArray.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
@@ -138,7 +138,7 @@ foreach(stages 1 3 7)
     add_test(NAME hls_pipeline_${stages}_native COMMAND "${HLS_NATIVE_BINARY}")
     if(HLS_VERILATOR)
         add_test(NAME hls_pipeline_${stages}_verilator COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-${stages}" "-DSTAGES=${stages}"
             "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
@@ -150,7 +150,7 @@ foreach(stages 1 3 7)
     add_test(NAME hls_pipeline_feedback_${stages}_native COMMAND "${HLS_NATIVE_BINARY}")
     if(HLS_VERILATOR)
         add_test(NAME hls_pipeline_feedback_${stages}_verilator COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-feedback-${stages}" "-DSTAGES=${stages}"
             -DSOURCE=PipelineFeedback.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
@@ -159,19 +159,19 @@ foreach(stages 1 3 7)
 endforeach()
 if(HLS_VERILATOR)
     add_test(NAME hls_pipeline_synth_verilator COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-synth" -DSTAGES=3 -DSYNTH=ON
         -DSOURCE=PipelineFeedback.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
     set_tests_properties(hls_pipeline_synth_verilator PROPERTIES TIMEOUT 300)
     add_test(NAME hls_pipeline_feedback_graph_verilator COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-feedback-graph" -DSTAGES=3 -DGRAPH=ON
         -DSOURCE=PipelineFeedback.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
     set_tests_properties(hls_pipeline_feedback_graph_verilator PROPERTIES TIMEOUT 240)
     add_test(NAME hls_pipeline_graph_verilator COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-graph" -DSTAGES=3 -DGRAPH=ON
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
@@ -179,7 +179,7 @@ if(HLS_VERILATOR)
 endif()
 add_test(NAME hls_libcxx_runtime COMMAND "${CMAKE_CURRENT_BINARY_DIR}/libcxx-check")
 add_test(NAME code_libcxx_headers COMMAND "${CMAKE_COMMAND}"
-    "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+    "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
     "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/libcxx-headers"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/LibcxxHeaders.cmake")
 
@@ -199,14 +199,14 @@ function(add_delayed_test container)
     add_test(NAME ${name}_native COMMAND "${HLS_NATIVE_BINARY}")
     if(HLS_VERILATOR)
         add_test(NAME ${name}_verilator COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/Delayed${container}.cpp"
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/${name}-rtl"
             "-DSHARED_MEMORY=${shared_memory}"
             "-DBLOCK_RAM=${block_ram}"
             "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
             "-DVERILATOR=${HLS_VERILATOR}" "-DMAKE=${HLS_MAKE}"
-            "-DCXX=${CMAKE_CXX_COMPILER}" -P "${CMAKE_SOURCE_DIR}/hls/tests/Delayed.cmake")
+            "-DCXX=${CPPHDL_TEST_CXX}" -P "${CMAKE_SOURCE_DIR}/hls/tests/Delayed.cmake")
         set_tests_properties(${name}_verilator PROPERTIES TIMEOUT 240)
     endif()
 endfunction()
@@ -230,7 +230,7 @@ add_delayed_test(Aggregates)
 add_delayed_test(Overrides TRUE)
 foreach(case RANGE 0 8)
     add_test(NAME hls_overrides_reject_${case} COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/overrides-reject-${case}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/OverridesReject.cmake")
     set_tests_properties(hls_overrides_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;expected-rejection")
@@ -238,13 +238,13 @@ endforeach()
 foreach(case RANGE 0 22)
     if(case EQUAL 6)
         add_test(NAME hls_delayed_without_flag COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" -DCASE=6
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" -DCASE=6
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/delayed-without-flag" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/DelayedReject.cmake")
         continue()
     endif()
     add_test(NAME hls_delayed_reject_${case} COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/delayed-reject-${case}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/DelayedReject.cmake")
     set_tests_properties(hls_delayed_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;expected-rejection")
@@ -252,7 +252,7 @@ endforeach()
 
 foreach(case RANGE 0 26)
     add_test(NAME hls_pipeline_reject_${case} COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-reject-${case}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/PipelineReject.cmake")
     set_tests_properties(hls_pipeline_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;expected-rejection")
@@ -266,7 +266,7 @@ add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
 foreach(case RANGE 0 35)
     add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/OpenMPReject.cmake")
     set_tests_properties(hls_openmp_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;openmp;expected-rejection")
@@ -296,23 +296,23 @@ if(HLS_VERILATOR)
                 set(synth ON)
             endif()
             add_test(NAME hls_external_local_${block}_${flow} COMMAND "${CMAKE_COMMAND}"
-                "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+                "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
                 "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-local-${block}-${flow}"
-                "-DVERILATOR=${HLS_VERILATOR}" "-DCXX=${CMAKE_CXX_COMPILER}" "-DSYNTH=${synth}"
+                "-DVERILATOR=${HLS_VERILATOR}" "-DCXX=${CPPHDL_TEST_CXX}" "-DSYNTH=${synth}"
                 -DLOCAL_RAM=ON "-DLOCAL_BLOCK=${block}"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
             set_tests_properties(hls_external_local_${block}_${flow} PROPERTIES TIMEOUT 300)
         endforeach()
     endforeach()
     add_test(NAME hls_external_local_large_rtl COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-local-large"
         "-DVERILATOR=${HLS_VERILATOR}" -DLOCAL_RAM=ON -DLOCAL_BLOCK=1 -DLOCAL_BYTES=2049
         -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
     set_tests_properties(hls_external_local_large_rtl PROPERTIES TIMEOUT 300)
     foreach(bytes 255 256 257 264)
         add_test(NAME hls_external_local_boundary_${bytes}_rtl COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-local-boundary-${bytes}"
             "-DVERILATOR=${HLS_VERILATOR}" -DLOCAL_RAM=ON -DLOCAL_BLOCK=1 "-DLOCAL_BYTES=${bytes}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
@@ -324,26 +324,26 @@ if(HLS_VERILATOR)
             set(synth ON)
         endif()
         add_test(NAME hls_external_pointer_${flow} COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/external-pointer-${flow}"
-            "-DVERILATOR=${HLS_VERILATOR}" "-DCXX=${CMAKE_CXX_COMPILER}" "-DSYNTH=${synth}"
+            "-DVERILATOR=${HLS_VERILATOR}" "-DCXX=${CPPHDL_TEST_CXX}" "-DSYNTH=${synth}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/ExternalPointer.cmake")
         set_tests_properties(hls_external_pointer_${flow} PROPERTIES TIMEOUT 300)
     endforeach()
     add_test(NAME hls_override_policy_verilator COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/override-policy"
         "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/OverridePolicy.cpp"
         "-DBENCH=${CMAKE_CURRENT_SOURCE_DIR}/OverridePolicy.sv" -DTOP=OverridePolicyChecks
         "-DVERILATOR=${HLS_VERILATOR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/MemoryPort.cmake")
     set_tests_properties(hls_override_policy_verilator PROPERTIES TIMEOUT 120)
     add_test(NAME hls_memory_port_verilator COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/memory-port"
         "-DVERILATOR=${HLS_VERILATOR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/MemoryPort.cmake")
     set_tests_properties(hls_memory_port_verilator PROPERTIES TIMEOUT 120)
     add_test(NAME hls_memory_port_bram_verilator COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/memory-port-bram"
         -DBLOCK_RAM=ON
         "-DVERILATOR=${HLS_VERILATOR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/MemoryPort.cmake")
@@ -355,13 +355,13 @@ function(add_hls_test name source top)
     string(REPLACE ";" " " definitions "${ARGN}")
     if(HLS_VERILATOR)
         add_test(NAME ${name}_verilator COMMAND "${CMAKE_COMMAND}"
-            "-DCPPHDL=$<TARGET_FILE:cpphdl>"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>"
             "-DROOT=${CMAKE_SOURCE_DIR}"
             "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/${source}"
             "-DTOP=${top}" "-DDEFINITIONS=${definitions}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
             "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/${name}-rtl"
             "-DVERILATOR=${HLS_VERILATOR}" "-DMAKE=${HLS_MAKE}"
-            "-DCXX=${CMAKE_CXX_COMPILER}" -P "${CMAKE_CURRENT_SOURCE_DIR}/Run.cmake")
+            "-DCXX=${CPPHDL_TEST_CXX}" -P "${CMAKE_CURRENT_SOURCE_DIR}/Run.cmake")
         set_tests_properties(${name}_verilator PROPERTIES TIMEOUT 180)
     else()
         message(WARNING "Verilator unavailable: ${name}_verilator is not registered")
@@ -377,7 +377,7 @@ foreach(case RANGE 0 5)
         set(test_name hls_recursion_default_auto)
     endif()
     add_test(NAME ${test_name} COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reject-${case}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Reject.cmake")
 endforeach()

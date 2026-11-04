@@ -4,6 +4,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include(CTest)
 endif()
 
+# The standalone analog build need not build the digital converter.
+if(NOT DEFINED CPPHDL_TEST_CXX)
+  set(CPPHDL_TEST_CXX "${CMAKE_CXX_COMPILER}")
+  set(CPPHDL_TEST_TARGET cpphdl)
+endif()
+
 option(CPPHDL_BUILD_ANALOG_TESTS "Build and register analog regression tests (requires BUILD_TESTING)" OFF)
 if(NOT CPPHDL_BUILD_ANALOG_TESTS)
   # Directory-local override: leave the parent project's digital tests enabled.

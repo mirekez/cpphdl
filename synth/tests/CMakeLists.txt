@@ -6,7 +6,7 @@ add_test(NAME synth_emitter_toolchain COMMAND "${Python3_EXECUTABLE}"
 set_tests_properties(synth_emitter_toolchain PROPERTIES TIMEOUT 30)
 
 add_test(NAME synth_auto_scheduler COMMAND "${CMAKE_COMMAND}"
-    "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+    "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/auto_scheduler"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/hls/AutoScheduler.cmake")
 
@@ -55,7 +55,7 @@ if(CPPHDL_SYNTH_VERILATOR)
     add_test(NAME synth_compact_verilog COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/CompactVerilog.py"
         --generator "$<TARGET_FILE:synth_compact_verilog_checks>"
-        --cxx "${CMAKE_CXX_COMPILER}" --verilator "${CPPHDL_SYNTH_VERILATOR}"
+        --cxx "${CPPHDL_TEST_CXX}" --verilator "${CPPHDL_SYNTH_VERILATOR}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/compact_verilog")
     set_tests_properties(synth_compact_verilog PROPERTIES TIMEOUT 180)
     foreach(storage registers ram)
@@ -64,33 +64,33 @@ if(CPPHDL_SYNTH_VERILATOR)
         set(storage_args --ram)
       endif()
       add_test(NAME synth_hls_${storage} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/hls/Run.py"
-          --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+          --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
           --verilator "${CPPHDL_SYNTH_VERILATOR}"
           --work "${CMAKE_CURRENT_BINARY_DIR}/hls_${storage}" ${storage_args})
       set_tests_properties(synth_hls_${storage} PROPERTIES TIMEOUT 1200)
     endforeach()
     add_test(NAME synth_hls_hft COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/hls/Run.py"
-        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
         --verilator "${CPPHDL_SYNTH_VERILATOR}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/hls_hft" --hft)
     set_tests_properties(synth_hls_hft PROPERTIES TIMEOUT 2400 LABELS "hls;slow")
   foreach(example one_clock feedback_frames)
     add_test(NAME synth_${example} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/retiming/Feedback.py"
-        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
         --verilator "${CPPHDL_SYNTH_VERILATOR}"
         --case ${example} --work "${CMAKE_CURRENT_BINARY_DIR}/${example}")
     set_tests_properties(synth_${example} PROPERTIES TIMEOUT 900)
   endforeach()
   foreach(example logic_retiming ram_retiming keep_box)
     add_test(NAME synth_${example} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/retiming/Run.py"
-        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
         --verilator "${CPPHDL_SYNTH_VERILATOR}"
         --case ${example} --work "${CMAKE_CURRENT_BINARY_DIR}/${example}")
     set_tests_properties(synth_${example} PROPERTIES TIMEOUT 900)
   endforeach()
   foreach(example math pipeline blackbox interface_proxy main_and_secondary two_main_clocks memory async_reset memory_async_reset)
     add_test(NAME synth_${example} COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Run.py"
-        --cpphdl "$<TARGET_FILE:cpphdl>" --cxx "${CMAKE_CXX_COMPILER}"
+        --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
         --verilator "${CPPHDL_SYNTH_VERILATOR}"
         --case ${example} --work "${CMAKE_CURRENT_BINARY_DIR}/${example}")
     set_tests_properties(synth_${example} PROPERTIES TIMEOUT 900)

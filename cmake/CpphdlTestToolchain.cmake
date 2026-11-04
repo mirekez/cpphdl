@@ -1,0 +1,40 @@
+include_guard(GLOBAL)
+
+set(static_test_default OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(static_test_default ON)
+endif()
+option(CPPHDL_STATIC_TESTS "Use cpphdl-static and static C++ runtimes for test executables" ${static_test_default})
+set(CPPHDL_TEST_TARGET cpphdl)
+set(CPPHDL_TEST_CXX "${CMAKE_CXX_COMPILER}")
+
+function(cpphdl_test_compiler output compiler name)
+  if(CPPHDL_STATIC_TESTS)
+    set(CPPHDL_TEST_REAL_CXX "${compiler}")
+    # Some Verilator fixtures derive -L paths from the compiler executable.
+    # A wrapper lives outside that prefix, so retain the actual atomic runtime
+    # search directory explicitly (Conda does not ship a static libatomic).
+    execute_process(COMMAND "${compiler}" -print-file-name=libatomic.so
+      OUTPUT_VARIABLE atomic OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+    set(CPPHDL_TEST_RUNTIME_DIR "")
+    if(EXISTS "${atomic}")
+      get_filename_component(CPPHDL_TEST_RUNTIME_DIR "${atomic}" REALPATH)
+      get_filename_component(CPPHDL_TEST_RUNTIME_DIR "${CPPHDL_TEST_RUNTIME_DIR}" DIRECTORY)
+    endif()
+    set(wrapper "${CMAKE_BINARY_DIR}/test-toolchain/${name}")
+    configure_file("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/TestCompiler.sh.in" "${wrapper}" @ONLY)
+    file(CHMOD "${wrapper}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    set(${output} "${wrapper}" PARENT_SCOPE)
+  else()
+    set(${output} "${compiler}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+if(CPPHDL_STATIC_TESTS)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "CPPHDL_STATIC_TESTS requires Linux and GCC or Clang")
+  endif()
+  set(CPPHDL_BUILD_STATIC ON)
+  set(CPPHDL_TEST_TARGET cpphdl-static)
+  cpphdl_test_compiler(CPPHDL_TEST_CXX "${CMAKE_CXX_COMPILER}" cxx)
+endif()

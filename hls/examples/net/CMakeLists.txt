@@ -8,7 +8,7 @@ if(HLS_VERILATOR)
         set(test_name hls_hft_pipeline8_verilator)
     endif()
     add_test(NAME ${test_name} COMMAND "${CMAKE_COMMAND}"
-        "-DCPPHDL=$<TARGET_FILE:cpphdl>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
         "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/hft.cpp"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/rtl${stages}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DSTAGES=${stages}"
         "-DVERILATOR=${HLS_VERILATOR}" "-DMAKE=${HLS_MAKE}"

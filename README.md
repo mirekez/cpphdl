@@ -120,12 +120,13 @@ The executable is `build-hdlcpp/hdlcpp` for Unix Makefiles or Ninja, or
 
 ### Fully static Linux converter
 
-To also build `build/cpphdl-static`, install the static dependencies and enable
-the optional target (commands run from the repository root):
+Linux test builds use `build/cpphdl-static` by default. Install the static
+dependencies through `requirements.yaml`, then configure and build (from the
+repository root):
 
 ```sh
 conda install -p ./.conda -c conda-forge zstd-static
-cmake -S . -B build -DCPPHDL_BUILD_STATIC=ON -DCPPHDL_BUILD_HLS_TESTS=OFF
+cmake -S . -B build -G "Unix Makefiles" -DCPPHDL_STATIC_TESTS=ON
 cmake --build build --target cpphdl-static -j2
 ctest --test-dir build -R '^cpphdl_static_cli_' --output-on-failure
 ```
@@ -140,6 +141,18 @@ this target does not bundle them or support loading shared Clang plugins.
 Static glibc can still load NSS modules for account lookups (for example,
 expanding `~user`); a static ELF does not guarantee those optional operations
 work on a filesystem without shared libraries.
+
+`CPPHDL_STATIC_TESTS=ON` selects this converter for tests and example conversion,
+and links test-generated executables with static C++ and GCC runtimes. This
+includes native-graph helpers, Verilator harnesses and HLS libc++ tests. CMake
+generates compiler wrappers under `build/test-toolchain/` so nested builds use
+the same linkage. Test executables can still depend on libc, libatomic, OpenMP or other
+external libraries; shared-library fixtures and sanitizer checks remain enabled.
+They are not all fully static ELF files like `cpphdl-static`. Use
+`-DCPPHDL_STATIC_TESTS=OFF` to test with the ordinary converter/compiler instead;
+`CPPHDL_BUILD_STATIC=ON` can still build the static converter independently.
+When enabled, the `hdlcpp` converter also builds as a fully static Linux binary
+by default (`HDLCPP_STATIC=ON`), with the same ELF dependency check.
 
 ## tests
 

@@ -26,6 +26,8 @@ set(HLS_LINK_FLAGS -stdlib=libc++)
 if(HLS_LIBCXX_LIBRARY_DIR)
     list(APPEND HLS_LINK_FLAGS "-L${HLS_LIBCXX_LIBRARY_DIR}" "-Wl,-rpath,${HLS_LIBCXX_LIBRARY_DIR}")
 endif()
+cpphdl_test_compiler(HLS_TEST_CXX "${HLS_CXX}" hls-cxx)
+set(HLS_CXX "${HLS_TEST_CXX}")
 execute_process(COMMAND "${HLS_CXX}" ${HLS_CXX_FLAGS}
     "${CMAKE_CURRENT_SOURCE_DIR}/Libcxx.cpp" ${HLS_LINK_FLAGS}
     -o "${CMAKE_CURRENT_BINARY_DIR}/libcxx-check"
