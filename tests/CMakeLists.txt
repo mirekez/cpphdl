@@ -345,6 +345,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeSchedulingChecks.py"
         --cxx "${CPPHDL_TEST_CXX}" --threaded)
     set_tests_properties(cpp_graph_native_threads PROPERTIES TIMEOUT 300)
+    add_test(NAME cpp_graph_native_wait_policy COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeWaitPolicyChecks.py"
+        --cxx "${CPPHDL_TEST_CXX}")
+    set_tests_properties(cpp_graph_native_wait_policy PROPERTIES TIMEOUT 120)
     add_test(NAME cpp_graph_native_compiler COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tools/cpphdl_native_compiler.py"
         --cxx "${CPPHDL_TEST_CXX}"
@@ -911,6 +915,13 @@ foreach(src ${TEST_SOURCES})
     endif()
 
 endforeach()
+
+# Exercise the constraint overloads as well as the existing C++17 fallback test.
+add_executable(datatypes_LogicConversionsCpp23 datatypes/LogicConversions.cpp)
+set_target_properties(datatypes_LogicConversionsCpp23 PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+target_include_directories(datatypes_LogicConversionsCpp23 PRIVATE "${CMAKE_SOURCE_DIR}/include")
+cpphdl_link_stdcxxexp_if_available(datatypes_LogicConversionsCpp23)
+add_test(NAME datatypes_LogicConversionsCpp23 COMMAND datatypes_LogicConversionsCpp23)
 
 # Exercise the byte-oriented fallback even on little-endian development hosts.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

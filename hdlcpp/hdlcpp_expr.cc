@@ -641,7 +641,7 @@
         if (BinaryExpressionSyntax::isKind(expr.kind)) {
             auto& b = expr.as<BinaryExpressionSyntax>();
             auto op = tok(b.operatorToken);
-            if (op == "|" || op == "&" || op == "^") {
+            if (op == "|" || op == "&" || op == "^" || op == "~^" || op == "^~") {
                 auto leftWidth = bitwiseExprWidth(*b.left);
                 auto rightWidth = bitwiseExprWidth(*b.right);
                 if (!leftWidth.empty() && leftWidth == rightWidth) {
@@ -1070,7 +1070,7 @@
         if (expr.kind == SyntaxKind::ParenthesizedExpression) {
             return exprWidth(*expr.as<ParenthesizedExpressionSyntax>().expression);
         }
-        auto text = expr.toString();
+        auto text = trim(expr.toString());
         auto quote = text.find('\'');
         if (quote != std::string::npos) {
             if (quote > 0) {
@@ -2260,9 +2260,10 @@
         if (width == "1" && (value & 1ull) == 1ull) {
             return maskForWidth(count);
         }
-        return "([]() { uint64_t __cpphdl_rep = 0; for (std::size_t __cpphdl_i = 0; __cpphdl_i < (std::size_t)(" +
-               count + "); ++__cpphdl_i) { __cpphdl_rep = ((__cpphdl_rep << (unsigned)(" + width +
-               ")) | (" + valueText + " & " + maskForWidth(width) + ")); } return __cpphdl_rep; }())";
+        // Keep replication typed and constexpr. An integer-returning lambda
+        // loses its bit width inside a wider concatenation and defeats lowering.
+        return "(uint64_t)(cpphdl::repeat<(std::size_t)(" + count + "), (std::size_t)(" +
+            width + ")>(logic<" + width + ">(" + valueText + ")))";
     }
 
     std::string emitNumericConcat(const ConcatenationExpressionSyntax& c)
@@ -2354,6 +2355,230 @@
             return std::to_string(value) + "ull";
         }
         return emitNumericExpr(expr);
+    }
+
+    std::optional<SVInt> wildcardCaseValue(const ExpressionSyntax& expr)
+    {
+        // Read the original tokens: exprText deliberately maps ordinary X/Z
+        // values to zero, which would destroy wildcard positions in case labels.
+        if (expr.kind == SyntaxKind::IntegerVectorExpression) {
+            const auto& literal = expr.as<IntegerVectorExpressionSyntax>();
+            auto size = std::string(literal.size.rawText());
+            if (size.empty()) size = "32";
+            return SVInt::fromString(size + std::string(literal.base.rawText()) + std::string(literal.value.rawText()));
+        }
+        if (expr.kind == SyntaxKind::IntegerLiteralExpression)
+            return SVInt::fromString(expr.as<LiteralExpressionSyntax>().literal.rawText());
+        if (expr.kind == SyntaxKind::UnbasedUnsizedLiteralExpression) {
+            auto text = expr.as<LiteralExpressionSyntax>().literal.rawText();
+            char digit = std::tolower(static_cast<unsigned char>(text.back()));
+            auto value = SVInt::fromString(std::string("1'b") + digit);
+            value.setSigned(true); // Unbased literals fill the case context.
+            return value;
+        }
+        if (expr.kind == SyntaxKind::ParenthesizedExpression)
+            return wildcardCaseValue(*expr.as<ParenthesizedExpressionSyntax>().expression);
+        if (expr.kind == SyntaxKind::ConcatenationExpression) {
+            std::vector<SVInt> values;
+            for (auto child : expr.as<ConcatenationExpressionSyntax>().expressions) {
+                auto value = wildcardCaseValue(*child);
+                if (!value) return {};
+                values.push_back(std::move(*value));
+            }
+            return SVInt::concat(values);
+        }
+        if (expr.kind == SyntaxKind::MultipleConcatenationExpression) {
+            const auto& repeated = expr.as<MultipleConcatenationExpressionSyntax>();
+            auto value = wildcardCaseValue(*repeated.concatenation);
+            auto count = wildcardCaseValue(*repeated.expression);
+            if (value && count && !count->hasUnknown()) return value->replicate(*count);
+        }
+        return {};
+    }
+
+    std::string caseBitConstant(const std::string& bits)
+    {
+        std::string result;
+        for (size_t end = bits.size(); end;) {
+            auto count = std::min<size_t>(64, end);
+            auto begin = end - count;
+            uint64_t word = 0;
+            for (size_t i = 0; i < count; ++i) if (bits[begin + i] == '1') word |= uint64_t(1) << i;
+            if (!result.empty()) result += ", ";
+            result += "logic<" + std::to_string(count) + ">(" + std::to_string(word) + "ull)";
+            end = begin;
+        }
+        return bits.size() <= 64 ? result : "cat{" + result + "}";
+    }
+
+    struct WildcardCaseMask {
+        std::string value, ignored;
+        bool impossible = false;
+    };
+
+    WildcardCaseMask wildcardCaseMask(const ExpressionSyntax& expr, bool casex)
+    {
+        if (auto value = wildcardCaseValue(expr)) {
+            std::string bits, ignored;
+            bool impossible = false;
+            for (unsigned i = 0; i < value->getBitWidth(); ++i) {
+                auto bit = (*value)[int32_t(i)];
+                bits += bit.value == 1 ? '1' : '0';
+                ignored += bit.value == logic_t::Z_VALUE || (casex && bit.value == logic_t::X_VALUE) ? '1' : '0';
+                impossible |= bit.value == logic_t::X_VALUE && !casex;
+            }
+            return {caseBitConstant(bits), caseBitConstant(ignored), impossible};
+        }
+        if (expr.kind == SyntaxKind::ParenthesizedExpression)
+            return wildcardCaseMask(*expr.as<ParenthesizedExpressionSyntax>().expression, casex);
+        if (expr.kind == SyntaxKind::ConcatenationExpression) {
+            WildcardCaseMask result{"cat{", "cat{"};
+            bool first = true;
+            for (auto child : expr.as<ConcatenationExpressionSyntax>().expressions) {
+                auto part = wildcardCaseMask(*child, casex);
+                auto width = foldWidth(exprWidth(*child));
+                if (width.empty()) throw std::runtime_error("unknown wildcard concatenation operand width");
+                if (!first) { result.value += ", "; result.ignored += ", "; }
+                result.value += "logic<" + width + ">(" + part.value + ")";
+                result.ignored += "logic<" + width + ">(" + part.ignored + ")";
+                result.impossible |= part.impossible;
+                first = false;
+            }
+            result.value += "}"; result.ignored += "}";
+            return result;
+        }
+        if (expr.kind == SyntaxKind::MultipleConcatenationExpression) {
+            const auto& repeated = expr.as<MultipleConcatenationExpressionSyntax>();
+            auto part = wildcardCaseMask(*repeated.concatenation, casex);
+            auto repeat = "cpphdl::repeat<" + emitNumericExpr(*repeated.expression) + ">(";
+            return {repeat + part.value + ")", repeat + part.ignored + ")", part.impossible};
+        }
+        // Keep parameters as C++ expressions, so template overrides still select
+        // the right pattern. Only literal positions contribute wildcard bits.
+        auto text = expr.toString();
+        static const std::regex wildcardLiteral("'[sS]?[bBoOhHdD][0-9a-fA-F_xXzZ?]*[xXzZ?]|'[xXzZ?]");
+        if (std::regex_search(text, wildcardLiteral))
+            throw std::runtime_error("unsupported wildcard case label: " + text);
+        auto width = foldWidth(exprWidth(expr));
+        if (width.empty()) throw std::runtime_error("unknown wildcard case operand width");
+        return {"logic<" + width + ">(" + emitExpr(expr) + ")", "logic<" + width + ">(0)"};
+    }
+
+    void emitWildcardCase(const CaseStatementSyntax& cases, std::vector<std::string>& out, bool comb, int indent)
+    {
+        const auto selectorWidth = foldWidth(exprWidth(*cases.expr));
+        if (selectorWidth.empty()) throw std::runtime_error("unknown wildcard case selector width");
+        unsigned knownWidth = isNumber(selectorWidth) ? std::stoul(selectorWidth) : 0;
+        const bool casex = tok(cases.caseKeyword) == "casex";
+        auto unbased = [](const ExpressionSyntax* expr) {
+            while (expr->kind == SyntaxKind::ParenthesizedExpression)
+                expr = expr->as<ParenthesizedExpressionSyntax>().expression;
+            return expr->kind == SyntaxKind::UnbasedUnsizedLiteralExpression;
+        };
+        // All case operands share one comparison width. For example, an '1
+        // label fills eight bits if any other label is eight bits, even when
+        // the selector is only four bits. It must not then match 4'b1111.
+        std::set<std::string> widths{selectorWidth};
+        for (auto item : cases.items) if (item->kind == SyntaxKind::StandardCaseItem)
+            for (auto label : item->as<StandardCaseItemSyntax>().expressions) {
+                if (unbased(label)) continue;
+                auto value = wildcardCaseValue(*label);
+                auto width = value ? std::to_string(value->getBitWidth()) : foldWidth(exprWidth(*label));
+                if (width.empty()) throw std::runtime_error("unknown wildcard case label width");
+                widths.insert(width);
+            }
+        unsigned knownCaseWidth = 0;
+        bool numericWidths = true;
+        std::string contextWidth = "std::max<uint64_t>({";
+        for (const auto& width : widths) {
+            contextWidth += "(" + width + "),";
+            if (isNumber(width)) knownCaseWidth = std::max(knownCaseWidth, unsigned(std::stoul(width)));
+            else numericWidths = false;
+        }
+        contextWidth += "})";
+        if (numericWidths) contextWidth = std::to_string(knownCaseWidth);
+        else knownCaseWidth = 0;
+        // Subtract each literal's matching cube from the uncovered input space.
+        // Only proven exhaustive chains get a terminal else; incomplete cases
+        // retain their original hold/default behavior. Bound proof work rather
+        // than enumerating 2^width possible values.
+        std::vector<std::string> uncovered;
+        bool proving = knownWidth > 0 && knownWidth <= 4096;
+        if (proving) uncovered.emplace_back(knownWidth, '?');
+        auto cover = [&](const std::string& pattern) {
+            if (!proving) return;
+            for (size_t i = knownWidth; i < pattern.size(); ++i) if (pattern[i] == '1') return;
+            auto projected = pattern.substr(0, knownWidth);
+            projected.resize(knownWidth, '0');
+            std::vector<std::string> remaining;
+            for (auto cube : uncovered) {
+                bool disjoint = false;
+                for (unsigned i = 0; i < knownWidth; ++i)
+                    disjoint |= cube[i] != '?' && projected[i] != '?' && cube[i] != projected[i];
+                if (disjoint) remaining.push_back(std::move(cube));
+                else for (unsigned i = 0; i < knownWidth; ++i) if (cube[i] == '?' && projected[i] != '?') {
+                    auto outside = cube;
+                    outside[i] = projected[i] == '0' ? '1' : '0';
+                    remaining.push_back(std::move(outside));
+                    cube[i] = projected[i];
+                }
+                if (remaining.size() > 4096) { proving = false; uncovered.clear(); return; }
+            }
+            uncovered = std::move(remaining);
+        };
+        const auto selector = emitExpr(*cases.expr);
+        const auto pre = std::string(indent * 4, ' ');
+        const DefaultCaseItemSyntax* fallback = nullptr;
+        bool emitted = false, complete = false;
+        for (auto item : cases.items) {
+            if (item->kind == SyntaxKind::DefaultCaseItem) {
+                fallback = &item->as<DefaultCaseItemSyntax>();
+                continue;
+            }
+            if (item->kind != SyntaxKind::StandardCaseItem) continue;
+            const auto& clause = item->as<StandardCaseItemSyntax>();
+            std::string condition;
+            for (auto label : clause.expressions) {
+                if (!condition.empty()) condition += " || ";
+                auto value = wildcardCaseValue(*label);
+                if (!value) {
+                    auto masked = wildcardCaseMask(*label, casex);
+                    condition += masked.impossible ? "false" : "((logic<" + contextWidth + ">(" + selector +
+                        ") & ~logic<" + contextWidth + ">(" + masked.ignored + ")) == logic<" + contextWidth + ">(" + masked.value + "))";
+                    continue;
+                }
+                if (unbased(label)) {
+                    if (!knownCaseWidth) throw std::runtime_error("unbased wildcard case label requires a known comparison width");
+                    *value = value->resize(knownCaseWidth);
+                }
+                std::string pattern, wild, bits;
+                bool impossible = false;
+                for (unsigned i = 0; i < value->getBitWidth(); ++i) {
+                    auto bit = (*value)[int32_t(i)];
+                    bool ignored = bit.value == logic_t::Z_VALUE || (casex && bit.value == logic_t::X_VALUE);
+                    impossible |= bit.value == logic_t::X_VALUE && !casex;
+                    pattern += ignored ? '?' : bit.value == 1 ? '1' : '0';
+                    wild += ignored ? '1' : '0';
+                    bits += bit.value == 1 ? '1' : '0';
+                }
+                if (impossible) { condition += "false"; continue; }
+                cover(pattern);
+                condition += "((logic<" + contextWidth + ">(" + selector + ") & ~logic<" + contextWidth + ">(" +
+                    caseBitConstant(wild) + ")) == logic<" + contextWidth + ">(" + caseBitConstant(bits) + "))";
+            }
+            complete = proving && uncovered.empty();
+            out.push_back(pre + (complete ? std::string(emitted ? "else {" : "{") :
+                std::string(emitted ? "else if (" : "if (") + (condition.empty() ? "false" : condition) + ") {"));
+            emitCaseClause(*clause.clause, out, comb, indent + 1);
+            out.push_back(pre + "}");
+            emitted = true;
+            if (complete) break;
+        }
+        if (fallback && !complete) {
+            out.push_back(pre + std::string(emitted ? "else {" : "{"));
+            emitCaseClause(*fallback->clause, out, comb, indent + 1);
+            out.push_back(pre + "}");
+        }
     }
 
     bool isNativeCaseLabelExpr(const ExpressionSyntax& expr)
@@ -2598,6 +2823,10 @@
         }
         else if (st.kind == SyntaxKind::CaseStatement) {
             auto& c = st.as<CaseStatementSyntax>();
+            if (tok(c.caseKeyword) == "casez" || tok(c.caseKeyword) == "casex") {
+                emitWildcardCase(c, out, comb, indent);
+                return;
+            }
             if (tok(c.matchesOrInside) == "inside") {
                 bool emittedAny = false;
                 for (auto item : c.items) {
@@ -2895,11 +3124,15 @@
                         t.erase(t.begin());
                     }
                     t = trim(t);
-                    s += " = " + translateExpr(t);
+                    s += " = " + (loopVars.count(name) && d.declarator->initializer->expr
+                        ? emitUntypedNumericExpr(*d.declarator->initializer->expr) : translateExpr(t));
                 }
             }
             else if (ExpressionSyntax::isKind(init->kind)) {
-                s += emitExpr(init->as<ExpressionSyntax>());
+                // Loop counters are native integral values. Use the same
+                // numeric assignment lowering as the iteration expression,
+                // including sized SV literals such as count = 32'd0.
+                s += emitForStep(init->as<ExpressionSyntax>());
             }
             else {
                 s += exprText(init->toString());
@@ -3649,11 +3882,77 @@
         }
         if (isBlockingAssignmentKind(expr.kind) || isNonblockingAssignmentKind(expr.kind)) {
             auto& b = expr.as<BinaryExpressionSyntax>();
+            if (b.left->kind == SyntaxKind::ConcatenationExpression) {
+                std::vector<const ExpressionSyntax*> leaves;
+                auto flatten = [&](auto&& self, const ExpressionSyntax& target) -> void {
+                    if (target.kind == SyntaxKind::ConcatenationExpression) {
+                        for (auto element : target.as<ConcatenationExpressionSyntax>().expressions)
+                            self(self, *element);
+                    }
+                    else leaves.push_back(&target);
+                };
+                flatten(flatten, *b.left);
+                std::vector<std::string> widths;
+                std::string total = "0";
+                for (auto leaf : leaves) {
+                    auto width = foldWidth(exprWidth(*leaf));
+                    const ElementSelectSyntax* selection = nullptr;
+                    if (leaf->kind == SyntaxKind::IdentifierSelectName) {
+                        const auto& selectors = leaf->as<IdentifierSelectNameSyntax>().selectors;
+                        if (!selectors.empty()) selection = selectors.back();
+                    }
+                    else if (leaf->kind == SyntaxKind::ElementSelectExpression)
+                        selection = leaf->as<ElementSelectExpressionSyntax>().select;
+                    // A packed slice of a memory row is not a one-bit array
+                    // selection, even when generic expression type lookup falls back.
+                    if (selection && selection->selector && RangeSelectSyntax::isKind(selection->selector->kind))
+                        width = foldWidth(selectWidth(*selection));
+                    if (width.empty()) throw std::runtime_error("unknown concatenation target width: " + leaf->toString());
+                    widths.push_back(width);
+                    total += " + (" + width + ")";
+                }
+                // A concatenation assignment is one transaction. Snapshot the
+                // complete RHS before distributing slices to register next values.
+                std::string result = "{\nauto __cpphdl_concat_rhs = logic<" + total + ">(" +
+                    emitTypedExpr(*b.right, "logic<" + total + ">") + ");\n";
+                std::string offset = "0";
+                for (size_t i = leaves.size(); i-- > 0;) {
+                    auto base = assignedBase(*leaves[i]);
+                    auto lhs = emitLValue(*leaves[i]);
+                    auto storage = mod->types.count(base) ? mod->types[base] : lookupLocalType(base);
+                    if (!scheduledMemoryType(storage) && !comb && isNonblockingAssignmentKind(expr.kind) && mod->types.count(base))
+                        lhs.replace(0, base.size(), base + "._next");
+                    auto value = "logic<" + widths[i] + ">(__cpphdl_concat_rhs.bits((" + offset +
+                        ") + (" + widths[i] + ") - 1, " + offset + "))";
+                    if (scheduledMemoryType(storage)) {
+                        auto open = base.size();
+                        auto close = std::string::npos;
+                        int depth = 0;
+                        for (size_t j = open; j < lhs.size(); ++j) {
+                            if (lhs[j] == '[') ++depth;
+                            else if (lhs[j] == ']' && --depth == 0) { close = j; break; }
+                        }
+                        if (open >= lhs.size() || lhs[open] != '[' || close == std::string::npos)
+                            throw std::runtime_error("unsupported concatenation memory target: " + leaves[i]->toString());
+                        // Retain RAM storage. A slice write merges with pending
+                        // writes to the same row before scheduling its new value.
+                        auto row = "__cpphdl_concat_row_" + std::to_string(i);
+                        auto index = "__cpphdl_concat_index_" + std::to_string(i);
+                        result += "auto " + index + " = " + lhs.substr(open + 1, close - open - 1) + ";\n";
+                        result += "auto " + row + " = " + base + ".pending(" + index + ");\n";
+                        result += row + lhs.substr(close + 1) + " = " + value + ";\n";
+                        result += base + "[" + index + "] = " + row + ";\n";
+                    }
+                    else result += emitCheckedArrayAssignment(lhs, value, *leaves[i]) + ";\n";
+                    offset += " + (" + widths[i] + ")";
+                }
+                return result + "}";
+            }
             auto base = assignedBase(*b.left);
             // The early sequential pre-scan can encounter syntax shapes before all module
             // metadata is available. The emitted assignment is authoritative, so retain its
             // nonblocking storage class for declaration, seeding, and strobe generation.
-            if (isNonblockingAssignmentKind(expr.kind) && mod && mod->types.count(base)) {
+            if (!comb && isNonblockingAssignmentKind(expr.kind) && mod && mod->types.count(base)) {
                 mod->nonblockingAssignedVars.insert(base);
             }
             auto lhs = emitLValue(*b.left);
@@ -3697,11 +3996,11 @@
                 if (mod->outputPortCppNames.count(base)) {
                     sequentialStorageType = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
                 }
-                if (isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
+                if (!comb && isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
                     sequentialStorageType = regTypeFor(sequentialStorageType);
                 }
                 auto writeNextValue = !scheduledMemoryType(sequentialStorageType) &&
-                    isNonblockingAssignmentKind(expr.kind) && mod->types.count(base);
+                    !comb && isNonblockingAssignmentKind(expr.kind) && mod->types.count(base);
                 return emitArraySliceAssignment(*arraySliceTarget, rhs, writeNextValue);
             }
             auto packedArrayWriteInfo = packedArrayElementWriteTarget(*b.left, false);
@@ -3820,7 +4119,7 @@
             if (mod->types.count(base) &&
                 (isNonblockingAssignmentKind(expr.kind) ||
                  mod->types[base].rfind("reg<", 0) == 0 || mod->outputPortCppNames.count(base))) {
-                if (comb && !isNonblockingAssignmentKind(expr.kind)) {
+                if (comb) {
                     mod->combAssignedVars.insert(base);
                 }
                 else {
@@ -3834,11 +4133,11 @@
             if (mod->outputPortCppNames.count(base)) {
                 sequentialStorageType = outputStorageType(*mod, base, mod->outputPortCppNames[base]);
             }
-            if (isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
+            if (!comb && isNonblockingAssignmentKind(expr.kind) && mod->types.count(base)) {
                 sequentialStorageType = regTypeFor(sequentialStorageType);
             }
             auto writeNextValue = !scheduledMemoryType(sequentialStorageType) &&
-                isNonblockingAssignmentKind(expr.kind) && mod->types.count(base);
+                !comb && isNonblockingAssignmentKind(expr.kind) && mod->types.count(base);
             auto packedArrayWrite = packedArrayElementWriteTarget(*b.left, writeNextValue);
             if (!packedArrayWrite && packedArrayWriteInfo && !writeNextValue) {
                 packedArrayWrite = packedArrayWriteInfo;
@@ -4709,6 +5008,9 @@
             }
             auto left = emitUntypedNumericExpr(*b.left);
             auto rhs = emitUntypedNumericExpr(*b.right);
+            if (op == "~^" || op == "^~") {
+                return numericBitwiseNotExpr("(" + left + " ^ " + rhs + ")", foldWidth(exprWidth(expr)));
+            }
             if (op == "<<" || op == ">>") {
                 if (auto packed = packedValueExpr(*b.left, emitExpr(*b.left)); !packed.empty()) {
                     left = packed;

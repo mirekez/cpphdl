@@ -508,7 +508,7 @@
                 }
             }
             if (!childPort) {
-                auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
+                const auto& portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
                 auto specIt = portTypes.find(type + "." + portName);
                 if (specIt == portTypes.end()) {
                     specIt = portTypes.find(type + "." + portName + "_in");
@@ -837,6 +837,37 @@
         }
     }
 
+    static bool levelEvent(const SyntaxNode& node)
+    {
+        switch (node.kind) {
+        case SyntaxKind::SignalEventExpression: {
+            const auto& event = node.as<SignalEventExpressionSyntax>();
+            return tok(event.edge).empty() && !event.iffClause;
+        }
+        case SyntaxKind::BinaryEventExpression: {
+            const auto& event = node.as<BinaryEventExpressionSyntax>();
+            return levelEvent(*event.left) && levelEvent(*event.right);
+        }
+        case SyntaxKind::ParenthesizedEventExpression:
+            return levelEvent(*node.as<ParenthesizedEventExpressionSyntax>().expr);
+        default: return false;
+        }
+    }
+
+    static bool combinationalProcess(const ProceduralBlockSyntax& proc)
+    {
+        if (proc.kind == SyntaxKind::AlwaysCombBlock) return true;
+        if (proc.kind != SyntaxKind::AlwaysBlock ||
+            proc.statement->kind != SyntaxKind::TimingControlStatement) return false;
+        const auto& timing = *proc.statement->as<TimingControlStatementSyntax>().timingControl;
+        // Legacy synthesizable RTL spells combinational sensitivity explicitly.
+        // An event list is not a clock: only edge-sensitive blocks enter _work.
+        if (timing.kind == SyntaxKind::ImplicitEventControl || timing.kind == SyntaxKind::EventControl)
+            return true;
+        return timing.kind == SyntaxKind::EventControlWithExpression &&
+            levelEvent(*timing.as<EventControlWithExpressionSyntax>().expr);
+    }
+
     void collectSequentialAssignedBases(const SyntaxNode& node, std::set<std::string>& found)
     {
         if (node.kind == SyntaxKind::AlwaysBlock ||
@@ -844,11 +875,7 @@
             node.kind == SyntaxKind::AlwaysFFBlock ||
             node.kind == SyntaxKind::AlwaysLatchBlock) {
             auto& proc = node.as<ProceduralBlockSyntax>();
-            bool comb = tok(proc.keyword).find("comb") != std::string::npos;
-            if (proc.statement->kind == SyntaxKind::TimingControlStatement) {
-                auto& t = proc.statement->as<TimingControlStatementSyntax>();
-                comb = comb || t.timingControl->kind == SyntaxKind::ImplicitEventControl;
-            }
+            bool comb = combinationalProcess(proc);
             if (!comb) {
                 collectAssignedBases(*proc.statement, found,
                                      mod ? &mod->partialSeqAssignedVars : nullptr,
@@ -1532,6 +1559,26 @@
         return expr != nullptr;
     }
 
+    std::string cppPortName(const std::string& moduleName, const std::string& name,
+                            const std::string& direction)
+    {
+        auto* module = findModule(moduleName);
+        if (module) {
+            if (auto found = module->portCppNames.find(name); found != module->portCppNames.end())
+                return found->second;
+        }
+        const auto& configured = configuredTextMap("HDLCPP_PORT_TYPES");
+        if (auto found = configured.find(moduleName + ".$cpp." + name); found != configured.end())
+            return found->second;
+        std::string suffix = direction == "output" ? "_out" : direction == "input" ? "_in" : "";
+        if (suffix.empty() || hasSuffix(name, suffix)) return name;
+        auto result = name + suffix;
+        // Preserve already-suffixed RTL names. A separate port named 'value'
+        // must not collide with a real port named 'value_out'.
+        while (module && module->sourcePortNames.count(result)) result += suffix;
+        return result;
+    }
+
     void handle(const ModuleDeclarationSyntax& node)
     {
         modules.push_back({});
@@ -1551,8 +1598,26 @@
         project.modules.push_back({});
         project.modules.back().name = mod->name;
 
+        std::vector<const ParameterDeclarationBaseSyntax*> parameterDeclarations;
+        std::set<const SyntaxNode*> bodyParameters;
         if (node.header->parameters) {
-            for (auto p : node.header->parameters->declarations) {
+            for (auto p : node.header->parameters->declarations) parameterDeclarations.push_back(p);
+        }
+        else if (!mod->isPackage) {
+            // Verilog-1995 declares overridable parameters in the module body.
+            // Collect them before ports so widths and dependent defaults remain
+            // symbolic, exactly as for a SystemVerilog parameter port list.
+            for (auto member : node.members) {
+                if (member->kind != SyntaxKind::ParameterDeclarationStatement) continue;
+                auto& declaration = member->as<ParameterDeclarationStatementSyntax>();
+                if (tok(declaration.parameter->keyword) == "parameter") {
+                    parameterDeclarations.push_back(declaration.parameter);
+                    bodyParameters.insert(member);
+                }
+            }
+        }
+        if (!parameterDeclarations.empty()) {
+            for (auto p : parameterDeclarations) {
                 if (p->kind == SyntaxKind::ParameterDeclaration) {
                     auto& pd = p->as<ParameterDeclarationSyntax>();
                     for (auto d : pd.declarators) {
@@ -1576,7 +1641,16 @@
                             type = "hdlcpp_fixed_string";
                         }
                         if (type == "unsigned" || type == "uint64_t") {
-                            init = stripLogicLiteralCasts(std::move(init));
+                            if (d->initializer && d->initializer->expr &&
+                                (d->initializer->expr->kind == SyntaxKind::ConcatenationExpression ||
+                                 d->initializer->expr->kind == SyntaxKind::MultipleConcatenationExpression))
+                                init = emitUntypedNumericExpr(*d->initializer->expr);
+                            // cat operands carry their own widths. Stripping
+                            // their logic wrappers turns a bit into an unsized
+                            // C++ integer and destroys the concatenation type.
+                            if (init.find("cat{") != std::string::npos)
+                                init = "static_cast<" + type + ">(" + init + ")";
+                            else init = stripLogicLiteralCasts(std::move(init));
                         }
                         if (name == "INTERRUPTS") {
                             init = type + "{}";
@@ -1589,7 +1663,7 @@
                             trackedType = "array<" + trackedType.substr(std::strlen("std::array<"));
                         }
                         mod->types[name] = trackedType;
-                        if (auto width = foldWidth(typeWidth(declaredType)); !width.empty()) {
+                        if (auto width = parameterValueWidth(*pd.type, *d); !width.empty()) {
                             mod->valueWidths[name] = width;
                         }
                         if (!init.empty()) {
@@ -1717,10 +1791,40 @@
             inheritedAnsiInterfaceModport.clear();
             auto& ports = node.header->ports->as<AnsiPortListSyntax>();
             for (auto p : ports.ports) {
+                if (p->kind == SyntaxKind::ImplicitAnsiPort)
+                    mod->sourcePortNames.insert(tok(p->as<ImplicitAnsiPortSyntax>().declarator->name));
+            }
+            for (auto p : ports.ports) {
                 p->visit(*this);
             }
             inheritedAnsiInterfaceName.clear();
             inheritedAnsiInterfaceModport.clear();
+        }
+
+        if (node.header->ports && node.header->ports->kind == SyntaxKind::NonAnsiPortList) {
+            // Header order controls positional bindings; body declaration order
+            // need not match it. Reuse the ANSI port lowering after resolving each
+            // header name to its declaration, including output reg declarations.
+            std::map<std::string, std::pair<const PortHeaderSyntax*, const DeclaratorSyntax*>> declarations;
+            for (auto member : node.members) {
+                if (member->kind != SyntaxKind::PortDeclaration) continue;
+                auto& declaration = member->as<PortDeclarationSyntax>();
+                for (auto d : declaration.declarators)
+                    declarations[tok(d->name)] = {declaration.header, d};
+            }
+            for (const auto& [name, declaration] : declarations) mod->sourcePortNames.insert(name);
+            for (auto port : node.header->ports->as<NonAnsiPortListSyntax>().ports) {
+                if (port->kind != SyntaxKind::ImplicitNonAnsiPort ||
+                    port->as<ImplicitNonAnsiPortSyntax>().expr->kind != SyntaxKind::PortReference)
+                    throw std::runtime_error("unsupported non-ANSI port expression in " + mod->name);
+                auto& reference = port->as<ImplicitNonAnsiPortSyntax>().expr->as<PortReferenceSyntax>();
+                auto name = tok(reference.name);
+                auto found = declarations.find(name);
+                if (reference.select || found == declarations.end())
+                    throw std::runtime_error("unresolved non-ANSI port " + mod->name + "." + name);
+                const auto& [header, declarator] = found->second;
+                handlePort(*header, *declarator, header->toString() + " " + declarator->toString());
+            }
         }
 
         for (auto member : node.members) {
@@ -1729,6 +1833,7 @@
         }
 
         for (auto member : node.members) {
+            if (bodyParameters.count(member) || member->kind == SyntaxKind::PortDeclaration) continue;
             member->visit(*this);
         }
 
@@ -1816,24 +1921,30 @@
 
     void handle(const ImplicitAnsiPortSyntax& node)
     {
+        handlePort(*node.header, *node.declarator, node.toString());
+    }
+
+    void handlePort(const PortHeaderSyntax& header, const DeclaratorSyntax& declarator,
+                    const std::string& sourceText)
+    {
         if (!mod) {
             return;
         }
         PortGen port;
-        port.name = tok(node.declarator->name);
-        port.array = listText(node.declarator->dimensions);
-        if (node.header->kind == SyntaxKind::NetPortHeader) {
-            auto& h = node.header->as<NetPortHeaderSyntax>();
+        port.name = tok(declarator.name);
+        port.array = listText(declarator.dimensions);
+        if (header.kind == SyntaxKind::NetPortHeader) {
+            auto& h = header.as<NetPortHeaderSyntax>();
             port.direction = tok(h.direction);
-            port.type = port.array.empty() ? typeText(*h.dataType) : varType(*h.dataType, *node.declarator);
+            port.type = port.array.empty() ? typeText(*h.dataType) : varType(*h.dataType, declarator);
         }
-        else if (node.header->kind == SyntaxKind::VariablePortHeader) {
-            auto& h = node.header->as<VariablePortHeaderSyntax>();
+        else if (header.kind == SyntaxKind::VariablePortHeader) {
+            auto& h = header.as<VariablePortHeaderSyntax>();
             port.direction = tok(h.direction);
-            port.type = port.array.empty() ? typeText(*h.dataType) : varType(*h.dataType, *node.declarator);
+            port.type = port.array.empty() ? typeText(*h.dataType) : varType(*h.dataType, declarator);
         }
         auto interfacePortType = [&]() -> std::string {
-            auto raw = trim(node.toString());
+            auto raw = trim(sourceText);
             {
                 std::stringstream in(raw);
                 std::string cleaned;
@@ -1854,7 +1965,7 @@
                 raw.pop_back();
                 raw = trim(raw);
             }
-            const auto name = tok(node.declarator->name);
+            const auto name = tok(declarator.name);
             auto namePos = raw.rfind(name);
             if (name.empty() || namePos == std::string::npos) {
                 return {};
@@ -1937,7 +2048,7 @@
         if (!interfacePortType.empty()) {
             port.type = interfacePortType;
             port.isInterface = true;
-            auto dims = dimensionWidths(node.declarator->dimensions);
+            auto dims = dimensionWidths(declarator.dimensions);
             for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
                 port.type = "array<" + port.type + "," + *it + ">";
             }
@@ -1956,19 +2067,15 @@
         auto svName = port.name;
         mod->sourcePortOrder.push_back(svName);
         if (isClockPortName(svName) || svName == "reset") {
+            if (isClockPortName(svName)) mod->implicitClockPorts.insert(svName);
             return;
         }
-        auto cppName = svName;
-        if (port.direction == "output") {
-            if (!hasSuffix(cppName, "_out")) {
-                cppName += "_out";
-            }
-        }
-        else if (port.direction == "input") {
-            if (!hasSuffix(cppName, "_in")) {
-                cppName += "_in";
-            }
-        }
+        // An explicit integration assumption, never an inference from inout:
+        // no external driver is present on these pads in the two-state model.
+        if (port.direction == "inout" &&
+            configuredNameEquals("HDLCPP_OUTPUT_ONLY_INOUTS", mod->name + "." + svName))
+            port.direction = "output";
+        auto cppName = cppPortName(mod->name, svName, port.direction);
         port.name = cppName;
         if (port.direction == "output") {
             auto backingType = port.type;
@@ -1985,11 +2092,25 @@
         mod->portCppNames[svName] = cppName;
         mod->types[svName] = port.type;
         mod->types[cppName] = port.type;
-        recordArrayLowerBounds(svName, node.declarator->dimensions);
+        recordArrayLowerBounds(svName, declarator.dimensions);
         if (cppName != svName && mod->arrayLowerBounds.count(svName)) {
             mod->arrayLowerBounds[cppName] = mod->arrayLowerBounds[svName];
         }
         mod->ports.push_back(port);
+    }
+
+    bool mergePortRedeclaration(const std::string& name, const std::string& type)
+    {
+        if (!mod->portNames.count(name)) return false;
+        if (auto output = mod->outputPortCppNames.find(name); output != mod->outputPortCppNames.end()) {
+            mod->outputRegTypes[output->second] = type;
+            auto valueType = unwrapRegType(type);
+            mod->types[name] = valueType;
+            mod->types[output->second] = valueType;
+            for (auto& port : mod->ports)
+                if (port.name == output->second) port.type = valueType;
+        }
+        return true;
     }
 
     void handle(const DataDeclarationSyntax& node)
@@ -2047,6 +2168,7 @@
             if (mod->nonblockingAssignedVars.count(svName)) {
                 type = regTypeFor(type);
             }
+            if (mergePortRedeclaration(svName, type)) continue;
             mod->vars.push_back({type, name});
             if (d->dimensions.empty()) {
                 mod->scalarOrPackedVarNames.insert(name);
@@ -2087,6 +2209,7 @@
             if (mod->nonblockingAssignedVars.count(svName)) {
                 type = regTypeFor(type);
             }
+            if (mergePortRedeclaration(svName, type)) continue;
             mod->vars.push_back({type, name});
             mod->varNames.insert(name);
             mod->types[name] = type;
@@ -2113,6 +2236,18 @@
         }
     }
 
+    std::string parameterValueWidth(const DataTypeSyntax& type, const DeclaratorSyntax& declaration)
+    {
+        // An untyped parameter inherits its initializer's width. Treating the
+        // absent type as scalar logic truncates {1'b1, PARAM} and can even
+        // collapse distinct case labels (2'b00 and 2'b10) to the same value.
+        if (type.kind == SyntaxKind::ImplicitType &&
+            type.as<ImplicitTypeSyntax>().dimensions.empty() &&
+            declaration.initializer && declaration.initializer->expr)
+            return foldWidth(exprWidth(*declaration.initializer->expr));
+        return foldWidth(typeWidth(varType(type, declaration)));
+    }
+
     void handle(const ParameterDeclarationSyntax& node)
     {
         if (!mod) {
@@ -2121,7 +2256,7 @@
         for (auto d : node.declarators) {
             auto name = tok(d->name);
             auto type = varType(*node.type, *d);
-            if (auto width = foldWidth(typeWidth(type)); !width.empty()) {
+            if (auto width = parameterValueWidth(*node.type, *d); !width.empty()) {
                 mod->valueWidths[name] = width;
             }
             auto ctype = constexprType(type);
@@ -2328,6 +2463,16 @@
             if (a->kind == SyntaxKind::AssignmentExpression) {
                 auto& b = a->as<BinaryExpressionSyntax>();
                 auto base = assignedBase(*b.left);
+                // Clock ports are represented by the simulator's cycle, not
+                // C++ data members. Do not emit assignments to omitted ports.
+                if (mod->implicitClockPorts.count(base)) continue;
+                // Verilog permits an undeclared continuous-assignment net;
+                // its implicit type is a scalar wire, not an absent C++ name.
+                if (b.left->kind == SyntaxKind::IdentifierName && !base.empty() && !mod->types.count(base)) {
+                    mod->types[base] = "logic<1>";
+                    mod->vars.push_back({"logic<1>", base});
+                    mod->varNames.insert(base);
+                }
                 auto wholeNetAssign = b.left->kind == SyntaxKind::IdentifierName || isWholeObjectSelect(*b.left, base);
                 auto lhs = (mod->outputPortCppNames.count(base) && wholeNetAssign) ? mod->outputPortCppNames[base] :
                     (wholeNetAssign && !base.empty() ? base : emitLValue(*b.left));
@@ -2669,6 +2814,7 @@
                 rememberMemberType(name, memberType);
             }
             mod->memberTypes.push_back(memberType);
+            mod->instanceModuleTypes.insert(type);
             mod->memberNames.push_back(name);
             size_t connectionPosition = 0;
             for (auto conn : inst->connections) {
@@ -2704,6 +2850,18 @@
         }
     }
 
+    void recordGeneratedLocals(MethodGen& method)
+    {
+        for (const auto& block : method.body) {
+            std::istringstream lines(block);
+            std::string line;
+            while (std::getline(lines, line)) {
+                auto name = hdlcpp::declarationName(line);
+                if (!name.empty()) method.localNames.insert(name);
+            }
+        }
+    }
+
     void handle(const ProceduralBlockSyntax& node)
     {
         if (!mod) {
@@ -2715,11 +2873,7 @@
             }
             return;
         }
-        auto comb = tok(node.keyword).find("comb") != std::string::npos;
-        if (node.statement->kind == SyntaxKind::TimingControlStatement) {
-            auto& t = node.statement->as<TimingControlStatementSyntax>();
-            comb = comb || t.timingControl->kind == SyntaxKind::ImplicitEventControl;
-        }
+        auto comb = combinationalProcess(node);
         if (!comb && statementCallsWork(*node.statement)) {
             return;
         }
@@ -2766,6 +2920,7 @@
         }
         localTypeScopes.push_back({});
         emitStatement(*node.statement, m.body, comb, 0);
+        recordGeneratedLocals(m);
         localTypeScopes.pop_back();
         if (comb) {
             proceduralAssignedScopes.pop_back();
@@ -2781,7 +2936,7 @@
                     hdlcpp::rewriteLhsBase(line, out.second, out.first);
                 }
             }
-            std::set<std::string> localNames;
+            std::set<std::string> localNames = m.localNames;
             for (const auto& line : m.body) {
                 auto local = hdlcpp::declarationName(line);
                 if (!local.empty()) {
@@ -2934,6 +3089,21 @@
             }
         }
         mod->functionArgumentDirections[m.name] = std::move(functionDirections);
+        bool assignsFunctionResult = false;
+        auto findResultAssignment = [&](auto&& self, const SyntaxNode& item) -> void {
+            if (BinaryExpressionSyntax::isKind(item.kind)) {
+                const auto& expression = item.as<BinaryExpressionSyntax>();
+                if ((isBlockingAssignmentKind(item.kind) || isNonblockingAssignmentKind(item.kind)) &&
+                    assignedBase(*expression.left) == m.name)
+                    assignsFunctionResult = true;
+            }
+            for (size_t child = 0; child < item.getChildCount(); ++child)
+                if (auto nested = item.childNode(child)) self(self, *nested);
+        };
+        if (m.ret != "void") {
+            for (auto item : node.items) findResultAssignment(findResultAssignment, *item);
+            if (assignsFunctionResult) functionLocalTypes[m.name] = m.ret;
+        }
         auto splitTopLevelArgs = [](const std::string& text) {
             std::vector<std::string> args;
             std::string cur;
@@ -3065,6 +3235,29 @@
         }
         restoreFunctionParamTypes();
         localTypeScopes.pop_back();
+        if (assignsFunctionResult) {
+            // Assignment to the SV function name updates a result variable;
+            // it does not return early. This also covers for-loop headers.
+            const std::string result = "__hdlcpp_function_result";
+            for (auto& line : m.body) {
+                auto isIdent = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+                for (size_t pos = 0; (pos = line.find(m.name, pos)) != std::string::npos;) {
+                    auto end = pos + m.name.size();
+                    auto next = end;
+                    while (next < line.size() && std::isspace(static_cast<unsigned char>(line[next]))) ++next;
+                    if ((pos == 0 || (!isIdent(line[pos-1]) && line[pos-1] != '.')) &&
+                        (end == line.size() || !isIdent(line[end])) &&
+                        (next == line.size() || line[next] != '(')) {
+                        line.replace(pos, m.name.size(), result);
+                        pos += result.size();
+                    }
+                    else pos = end;
+                }
+            }
+            m.body.insert(m.body.begin(), m.ret + " " + result + "{};");
+            m.body.push_back("return " + result + ";");
+            m.localNames.insert(result);
+        }
         mod->methods.push_back(m);
     }
 
@@ -3367,6 +3560,7 @@
                     }
                     mod->members.push_back(emittedArrayType + " " + name + ";");
                     mod->memberTypes.push_back(arrayType);
+                    mod->instanceModuleTypes.insert(type);
                     mod->memberNames.push_back(name);
                     mod->memberArraySizes[name] = dimensions.front();
                     mod->memberArrayDimensions[name] = dimensions;
@@ -3427,22 +3621,18 @@
 	                        isOutput = hasSuffix(portName, "_o") || portName.find("_o_") != std::string::npos;
 	                        portName += isOutput ? "_out" : "_in";
 	                    }
-	                    if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); portTypes.count(type + "." + port)) {
-	                        auto spec = portTypes[type + "." + port];
+	                    if (const auto& portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); portTypes.count(type + "." + port)) {
+	                        auto spec = portTypes.at(type + "." + port);
 	                        auto sep = spec.find(':');
 	                        auto direction = trim(sep == std::string::npos ? std::string() : spec.substr(0, sep));
 	                        auto configuredType = trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
 	                        if (direction == "output") {
 	                            isOutput = true;
-	                            if (!hasSuffix(portName, "_out")) {
-	                                portName = port + "_out";
-	                            }
+	                            portName = cppPortName(type, port, direction);
 	                        }
 	                        else if (direction == "input") {
 	                            isOutput = false;
-	                            if (!hasSuffix(portName, "_in")) {
-	                                portName = port + "_in";
-	                            }
+	                            portName = cppPortName(type, port, direction);
 	                        }
 	                        if (!configuredType.empty()) {
 	                            portType = substituteModuleParamValues(type, instanceParams, configuredType);
@@ -3755,6 +3945,7 @@
                 auto memberType = moduleMemberType(type, instanceParams);
                 mod->members.push_back(memberType + " " + name + ";");
                 mod->memberTypes.push_back(memberType);
+                mod->instanceModuleTypes.insert(type);
                 mod->memberNames.push_back(name);
                 size_t connectionPosition = 0;
                 for (auto conn : inst->connections) {
@@ -3800,11 +3991,7 @@
                  node.kind == SyntaxKind::InitialBlock ||
                  node.kind == SyntaxKind::FinalBlock) {
             auto& proc = node.as<ProceduralBlockSyntax>();
-            bool comb = tok(proc.keyword).find("comb") != std::string::npos;
-            if (proc.statement->kind == SyntaxKind::TimingControlStatement) {
-                auto& t = proc.statement->as<TimingControlStatementSyntax>();
-                comb = comb || t.timingControl->kind == SyntaxKind::ImplicitEventControl;
-            }
+            bool comb = combinationalProcess(proc);
             if (comb) {
                 auto savedLoopVars = loopVars;
                 loopVars.clear();
@@ -4018,6 +4205,7 @@
                         m.body.push_back("}");
                     }
                 }
+                recordGeneratedLocals(m);
                 mod->methods.push_back(m);
                 loopVars = savedLoopVars;
             }
@@ -5764,20 +5952,23 @@
             auto& st = node.as<ExpressionStatementSyntax>();
             if (st.expr->kind == SyntaxKind::AssignmentExpression || st.expr->kind == SyntaxKind::NonblockingAssignmentExpression) {
                 auto& b = st.expr->as<BinaryExpressionSyntax>();
-                auto name = assignedBase(*b.left);
-                // Slang can represent selected aggregate lvalues in syntax forms that the
-                // structural expression walker does not recognize. Recover the root from
-                // the source lvalue so sequential storage classification is never dropped.
-                if (name.empty()) {
-                    name = baseFromLValueText(exprText(b.left->toString()));
-                }
-                if (!name.empty()) {
-                    found.insert(name);
-                    if (nonblocking && st.expr->kind == SyntaxKind::NonblockingAssignmentExpression) {
-                        nonblocking->insert(name);
+                std::vector<const ExpressionSyntax*> targets{b.left};
+                for (size_t index = 0; index < targets.size(); ++index) {
+                    const auto& target = *targets[index];
+                    if (target.kind == SyntaxKind::ConcatenationExpression) {
+                        for (auto element : target.as<ConcatenationExpressionSyntax>().expressions)
+                            targets.push_back(element);
+                        continue;
                     }
-                    if (partial && b.left->kind != SyntaxKind::IdentifierName) {
-                        partial->insert(name);
+                    auto name = assignedBase(target);
+                    // Recover selected aggregate roots not recognized by the
+                    // structural walker, without losing sequential storage.
+                    if (name.empty()) name = baseFromLValueText(exprText(target.toString()));
+                    if (!name.empty()) {
+                        found.insert(name);
+                        if (nonblocking && st.expr->kind == SyntaxKind::NonblockingAssignmentExpression)
+                            nonblocking->insert(name);
+                        if (partial && target.kind != SyntaxKind::IdentifierName) partial->insert(name);
                     }
                 }
             }
@@ -5836,7 +6027,37 @@
             }
         }
         else if (node.kind == SyntaxKind::ForLoopStatement) {
-            collectAssignedBases(*node.as<ForLoopStatementSyntax>().statement, found, partial, nonblocking);
+            const auto& loop = node.as<ForLoopStatementSyntax>();
+            std::set<std::string> declared;
+            for (auto init : loop.initializers)
+                if (init->kind == SyntaxKind::ForVariableDeclaration)
+                    declared.insert(tok(init->as<ForVariableDeclarationSyntax>().declarator->name));
+            auto collectHeaderWrite = [&](const ExpressionSyntax& expr) {
+                const ExpressionSyntax* target = nullptr;
+                if (isBlockingAssignmentKind(expr.kind) || isCompoundAssignmentKind(expr.kind))
+                    target = expr.as<BinaryExpressionSyntax>().left;
+                else if (PostfixUnaryExpressionSyntax::isKind(expr.kind)) {
+                    const auto& unary = expr.as<PostfixUnaryExpressionSyntax>();
+                    if (tok(unary.operatorToken) == "++" || tok(unary.operatorToken) == "--") target = unary.operand;
+                }
+                else if (PrefixUnaryExpressionSyntax::isKind(expr.kind)) {
+                    const auto& unary = expr.as<PrefixUnaryExpressionSyntax>();
+                    if (tok(unary.operatorToken) == "++" || tok(unary.operatorToken) == "--") target = unary.operand;
+                }
+                if (!target) return;
+                auto name = assignedBase(*target);
+                if (name.empty() || declared.count(name)) return;
+                found.insert(name);
+                if (partial && target->kind != SyntaxKind::IdentifierName) partial->insert(name);
+            };
+            // A module-scoped integer remains observable after a loop. Its
+            // initializer and step are procedural writes, not a reason to emit
+            // an immutable zero configuration in _assign(). Keep declared loop
+            // locals separate and retain blocking semantics for module storage.
+            for (auto init : loop.initializers)
+                if (ExpressionSyntax::isKind(init->kind)) collectHeaderWrite(init->as<ExpressionSyntax>());
+            for (auto step : loop.steps) collectHeaderWrite(*step);
+            collectAssignedBases(*loop.statement, found, partial, nonblocking);
         }
         else if (node.kind == SyntaxKind::CaseStatement) {
             for (auto item : node.as<CaseStatementSyntax>().items) {
@@ -6497,6 +6718,18 @@
                     break;
                 }
                 auto field = expr.substr(start, pos - start);
+                if (field == "bits" && pos < expr.size() && expr[pos] == '(') {
+                    auto close = matchingParenClose(expr, pos);
+                    if (close == std::string::npos) return std::string();
+                    auto bounds = splitTopLevelCommaList(expr.substr(pos + 1, close - pos - 1));
+                    if (bounds.size() != 2) return std::string();
+                    // A range proxy has its selected width. In particular,
+                    // concatenation destinations must not consume the whole
+                    // base net's width when distributing the RHS into slices.
+                    type = "logic<" + foldWidth("(" + bounds[0] + ") - (" + bounds[1] + ") + 1") + ">";
+                    pos = close + 1;
+                    continue;
+                }
                 auto nextType = fieldTypeFor(resolveAliasType(type), field);
                 if (nextType.empty()) {
                     resolvedSelectors = false;
@@ -6909,7 +7142,7 @@
                 }
             }
         }
-        if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
+        if (const auto& portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
             portTypes.count(m.name + "." + instance + "." + svPortName) ||
             portTypes.count(m.name + "." + instance + "." + portName) ||
             portTypes.count(instance + "." + svPortName) ||

@@ -27,18 +27,21 @@ inline DispatchPolicy nativeDispatchPolicy() {
     throw std::invalid_argument("CPPHDL_NATIVE_DISPATCH must be auto, serial or parallel");
 }
 
-// Read once per executor, before starting workers. Bounded spinning can avoid
-// kernel sleep/wakeup overhead for frequent short graph transactions. Keep a
-// conservative default for shared/oversubscribed hosts; tune by throughput,
-// not CPU occupancy. Zero requests immediate atomic waiting.
+// Read once per executor, before starting workers. CPPHDL_NATIVE_SPIN takes
+// precedence over CPPHDL_NATIVE_SPIN_LIMIT; each setting retains its supported
+// range. Zero skips our spin window and goes directly to atomic waiting.
 inline unsigned nativeSpinLimit() {
     const char* value = std::getenv("CPPHDL_NATIVE_SPIN");
-    if (!value) return 64;
+    const bool extended = !value;
+    if (extended) value = std::getenv("CPPHDL_NATIVE_SPIN_LIMIT");
+    if (!value) return 4096;
     const std::string_view text(value);
     unsigned count = 0;
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), count);
-    if (error != std::errc{} || end != text.data() + text.size() || count > 65536)
-        throw std::invalid_argument("CPPHDL_NATIVE_SPIN must be an integer from 0 to 65536");
+    if (error != std::errc{} || end != text.data() + text.size() || count > (extended ? 1000000u : 65536u))
+        throw std::invalid_argument(extended
+            ? "CPPHDL_NATIVE_SPIN_LIMIT must be an integer from 0 to 1000000"
+            : "CPPHDL_NATIVE_SPIN must be an integer from 0 to 65536");
     return count;
 }
 
@@ -69,7 +72,8 @@ class Threads {
 public:
     using Function = void (*)(void*, Threads&, unsigned, uint32_t) noexcept;
     Threads(unsigned lanes, unsigned tasks)
-        : lanes_(lanes), commands_(new Slot[lanes]), completed_(new Slot[lanes]), tasks_(new Slot[tasks]) {
+        : lanes_(lanes), spinLimit_(nativeSpinLimit()), commands_(new Slot[lanes]),
+          completed_(new Slot[lanes]), tasks_(new Slot[tasks]) {
         try {
             for (unsigned lane = 1; lane < lanes; ++lane)
                 workers_.emplace_back([this, lane] { worker(lane); });
@@ -158,8 +162,6 @@ public:
         tasks_[task].value.notify_all();
     }
 private:
-    // Long idle spins can keep the caller descheduled on a busy host. A short
-    // window catches immediate completions, then lets the futex wake the lane.
     static void pause() noexcept {
 #if defined(__i386__) || defined(__x86_64__)
         __builtin_ia32_pause();
@@ -207,7 +209,7 @@ private:
         for (auto& worker : workers_) worker.join();
     }
     unsigned lanes_;
-    const unsigned spinLimit_ = nativeSpinLimit();
+    const unsigned spinLimit_;
     const unsigned taskWorkers_ = nativeTaskWorkers(lanes_);
     std::unique_ptr<Slot[]> commands_, completed_, tasks_;
     std::vector<std::thread> workers_;

@@ -1055,6 +1055,11 @@
                 }
                 return left + " " + op + " " + rhs;
             }
+            if (op == "~^" || op == "^~") {
+                auto width = bitwiseExprWidth(expr);
+                return "logic<" + width + ">(~(" + logicValueExpr(*b.left, width) +
+                    " ^ " + logicValueExpr(*b.right, width, rhs) + "))";
+            }
             if (op == "|" || op == "&" || op == "^") {
                 auto width = bitwiseExprWidth(expr);
                 if (width.empty() || width == "1") {
@@ -2702,8 +2707,9 @@
                     continue;
                 }
                 bool ready = true;
-                for (auto& type : candidate.memberTypes) {
-                    auto baseType = cppTemplateBaseName(type);
+                auto dependencies = candidate.instanceModuleTypes;
+                for (const auto& type : candidate.memberTypes) dependencies.insert(cppTemplateBaseName(type));
+                for (const auto& baseType : dependencies) {
                     if (baseType == candidate.name) {
                         continue;
                     }
@@ -5878,7 +5884,7 @@
                 if (auto lt = baseChildType.find('<'); lt != std::string::npos) {
                     baseChildType = trim(baseChildType.substr(0, lt));
                 }
-                if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); !portTypes.empty()) {
+                if (const auto& portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); !portTypes.empty()) {
                     auto lookupConfigured = [&](const std::string& key) -> std::string {
                         auto it = portTypes.find(key);
                         if (it == portTypes.end()) {
@@ -6043,8 +6049,11 @@
                         }
                     }
                 }
+		                const bool hasExactOutputName = std::any_of(m.outputPortCppNames.begin(), m.outputPortCppNames.end(),
+                        [&](const auto& output) { return output.second == p.name; });
 		                for (auto& out : m.outputPortCppNames) {
 		                    auto outputNameMatchesPort = [&]() {
+		                        if (hasExactOutputName) return out.second == p.name;
 		                        return out.second == p.name ||
 		                               out.first == p.name ||
 		                               out.first + "_out" == p.name ||
@@ -6190,7 +6199,28 @@
             }
 	            h << (m.isInterface ? "\npublic:\n" : "\nprivate:\n");
 	            for (auto& member : m.members) {
-	                h << "    " << postProcessCppLine(member) << "\n";
+                // Elaborated syntax disambiguates module classes from library
+                // functions such as sync(). Apply it only at final emission;
+                // connection resolution consumes the canonical stored types.
+                auto declaration = member;
+                size_t typeStart = 0;
+                while (declaration.compare(typeStart, 6, "array<") == 0) {
+                    size_t pos = typeStart + 6;
+                    int angle = 0, paren = 0;
+                    for (; pos < declaration.size(); ++pos) {
+                        char c = declaration[pos];
+                        if (c == '(') ++paren;
+                        else if (c == ')') --paren;
+                        else if (!paren && c == '<') ++angle;
+                        else if (!paren && c == '>') --angle;
+                        else if (!paren && !angle && c == ',') break;
+                    }
+                    if (pos == declaration.size()) throw std::runtime_error("invalid module array declaration: " + member);
+                    typeStart = pos + 1;
+                    while (typeStart < declaration.size() && std::isspace(static_cast<unsigned char>(declaration[typeStart]))) ++typeStart;
+                }
+                declaration.insert(typeStart, "class ");
+	                h << "    " << postProcessCppLine(declaration) << "\n";
 	            }
 	            if (!m.members.empty()) {
 	                h << "\n";
@@ -6786,8 +6816,16 @@
 	                std::cerr << "HDLCPP_PHASE comb_methods done " << m.name << "\n";
 	            }
 	            h << "public:\n";
-	            h << "    " << m.name << "()\n    {\n";
-            h << "    }\n\n";
+            // A defaulted constructor preserves member initialization without
+            // eagerly instantiating every child constructor while Clang parses
+            // the parent. An empty user-provided body forces that whole-tree
+            // work even for an extern native-graph root. Omit the declaration
+            // entirely when a field shares the class name (legal SV and C++).
+            bool constructorNameIsField = m.varNames.count(m.name) || m.outputPortCppNames.count(m.name) ||
+                std::find(m.memberNames.begin(), m.memberNames.end(), m.name) != m.memberNames.end();
+            if (!constructorNameIsField) {
+                h << "    " << m.name << "() = default;\n\n";
+            }
             std::map<std::string, std::vector<std::string>> instanceGuards;
             for (const auto& conn : m.instanceConns) {
                 if (!conn.guards.empty() && instanceGuards[conn.instance].empty()) {
@@ -7924,7 +7962,7 @@
                 }
                 portName += isOutput ? "_out" : "_in";
             }
-            if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
+            if (const auto& portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
                 portTypes.count(m.name + "." + conn.instance + "." + conn.port) ||
                 portTypes.count(conn.instance + "." + conn.port) ||
                 portTypes.count(conn.type + "." + conn.port)) {
@@ -7941,15 +7979,11 @@
                 auto configuredType = trim(sep == std::string::npos ? spec : spec.substr(sep + 1));
                 if (direction == "output") {
                     isOutput = true;
-                    if (!hasSuffix(portName, "_out")) {
-                        portName = conn.port + "_out";
-                    }
+                    portName = cppPortName(conn.type, conn.port, direction);
                 }
                 else if (direction == "input") {
                     isOutput = false;
-                    if (!hasSuffix(portName, "_in")) {
-                        portName = conn.port + "_in";
-                    }
+                    portName = cppPortName(conn.type, conn.port, direction);
                 }
                 if (!configuredType.empty()) {
                     portType = substituteConfiguredPortType(childBaseType.empty() ? conn.type : childBaseType, connParamsForType, configuredType);
@@ -10660,11 +10694,14 @@
         }
         for (const auto& candidate : mod.methods) {
             if (candidate.name == method.name ||
-                candidate.name.find("_comb_func") == std::string::npos ||
-                !directNoCacheCombMethod(mod, candidate)) {
+                candidate.name.find("_comb_func") == std::string::npos) {
                 continue;
             }
-            if (methodBodyMentionsCombMethod(candidate, method, true, true)) {
+            // Most methods do not consume this producer. Test that relation
+            // before the expensive sequential-parent/output-port analysis;
+            // the predicates are pure and their conjunction is unchanged.
+            if (methodBodyMentionsCombMethod(candidate, method, true, true) &&
+                directNoCacheCombMethod(mod, candidate)) {
                 return true;
             }
         }
@@ -11668,7 +11705,7 @@
             baseChildType = trim(baseChildType.substr(0, lt));
         }
         auto configuredOutput = [&](const std::string& name) {
-            auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
+            const auto& portTypes = configuredTextMap("HDLCPP_PORT_TYPES");
             auto check = [&](const std::string& key) {
                 auto it = portTypes.find(key);
                 if (it == portTypes.end()) {
@@ -11808,7 +11845,7 @@
             }
             return substituteModuleParamValues(baseChildType, childParams, typeText);
         };
-        if (auto portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); !portTypes.empty()) {
+        if (const auto& portTypes = configuredTextMap("HDLCPP_PORT_TYPES"); !portTypes.empty()) {
             const std::string keys[] = {
                 childType + "." + svPortName,
                 childType + "." + portName,
@@ -13825,6 +13862,15 @@ struct ModuleTemplateParamCollector : SyntaxVisitor<ModuleTemplateParamCollector
         if (node.header && node.header->parameters && !node.header->parameters->declarations.empty()) {
             names.insert(tok(node.header->name));
         }
+        else if (node.kind != SyntaxKind::PackageDeclaration && !node.header->parameters) {
+            for (auto member : node.members) {
+                if (member->kind == SyntaxKind::ParameterDeclarationStatement &&
+                    tok(member->as<ParameterDeclarationStatementSyntax>().parameter->keyword) == "parameter") {
+                    names.insert(tok(node.header->name));
+                    break;
+                }
+            }
+        }
         visitDefault(node);
     }
 };
@@ -14736,11 +14782,11 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
         case OptimizedMember::Constructor:
             if (hasInstantiableConstructor(concreteTypes[index])) {
                 inst << "template " << type << "::" << ctor << "();\n";
-                if (index == 0) {
-                    inst << "__attribute__((noinline, optimize(\"O0\", \"no-inline\"))) "
-                            "cpphdl_opt_t0* cpphdl_optimized_root_create() "
-                            "{ return new cpphdl_opt_t0; }\n";
-                }
+            }
+            if (index == 0) {
+                inst << "__attribute__((noinline, optimize(\"O0\", \"no-inline\"))) "
+                        "cpphdl_opt_t0* cpphdl_optimized_root_create() "
+                        "{ return new cpphdl_opt_t0; }\n";
             }
             break;
         case OptimizedMember::Work:
@@ -15113,15 +15159,12 @@ int main(int argc, char** argv)
             }
             for (const auto& port : module.ports) {
                 auto svName = port.name;
-                if (port.direction == "input" && hasSuffix(svName, "_in")) {
-                    svName.resize(svName.size() - 3);
-                }
-                else if (port.direction == "output" && hasSuffix(svName, "_out")) {
-                    svName.resize(svName.size() - 4);
-                }
+                for (const auto& [source, cpp] : module.portCppNames)
+                    if (cpp == port.name) { svName = source; break; }
+                portTypes << module.name << ".$cpp." << svName << "\t" << port.name << "\n";
                 portTypes << module.name << "." << svName << "\t"
                           << port.direction << ":" << port.type << "\n";
-                if (svName != port.name) {
+                if (svName != port.name && !module.sourcePortNames.count(port.name)) {
                     portTypes << module.name << "." << port.name << "\t"
                               << port.direction << ":" << port.type << "\n";
                 }
@@ -15186,7 +15229,10 @@ int main(int argc, char** argv)
         // projected-input requirements are metadata consumed while emitting the parent.
         // Export dependencies from parsed instances so drivers need no HDL-name heuristics.
         for (const auto& module : converter.modules) {
-            std::set<std::string> dependencies;
+            // Generated arrays can have no resolved port connections during the
+            // metadata pass. Their parsed instance type is still a dependency.
+            std::set<std::string> dependencies = module.instanceModuleTypes;
+            dependencies.erase(module.name);
             for (const auto& connection : module.instanceConns) {
                 auto dependency = cppTemplateBaseName(connection.type);
                 if (dependency.rfind("::", 0) == 0) {
