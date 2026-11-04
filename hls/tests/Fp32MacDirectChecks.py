@@ -64,7 +64,8 @@ endmodule\n''')
         paths=[p for p in work.rglob('*') if p.is_file() and p.name!='results.json']
         paths += [root/'hls/tests'/x for x in ('Fp32MacDirectChecks.py','Fp32MacDirectCheck.cpp','Fp32MacDirectAudit.cpp','Fp32MacRtlArray.cpp')]
         if a.prior_rtl:paths.append(a.prior_rtl.resolve())
-        paths += [root/'hls/math'/x for x in ('Fp32MacRtlPipeline.h','Fp32Mac.h','FpAdd.h')]
+        paths += [root/'hls/math'/x for x in ('Fp32MacRtlPipeline.h',)]
+        paths += [root/'lib/math'/x for x in ('FpAdd.h','Fp32Mac.h')]
         report['artifacts']={str(x):digest(x) for x in paths};save()
         print(work/'results.json',flush=True)
     except BaseException as error:report.update(status='failed',error=str(error));save();raise

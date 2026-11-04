@@ -76,7 +76,7 @@ include(cmake/CpphdlRuntime.cmake)
 add_compile_definitions(CPPHDL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 option(CPPHDL_BUILD_HDLCPP "Build the hdlcpp SystemVerilog-to-C++HDL converter" OFF)
-option(CPPHDL_BUILD_EXAMPLES "Build C++HDL examples" ON)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CpphdlTestOptions.cmake")
 option(CPPHDL_BUILD_TESTS "Build C++HDL standalone tests" ON)
 option(CPPHDL_BUILD_HLS_TESTS "Build experimental HLS tests (requires Clang and libc++)" ON)
 option(CPPHDL_BUILD_SYNTH_TESTS "Build experimental shared-graph synthesis tests" ON)
@@ -112,7 +112,7 @@ for ARG in "$@"; do
             ;;
     esac
 done
-for DIR in examples tests; do
+for DIR in lib examples tests; do
     if [[ ! -d "$DIR" ]]; then
         continue
     fi
@@ -429,7 +429,10 @@ function(cpphdl_add_converter_dependency target)
   set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${CMAKE_BINARY_DIR}/${CPPHDL_TEST_TARGET}")
 endfunction()
 
-if(CPPHDL_BUILD_EXAMPLES)
+if(CPPHDL_BUILD_LIB_TESTS)
+  add_subdirectory(lib)
+endif()
+if(CPPHDL_BUILD_EXAMPLES_TESTS)
   add_subdirectory(examples)
 endif()
 if(CPPHDL_BUILD_TESTS)

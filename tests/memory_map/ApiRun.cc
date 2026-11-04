@@ -1,6 +1,6 @@
 #include "../../hls/MemoryMapTypes.h"
 #include "../../hls/StridedView.h"
-#include "../../hls/math/Maximum.h"
+#include "../../examples/math/Maximum.h"
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -75,7 +75,7 @@ int main()
     assert(StridedViewMethods::view_next_inner(64, 0, 8, 0, false) == 8);
     assert(StridedViewMethods::view_next_inner(64, 0, 8, 16, false) == 1);
     std::mt19937 rng(17);
-    math::MaximumMethods maximum;
+    cpphdl_examples::math::MaximumMethods maximum;
     for (unsigned trial = 0; trial < 1024; ++trial)
     {
         std::array<uint32_t, 8> bits{};
@@ -111,7 +111,7 @@ int main()
             }
         }
         std::shuffle(values.begin(), values.end(), rng);
-        uint64_t actual = math::maximum_empty;
+        uint64_t actual = cpphdl_examples::math::maximum_empty;
         for (auto value : values)
             actual = maximum.maximum_merge(actual, value);
         assert(actual == ((uint64_t(index) << 32) | bits[index]));

@@ -79,6 +79,10 @@ foreach(spins invalid -1 65537)
 endforeach()
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME header_test_options COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/HeaderTestOptions.py"
+        --cmake "${CMAKE_COMMAND}")
+    set_tests_properties(header_test_options PROPERTIES TIMEOUT 60 LABELS "cmake")
     add_test(NAME optimizer_assign_initialization COMMAND "${Python3_EXECUTABLE}" -B
         "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/AssignInitializationChecks.py"
         --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}")
@@ -766,6 +770,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
 )
+# The example adapter needs a selected header supplied by its owning target.
+list(REMOVE_ITEM TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/ExampleMain.cpp")
 
 # Unsupported closures must fail conversion, not emit malformed RTL.
 foreach(lambda_case reference value captureless immediate explicit reference_alias)

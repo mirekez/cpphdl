@@ -230,7 +230,7 @@ execution rules; no previous C++HDL experience is required.
 The API reference is [spec.md](spec.md); coding guidance is
 [best_practice.md](best_practice.md). The repository's
 [examples](../examples/) and [tests](../tests/) are useful companions, especially
-[the existing two-clock FIFO](../examples/cdc/Fifo2clk.cpp) and
+[the existing two-clock FIFO](../examples/cdc/Fifo2clk.h) and
 [the CDC regression](../tests/cdc/TwoClocksCdc.cpp).
 
 Part I's complete source listings are labeled by filename and belong in one working
@@ -3853,7 +3853,7 @@ the repository examples below provide complete build and test flows.
 
 **RTL, interfaces, and clock-domain crossing**
 
-- [Fifo2clk.cpp](https://github.com/mirekez/cpphdl/blob/main/examples/cdc/Fifo2clk.cpp): memory-backed asynchronous FIFO; [generated SystemVerilog](https://github.com/mirekez/cpphdl/blob/main/examples/cdc/generated/Fifo2clk.sv).
+- [Fifo2clk.h](https://github.com/mirekez/cpphdl/blob/main/examples/cdc/Fifo2clk.h): memory-backed asynchronous FIFO with embedded `MAINFILE` tests; [generated SystemVerilog](https://github.com/mirekez/cpphdl/blob/main/examples/cdc/generated/Fifo2clk.sv).
 - [TwoClocksCdc.cpp](https://github.com/mirekez/cpphdl/blob/main/tests/cdc/TwoClocksCdc.cpp): synchronization, mailbox, FIFO, reset-release, and multi-clock tests.
 - [AsyncReset.cpp](https://github.com/mirekez/cpphdl/blob/main/tests/reset/AsyncReset.cpp): asynchronous reset examples and tests.
 - [AssignIfHierarchyProxy.cpp](https://github.com/mirekez/cpphdl/blob/main/tests/interface/AssignIfHierarchyProxy.cpp): parent-to-child interface connections.

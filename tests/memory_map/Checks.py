@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from TestToolchain import TestToolchain
@@ -25,8 +26,9 @@ for path in rtl.glob('*.sv'):path.unlink()
 run('convert',[a.cpphdl.resolve(),'--generated-dir',rtl,source/'DimensionTop.h','--','-I'+str(root/'include')])
 files=sorted(rtl.glob('*.sv'),key=lambda f:(f.name!='Predef_pkg.sv',not f.name.endswith('_pkg.sv'),f.name))
 run('dimension-lint',[a.verilator.resolve(),'--lint-only','-Wno-fatal','--top-module','DimensionTop',*files])
-for fixture,top,prefix,parameters in [('Map','cpphdl_hls_ClockedMapMapAddMethods_cpphdl_hls_MapInput2_cpphdl_hls_MapOutput1','VMapAdd',['-GReads=2','-GWrites=1','-GSlots=4']),('Ram','cpphdl_hls_MaskedSynchronousRam','VMaskedRam',['-GWORDS=2','-GDEPTH=8'])]:
+for fixture,top,prefix,parameters in [('Map','cpphdl_hls_ClockedMapMapAddMethods_cpphdl_hls_MapInput2_cpphdl_hls_MapOutput1','VMapAdd',['-GReads=2','-GWrites=1','-GSlots=4']),('Ram','cpphdl_examples_MaskedSynchronousRam','VMaskedRam',['-GWORDS=2','-GDEPTH=8'])]:
     obj=work/(fixture+'-obj')
+    shutil.rmtree(obj, ignore_errors=True)
     run(fixture+'-rtl-build',[a.verilator.resolve(),'--cc','--exe','--build','-j','1','-Wno-fatal',
         '--top-module',top,'--prefix',prefix,'--Mdir',obj,*parameters,'-CFLAGS','-DVERILATOR -std=c++17 -I'+str(root/'include'),
         *files,source/(fixture+'Run.cc')])

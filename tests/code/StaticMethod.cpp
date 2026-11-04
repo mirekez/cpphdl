@@ -53,6 +53,19 @@ struct StaticMethodHolder {
     };
 };
 
+struct StaticMethodObject {
+    uint16_t bias;
+
+    uint16_t apply(uint16_t value) const
+    {
+        uint16_t folded;
+        folded = StaticMethodTemplateHelper<StaticMethodConfig>::fold(value);
+        // The nested static call has no object; field access afterwards must
+        // still refer to this instance, not to the static helper's owner.
+        return uint16_t(folded + bias + StaticMethodHolder::Nested::spread(bias));
+    }
+};
+
 class StaticMethod : public Module
 {
 public:
@@ -67,8 +80,11 @@ private:
         uint16_t a;
         uint16_t b;
         uint16_t c;
+        StaticMethodObject object;
 
-        a = StaticMethodPlainHelper::mix((uint16_t)value_in());
+        object.bias = 0x27;
+        a = object.apply((uint16_t)value_in());
+        a = StaticMethodPlainHelper::mix(a);
         b = StaticMethodTemplateHelper<StaticMethodConfig>::fold(a);
         c = StaticMethodHolder::Nested::spread(b);
         value_comb = u<16>(c);
@@ -101,7 +117,8 @@ long _system_clock = -1;
 
 static uint16_t expected_static_method(uint16_t value)
 {
-    uint16_t a = StaticMethodPlainHelper::mix(value);
+    StaticMethodObject object{0x27};
+    uint16_t a = StaticMethodPlainHelper::mix(object.apply(value));
     uint16_t b = StaticMethodTemplateHelper<StaticMethodConfig>::fold(a);
     return StaticMethodHolder::Nested::spread(b);
 }
@@ -128,7 +145,9 @@ static bool check_generated_sv()
     ok &= top.find("StaticMethodHolder_Nested___spread") != std::string::npos;
     ok &= top.find("assign value_out = value_comb;") != std::string::npos;
     ok &= top.find("function logic[15:0] StaticMethodPlainHelper___mix (input logic[15:0] value);") != std::string::npos;
-    ok &= top.find("_this") == std::string::npos;
+    ok &= top.find("function logic[15:0] StaticMethodTemplateHelperStaticMethodConfig___fold (input logic[15:0] value);") != std::string::npos;
+    ok &= top.find("function logic[15:0] StaticMethodHolder_Nested___spread (input logic[15:0] value);") != std::string::npos;
+    ok &= top.find("input StaticMethodObject _this") != std::string::npos;
     ok &= top.find("unknown(") == std::string::npos;
     ok &= top.find("unknown:") == std::string::npos;
     ok &= top.find("DependentScope") == std::string::npos;

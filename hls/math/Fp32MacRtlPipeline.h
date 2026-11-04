@@ -1,5 +1,5 @@
 #pragma once
-#include "Fp32Mac.h"
+#include "../../lib/math/Fp32Mac.h"
 
 // The complete sequential replacement, shared by direct C++/native-graph
 // simulation and RTL generation. LATENCY comes from the HLS retiming report.

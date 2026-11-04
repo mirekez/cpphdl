@@ -1,6 +1,6 @@
 #pragma once
 #include "../../hls/MemoryMap.h"
-#include "../../hls/MaskedSynchronousRam.h"
+#include "../../lib/memory/MaskedSynchronousRam.h"
 
 struct MapAddMethods
 {
@@ -20,7 +20,7 @@ struct MapPairMethods
 };
 using MapAdd = cpphdl::hls::ClockedMap<MapAddMethods, 2, 1, 4>;
 using MapPair = cpphdl::hls::ClockedMap<MapPairMethods, 1, 2, 4>;
-using MaskedRam = cpphdl::hls::MaskedSynchronousRam<2, 8>;
+using MaskedRam = cpphdl_examples::MaskedSynchronousRam<2, 8>;
 
 class DimensionTop : public cpphdl::Module
 {

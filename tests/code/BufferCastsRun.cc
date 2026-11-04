@@ -1,5 +1,5 @@
 #define NO_MAINFILE
-#include "../../examples/basic/Buffer.cpp"
+#include "../../lib/basic/Buffer.h"
 #include <cstdio>
 #include <deque>
 #ifdef BUFFER_RTL

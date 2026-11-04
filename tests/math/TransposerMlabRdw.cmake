@@ -11,7 +11,7 @@ string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef run_id)
 set(work "${WORK}/${run_id}")
 file(MAKE_DIRECTORY "${work}")
 execute_process(COMMAND "${CPPHDL}"
-    "${SOURCE_ROOT}/examples/math/Transposer.cpp"
+    "${SOURCE_ROOT}/examples/math/Transposer.h"
     "--generated-dir=${work}/generated" "-I${SOURCE_ROOT}/include"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 if(NOT result EQUAL 0)

@@ -31,7 +31,7 @@ def main():
             raise RuntimeError(f'{label}: {result.stdout[-6000:]}\nArtifacts: {work}')
         return result.stdout
 
-    run([args.cpphdl, '--generated-dir=' + str(work / 'rtl'), root / 'examples/basic/Buffer.cpp',
+    run([args.cpphdl, '--generated-dir=' + str(work / 'rtl'), root / 'lib/basic/Buffer.h',
          '--', '-std=c++23', '-I' + str(root / 'include')], 'convert')
     sv = ''.join((work / 'rtl/Buffer.sv').read_text().split())
     for expected in ('head=head_reg;', 'tail=tail_reg;', 'count=count_reg;',

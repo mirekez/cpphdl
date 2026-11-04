@@ -1,0 +1,392 @@
+#pragma once
+
+// A test build selects this header only; dependencies remain library-only.
+#pragma push_macro("MAINFILE")
+#undef MAINFILE
+#include <cpphdl.h>
+#if !defined(SYNTHESIS)
+#include "cpphdl_vcd.h"
+#endif
+#include <print>
+
+using namespace cpphdl;
+
+// C++HDL MODEL /////////////////////////////////////////////////////////
+
+template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD = true>
+class Memory : public Module
+{
+public:
+    _PORT(u<clog2(MEM_DEPTH)>)       write_addr_in;
+    _PORT(bool)                      write_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  write_data_in;
+    _PORT(logic<MEM_WIDTH_BYTES>)    write_mask_in;
+
+    _PORT(u<clog2(MEM_DEPTH)>)       read_addr_in;
+    _PORT(bool)                      read_in;
+    _PORT(logic<MEM_WIDTH_BYTES*8>)  read_data_out = _ASSIGN_COMB( data_out_comb_func() );
+
+    bool                      debugen_in;
+
+private:
+
+    reg<logic<MEM_WIDTH_BYTES*8>> data_out_reg;
+    memory<u8,MEM_WIDTH_BYTES,MEM_DEPTH> buffer;
+
+    logic<MEM_WIDTH_BYTES*8> data_out_comb;
+    logic<MEM_WIDTH_BYTES*8>& data_out_comb_func()
+    {
+        if (SHOWAHEAD) {
+            data_out_comb = buffer[read_addr_in()];
+        }
+        else {
+            data_out_comb = data_out_reg;
+        }
+        return data_out_comb;
+    }
+
+public:
+
+    void _work(bool reset)
+    {
+        size_t i;
+        logic<MEM_WIDTH_BYTES*8> mask;
+        logic<MEM_WIDTH_BYTES> mask_in = write_mask_in();
+        if (debugen_in) {
+            std::print("{:s}: input: ({}){}@{}({}), output: ({}){}@{}\n", __inst_name,
+                (int)write_in(), write_data_in(), write_addr_in(), mask_in,
+                (int)read_in(), read_data_out(), read_addr_in());
+        }
+
+        if (write_in()) {
+            mask = 0;
+            for (i=0; i < MEM_WIDTH_BYTES; ++i) {
+                mask.bits((i+1)*8-1,i*8) = mask_in[i] ? 0xFF : 0 ;
+            }
+            buffer[write_addr_in()] = (buffer[write_addr_in()]&~mask) | (write_data_in()&mask);
+        }
+
+        if (!SHOWAHEAD) {
+            data_out_reg._next = buffer[read_addr_in()];
+        }
+    }
+
+    void _strobe()
+    {
+        buffer.apply();
+        data_out_reg.strobe();
+    }
+
+    void _assign() {}
+
+#if !defined(SYNTHESIS)
+    void add_vcd_signals(VcdFile& vcd, const std::string& prefix)
+    {
+        vcd.signals.push_back({prefix + "data_out_reg", MEM_WIDTH_BYTES * 8, &data_out_reg});
+    }
+#endif
+};
+/////////////////////////////////////////////////////////////////////////
+
+// C++HDL INLINE TEST ///////////////////////////////////////////////////
+#pragma pop_macro("MAINFILE")
+
+#if !defined(SYNTHESIS) && defined(MAINFILE)
+#pragma push_macro("MAINFILE")
+#undef MAINFILE
+#include <chrono>
+#include <iostream>
+#include <filesystem>
+#include <string>
+#include <sstream>
+#include <vector>
+#include "../../examples/tools.h"
+
+#ifdef VERILATOR
+#define MAKE_HEADER(name) STRINGIFY(name.h)
+#include MAKE_HEADER(VERILATOR_MODEL)
+#endif
+
+long _system_clock = -1;
+
+template<size_t MEM_WIDTH_BYTES, size_t MEM_DEPTH, bool SHOWAHEAD>
+class TestMemory : Module
+{
+    static constexpr long VCD_MAX_SAMPLES = 4096;
+
+#ifdef VERILATOR
+    VERILATOR_MODEL mem;
+#else
+    Memory<MEM_WIDTH_BYTES,MEM_DEPTH,SHOWAHEAD> mem;
+#endif
+
+    reg<u<clog2(MEM_DEPTH)>>       write_addr_reg;
+    reg<logic<MEM_WIDTH_BYTES*8>>  data_reg;
+    reg<u1>                        write_reg;
+    reg<u<clog2(MEM_DEPTH)>>       read_addr_reg;
+    reg<u1>                        read_reg;
+
+    reg<u1>                  was_read;
+    reg<u<clog2(MEM_DEPTH)>> was_read_addr;
+    reg<u16>                 to_write_cnt;
+    reg<u16>                 to_read_cnt;
+    bool                     error = false;
+
+    logic<MEM_WIDTH_BYTES*8> mem_read_data;  // to support Verilator
+    VcdFile vcd;
+
+    memory<uint8_t,MEM_WIDTH_BYTES,MEM_DEPTH> mem_copy;
+
+public:
+    bool    debugen_in;
+
+    TestMemory(bool debug)
+    {
+        debugen_in = debug;
+        memset(mem_copy.data, 0, sizeof(*mem_copy.data)*MEM_DEPTH);
+    }
+
+    void _assign()
+    {
+#ifndef VERILATOR
+        mem.write_addr_in = _ASSIGN_REG( write_addr_reg );
+        mem.write_in =      _ASSIGN_REG( write_reg );
+        mem.write_data_in = _ASSIGN_REG( data_reg );
+        mem.write_mask_in = _ASSIGN( logic<MEM_WIDTH_BYTES>(0xFFFFFFFFFFFFFFFFULL) );
+        mem.read_addr_in =  _ASSIGN_REG( read_addr_reg );
+        mem.read_in =       _ASSIGN_REG( read_reg );
+        mem.__inst_name = __inst_name + "/mem";
+        mem.debugen_in  = debugen_in;
+        mem._assign();
+#endif
+    }
+
+    void _work(bool reset)
+    {
+        if (reset) {
+            write_reg.clr();
+            read_reg.clr();
+            to_write_cnt.clr();
+            to_read_cnt.clr();
+            was_read.clr();
+            return;
+        }
+
+#ifdef VERILATOR
+        // we're using this trick to update comb values of Verilator on it's outputs without strobing registers
+        // the problem is that it's difficult to see 0-delayed memory output from Verilator
+        // because if we write the same cycle Verilator updates combs in eval() and we see same clock written words
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+        mem.read_addr_in = read_addr_reg;
+        mem.clk = 0;
+        mem.reset = 0;
+        mem.eval();  // so lets update Verilator's combs without strobing registers
+        mem_read_data = *(logic<MEM_WIDTH_BYTES*8>*)&mem.read_data_out;
+#else
+        mem_read_data = mem.read_data_out();
+#endif
+        // checking test results
+        if (to_read_cnt && (logic<MEM_WIDTH_BYTES*8>)mem_copy[SHOWAHEAD?read_addr_reg:was_read_addr] != mem_read_data && (was_read || SHOWAHEAD)) {
+            std::print("{:s} ERROR: {} was read instead of {} from address {}\n",
+                __inst_name, mem_read_data, (logic<MEM_WIDTH_BYTES*8>)mem_copy[read_addr_reg],
+                SHOWAHEAD?read_addr_reg:was_read_addr);
+            error = true;
+        }
+
+        write_reg._next = 0;
+        if (to_write_cnt) {
+            write_addr_reg._next = random()%MEM_DEPTH;
+            write_reg._next = 1;
+            for (size_t i=0; i < MEM_WIDTH_BYTES/4; ++i) {
+                data_reg._next.bits(i*32+31,i*32) = random();
+            }
+            to_write_cnt._next = to_write_cnt - 1;
+
+            to_read_cnt._next = std::min((unsigned)random()%30, (unsigned)to_write_cnt);
+        }
+        if (write_reg) {
+            mem_copy[write_addr_reg] = data_reg;
+        }
+
+        read_reg._next = 0;
+        if (to_read_cnt) {
+            read_addr_reg._next = random()%MEM_DEPTH;
+            to_read_cnt._next = to_read_cnt - 1;
+            if (!SHOWAHEAD) {
+                read_reg._next = 1;
+            }
+        }
+        if (!to_write_cnt && !to_read_cnt) {
+            to_write_cnt._next = random()%100;
+        }
+
+        if (was_read) {
+            was_read_addr._next = read_addr_reg;
+        }
+
+#ifndef VERILATOR
+        mem._work(reset);
+#else
+        mem.write_addr_in = write_addr_reg;
+        mem.write_in      = write_reg;
+        memcpy(&mem.write_data_in, &data_reg, sizeof(mem.write_data_in));
+        auto tmp = __ONES<MEM_WIDTH_BYTES>();
+        memcpy(&mem.write_mask_in, &tmp, sizeof(mem.write_mask_in));
+        mem.read_addr_in  = read_addr_reg;
+        mem.read_in       = read_reg;
+        mem.debugen_in    = debugen_in;
+
+        mem.clk = 1;
+        mem.reset = reset;
+        mem.eval(); // eval of verilator should be in the end in 0-delay test
+#endif
+    }
+
+    void _strobe()
+    {
+#ifndef VERILATOR
+        mem._strobe();
+#endif
+        write_addr_reg.strobe();
+        data_reg.strobe();
+        write_reg.strobe();
+        read_addr_reg.strobe();
+
+        read_reg.strobe();
+
+        was_read.strobe();
+        was_read_addr.strobe();
+        to_write_cnt.strobe();
+        to_read_cnt.strobe();
+
+        mem_copy.apply();
+    }
+
+    void _work_neg(bool reset)
+    {
+#ifdef VERILATOR
+        mem.clk = 0;
+        mem.reset = reset;
+        mem.eval();
+#endif
+    }
+
+    void _strobe_neg()
+    {
+    }
+
+    void setup_vcd()
+    {
+        vcd.signals.clear();
+        vcd.signals.push_back({"write_addr_reg", clog2(MEM_DEPTH), &write_addr_reg});
+        vcd.signals.push_back({"data_reg", MEM_WIDTH_BYTES * 8, &data_reg});
+        vcd.signals.push_back({"write_reg", 1, &write_reg});
+        vcd.signals.push_back({"read_addr_reg", clog2(MEM_DEPTH), &read_addr_reg});
+        vcd.signals.push_back({"read_reg", 1, &read_reg});
+        vcd.signals.push_back({"was_read", 1, &was_read});
+        vcd.signals.push_back({"was_read_addr", clog2(MEM_DEPTH), &was_read_addr});
+        vcd.signals.push_back({"to_write_cnt", 16, &to_write_cnt});
+        vcd.signals.push_back({"to_read_cnt", 16, &to_read_cnt});
+        vcd.signals.push_back({"mem_read_data", MEM_WIDTH_BYTES * 8, &mem_read_data});
+#ifndef VERILATOR
+        mem.add_vcd_signals(vcd, "dut.");
+#endif
+        vcd.create("output.vcd");
+    }
+
+    bool run()
+    {
+#ifdef VERILATOR
+        std::print("VERILATOR TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
+#else
+        std::print("C++HDL TestMemory, MEM_WIDTH_BYTES: {}, MEM_DEPTH: {}, SHOWAHEAD: {}...", MEM_WIDTH_BYTES, MEM_DEPTH, SHOWAHEAD);
+#endif
+        if (debugen_in) {
+            std::print("\n");
+        }
+        auto start = std::chrono::high_resolution_clock::now();
+        __inst_name = "mem_test";
+        _assign();
+        _work(1);
+        _work_neg(1);
+        setup_vcd();
+        vcd.sample(0);
+        int cycles = 100000;
+        while (--cycles) {
+            _strobe();
+            ++_system_clock;
+            _work(0);
+            _strobe_neg();
+            _work_neg(0);
+            if (_system_clock <= VCD_MAX_SAMPLES) {
+                vcd.sample(_system_clock);
+            }
+
+            if (error) {
+                break;
+            }
+        }
+        std::print(" {} ({} us)\n", !error?"PASSED":"FAILED",
+            (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
+        return !error;
+    }
+};
+
+int main_from_header(int argc, char** argv)
+{
+    bool debug = false;
+    bool noveril = false;
+    std::vector<std::string> positional;
+    for (int i=1; i < argc; ++i) {
+        if (strcmp(argv[i], "--debug") == 0) {
+            debug = true;
+        }
+        else if (strcmp(argv[i], "--noveril") == 0) {
+            noveril = true;
+        }
+        else {
+            positional.emplace_back(argv[i]);
+        }
+    }
+
+    bool ok = true;
+#ifndef VERILATOR  // this cpphdl test runs verilator tests recursively using same file
+    if (!noveril) {
+        std::cout << "Building verilator simulation... =============================================================\n";
+        auto start = std::chrono::high_resolution_clock::now();
+        ok &= VerilatorCompile(__FILE__, "Memory", {"Predef_pkg"}, {"../../../../include"}, 64, 65536, 1);
+        ok &= VerilatorCompile(__FILE__, "Memory", {"Predef_pkg"}, {"../../../../include"}, 64, 65536, 0);
+        auto compile_us = ((std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start)).count());
+        std::cout << "Executing tests... ===========================================================================\n";
+        ok = ( ok
+            && std::system((std::string("Memory_64_65536_1/obj_dir/VMemory 64 65536 1") + (debug?" --debug":"")).c_str()) == 0
+            && std::system((std::string("Memory_64_65536_0/obj_dir/VMemory 64 65536 0") + (debug?" --debug":"")).c_str()) == 0
+        );
+        std::cout << "Verilator compilation time: {} " << compile_us/2 << " microseconds\n";
+    }
+#else
+    Verilated::commandArgs(argc, argv);
+#endif
+
+    if (positional.size() >= 3) {
+        size_t width = std::stoull(positional[0]);
+        size_t depth = std::stoull(positional[1]);
+        size_t showahead = std::stoull(positional[2]);
+        if (width == 64 && depth == 65536 && showahead == 1) {
+            return !(ok && TestMemory<64,65536,1>(debug).run());
+        }
+        if (width == 64 && depth == 65536 && showahead == 0) {
+            return !(ok && TestMemory<64,65536,0>(debug).run());
+        }
+        std::print("Unsupported Memory test parameters: WIDTH={} DEPTH={} SHOWAHEAD={}\n", width, depth, showahead);
+        return 1;
+    }
+
+    ok = ok && TestMemory<64,65536,1>(debug).run();
+    ok = ok && TestMemory<64,65536,0>(debug).run();
+    return !ok;
+}
+
+/////////////////////////////////////////////////////////////////////////
+#pragma pop_macro("MAINFILE")
+#endif

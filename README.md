@@ -60,7 +60,8 @@ cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_FLAGS_RELEASE='-O1 -DNDEBUG -g0' \
   -DCPPHDL_BUILD_HDLCPP=ON \
-  -DCPPHDL_BUILD_EXAMPLES=OFF \
+  -DCPPHDL_BUILD_EXAMPLES_TESTS=OFF \
+  -DCPPHDL_BUILD_LIB_TESTS=OFF \
   -DCPPHDL_BUILD_TESTS=OFF \
   -DCPPHDL_BUILD_HLS_TESTS=OFF \
   -DCPPHDL_BUILD_SYNTH_TESTS=OFF \
@@ -82,6 +83,13 @@ Multi-configuration generators place them in `build/Release/cpphdl` and
 targets; they do not run FPGA builds or RTL simulation tests. `-O1` keeps
 conversion optimized while limiting compiler memory use, and `-j2` limits
 concurrent compilation jobs.
+
+Shared RTL buffering, memory and math implementations live in [lib/](lib/README.md), with
+embedded native C++ and Verilator tests. `CPPHDL_BUILD_LIB_TESTS` enables their
+build and test registration, independently of `CPPHDL_BUILD_EXAMPLES_TESTS`
+for the examples. Both default to `ON`; neither is needed to include the headers
+in your own design. The old option names are accepted with a deprecation warning
+and migrated to the new names; explicitly supplied new values take precedence.
 
 For example, convert a SystemVerilog top to a native graph:
 

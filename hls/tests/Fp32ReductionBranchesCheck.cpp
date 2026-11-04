@@ -11,7 +11,7 @@
 #include "reference.h"
 #undef cpphdl_native
 #endif
-#include "../math/Fp32Bits.h"
+#include "../../lib/math/Fp32Bits.h"
 #include <array>
 #include <deque>
 #include <optional>
@@ -73,8 +73,8 @@ int main(){
                 for(unsigned r=0;r<R;++r){std::array<uint32_t,C> v{};
                     for(unsigned c=0;c<C;++c)v[c]=in[r*C+c];
                     for(unsigned width=C;width>1;width=(width+1)/2)
-                        for(unsigned c=0;c<(width+1)/2;++c)v[c]=2*c+1<width?cpphdl::hls::math::fp32_add(v[2*c],v[2*c+1]):v[2*c];
-                    (*out)[r]=cpphdl::hls::math::fp32_add(0,v[0]);}}
+                        for(unsigned c=0;c<(width+1)/2;++c)v[c]=2*c+1<width?cpphdl_examples::math::fp32_add(v[2*c],v[2*c+1]):v[2*c];
+                    (*out)[r]=cpphdl_examples::math::fp32_add(0,v[0]);}}
             expected.push_front(out);
         }
         auto edge=[&](auto& g){if constexpr(requires{g.clk;}){g.clk[0]=1;g.step();g.step();g.clk[0]=0;g.step();}else g.step();};

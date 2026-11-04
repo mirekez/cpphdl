@@ -14,9 +14,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix='cpphdl-mac-rtl-') as directory:
         subprocess.run([str(a.cpphdl.resolve()),'--generated-dir',directory,
             str(root/'hls/tests/Fp32MacRtl.cpp'),'--','-I'+str(root/'include')],check=True)
-        for name,source in [('FpAdd.sv','FpAdd.h'),('Fp32Mac.sv','Fp32Mac.h')]:
+        for name,source in [('FpAdd.sv','lib/math/FpAdd.h'),('Fp32Mac.sv','lib/math/Fp32Mac.h')]:
             text=(Path(directory)/name).read_text().replace('import Predef_pkg::*;','')
-            text='// Generated from hls/math/'+source+' by cpphdl.\n'+text
+            text='// Generated from '+source+' by cpphdl.\n'+text
             target=math/'rtl'/name
             if a.check:
                 if target.read_text()!=text:raise RuntimeError('Stale generated MAC RTL: '+str(target))
