@@ -111,6 +111,7 @@ static void exceptionDrain(Threads& pool, unsigned count) {
 }
 
 int main(int argc, char**) {
+    cpphdl::graph_runtime::NativeAffinityScope affinity;
     if (argc > 1) {
         try { Threads pool(2, 2); }
         catch (const std::invalid_argument&) { return 0; }

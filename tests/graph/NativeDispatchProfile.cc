@@ -51,6 +51,7 @@ static void check(unsigned every) {
     }
 }
 int main() {
+    cpphdl::graph_runtime::NativeAffinityScope affinity;
     check(0);check(1);check(17);
     for(const char* value:{"-1","garbage","1000000001",""}) {
         setenv("CPPHDL_NATIVE_PROFILE_EVERY",value,1);
