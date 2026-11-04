@@ -1,5 +1,5 @@
 #pragma once
-#include "SynchronousRam.h"
+#include "../lib/memory/SynchronousRam.h"
 
 namespace cpphdl::hls {
 // Contiguous two-input map. The callable is an ordered ready/valid pipeline;
@@ -21,7 +21,7 @@ public:
     _PORT(bool) m_readdatavalid_in;_PORT(bool) m_readdataerror_in;
     _PORT(uint32_t) profile_active_out;_PORT(uint32_t) profile_accept_out;_PORT(uint32_t) profile_complete_out;
 private:
-    SynchronousRam<16,512> first,second;
+    cpphdl_examples::SynchronousRam<16,512> first,second;
     cpphdl::reg<cpphdl::u<2>> state;
     cpphdl::reg<cpphdl::u32> source,other,destination,count,operation,error,requested,returned;
     cpphdl::reg<cpphdl::u32> read_index,read_tag,issued,completed,write_index,fill;

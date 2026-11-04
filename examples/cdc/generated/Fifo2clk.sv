@@ -47,8 +47,8 @@ module Fifo2clk (
 
 
     always_comb begin : write_ready_comb_func  // write_ready_comb_func
-        logic[5-1:0] full_gray;
-        full_gray = unsigned'(PTR_BITS'(read_gray_write2_reg ^ unsigned'(PTR_BITS'(unsigned'(PTR_BITS'(((('h1 <<< ADDR_BITS)) | (('h1 <<< ((ADDR_BITS - 'h1)))))))))));
+        logic[PTR_BITS-1:0] full_gray;
+        full_gray = PTR_BITS'(unsigned'(64'(read_gray_write2_reg ^ PTR_BITS'(64'(32'(((('h1 <<< ADDR_BITS)) | (('h1 <<< ((ADDR_BITS - 64'h1)))))))))));
         write_ready_comb=write_gray_reg != full_gray;
     end
 
@@ -57,57 +57,8 @@ module Fifo2clk (
     end
 
     always_comb begin : read_data_comb_func  // read_data_comb_func
-        read_data_comb = unsigned'(8'(data_mem[unsigned'(32'(read_bin_reg)) & unsigned'(32'(((DEPTH - 'h1))))]));
+        read_data_comb = unsigned'(8'(data_mem[64'(32'(unsigned'(32'(read_bin_reg)) & 32'(((DEPTH - 64'h1)))))]));
     end
-
-    task _work_write_clk (input logic reset);
-    begin: _work_write_clk
-        logic[5-1:0] next;
-        read_gray_write1_reg_tmp = read_gray_reg;
-        read_gray_write2_reg_tmp = read_gray_write1_reg;
-        if (write_valid_in && write_ready_comb) begin
-            data_mem[unsigned'(32'(write_bin_reg)) & unsigned'(32'(((DEPTH - 'h1))))] <= write_data_in;
-            next = write_bin_reg + 'h1;
-            write_bin_reg_tmp = next;
-            write_gray_reg_tmp = next ^ ((next >>> 'h1));
-        end
-        if (reset) begin
-            write_bin_reg_tmp = '0;
-            write_gray_reg_tmp = '0;
-            read_gray_write1_reg_tmp = '0;
-            read_gray_write2_reg_tmp = '0;
-        end
-    end
-    endtask
-
-    task _work_neg_write_clk (input logic unused);
-    begin: _work_neg_write_clk
-    end
-    endtask
-
-    task _work_read_clk (input logic reset);
-    begin: _work_read_clk
-        logic[5-1:0] next;
-        write_gray_read1_reg_tmp = write_gray_reg;
-        write_gray_read2_reg_tmp = write_gray_read1_reg;
-        if (read_ready_in && read_valid_comb) begin
-            next = read_bin_reg + 'h1;
-            read_bin_reg_tmp = next;
-            read_gray_reg_tmp = next ^ ((next >>> 'h1));
-        end
-        if (reset) begin
-            read_bin_reg_tmp = '0;
-            read_gray_reg_tmp = '0;
-            write_gray_read1_reg_tmp = '0;
-            write_gray_read2_reg_tmp = '0;
-        end
-    end
-    endtask
-
-    task _work_neg_read_clk (input logic unused);
-    begin: _work_neg_read_clk
-    end
-    endtask
 
     generate  // _assign
     endgenerate
@@ -118,7 +69,23 @@ module Fifo2clk (
         read_gray_write1_reg_tmp = read_gray_write1_reg;
         read_gray_write2_reg_tmp = read_gray_write2_reg;
 
-        _work_write_clk(reset);
+        begin : _work_write_clk
+            logic[PTR_BITS-1:0] next;
+            read_gray_write1_reg_tmp = read_gray_reg;
+            read_gray_write2_reg_tmp = read_gray_write1_reg;
+            if (write_valid_in && write_ready_comb) begin
+                data_mem[64'(32'(unsigned'(32'(write_bin_reg)) & 32'(((DEPTH - 64'h1)))))] <= write_data_in;
+                next = write_bin_reg + 64'h1;
+                write_bin_reg_tmp = next;
+                write_gray_reg_tmp = next ^ ((next >>> 32'sh1));
+            end
+            if (reset) begin
+                write_bin_reg_tmp = '0;
+                write_gray_reg_tmp = '0;
+                read_gray_write1_reg_tmp = '0;
+                read_gray_write2_reg_tmp = '0;
+            end
+        end
 
         write_bin_reg <= write_bin_reg_tmp;
         write_gray_reg <= write_gray_reg_tmp;
@@ -128,7 +95,10 @@ module Fifo2clk (
 
     always_ff @(negedge write_clk) begin
 
-        _work_neg_write_clk(reset);
+        begin : _work_neg_write_clk
+            logic unused;
+            unused = reset;
+        end
 
     end
 
@@ -138,7 +108,22 @@ module Fifo2clk (
         write_gray_read1_reg_tmp = write_gray_read1_reg;
         write_gray_read2_reg_tmp = write_gray_read2_reg;
 
-        _work_read_clk(reset);
+        begin : _work_read_clk
+            logic[PTR_BITS-1:0] next;
+            write_gray_read1_reg_tmp = write_gray_reg;
+            write_gray_read2_reg_tmp = write_gray_read1_reg;
+            if (read_ready_in && read_valid_comb) begin
+                next = read_bin_reg + 64'h1;
+                read_bin_reg_tmp = next;
+                read_gray_reg_tmp = next ^ ((next >>> 32'sh1));
+            end
+            if (reset) begin
+                read_bin_reg_tmp = '0;
+                read_gray_reg_tmp = '0;
+                write_gray_read1_reg_tmp = '0;
+                write_gray_read2_reg_tmp = '0;
+            end
+        end
 
         read_bin_reg <= read_bin_reg_tmp;
         read_gray_reg <= read_gray_reg_tmp;
@@ -148,7 +133,10 @@ module Fifo2clk (
 
     always_ff @(negedge read_clk) begin
 
-        _work_neg_read_clk(reset);
+        begin : _work_neg_read_clk
+            logic unused;
+            unused = reset;
+        end
 
     end
 

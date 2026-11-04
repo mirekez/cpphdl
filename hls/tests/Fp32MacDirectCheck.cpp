@@ -86,8 +86,8 @@ int main() {
         else if(advance){expected.pop_back();std::optional<Result> result;
             if(valid){result.emplace();(*result)[N]=cycle;
                 for(unsigned r=0;r<R;++r)for(unsigned c=0;c<C;++c){unsigned i=r*C+c;auto initial=input[N+C+i];
-                    (*result)[i]=r<input[W-4] && c<input[W-3] ? cpphdl::hls::math::fp32_add(initial,
-                        cpphdl::hls::math::fp32_multiply(input[W-1]==0?input[2*N+C+r]:input[i],input[N+c])):initial;}}
+                    (*result)[i]=r<input[W-4] && c<input[W-3] ? cpphdl_examples::math::fp32_add(initial,
+                        cpphdl_examples::math::fp32_multiply(input[W-1]==0?input[2*N+C+r]:input[i],input[N+c])):initial;}}
             expected.push_front(result);
         }
         source._work(reset);source._strobe();native.step();

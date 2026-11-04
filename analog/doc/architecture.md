@@ -68,10 +68,10 @@ or failed components. All models remain in one global physical equation graph.
 
 ## Shared C++HDL conventions
 
-[Buffer.cpp](../../examples/basic/Buffer.cpp) demonstrates class templates,
+[Buffer.h](../../lib/basic/Buffer.h) demonstrates class templates,
 member ports/registers and separate `_work`/`_strobe` phases.
-[Fifo.cpp](../../examples/basic/Fifo.cpp) demonstrates nested components and
-compile-time variants. [Fifo2clk.cpp](../../examples/cdc/Fifo2clk.cpp)
+[Fifo.h](../../lib/basic/Fifo.h) demonstrates nested components and
+compile-time variants. [Fifo2clk.h](../../examples/cdc/Fifo2clk.h)
 demonstrates named clock domains and their distinct work/commit methods.
 The local [spec](../../doc/spec.md) and [lowering design](../../doc/lowering.md)
 preserve bit widths and distinguish execution from synthesis policy.

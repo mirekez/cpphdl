@@ -1,4 +1,4 @@
-// Generated from hls/math/FpAdd.h by cpphdl.
+// Generated from lib/math/FpAdd.h by cpphdl.
 `default_nettype none
 
 

@@ -412,7 +412,11 @@ C++HDL can run any C++ in native simulation, but converted RTL should use a synt
 
 ## Inline Tests
 
-Examples and tests usually keep the first test in the same `.cpp` file as the RTL model. This is the C++HDL inline test practice: the file contains synthesizable modules first, then a `// C++HDL INLINE TEST` section with ordinary C++ test code.
+Inline tests live alongside the RTL model. Reusable `examples/` headers keep
+their testbench under `!defined(SYNTHESIS) && defined(MAINFILE)`, with a
+`main_from_header(int, char**)` entry point called by the build's separate
+`main()`. Normal inclusion exposes only the library code. Standalone regression
+tests under `tests/` can still use `.cpp` files with an ordinary `main()`.
 
 An inline test normally does four things:
 
@@ -421,7 +425,7 @@ An inline test normally does four things:
 * Runs the RTL cycle hooks: `_assign()`, `_work(reset)`, and `_strobe()`.
 * Checks outputs and internal behavior against expected values or a C++ reference model.
 
-Complete single-clock native testbench shape (assuming `MyModule` has `enable_in` and `done_out` ports):
+Complete standalone `.cpp` testbench (assuming `MyModule` has `enable_in` and `done_out` ports):
 
 ```cpp
 // C++HDL INLINE TEST ///////////////////////////////////////////////////
@@ -475,7 +479,12 @@ For simultaneous clock edges, evaluate all active work methods against pre-edge 
 
 ## Build and Run Tests
 
-The `examples/` and `tests/` folders are built by CMake. Most `.cpp` files become executable targets with post-build SystemVerilog generation; optimizer and other special regressions use dedicated CMake rules.
+The `examples/` and `tests/` folders are built by CMake. Reusable examples are
+headers with embedded tests guarded by `defined(MAINFILE)`. CMake defines
+`MAINFILE` and supplies a small `main()` that calls `main_from_header(argc, argv)`.
+Normal inclusion does not enable a testbench. See [examples/README.md](../examples/README.md)
+for the standalone Makefile and native/Verilator commands. Other regressions
+retain their `.cpp` executables or dedicated CMake rules.
 
 Configure once:
 

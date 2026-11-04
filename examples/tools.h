@@ -685,7 +685,7 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
     for (const auto& module : ordered_modules) {
         modules_list += module + ".sv ";
     }
-    std::string includes_list;
+    std::string includes_list = " -I" + (CpphdlSourceRootFrom(cpp_name) / "include").string();
     for (const auto& include : includes) {
         includes_list += " -I" + include;
     }
@@ -705,8 +705,17 @@ inline bool VerilatorCompileInExactFolderFromGenerated(std::string cpp_name, std
     const std::string verilator = ToolShellQuoteString(VerilatorTool());
     const std::string verilator_cxx_raw = VerilatorCxx();
     const std::string compiler_params = VerilatorCompilerParams(verilator_cxx_raw);
+    std::string test_source = cpp_name;
+    if (std::filesystem::path(cpp_name).extension() == ".h") {
+        test_source = std::filesystem::absolute(std::filesystem::path(folder_name) / "example_main.cpp").string();
+        std::ofstream driver(test_source);
+        driver << "#include \"" << std::filesystem::absolute(cpp_name).string() << "\"\n"
+               << "#include \"" << (CpphdlSourceRootFrom(cpp_name) / "tests/ExampleMain.cpp").string() << "\"\n";
+        if (!driver) return false;
+        includes_list += " -DMAINFILE";
+    }
     if (SystemEcho((std::string("cd ") + folder_name +
-            "; " + verilator + " -cc " + modules_list + " " + top_name + ".sv --exe " + cpp_name + " --top-module " + top_name +
+            "; " + verilator + " -cc " + modules_list + " " + top_name + ".sv --exe " + ToolShellQuoteString(test_source) + " --top-module " + top_name +
             " --Wno-fatal --CFLAGS \"-DVERILATOR " + includes_list + " -DVERILATOR_MODEL=V" + top_name + " " + compiler_params + VerilatorConfigCflags() + VerilatorExtraCflags() + "\"").c_str()) != 0) {
         return false;
     }

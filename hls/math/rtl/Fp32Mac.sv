@@ -1,4 +1,4 @@
-// Generated from hls/math/Fp32Mac.h by cpphdl.
+// Generated from lib/math/Fp32Mac.h by cpphdl.
 `default_nettype none
 
 

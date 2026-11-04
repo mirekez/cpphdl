@@ -1690,7 +1690,7 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
     // must remain external while converting a parent named TribeTest.
     if (hlp.mod->origName != MD->getParent()->getQualifiedNameAsString()) {  // method of base class or external object (not current mod)
         std::string parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
-        if ((notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
+        if (!MD->isStatic() && (notThis || (hlp.flags&Helpers::FLAG_EXTERNAL_THIS))) {  // method called for var - need specialization
             if (isModuleClockLifecycleMethod(MD->getNameAsString()) || MD->getNameAsString() == "_assign") {
                 return "";  // we need not work functions from third party classes (not Modules)
             }
@@ -1730,6 +1730,9 @@ std::string putMethod(const CXXMethodDecl* MD, Helpers& hlp, bool notThis = fals
         }
         else {
             if (MD->isStatic()) {
+                // A static helper called from an external object's method has
+                // no implicit object, even when its caller needs one.
+                hlp.flags &= ~Helpers::FLAG_EXTERNAL_THIS;
                 parentName = genTypeName(MD->getParent()->getQualifiedNameAsString());
                 hlp.followSpecialization(MD->getParent(), parentName);
                 if (!dyn_cast<ClassTemplateSpecializationDecl>(MD->getParent())) {
@@ -2512,10 +2515,10 @@ Compiler arguments after -- (common examples, not an exhaustive Clang list):
   For the compiler's full option list, use clang++ --help.
 
 Examples (from the repository root):
-  cpphdl --generated-dir=rtl examples/basic/Buffer.cpp -- -Iinclude
+  cpphdl --generated-dir=rtl lib/basic/Buffer.h -- -Iinclude
   cpphdl --json-output=design.json top.cpp -- -Iinclude -DMY_WIDTH=32
   cpphdl --primary_clock write_clk 100000000 \
-         --secondary_clock read_clk 40000000 examples/cdc/Fifo2clk.cpp -- -Iinclude
+         --secondary_clock read_clk 40000000 examples/cdc/Fifo2clk.h -- -Iinclude
   cpphdl --optimize-combs-l1 MyTop --optimize-threads=4 \
          --generated-dir=sim top.cpp -- -Iinclude
 

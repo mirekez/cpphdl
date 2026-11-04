@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <stdexcept>
 #ifdef FP32_MAC_CHECK
-#include "../math/Fp32Bits.h"
+#include "../../lib/math/Fp32Bits.h"
 #endif
 
 int main() {
@@ -45,7 +45,7 @@ int main() {
             }
             if(valid && replacement.command_ready_out[0]) {
 #ifdef FP32_MAC_CHECK
-                expected.push_back(cpphdl::hls::math::fp32_add(a,cpphdl::hls::math::fp32_multiply(b,c)));++accepted;
+                expected.push_back(cpphdl_examples::math::fp32_add(a,cpphdl_examples::math::fp32_multiply(b,c)));++accepted;
 #else
                 expected.push_back((uint64_t(b)<<32)|uint32_t(a*c+b));++accepted;
 #endif

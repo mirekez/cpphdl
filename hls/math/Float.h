@@ -1,10 +1,16 @@
 #pragma once
 #include "../Overrides.h"
-#include "Fp32Bits.h"
+#include "../../lib/math/Fp32Bits.h"
 #ifndef SYNTHESIS
 #include <cstring>
 #endif
 namespace cpphdl::hls::math {
+using cpphdl_examples::math::leading_zeros;
+using cpphdl_examples::math::shift_jam;
+using cpphdl_examples::math::fp16_to_fp32;
+using cpphdl_examples::math::fp32_round;
+using cpphdl_examples::math::fp32_add;
+using cpphdl_examples::math::fp32_multiply;
 // Bit transport, never numerical integer/float conversion.
 inline float decode(uint32_t bits) {
 #ifndef SYNTHESIS

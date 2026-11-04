@@ -243,7 +243,7 @@ static_assert (sizeof(CmdConfig) == 4, "struct CmdConfig size is not correct");
 3. Optional private zone for registers and variables
 4. Public zone with *\_work(reset)*, *\_strobe*(), *\_work_neg(reset)*, *\_strobe_neg*() and combinational functions bodies
 
-&nbsp;&nbsp;&nbsp;&nbsp;This complete one-register pipeline stage illustrates the module hooks. The state is updated only when enabled and remains unchanged otherwise. Larger FIFO and memory examples are in `examples/basic/`.
+&nbsp;&nbsp;&nbsp;&nbsp;This complete one-register pipeline stage illustrates the module hooks. The state is updated only when enabled and remains unchanged otherwise. Larger FIFO and memory examples are in `lib/basic/`.
 
 ```cpp
 #pragma once
@@ -645,7 +645,7 @@ public:
 };
 ```
 
-This example resets the output register, not the memory contents. Initialize a row before reading it. The larger memory example in `examples/basic/Memory.cpp` also demonstrates write masks. In registered-read mode, a same-edge read/write observes the old row; in show-ahead mode, the output follows committed memory at the selected address.
+This example resets the output register, not the memory contents. Initialize a row before reading it. The larger memory example in `lib/basic/Memory.h` also demonstrates write masks. In registered-read mode, a same-edge read/write observes the old row; in show-ahead mode, the output follows committed memory at the selected address.
 
 ## Interfaces
 
@@ -781,7 +781,7 @@ public:
 `_assign()` methods in the order needed for bidirectional interface signals. This is important for
 interfaces such as valid-ready, where one module drives `valid` and `data`, while the other drives
 `ready`. Use it from a parent module or test wrapper after setting instance names. Check
-`examples/axi/Axi4MuxFromSlave.cpp`, `examples/axi/Axi4MuxToMaster.cpp`, and
+`examples/axi/Axi4MuxFromSlave.h`, `examples/axi/Axi4MuxToMaster.h`, and
 `tests/interface/ValidReady.cpp` for larger examples.
 
 Connect each interface bundle through `assignIf()` in the immediate common parent; do not copy its ports one at a time. The endpoint's own `_assign()` still binds the signals that endpoint drives, as above. Do not bypass hierarchy by reaching into grandchildren or another module's internal state. A forwarding module can use `assignIf(*this, child, proxy_in, child.sink_in)`; see `tests/interface/AssignIfHierarchyProxy.cpp`.
@@ -1173,7 +1173,7 @@ for (unsigned cycle = 1; cycle <= 100; ++cycle) {
 
 `VcdFile::create()` currently emits a `1ns` timescale. The argument to `sample(time_ns)` is therefore the VCD timestamp in nanoseconds; it does not advance the model. For multiple clocks, sample after every clock transition or scheduled event and use timestamps that represent the testbench's actual edge schedule.
 
-The signal pointer must refer to contiguous raw storage such as a C++HDL scalar, `logic<>`, or the current-value storage of `reg<>`. The width is the RTL value width, not `sizeof(reg<T>) * 8`, which would include next-state storage. For arrays or structs, check their actual byte/bit layout before using raw tracing. Do not register a temporary expression or a `_PORT`/`function_ref` object. If a port value is needed, copy it into persistent testbench storage before sampling. Limit long traces explicitly because VCD files grow quickly. `examples/basic/Buffer.cpp`, `examples/basic/Fifo.cpp`, and `examples/basic/Memory.cpp` contain complete native examples and cap the number of samples.
+The signal pointer must refer to contiguous raw storage such as a C++HDL scalar, `logic<>`, or the current-value storage of `reg<>`. The width is the RTL value width, not `sizeof(reg<T>) * 8`, which would include next-state storage. For arrays or structs, check their actual byte/bit layout before using raw tracing. Do not register a temporary expression or a `_PORT`/`function_ref` object. If a port value is needed, copy it into persistent testbench storage before sampling. Limit long traces explicitly because VCD files grow quickly. `lib/basic/Buffer.h`, `lib/basic/Fifo.h`, and `lib/basic/Memory.h` contain complete native examples and cap the number of samples.
 
 This helper traces the native C++HDL model. To trace internal signals of generated RTL under Verilator, build the generated SystemVerilog with Verilator's `--trace` option. The testbench must enable tracing before time advances, register the model, and call `dump()` after every evaluated clock transition:
 

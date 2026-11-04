@@ -11,7 +11,7 @@
 #include "legacy.h"
 #undef cpphdl_native
 #endif
-#include "../math/Fp32Bits.h"
+#include "../../lib/math/Fp32Bits.h"
 #include <array>
 #include <deque>
 #include <optional>
@@ -58,8 +58,8 @@ int main(){
   else if(advance){expected.pop_back();std::optional<Result> out;
    if(valid){out.emplace();(*out)[N]=cycle;
     for(unsigned r=0;r<R;r++)for(unsigned c=0;c<C;c++){unsigned i=r*C+c;uint32_t initial=in[N+C+i];
-     (*out)[i]=r<in[W-4] && c<in[W-3]?cpphdl::hls::math::fp32_add(initial,
-      cpphdl::hls::math::fp32_multiply(in[W-1]==0?in[2*N+C+r]:in[i],in[N+c])):initial;}}
+     (*out)[i]=r<in[W-4] && c<in[W-3]?cpphdl_examples::math::fp32_add(initial,
+      cpphdl_examples::math::fp32_multiply(in[W-1]==0?in[2*N+C+r]:in[i],in[N+c])):initial;}}
    expected.push_front(out);
   }
   auto edge=[&](auto& g){g.clk[0]=1;g.step();g.step();g.clk[0]=0;g.step();};

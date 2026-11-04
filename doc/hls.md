@@ -275,7 +275,7 @@ FP32 multiply/add command with an annotated implementation. Its C++RTL
 `hls/math/rtl/`. Regenerate it with `regenerate_mac_rtl.py --cpphdl ...` and use
 `--check` in validation. `PipelineReplacementChecks.py --fp32` compares its
 retimed reference with hdlcpp-converted replacement RTL, including raw FP32
-bit patterns. `Fp32Mac.cpp` checks the primitive's two enabled stages directly.
+bit patterns. `lib/math/Fp32Mac.h` checks the primitive's two enabled stages directly.
 
 The MAC replacement script emits the generated FpAdd/Fp32Mac implementation
 under SystemVerilog `ifdef SYNTHESIS` and `Fp32MacSimulation.sv` under `else`.
@@ -1559,9 +1559,13 @@ contract, artifacts and current restrictions.
 
 `hls/math/Float.h` registers FP32 add/subtract/multiply and representation
 transport policies. Native code uses ordinary float operations; RTL uses
-`Fp32Bits.h` (separate multiply/add, round-to-nearest-even and FTZ arithmetic).
-See [the library contract](../hls/math/README.md). Existing FpAdd, FpConverter,
-FpSqrt and FpTanh examples now include reusable headers from that directory.
+`lib/math/Fp32Bits.h` (separate multiply/add, round-to-nearest-even and FTZ arithmetic).
+See [the library contract](../hls/math/README.md). The ordinary RTL blocks
+FpAdd, FpConverter, Fp32Mac, Fp32Bits and Fp32Add live in the shared
+[lib/math library](../lib/README.md), with embedded native/Verilator tests.
+They do not depend on HLS; HLS adapters reuse them. FpSqrt, FpTanh, Fp32Exp
+and Maximum remain in [examples/math](../examples/math/README.md).
+The stateless arithmetic helper namespace is `cpphdl_examples::math`.
 
 `ClockedPipeline` arguments/results may be unsigned 8/16/32/64/128-bit integers
 or padding-free standard-layout POD records/fixed arrays of those integers.
@@ -1612,10 +1616,10 @@ semantics are preserved; reset argument names need not be `reset`.
 
 Inlining is not a guarantee of block-RAM inference. Large dynamic selectors or
 aggregate updates can still turn member arrays into registers. For explicit
-bank ports, include `hls/SynchronousRam.h` and declare a member such as:
+bank ports, include `lib/memory/SynchronousRam.h` and declare a member such as:
 
 ```cpp
-cpphdl::hls::SynchronousRam<16, 256> bank; // 256 addresses of 512 bits
+cpphdl_examples::SynchronousRam<16, 256> bank; // 256 addresses of 512 bits
 ```
 
 Bind `read_in`, `read_address_in`, `write_in`, `write_address_in`, and `data_in`
@@ -1625,14 +1629,20 @@ in the parent's `_assign()`, then call `bank._assign()` once. Call
 track its validity in the controller. `WORDS` counts 32-bit words, so
 `SynchronousRam<1, 64>` is a 64-address, 32-bit bank, suitable for FP32 bit
 patterns. Each bank permits one read and one write per clock. Use independent
-member banks for independent parallel accesses, and avoid read/write collisions
-at the same address. Reset validity/control, not the RAM contents.
+member banks for independent parallel accesses. A same-address read/write returns
+the old contents (read-first). Reset validity/control, not the RAM contents.
 
 The primitive's native C++ model uses `cpphdl::memory`. Conversion uses its
 `CPPHDL_REPLACEMENT` synchronous RAM module with block-RAM attributes. This is
 an explicit C++ RTL building block; arbitrary high-level C++ array accesses do
 not automatically acquire this port schedule. Always confirm physical RAM
 usage in the FPGA synthesis report.
+
+`lib/memory/MaskedSynchronousRam.h` adds a write enable per 32-bit lane.
+`lib/memory/MatrixTransfer.h` provides an explicit RTL controller for
+strided/transposed matrix transfers. These ordinary RTL modules use the
+`cpphdl_examples` namespace and have native/Verilator examples in the same
+directory; they are not HLS clocked wrappers.
 
 ## Concurrent Stages Around HLS Kernels
 
@@ -1715,7 +1725,7 @@ Host simulator CPU time is a separate measurement from device-clock occupancy.
 
 A reduction that only needs completed matrix values belongs on the output
 stream, after the final K accumulation. It should not force a second external
-memory scan. `hls/math/Maximum.h` provides `MaximumMethods`, which compares FP32 representation bits,
+memory scan. `examples/math/Maximum.h` provides `MaximumMethods`, which compares FP32 representation bits,
 carries original indices through reductions, preserves first-index ties (including
 signed zeros), and matches sequential argmax's NaN behavior. A branchless final select provides a
 shallow compare/mux path. Stateless helpers can be inherited by RTL modules;
@@ -1862,7 +1872,7 @@ bounded 64-byte beat traversal for FP32 and FP16 input, including sparse and
 broadcast strides. This is an explicit memory-interface building block; it does
 not automatically turn arbitrary pointer loops into burst engines.
 
-`hls/MaskedSynchronousRam.h` supplies a registered one-read/one-write BRAM bank
+`lib/memory/MaskedSynchronousRam.h` supplies a registered one-read/one-write BRAM bank
 with one write enable per 32-bit word. A gather controller can scatter an aligned
 DRAM beat into selected lanes without first reading the BRAM word or writing
 padded operands into DRAM. The ordinary C++ implementation and generated RTL
@@ -1976,7 +1986,7 @@ previous result. Additional buffering overlaps input transforms and memory;
 it cannot remove this dependency. A tree or striped reduction changes FP32
 association and must be an explicit algorithm choice in the C++ reference.
 
-`hls/math/Fp32Add.h` provides `fp32_add_narrow(a, b)` for bit-pattern FP32
+`lib/math/Fp32Add.h` provides `fp32_add_narrow(a, b)` for bit-pattern FP32
 addition with the same RNE, canonical-NaN and exponent-zero flush semantics as
 `fp32_add`. It uses a 32-bit guard/round/sticky datapath and a parallel priority
 encoder for cancellation normalization. The function is ordinary C++, suitable
@@ -1990,15 +2000,17 @@ overlapping load/transform/sum/map/store counters, not just standalone adder
 latency. Check transformed RTL and retimed arithmetic under backpressure, and
 retain the exact sequential C++ sum as the numerical reference.
 
-`hls/math/FloatConvert.h` similarly provides `fp16_to_fp32_narrow` and
-`fp32_from_int_narrow`. They preserve FP16 subnormals/NaN payloads and int32
-round-to-nearest/even respectively, using bounded 32-bit normalization instead
-of a 64-bit shifted significand. `hls/tests/FloatConvertNarrow.cpp` checks all
+`lib/math/FpConverter.h` provides
+`FP16E5::convert_raw<FP32E8>(bits, true, true)` and
+`FP32E8::from_int_raw(value)`. They preserve FP16 subnormals/NaN payloads and use
+int32 round-to-nearest/even respectively. The format conversion uses a shared
+raw-bit implementation; integer normalization uses a 32-bit magnitude.
+`hls/tests/FloatConvertNarrow.cpp` checks all
 FP16 encodings and int32 rounding boundaries against the original primitives.
 
 ### Affine bulk transfers
 
-`hls/MatrixTransfer.h` provides a C++ RTL memory stage for copying an affine
+`lib/memory/MatrixTransfer.h` provides a C++ RTL memory stage for copying an affine
 matrix view between disjoint external-memory regions. Its command supplies
 rows, columns, byte addresses and independent source/destination row and
 column strides. Input is FP16 or FP32; output is FP32. It copies real elements
@@ -2012,8 +2024,9 @@ requests stable. Noncontiguous views fall back to one element per beat.
 Loading and draining each tile are sequential; read requests and responses
 are overlapped within loading. A caller must fence accepted external writes
 when the surrounding memory controller permits delayed write visibility.
-FP16 conversion reuses `math::FloatConvertMethods::from_half`; the free
-`fp16_to_fp32_narrow` wrapper remains available to software and HLS methods.
+FP16 conversion uses the shared `FpFormatConversion` helper with both preservation
+options enabled; `FP16E5::convert_raw<FP32E8>` exposes the same conversion to
+software and HLS methods.
 
 ### Cached binary maps
 

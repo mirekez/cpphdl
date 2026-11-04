@@ -1,0 +1,20 @@
+# Migrate cached test-build switches without enabling previously disabled tests.
+# An explicitly supplied new name takes precedence over its deprecated name.
+foreach(component LIB EXAMPLES)
+    set(old_option "CPPHDL_BUILD_${component}")
+    set(new_option "${old_option}_TESTS")
+    if(DEFINED ${old_option})
+        if(NOT DEFINED ${new_option})
+            set(${new_option} "${${old_option}}" CACHE BOOL "Build ${component} self-tests and generated RTL")
+        endif()
+        message(DEPRECATION "${old_option} was renamed to ${new_option}; use the new name.")
+        unset(${old_option} CACHE)
+        unset(${old_option})
+    endif()
+endforeach()
+unset(component)
+unset(old_option)
+unset(new_option)
+
+option(CPPHDL_BUILD_LIB_TESTS "Build shared RTL library self-tests and generated RTL" ON)
+option(CPPHDL_BUILD_EXAMPLES_TESTS "Build example self-tests and generated RTL" ON)

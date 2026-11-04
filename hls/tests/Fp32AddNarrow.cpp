@@ -1,10 +1,10 @@
-#include "hls/math/Fp32Add.h"
+#include "lib/math/Fp32Add.h"
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 
 static void check(uint32_t a,uint32_t b) {
-    using namespace cpphdl::hls::math;
+    using namespace cpphdl_examples::math;
     uint32_t expected=fp32_add(a,b),actual=fp32_add_narrow(a,b);
     if(expected!=actual) {
         std::fprintf(stderr,"add(%08x,%08x): %08x != %08x\n",a,b,actual,expected);
