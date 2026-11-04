@@ -12,6 +12,7 @@ p.add_argument('--work',type=Path)
 p.add_argument('--tsan',action='store_true')
 p.add_argument('--active-commits',action='store_true')
 p.add_argument('--task-workers',type=int,nargs='+',default=[None],help='Runtime independent-task worker caps')
+p.add_argument('--memory-workers',type=int,nargs='+',default=[None],help='Runtime RAM commit worker caps')
 p.add_argument('--cases',nargs='+',choices=('serial','plain','keys','external','delta','coupled','overlap','tasks'),
                help='Restrict diagnostic runs to these cache modes')
 a=p.parse_args()
@@ -137,7 +138,9 @@ for index,(kind,threads,split) in enumerate(cases):
  subprocess.run([*flags,*instrumentation,'-DRAMS=8',f'-DCOUPLED={int(kind=="coupled")}',f'-DEXPECTED_LANES={lanes}','-I'+str(d),d/'run.cpp',
                  *sorted(d.glob('model.part.*.cpp')),'-o',d/'run'],check=True)
  for cap in a.task_workers:
-  for dispatch in ('serial','parallel','auto'):
-   env=dict(os.environ,CPPHDL_NATIVE_DISPATCH=dispatch)
-   if cap is not None:env['CPPHDL_NATIVE_TASK_WORKERS']=str(cap)
-   subprocess.run([d/'run'],env=env,check=True,timeout=60)
+  for memory_cap in a.memory_workers:
+   for dispatch in ('serial','parallel','auto'):
+    env=dict(os.environ,CPPHDL_NATIVE_DISPATCH=dispatch)
+    if cap is not None:env['CPPHDL_NATIVE_TASK_WORKERS']=str(cap)
+    if memory_cap is not None:env['CPPHDL_NATIVE_MEMORY_WORKERS']=str(memory_cap)
+    subprocess.run([d/'run'],env=env,check=True,timeout=60)

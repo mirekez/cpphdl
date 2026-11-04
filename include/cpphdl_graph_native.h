@@ -964,6 +964,9 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
         };
         output << "static constexpr size_t __cpphdl_cached_memory_commits = " << cachedMemoryCommitCount << ";\n";
         output << "static constexpr unsigned __cpphdl_memory_commit_lanes = " << commitLanes << ";\n";
+        if(parallelMemoryCommits)
+            output << "unsigned __cpphdl_memory_workers = cpphdl::graph_runtime::nativeMemoryWorkers("
+                   << commitLanes << "u);\n";
         if(parallelMemoryCommits&&!adaptiveDispatch)
             output << "cpphdl::graph_runtime::DispatchPolicy __cpphdl_memory_dispatch_policy = cpphdl::graph_runtime::nativeDispatchPolicy();\n";
         for(size_t memory=0;memory<memories.size();++memory)if(cachedMemoryCommits[memory])
@@ -2005,15 +2008,15 @@ inline void Graph::emit(const std::string& path, unsigned chunkSize, unsigned th
                         output << "{ auto mask = __cpphdl_active_commit_mask[" << word << "];\nwhile(mask) {\n"
                                << "__cpphdl_active_commit_lanes[active++] = " << word*64 << "u + unsigned(__builtin_ctzll(mask));\n"
                                   "mask &= mask-1;\n}\n}\n";
-                    output << "if(active <= 1 || " << (adaptiveDispatch?"__cpphdl_dispatch_policy":"__cpphdl_memory_dispatch_policy")
+                    output << "if(active <= 1 || __cpphdl_memory_workers == 1 || " << (adaptiveDispatch?"__cpphdl_dispatch_policy":"__cpphdl_memory_dispatch_policy")
                            << " == cpphdl::graph_runtime::DispatchPolicy::Serial) {\n"
                               "for(unsigned i=0;i<active;++i) __cpphdl_commit_memory_lane(__cpphdl_active_commit_lanes[i]);\n"
-                              "} else __cpphdl_threads->runTasks(this,&Model::__cpphdl_active_commit_lane,active);\n";
+                              "} else __cpphdl_threads->runTasks(this,&Model::__cpphdl_active_commit_lane,active,__cpphdl_memory_workers);\n";
                 } else if(parallelMemoryCommits) {
-                    output << "if(" << (adaptiveDispatch?"__cpphdl_dispatch_policy":"__cpphdl_memory_dispatch_policy")
+                    output << "if(__cpphdl_memory_workers == 1 || " << (adaptiveDispatch?"__cpphdl_dispatch_policy":"__cpphdl_memory_dispatch_policy")
                            << " == cpphdl::graph_runtime::DispatchPolicy::Serial) {\n"
                            << "for(unsigned lane=0;lane<" << commitLanes << ";++lane) __cpphdl_commit_memory_lane(lane);\n"
-                           << "} else __cpphdl_threads->runTasks(this,&Model::__cpphdl_commit_lane," << commitLanes << "u);\n";
+                           << "} else __cpphdl_threads->runTasks(this,&Model::__cpphdl_commit_lane," << commitLanes << "u,__cpphdl_memory_workers);\n";
                 } else emitCommitLane(0);
                 if(memoryChangeEvents)output << "__cpphdl_publish_memory_changes();\n";
                 output << "__cpphdl_current = !__cpphdl_current;\n";

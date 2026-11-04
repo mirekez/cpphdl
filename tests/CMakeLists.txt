@@ -25,6 +25,12 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
     "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CPPHDL_TEST_CXX}")
 find_package(Threads REQUIRED)
+add_executable(cpp_graph_native_dispatch_profile graph/NativeDispatchProfile.cc)
+target_include_directories(cpp_graph_native_dispatch_profile PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_features(cpp_graph_native_dispatch_profile PRIVATE cxx_std_23)
+target_link_libraries(cpp_graph_native_dispatch_profile PRIVATE Threads::Threads)
+add_test(NAME cpp_graph_native_dispatch_profile COMMAND cpp_graph_native_dispatch_profile)
+set_tests_properties(cpp_graph_native_dispatch_profile PROPERTIES TIMEOUT 120)
 add_test(NAME cpp_graph_native_quiet_probes COMMAND bash
     "${CMAKE_CURRENT_SOURCE_DIR}/graph/NativeQuietProbesChecks.sh" "${CPPHDL_TEST_CXX}")
 set_tests_properties(cpp_graph_native_quiet_probes PROPERTIES TIMEOUT 900)
