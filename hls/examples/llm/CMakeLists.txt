@@ -1,4 +1,12 @@
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_hls_native(hls_llm_MathRtl MathRtl.cpp)
+add_test(NAME hls_llm_MathRtl_native COMMAND "${HLS_NATIVE_BINARY}")
+if(HLS_VERILATOR)
+    add_test(NAME hls_llm_MathRtl_rtl COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Run.py"
+        --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+        --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/MathRtl_rtl" --top MathRtl)
+    set_tests_properties(hls_llm_MathRtl_rtl PROPERTIES TIMEOUT 600 LABELS "rtl;llm;math")
+endif()
 add_hls_native(hls_llm_product WeightProduct.cpp)
 add_test(NAME hls_llm_product_native COMMAND "${HLS_NATIVE_BINARY}")
 add_hls_native(hls_llm_product64 WeightProduct.cpp LLM_DDR_BITS=64)

@@ -12,6 +12,7 @@ included as a library. Include them without defining `MAINFILE`.
 | [math/Fp32Mac.h](math/Fp32Mac.h) | Enabled two-stage FP32 multiply/add, separately rounded | FP32 MAC pipeline adapter |
 | [math/Fp32Bits.h](math/Fp32Bits.h) | Integer FP32 arithmetic and exact FP16 widening | `hls/math/Float.h` policies |
 | [math/Fp32Add.h](math/Fp32Add.h) | Narrow-datapath FP32 adder methods | Narrow arithmetic pipelines |
+| [math/Q48Math.h](math/Q48Math.h) | Bounded combinational Q16.48 division, exponential, inverse square root and SiLU | LLM scalar C++RTL implementations |
 
 The library also includes reusable buffering and memory modules:
 
@@ -60,12 +61,17 @@ zero. Arithmetic NaNs are canonicalized; FP16 widening preserves the payload.
 
 ## Native and RTL Tests
 
-As in `examples/`, each implementation header contains its complete testbench.
+As in `examples/`, RTL example headers contain their complete testbench.
 Defining `MAINFILE` enables `main_from_header(int, char**)`;
 [`tests/ExampleMain.cpp`](../tests/ExampleMain.cpp) supplies the ordinary `main()`.
 Dependencies suppress `MAINFILE` while being included, so their testbenches
 are not enabled accidentally. The same tests run in C++ and against generated
 SystemVerilog through Verilator.
+
+The raw `Q48Math.h` helpers are tested through the four C++RTL modules in
+[`hls/examples/llm/MathRtl.h`](../hls/examples/llm/MathRtl.h). Their native and
+Verilator tests compare against the original integer arithmetic, and the
+scalar pipeline tests use the generated modules without DPI callbacks.
 
 CMake option `CPPHDL_BUILD_LIB_TESTS` defaults to `ON` and is independent of
 `CPPHDL_BUILD_EXAMPLES_TESTS`. These options control self-tests and RTL

@@ -5,19 +5,6 @@
 #include <stdexcept>
 #ifdef VERILATOR
 #include "VScalarMath.h"
-extern "C" unsigned long long llm_model_divide(unsigned long long a, unsigned long long b) {
-    return b ? uint64_t(integer_llm::divide(int64_t(a), int64_t(b))) : 0;
-}
-extern "C" unsigned long long llm_model_exp(unsigned long long a) {
-    // Other mux branches can evaluate even when this operation is not selected.
-    return int64_t(a) <= 0 ? uint64_t(integer_llm::exp_negative(int64_t(a))) : 0;
-}
-extern "C" unsigned long long llm_model_inverse_sqrt(unsigned long long a) {
-    return uint64_t(integer_llm::inverse_sqrt(int64_t(a)));
-}
-extern "C" unsigned long long llm_model_silu(unsigned long long a) {
-    return uint64_t(integer_llm::silu(int64_t(a)));
-}
 #endif
 long _system_clock = 0;
 

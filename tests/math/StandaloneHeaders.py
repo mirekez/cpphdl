@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     library = tuple('lib/math/' + name + '.h' for name in (
-        'FpConvertBits', 'FpConverter', 'FpAdd', 'Fp32Mac', 'Fp32Bits', 'Fp32Add')) + tuple(
+        'FpConvertBits', 'FpConverter', 'FpAdd', 'Fp32Mac', 'Fp32Bits', 'Fp32Add', 'Q48Math')) + tuple(
         'lib/basic/' + name + '.h' for name in ('Buffer', 'Fifo', 'Memory')) + tuple(
         'lib/memory/' + name + '.h' for name in ('SynchronousRam', 'MaskedSynchronousRam', 'MatrixTransfer'))
     examples = tuple('examples/math/' + name + '.h' for name in (

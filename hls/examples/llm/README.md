@@ -5,7 +5,8 @@ This directory starts the hardware port of the integer Qwen implementation in
 current RTL accepts matrix tiles or scalar operands, not an input token.
 Transformer control, attention and normalization are still host C++.
 Matrix products, their full-width accumulation, and final rounding now execute
-in hardware. Nonlinear scalar functions have explicit external blackbox contracts.
+in hardware. Nonlinear scalar functions retain external blackbox contracts,
+with synthesizable C++RTL implementations supplied by this example.
 
 ## Implemented
 
@@ -30,6 +31,9 @@ in hardware. Nonlinear scalar functions have explicit external blackbox contract
   scheduling of the C++ matrix loops over DDR is not implemented.
 - `ScalarMath.cpp`: pipelined add and Q48 multiply, plus calls to the external
   division, exponential, inverse-square-root and SiLU modules below.
+- `MathRtl.h`: four combinational C++RTL modules implementing those calls with
+  [`Q48Math.h`](../../../lib/math/Q48Math.h). `MathRtl.cpp` tests their actual
+  arithmetic against the independent functions in `IntegerMath.h`.
 - `TiledMatVec.cpp`: a pointer-based `ClockedMemory` weight loader, two local
   weight buffers and independent `ClockedPipeline` arithmetic. Loading the next
   row overlaps computation on the current row. See below.
@@ -179,7 +183,7 @@ DDR system requires checking the base address and all additional allocations.
 From the repository root, using the existing HLS-enabled CMake build:
 
 ```sh
-cmake --build build --target cpphdl hls_llm_product hls_llm_product64 hls_llm_MatrixMath hls_llm_ScalarMath
+cmake --build build --target cpphdl hls_llm_product hls_llm_product64 hls_llm_MatrixMath hls_llm_ScalarMath hls_llm_MathRtl
 ctest --test-dir build -R '^hls_llm_' --output-on-failure
 ```
 
@@ -208,6 +212,8 @@ build/hls/examples/llm/gates512/rtl/timing.json
 build/hls/examples/llm/MatrixMath_gates/rtl/gates.v
 build/hls/examples/llm/ScalarMath_gates/rtl/gates.v
 build/hls/examples/llm/ScalarMath_gates/rtl/blackboxes.v
+build/hls/examples/llm/ScalarMath_gates/math-rtl/
+build/hls/examples/llm/MathRtl_rtl/rtl/
 ```
 
 The gate test invokes synthesis with:
@@ -232,7 +238,7 @@ product stages and four reduction stages; the generic estimate is 4.9 ns.
 Only the arithmetic pipelines have II=1. A matrix result needs `depth` products,
 DDR service, reduction latency and any output stalls.
 
-## Opaque Math Functions
+## C++RTL Math Implementations
 
 `IntegerMath.h` marks division, negative exponential, inverse square root and
 SiLU with annotations such as:
@@ -250,15 +256,35 @@ clock latency. It is a requested timing abstraction, not a claim that real
 division or exponentiation takes no time. A registered implementation cannot
 replace such a box without adding a latency/handshake adapter.
 
-`blackboxes.v` contains empty declarations for implementation tools. Actual
-hardware implementations are still required. Do not include the empty
-declarations alongside implementations, or use them as simulation models.
-`MathModels.sv` supplies test-only DPI models using the original integer math;
-Verilator checks their connections and aligned arithmetic results through
-retiming. Those DPI functions are **not synthesized**. Reports list the boxes
-under `external_blackboxes` and `external_implementations_required`; gate counts
-and timing exclude their unknown internal costs. Add, multiply, carry-save
-accumulation and matrix control are not blackboxed.
+`Run.py` converts `MathRtl.cpp` into real SystemVerilog implementations for all
+four functions and links them into both the scheduled-RTL and retimed-gate
+tests. `BlackboxBindings.sv`, written alongside these generated modules, only
+connects the blackbox `args`/`result` ABI to C++RTL `args_in`/`result_out` ports.
+There are no DPI callbacks or simulation-only arithmetic replacements.
+
+The implementation preserves full signed 128-bit products, division truncated
+towards zero, the exponential's 24 bounded terms, and the inverse square
+root's eight Newton iterations. Loops describe combinational logic, not clock
+cycles. Division by zero returns zero; the negative-exponential function returns
+zero for positive inputs. These guards keep inactive mux branches defined.
+
+`hls_llm_MathRtl_native` and `hls_llm_MathRtl_rtl` compare all four modules
+against the original C++ functions across random inputs, signed extremes,
+normalization boundaries, exponential cutoff and saturation. The existing
+`hls_llm_ScalarMath_rtl` and `hls_llm_ScalarMath_gates` tests check 1,200 pipeline
+results with randomized backpressure using these same RTL implementations.
+
+For hardware integration, use the files in `math-rtl/` with `rtl/gates.v`.
+Do not also include `rtl/blackboxes.v`: it contains only empty declarations.
+The nonlinear modules are synthesizable RTL, but they are not mapped or retimed
+inside the parent synthesis pass. The parent's zero-delay annotations therefore
+remain an explicit timing approximation: **the 5 ns parent target does not
+prove timing closure for these combinational math blocks**. Reports still list
+them under `external_blackboxes` and `external_implementations_required`; their
+internal area and delay are excluded. Pipeline these blocks with a matching
+latency adapter, or time the integrated design, before claiming a hardware
+frequency. Add, multiply, carry-save accumulation and matrix control are not
+blackboxed.
 
 For an independent arithmetic comparison against the original checkout:
 

@@ -13,7 +13,7 @@ p.add_argument('--bus', type=int, choices=(64, 128, 256, 512), default=512)
 p.add_argument('--gates', action='store_true')
 p.add_argument('--depth', type=int, default=8)
 p.add_argument('--window', type=int, default=8)
-p.add_argument('--top', choices=('WeightProduct', 'ScalarMath', 'MatrixMath', 'TiledMatVec', 'StreamingMatVec'), default='WeightProduct')
+p.add_argument('--top', choices=('WeightProduct', 'ScalarMath', 'MathRtl', 'MatrixMath', 'TiledMatVec', 'StreamingMatVec'), default='WeightProduct')
 args = p.parse_args()
 root = Path(__file__).resolve().parents[3]
 source = Path(__file__).with_name(args.top + '.cpp')
@@ -60,7 +60,32 @@ else:
     sources = [rtl / 'Predef_pkg.sv', *sorted(rtl.glob('cpphdl_hls_*.sv'))]
     sources += [path for path in sorted(rtl.glob('*.sv')) if path not in sources]
 if args.top == 'ScalarMath':
-    sources.append(source.with_name('MathModels.sv'))
+    math_rtl = work / 'math-rtl'
+    if math_rtl.exists():
+        shutil.rmtree(math_rtl)
+    run([args.cpphdl, '--generated-dir', math_rtl, source.with_name('MathRtl.cpp'),
+         '--', *flags], 'math-conversion')
+    math_sources = sorted(math_rtl.glob('*.sv'), key=lambda path: (
+        path.name != 'Predef_pkg.sv', not path.name.endswith('_pkg.sv'), path.name))
+    # Only wire adaptation is handwritten: the arithmetic comes from C++RTL.
+    bindings = [('llm_q48_divide', 'LlmQ48Divide', 128),
+                ('llm_q48_exp_negative', 'LlmQ48ExpNegative', 64),
+                ('llm_q48_inverse_sqrt', 'LlmQ48InverseSqrt', 64),
+                ('llm_q48_silu', 'LlmQ48Silu', 64)]
+    adapters = math_rtl / 'BlackboxBindings.sv'
+    adapters.write_text('\n'.join(
+        f'module {name} #(parameter INPUT_BITS={width}, OUTPUT_BITS=64) (\n'
+        '    input wire [INPUT_BITS-1:0] args, output wire [OUTPUT_BITS-1:0] result);\n'
+        f'    {implementation} #(.INPUT_BITS(INPUT_BITS), .OUTPUT_BITS(OUTPUT_BITS)) rtl (\n'
+        "        .clk(1'b0), .reset(1'b0), .args_in(args), .result_out(result));\n"
+        'endmodule\n' for name, implementation, width in bindings))
+    if args.gates:
+        sources = [*math_sources, adapters, *sources]
+    else:
+        sources = [sources[0], *[path for path in math_sources if path.name != 'Predef_pkg.sv'],
+                   adapters, *sources[1:]]
+    assert all('DPI-C' not in path.read_text() for path in sources)
+    assert all((math_rtl / (implementation + '.sv')).exists() for _, implementation, _ in bindings)
 obj = work / 'obj'
 if obj.exists():
     shutil.rmtree(obj)
