@@ -12,7 +12,11 @@ The book: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl_book.pdf
 
 Some resources on wiki: https://github.com/mirekez/cpphdl/wiki
 
-![](doc/cpphdl-cover.png)
+![Inverted pyramid: C++HDL for generic C++ hardware and pipelines, C++Analog for analog modelling and mixed-signal simulation, and C++RTL for explicit RTL models.](doc/cpphdl-layers.png)
+
+- **C++HDL:** Describe hardware in generic C++ and use HLS scheduling and retiming to spread computations across pipeline stages.
+- **C++Analog:** Describe analog behaviour in C++ and connect the models to mixed-signal simulations.
+- **C++RTL:** Describe explicit RTL models in C++, with ports, registers, combinational logic, and clocks.
 
 ## build
 
