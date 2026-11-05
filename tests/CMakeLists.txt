@@ -73,6 +73,11 @@ foreach(spins invalid -1 65537)
 endforeach()
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME optimizer_test_compiler COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/optimizer/CompilerChecks.py"
+        --ctest "${CMAKE_CTEST_COMMAND}" --build "${CMAKE_BINARY_DIR}"
+        --cxx "${CPPHDL_TEST_CXX}")
+    set_tests_properties(optimizer_test_compiler PROPERTIES TIMEOUT 150 LABELS "optimizer;cmake")
     add_test(NAME header_test_options COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/HeaderTestOptions.py"
         --cmake "${CMAKE_COMMAND}")
@@ -1188,6 +1193,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_constexpr_binding PROPERTIES TIMEOUT 120)
 
@@ -1201,6 +1207,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_lazy_cycle_order PROPERTIES TIMEOUT 120)
 
@@ -1214,6 +1221,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_dynamic_comb_repeat PROPERTIES TIMEOUT 120)
 
@@ -1224,6 +1232,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_replay_context PROPERTIES TIMEOUT 120)
 
@@ -1234,6 +1243,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_native_bit_store PROPERTIES TIMEOUT 120)
 
@@ -1244,6 +1254,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_specialized_comb PROPERTIES TIMEOUT 120)
 
@@ -1255,6 +1266,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_projected_comb PROPERTIES TIMEOUT 120)
 
@@ -1265,6 +1277,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_projected_handshake PROPERTIES TIMEOUT 120)
 
@@ -1274,6 +1287,8 @@ add_test(
             "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>"
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
+            ""
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_external_binding_state PROPERTIES TIMEOUT 120)
 
@@ -1287,6 +1302,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_work_mutation PROPERTIES TIMEOUT 120)
 
@@ -1313,6 +1329,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_module_array_call PROPERTIES TIMEOUT 120)
 
@@ -1326,6 +1343,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_opaque_subtree PROPERTIES TIMEOUT 120)
 
@@ -1339,6 +1357,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_pure_comb_root PROPERTIES TIMEOUT 120)
 
@@ -1352,6 +1371,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_alias_root PROPERTIES TIMEOUT 120)
 
@@ -1365,6 +1385,7 @@ add_test(
             "${CMAKE_SOURCE_DIR}/include"
             "${CMAKE_CURRENT_SOURCE_DIR}/optimizer"
             "${CPPHDL_STDCXXEXP}"
+            "${CPPHDL_TEST_CXX}"
 )
 set_tests_properties(optimizer_structural_nttp PROPERTIES TIMEOUT 120)
 

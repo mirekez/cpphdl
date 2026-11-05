@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cxx="${5:-${CXX:-c++}}"
 
 source "$(dirname "${BASH_SOURCE[0]}")/Search.sh"
 
@@ -42,11 +43,11 @@ for mode in --optimize-combs --optimize-combs-l1; do
     objects=()
     for source in "$build_dir"/*.cpp; do
         object="${source%.cpp}.o"
-        g++ -std=c++23 -O2 -g0 -w -I"$build_dir" -I"$source_dir" \
+        "$cxx" -std=c++23 -O2 -g0 -w -I"$build_dir" -I"$source_dir" \
             -I"$include_dir" -c "$source" -o "$object"
         objects+=("$object")
     done
-    g++ -std=c++23 -O2 -g0 -w -I"$build_dir" -I"$source_dir" \
+    "$cxx" -std=c++23 -O2 -g0 -w -I"$build_dir" -I"$source_dir" \
         -I"$include_dir" "$source_dir/ProjectedCombRun.cc" \
         "${objects[@]}" "${link_options[@]}" -o "$build_dir/run"
     "$build_dir/run"

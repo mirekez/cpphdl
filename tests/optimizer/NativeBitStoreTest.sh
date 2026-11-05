@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cxx="${5:-${CXX:-c++}}"
 
 source "$(dirname "${BASH_SOURCE[0]}")/Search.sh"
 
@@ -23,7 +24,7 @@ for mode in --optimize-combs --optimize-combs-l1; do
     search_q '__cpphdl_bit_target = n0.unpacked_comb\[' "$build_dir"/*.cpp
     search_q '"; n0.result_comb\[1\] = 1;"' "$build_dir"/*.cpp
     for optimization in -O0 -O2; do
-        g++ -std=c++23 "$optimization" -g0 -w -I"$build_dir" -I"$source_dir" \
+        "$cxx" -std=c++23 "$optimization" -g0 -w -I"$build_dir" -I"$source_dir" \
             -I"$include_dir" "$source_dir/NativeBitStoreRun.cc" \
             "$build_dir"/*.cpp "${link_options[@]}" -o "$build_dir/run"
         "$build_dir/run"

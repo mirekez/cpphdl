@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cxx="${5:-${CXX:-c++}}"
 cpphdl=$1
 include_dir=$2
 source_dir=$3
@@ -11,7 +12,7 @@ for lanes in 1 2; do
     --generated-dir="$generated" "$source_dir/ExternalBindingStateSeed.cc" -- \
     -std=c++17 -w -I"$include_dir" -I"$source_dir"
   for optimization in -O0 -O2; do
-    g++ -std=c++17 "$optimization" -g0 -w -pthread \
+    "$cxx" -std=c++17 "$optimization" -g0 -w -pthread \
       -I"$generated" -I"$include_dir" -I"$source_dir" \
       "$source_dir/ExternalBindingStateRun.cc" "$generated"/*.cpp -o "$generated/run"
     "$generated/run"

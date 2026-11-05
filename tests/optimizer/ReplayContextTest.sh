@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cxx="${5:-${CXX:-c++}}"
 cpphdl="$1"
 include_dir="$2"
 source_dir="$3"
@@ -29,7 +30,7 @@ for mode in --optimize-combs --optimize-combs-l1; do
         --replay-source=subject \
         --generated-dir="$build_dir/replay" "$source_dir/DynamicCombRepeatSeed.cc" \
         -- -std=c++23 -w -I"$source_dir" -I"$include_dir"
-    g++ -std=c++23 -O2 -w -I"$source_dir" -I"$include_dir" -I"$build_dir/replay" \
+    "$cxx" -std=c++23 -O2 -w -I"$source_dir" -I"$include_dir" -I"$build_dir/replay" \
         "$source_dir/DynamicCombRepeatRun.cc" "$build_dir/replay"/*.cpp \
         "${link_options[@]}" -o "$build_dir/run"
     "$build_dir/run"
