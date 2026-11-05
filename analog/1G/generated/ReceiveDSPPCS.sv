@@ -51,7 +51,7 @@ module ReceiveDSPPCS (
     wire dsp__fault_out;
     wire dsp__clipped_out;
     wire dsp__training_busy_out;
-    ReceiveDSP      dsp (
+    receive_dsp_pcs__ReceiveDSP      dsp (
         .clk(clk)
 ,       .reset(((reset || restart_in) || !enable_in) || transport_fault_in)
 ,       .samples_in(dsp__samples_in)
@@ -82,7 +82,7 @@ module ReceiveDSPPCS (
     wire[2-1:0] pairs__state_out;
     wire[8-1:0] pairs__mapping_out;
     wire[20-1:0] pairs__delays_out;
-    ReceivePairAcquirer      pairs (
+    receive_dsp_pcs__ReceivePairAcquirer      pairs (
         .clk(clk)
 ,       .reset(((reset || restart_in) || !enable_in) || transport_fault_in)
 ,       .samples_in(pairs__samples_in)
@@ -107,7 +107,7 @@ module ReceiveDSPPCS (
     wire[10-1:0] pcs__receive_out;
     wire pcs__locked_out;
     wire pcs__remote_receiver_ok_out;
-    PCSReceiver      pcs (
+    receive_dsp_pcs__PCSReceiver      pcs (
         .clk(clk)
 ,       .reset(reset || !receiver_available_comb)
 ,       .samples_in(pcs__samples_in)
@@ -128,7 +128,7 @@ module ReceiveDSPPCS (
     wire quality__ready_out;
     wire[6-1:0] quality__flushed_out;
     wire[7-1:0] quality__idles_out;
-    ReceiveQuality      quality (
+    receive_dsp_pcs__ReceiveQuality      quality (
         .clk(clk)
 ,       .reset(((reset || restart_in) || !enable_in) || transport_fault_in)
 ,       .receive_in(quality__receive_in)

@@ -44,7 +44,7 @@ module ReceiveSamplePCS (
     wire[25-1:0] recovery__period_out;
     wire[14-1:0] recovery__error_out;
     wire recovery__correction_valid_out;
-    ReceiveSampleRecovery      recovery (
+    receive_sample_pcs__ReceiveSampleRecovery      recovery (
         .clk(clk)
 ,       .reset(reset)
 ,       .samples_in(recovery__samples_in)
@@ -73,7 +73,7 @@ module ReceiveSamplePCS (
     wire[10-1:0] pcs__receive_out;
     wire pcs__locked_out;
     wire pcs__remote_receiver_ok_out;
-    PCSReceiver      pcs (
+    receive_sample_pcs__PCSReceiver      pcs (
         .clk(clk)
 ,       .reset(reset || restart_in)
 ,       .samples_in(pcs__samples_in)

@@ -78,21 +78,48 @@ module PCSTrellisDecoder (
         input logic[31:0] path
 ,       input logic[31:0] branch
     );
-        logic[8-1:0] low;
-        logic[8-1:0] middle0;
-        logic[8-1:0] middle1;
-        logic[7-1:0] high0;
-        logic[7-1:0] high1;
-        logic[31:0] carry0;
-        logic[31:0] carry1;
-        low = 32'(((path & 32'h7F)) + ((branch & 32'h7F)));
-        middle0 = 32'(((((path >>> 32'sh7)) & 32'h7F)) + ((((branch >>> 32'sh7)) & 32'h7F)));
-        middle1 = 32'((((((path >>> 32'sh7)) & 32'h7F)) + ((((branch >>> 32'sh7)) & 32'h7F))) + 32'h1);
-        high0 = 32'(((path >>> 32'shE)) + ((branch >>> 32'shE)));
-        high1 = 32'((((path >>> 32'shE)) + ((branch >>> 32'shE))) + 32'h1);
-        carry0=((unsigned'(32'(low)) >>> 32'sh7)) & 32'h1;
-        carry1=((((((carry0) != '0)) ? (unsigned'(32'(middle1))) : (unsigned'(32'(middle0)))) >>> 32'sh7)) & 32'h1;
-        return (((unsigned'(32'(low)) & 32'h7F)) | ((((((((carry0) != '0)) ? (unsigned'(32'(middle1))) : (unsigned'(32'(middle0)))) & 32'h7F)) <<< 'h7))) | ((((((carry1) != '0)) ? (unsigned'(32'(high1))) : (unsigned'(32'(high0)))) <<< 'hE));
+        logic[31:0] _initial;
+        logic[31:0] propagate;
+        logic[31:0] _generate;
+        _initial=path ^ branch;
+        propagate=_initial;
+        _generate=path & branch;
+        for (logic[31:0] shift = 32'h1;shift < 32'h15;shift=shift*32'h2) begin
+            _generate=_generate | ((propagate & ((_generate <<< shift))));
+            propagate=propagate & ((propagate <<< shift));
+        end
+        return ((_initial ^ ((_generate <<< 'h1)))) & 32'h1FFFFF;
+    endfunction
+
+    function logic branch_better (
+        input logic[31:0] a
+,       input logic[31:0] b
+,       input logic[31:0] c
+,       input logic[31:0] d
+,       input logic candidate_valid
+,       input logic current_valid
+    );
+        logic[31:0] x;
+        logic[31:0] y;
+        logic[31:0] z;
+        logic[31:0] sum;
+        logic[31:0] carry;
+        x=a;
+        y=b;
+        z=~c;
+        sum=(x ^ y) ^ z;
+        carry=(((((x & y)) | ((x & z))) | ((y & z)))) <<< 'h1;
+        x=sum;
+        y=carry;
+        z=~d;
+        sum=(x ^ y) ^ z;
+        carry=(((((x & y)) | ((x & z))) | ((y & z)))) <<< 'h1;
+        x=sum;
+        y=carry;
+        z=32'h2;
+        sum=(x ^ y) ^ z;
+        carry=(((((x & y)) | ((x & z))) | ((y & z)))) <<< 'h1;
+        return candidate_valid && ((!current_valid || (((((add_metric(sum, carry) >>> 32'sh14)) & 32'h1)) != 32'h0)));
     endfunction
 
     generate  // _assign
@@ -103,14 +130,17 @@ module PCSTrellisDecoder (
         logic[8-1:0][31:0] next_cost;
         logic[8-1:0][256-1:0] next_survivor;
         logic[4-1:0] candidate_valid;
-        logic[2-1:0] valid2;
         logic[64'(32'(DEPTH - 32'h1))-1:0] pending_valid;
         logic[31:0] predecessor;
         logic[2-1:0] winner;
         logic[4-1:0][31:0] candidates;
         logic[4-1:0][31:0] candidate_bytes;
+        logic[4-1:0][31:0] branch;
         logic[2-1:0][31:0] cost2;
         logic[2-1:0][31:0] state2;
+        logic[2-1:0] valid2;
+        logic[64-1:0] outranks;
+        logic is_best;
         logic[64'(32'(DEPTH*32'h8))-1:0] pending;
         logic[64'(32'(DEPTH*32'h8))-1:0] byte_mask;
         logic[64'(32'(DEPTH*32'h8))-1:0] scheduled_byte;
@@ -126,9 +156,14 @@ module PCSTrellisDecoder (
         logic win12;
         logic win13;
         logic win23;
+        logic choose0;
         logic choose1;
         logic choose2;
         logic choose3;
+        is_best=0;
+        for (logic[31:0] i = 32'h0;i < 32'h40;i=i+1) begin
+            outranks[i]=0;
+        end
         subset=32'h0;
         best_state=32'h0;
         sd6=32'h0;
@@ -145,11 +180,13 @@ module PCSTrellisDecoder (
         win12=0;
         win13=0;
         win23=0;
+        choose0=0;
         choose1=0;
         choose2=0;
         choose3=0;
         for (logic[31:0] i = 32'h0;i < 32'h4;i=i+1) begin
             candidates[i]=32'h0;
+            branch[i]=32'h0;
             candidate_bytes[i]=32'h0;
             candidate_valid[i]=0;
         end
@@ -183,21 +220,23 @@ module PCSTrellisDecoder (
                     sd6=((((destination >>> 32'sh1)) ^ predecessor)) & 32'h1;
                     sd7=((((destination >>> 32'sh2)) ^ ((predecessor >>> 32'sh1)))) & 32'h1;
                     subset=((sd6*32'h4) + (sd7*32'h2)) + ((destination & 32'h1));
+                    branch[choice]=metric_in[subset];
                     candidates[choice]=add_metric(unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + choice])), unsigned'(32'(metric_in[subset])));
                     candidate_valid[choice]=((((unsigned'(32'(reachable)) >>> (((((destination & 32'h1))*32'h4) + choice)))) & 32'h1)) != 32'h0;
                     candidate_bytes[choice]=(unsigned'(32'(point_in[subset])) | ((sd6 <<< 'h6))) | ((sd7 <<< 'h7));
                 end
-                win01=better(candidates['h1], candidates['h0], candidate_valid['h1], candidate_valid['h0]);
-                win02=better(candidates['h2], candidates['h0], candidate_valid['h2], candidate_valid['h0]);
-                win03=better(candidates['h3], candidates['h0], candidate_valid['h3], candidate_valid['h0]);
-                win12=better(candidates['h2], candidates['h1], candidate_valid['h2], candidate_valid['h1]);
-                win13=better(candidates['h3], candidates['h1], candidate_valid['h3], candidate_valid['h1]);
-                win23=better(candidates['h3], candidates['h2], candidate_valid['h3], candidate_valid['h2]);
+                win01=branch_better(unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h1])), branch['h1], unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h0])), branch['h0], candidate_valid['h1], candidate_valid['h0]);
+                win02=branch_better(unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h2])), branch['h2], unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h0])), branch['h0], candidate_valid['h2], candidate_valid['h0]);
+                win03=branch_better(unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h3])), branch['h3], unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h0])), branch['h0], candidate_valid['h3], candidate_valid['h0]);
+                win12=branch_better(unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h2])), branch['h2], unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h1])), branch['h1], candidate_valid['h2], candidate_valid['h1]);
+                win13=branch_better(unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h3])), branch['h3], unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h1])), branch['h1], candidate_valid['h3], candidate_valid['h1]);
+                win23=branch_better(unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h3])), branch['h3], unsigned'(32'(costs[(((destination & 32'h1))*32'h4) + 32'h2])), branch['h2], candidate_valid['h3], candidate_valid['h2]);
                 choose1=(win01 && !win12) && !win13;
                 choose2=(win02 && win12) && !win23;
                 choose3=(win03 && win13) && win23;
                 winner = signed'(32'((((choose1 || choose3)) ? ('h1) : ('h0)) | (((choose2 || choose3)) ? ('h2) : ('h0))));
-                next_cost[destination]=candidates[unsigned'(32'(winner))];
+                choose0=(!win01 && !win02) && !win03;
+                next_cost[destination]=((((candidates['h0] & ((32'h0 - 32'(choose0))))) | ((candidates['h1] & ((32'h0 - 32'(choose1)))))) | ((candidates['h2] & ((32'h0 - 32'(choose2)))))) | ((candidates['h3] & ((32'h0 - 32'(choose3)))));
                 winning_byte=candidate_bytes[unsigned'(32'(winner))];
                 if (candidate_valid[unsigned'(32'(winner))]) begin
                     next_reachable=next_reachable | 32'((('h1 <<< destination)));
@@ -218,26 +257,28 @@ module PCSTrellisDecoder (
                 next_survivor[destination] = (survivors[(((destination & 32'h1))*32'h4) + unsigned'(32'(selectors[destination]))] << 'h8) | unsigned'(32'(selected_bytes[destination]));
                 survivors_tmp[destination] = next_survivor[destination];
             end
-            for (logic[31:0] group = 32'h0;group < 32'h2;group=group+1) begin
-                for (logic[31:0] choice = 32'h0;choice < 32'h4;choice=choice+1) begin
-                    candidates[choice]=costs[(group*32'h4) + choice];
-                    candidate_valid[choice]=((((reachable >>> (((group*32'h4) + choice)))) & 64'h1)) != 64'h0;
+            for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
+                for (logic[31:0] j = 32'h0;j < 32'h8;j=j+1) begin
+                    if (i < j) begin
+                        outranks[(i*32'h8) + j]=better(unsigned'(32'(costs[j])), unsigned'(32'(costs[i])), ((((reachable >>> j)) & 64'h1)) != 64'h0, ((((reachable >>> i)) & 64'h1)) != 64'h0);
+                    end
                 end
-                win01=better(candidates['h1], candidates['h0], candidate_valid['h1], candidate_valid['h0]);
-                win02=better(candidates['h2], candidates['h0], candidate_valid['h2], candidate_valid['h0]);
-                win03=better(candidates['h3], candidates['h0], candidate_valid['h3], candidate_valid['h0]);
-                win12=better(candidates['h2], candidates['h1], candidate_valid['h2], candidate_valid['h1]);
-                win13=better(candidates['h3], candidates['h1], candidate_valid['h3], candidate_valid['h1]);
-                win23=better(candidates['h3], candidates['h2], candidate_valid['h3], candidate_valid['h2]);
-                choose1=(win01 && !win12) && !win13;
-                choose2=(win02 && win12) && !win23;
-                choose3=(win03 && win13) && win23;
-                winner = signed'(32'((((choose1 || choose3)) ? ('h1) : ('h0)) | (((choose2 || choose3)) ? ('h2) : ('h0))));
-                cost2[group]=candidates[unsigned'(32'(winner))];
-                state2[group]=(group*32'h4) + unsigned'(32'(winner));
-                valid2[group]=((((reachable >>> ((group*32'h4)))) & 64'hF)) != 64'h0;
             end
-            best_state=(better(cost2['h1], cost2['h0], valid2['h1], valid2['h0])) ? (state2['h1]) : (state2['h0]);
+            best_state=32'h0;
+            for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
+                is_best=((((reachable >>> i)) & 64'h1)) != 64'h0;
+                for (logic[31:0] j = 32'h0;j < 32'h8;j=j+1) begin
+                    if (j < i) begin
+                        is_best=is_best && outranks[((j*32'h8) + i)];
+                    end
+                    if (j > i) begin
+                        is_best=is_best && !outranks[((i*32'h8) + j)];
+                    end
+                end
+                if (is_best) begin
+                    best_state=best_state | i;
+                end
+            end
             if (pending_count>=64'(32'((DEPTH - 32'h1))) || (drain_left == 64'h0)) begin
                 valid_reg_tmp = pending_count>=64'(32'(DEPTH - 32'h1));
                 data_reg_tmp = unsigned'(32'(next_survivor[best_state] >> (((DEPTH - 32'h1))*32'h8)));

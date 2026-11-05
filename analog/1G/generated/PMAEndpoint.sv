@@ -42,7 +42,7 @@ module PMAEndpoint (
     wire control__timeout_out;
     wire control__master_out;
     wire[3-1:0] control__state_out;
-    PMAControl      control (
+    pma_endpoint__PMAControl      control (
         .clk(clk)
 ,       .reset(reset)
 ,       .enable_in(control__enable_in)
@@ -70,7 +70,7 @@ module PMAEndpoint (
     wire[33-1:0] tx__seed_in;
     wire[12-1:0] tx__symbols_out;
     wire tx__fault_out;
-    PCSTransmitter      tx (
+    pma_endpoint__PCSTransmitter      tx (
         .clk(clk)
 ,       .reset((reset || restart_in) || !enable_in)
 ,       .data_in(tx__data_in)
@@ -93,7 +93,7 @@ module PMAEndpoint (
     wire[10-1:0] rx__receive_out;
     wire rx__locked_out;
     wire rx__remote_receiver_ok_out;
-    PCSReceiver      rx (
+    pma_endpoint__PCSReceiver      rx (
         .clk(clk)
 ,       .reset((reset || restart_in) || !enable_in)
 ,       .samples_in(rx__samples_in)

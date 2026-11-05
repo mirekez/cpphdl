@@ -16,16 +16,19 @@ module PCSReceiver (
 ,   output wire remote_receiver_ok_out
 );
     localparam  TAG_BITS = 'hB;
-    localparam  TAG_DEPTH = 'h25;
-    localparam  RECEIVE_LATENCY = 'h27;
+    localparam  TAG_DEPTH = 'h28;
+    localparam  RECEIVE_LATENCY = 'h2A;
 
 
     // regs and combs
     reg[12-1:0] hard_delayed;
     reg[32-1:0] samples_delayed;
     reg[32-1:0] samples_for_metrics;
-    reg[28-1:0] control_history;
-    reg[407-1:0] tags;
+    reg[42-1:0] control_history;
+    reg[18-1:0] decoder_metrics[8];
+    reg[6-1:0] decoder_points[8];
+    reg[3-1:0] decoder_flags;
+    reg[440-1:0] tags;
     reg[10-1:0] output_reg;
     reg output_valid;
 
@@ -44,7 +47,7 @@ module PCSReceiver (
     wire[4-1:0] sync__low_mask_out;
     wire[4-1:0] sync__polarity_out;
     wire sync__remote_receiver_ok_out;
-    PCSReceiveSynchronizer      sync (
+    pcs_receiver__PCSReceiveSynchronizer      sync (
         .clk(clk)
 ,       .reset(reset)
 ,       .symbol_enable_in(sync__symbol_enable_in)
@@ -76,7 +79,7 @@ module PCSReceiver (
     wire framer__restart_out;
     wire framer__remote_receiver_ok_out;
     wire framer__receiving_out;
-    PCSReceiveFramer      framer (
+    pcs_receiver__PCSReceiveFramer      framer (
         .clk(clk)
 ,       .reset(reset)
 ,       .symbol_enable_in(framer__symbol_enable_in)
@@ -101,7 +104,7 @@ module PCSReceiver (
     wire[18-1:0] metrics__metric_out[8];
     wire[6-1:0] metrics__point_out[8];
     wire metrics__valid_out;
-    PipelinedPCSBranchMetrics      metrics (
+    pcs_receiver__PipelinedPCSBranchMetrics      metrics (
         .clk(clk)
 ,       .reset(reset)
 ,       .symbol_enable_in(metrics__symbol_enable_in)
@@ -121,7 +124,7 @@ module PCSReceiver (
     wire[8-1:0] decoder__data_out;
     wire decoder__valid_out;
     wire[3-1:0] decoder__state_out;
-    PCSTrellisDecoder      decoder (
+    pcs_receiver__PCSTrellisDecoder      decoder (
         .clk(clk)
 ,       .reset(reset)
 ,       .symbol_enable_in(decoder__symbol_enable_in)
@@ -139,15 +142,14 @@ module PCSReceiver (
     logic[12-1:0] hard_delayed_tmp;
     logic[32-1:0] samples_delayed_tmp;
     logic[32-1:0] samples_for_metrics_tmp;
-    logic[28-1:0] control_history_tmp;
-    logic[407-1:0] tags_tmp;
+    logic[42-1:0] control_history_tmp;
+    logic[18-1:0] decoder_metrics_tmp[8];
+    logic[6-1:0] decoder_points_tmp[8];
+    logic[3-1:0] decoder_flags_tmp;
+    logic[440-1:0] tags_tmp;
     logic[10-1:0] output_reg_tmp;
     logic output_valid_tmp;
 
-
-    function logic[31:0] decoder_control (input logic[31:0] history);
-        return ((history >>> 32'sh15)) & 32'h7F;
-    endfunction
 
     function logic[31:0] slice (input logic[31:0] samples);
         logic[31:0] _packed;
@@ -184,12 +186,12 @@ module PCSReceiver (
         assign metrics__negate_in = framer__negate_out;
         assign metrics__advance_in = ((((framer__control_out & 64'h1)) != 64'h0) != '0);
         for (gi = 32'h0;gi < 32'h8;gi=gi+1) begin
-            assign decoder__metric_in[gi] = ((((decoder_control(unsigned'(32'(control_history))) & 32'h8)) != '0)) ? (unsigned'(32'(((((((decoder_control(unsigned'(32'(control_history))) >>> 32'sh4)) & 32'h7)) == gi) ? ('h0) : ('h3FFFF))))) : (unsigned'(32'(metrics__metric_out[gi])));
-            assign decoder__point_in[gi] = ((((decoder_control(unsigned'(32'(control_history))) & 32'h8)) != '0)) ? (32'h0) : (unsigned'(32'(metrics__point_out[gi])));
+            assign decoder__metric_in[gi] = decoder_metrics[gi];
+            assign decoder__point_in[gi] = decoder_points[gi];
         end
-        assign decoder__advance_in = ((((decoder_control(unsigned'(32'(control_history))) & 32'h1)) != 32'h0) != '0);
-        assign decoder__start_in = ((((decoder_control(unsigned'(32'(control_history))) & 32'h2)) != 32'h0) != '0);
-        assign decoder__end_in = ((((decoder_control(unsigned'(32'(control_history))) & 32'h4)) != 32'h0) != '0);
+        assign decoder__advance_in = ((((decoder_flags & 64'h1)) != 64'h0) != '0);
+        assign decoder__start_in = ((((decoder_flags & 64'h2)) != 64'h0) != '0);
+        assign decoder__end_in = ((((decoder_flags & 64'h4)) != 64'h0) != '0);
     endgenerate
 
     task _work (input logic reset);
@@ -199,8 +201,15 @@ module PCSReceiver (
         logic[31:0] kind;
         logic[31:0] source;
         logic[31:0] encoded;
+        logic[31:0] control;
+        control=unsigned'(32'((control_history >>> 32'sh23))) & 32'h7F;
         output_valid_tmp = symbol_enable_in && pma_ok_in;
         if (symbol_enable_in) begin
+            for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
+                decoder_metrics_tmp[i] = unsigned'(32'(((((control & 32'h8)) != '0)) ? (unsigned'(32'(((((((control >>> 32'sh4)) & 32'h7)) == i) ? ('h0) : ('h3FFFF))))) : (unsigned'(32'(metrics__metric_out[i])))));
+                decoder_points_tmp[i] = unsigned'(32'(((((control & 32'h8)) != '0)) ? (32'h0) : (unsigned'(32'(metrics__point_out[i])))));
+            end
+            decoder_flags_tmp = 32'(control & 32'h7);
             tag=unsigned'(32'((tags >> ((((TAG_DEPTH - 32'h1))*TAG_BITS))))) & 32'h7FF;
             kind=tag & 32'h7;
             _byte=unsigned'(32'(decoder__data_out)) ^ ((tag >>> 32'sh3));
@@ -227,6 +236,7 @@ module PCSReceiver (
             output_reg_tmp = 64'h200;
             tags_tmp = 'h0;
             control_history_tmp = 64'h0;
+            decoder_flags_tmp = 64'h0;
         end
         if (reset) begin
             output_valid_tmp = (('h0) != '0);
@@ -236,6 +246,11 @@ module PCSReceiver (
             control_history_tmp = 64'h0;
             tags_tmp = 'h0;
             output_reg_tmp = 64'h0;
+            decoder_flags_tmp = 64'h0;
+            for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
+                decoder_metrics_tmp[i] = 64'h0;
+                decoder_points_tmp[i] = 64'h0;
+            end
         end
     end
     endtask
@@ -245,6 +260,9 @@ module PCSReceiver (
         samples_delayed_tmp = samples_delayed;
         samples_for_metrics_tmp = samples_for_metrics;
         control_history_tmp = control_history;
+        decoder_metrics_tmp = decoder_metrics;
+        decoder_points_tmp = decoder_points;
+        decoder_flags_tmp = decoder_flags;
         tags_tmp = tags;
         output_reg_tmp = output_reg;
         output_valid_tmp = output_valid;
@@ -255,6 +273,9 @@ module PCSReceiver (
         samples_delayed <= samples_delayed_tmp;
         samples_for_metrics <= samples_for_metrics_tmp;
         control_history <= control_history_tmp;
+        decoder_metrics <= decoder_metrics_tmp;
+        decoder_points <= decoder_points_tmp;
+        decoder_flags <= decoder_flags_tmp;
         tags <= tags_tmp;
         output_reg <= output_reg_tmp;
         output_valid <= output_valid_tmp;

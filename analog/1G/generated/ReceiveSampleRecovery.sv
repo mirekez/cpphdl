@@ -44,7 +44,7 @@ module ReceiveSampleRecovery (
     wire interpolator__valid_out;
     wire interpolator__fault_out;
     wire interpolator__clipped_out;
-    ReceiveSampleInterpolator      interpolator (
+    receive_sample_recovery__ReceiveSampleInterpolator      interpolator (
         .clk(clk)
 ,       .reset(reset || restart_in)
 ,       .samples_in(interpolator__samples_in)
@@ -74,7 +74,7 @@ module ReceiveSampleRecovery (
     wire[14-1:0] timing__error_out;
     wire timing__activity_out;
     wire timing__valid_out;
-    ReceiveTimingLoop      timing (
+    receive_sample_recovery__ReceiveTimingLoop      timing (
         .clk(clk)
 ,       .reset((reset || restart_in) || interpolator__fault_out)
 ,       .early_in(timing__early_in)

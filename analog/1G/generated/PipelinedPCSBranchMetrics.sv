@@ -21,11 +21,17 @@ module PipelinedPCSBranchMetrics (
     reg[16-1:0] nearest[12];
     reg[16-1:0] fixed_costs[4];
     reg[12-1:0] low_choices;
+    reg[17-1:0] left_sums[48];
+    reg[17-1:0] right_sums[48];
+    reg[6-1:0] sum_points[48];
     reg[18-1:0] group_costs[48];
     reg[18-1:0] metrics[8];
     reg[6-1:0] group_points[48];
     reg[6-1:0] points[8];
-    reg[4-1:0] accepted;
+    reg[18-1:0] pair_costs[24];
+    reg[6-1:0] pair_points[24];
+    reg[6-1:0] accepted;
+    reg[4-1:0] polarity;
 
     // members
 
@@ -34,11 +40,17 @@ module PipelinedPCSBranchMetrics (
     logic[16-1:0] nearest_tmp[12];
     logic[16-1:0] fixed_costs_tmp[4];
     logic[12-1:0] low_choices_tmp;
+    logic[17-1:0] left_sums_tmp[48];
+    logic[17-1:0] right_sums_tmp[48];
+    logic[6-1:0] sum_points_tmp[48];
     logic[18-1:0] group_costs_tmp[48];
     logic[18-1:0] metrics_tmp[8];
     logic[6-1:0] group_points_tmp[48];
     logic[6-1:0] points_tmp[8];
-    logic[4-1:0] accepted_tmp;
+    logic[18-1:0] pair_costs_tmp[24];
+    logic[6-1:0] pair_points_tmp[24];
+    logic[6-1:0] accepted_tmp;
+    logic[4-1:0] polarity_tmp;
 
 
     function logic[31:0] base (input logic[31:0] index);
@@ -214,8 +226,6 @@ module PipelinedPCSBranchMetrics (
         logic choose_right;
         logic signed[31:0] sample;
         logic signed[31:0] difference;
-        logic[17-1:0] left_sum;
-        logic[17-1:0] right_sum;
         logic[31:0] choices;
         logic[31:0] _packed;
         logic[31:0] fixed;
@@ -230,8 +240,6 @@ module PipelinedPCSBranchMetrics (
         sample='h0;
         difference='h0;
         distance = 64'h0;
-        left_sum = 64'h0;
-        right_sum = 64'h0;
         choices=32'h0;
         _packed=32'h0;
         fixed=32'h0;
@@ -250,11 +258,9 @@ module PipelinedPCSBranchMetrics (
         end
         accepted_tmp = 32'(((unsigned'(32'(accepted)) <<< 'h1)) | unsigned'(32'(((advance_in) ? ('h1) : ('h0)))));
         if (advance_in) begin
+            polarity_tmp = negate_in;
             for (logic[31:0] lane = 32'h0;lane < 32'h4;lane=lane+1) begin
                 sample=signed'(32'((((unsigned'(32'(samples_in)) >>> ((32'h8*lane)))) & 32'hFF))) - 'h80;
-                if (((((negate_in >>> lane)) & 64'h1) != '0)) begin
-                    sample=-sample;
-                end
                 for (logic[31:0] code = 32'h0;code < 32'h5;code=code+1) begin
                     difference=sample - (((signed'(32'(code)) - 'h2))*'h20);
                     distance = unsigned'(32'((difference < 32'sh0) ? (-difference) : (difference)));
@@ -264,10 +270,14 @@ module PipelinedPCSBranchMetrics (
         end
         if (((accepted & 64'h1)) != 64'h0) begin
             for (logic[31:0] lane = 32'h0;lane < 32'h4;lane=lane+1) begin
-                fixed_costs_tmp[lane] = squared[(lane*32'h5) + 32'h4];
+                fixed_costs_tmp[lane] = ((((((polarity >>> lane)) & 64'h1)) != '0)) ? (squared[lane*32'h5]) : (squared[(lane*32'h5) + 32'h4]);
                 for (logic[31:0] pair = 32'h0;pair < 32'h3;pair=pair+1) begin
                     choose_right=squared[((lane*32'h5) + pair)] < squared[(((lane*32'h5) + pair) + 32'h2)];
                     nearest_tmp[(lane*32'h3) + pair] = (choose_right) ? (squared[(lane*32'h5) + pair]) : (squared[((lane*32'h5) + pair) + 32'h2]);
+                    if (((((polarity >>> lane)) & 64'h1) != '0)) begin
+                        choose_right=squared[(((lane*32'h5) + 32'h4) - pair)] < squared[(((lane*32'h5) + 32'h2) - pair)];
+                        nearest_tmp[(lane*32'h3) + pair] = (choose_right) ? (squared[((lane*32'h5) + 32'h4) - pair]) : (squared[((lane*32'h5) + 32'h2) - pair]);
+                    end
                     if (choose_right) begin
                         choices=choices | 32'((('h1 <<< (((lane*32'h3) + pair)))));
                     end
@@ -293,19 +303,32 @@ module PipelinedPCSBranchMetrics (
                             bit_index=bit_index + 32'h1;
                         end
                     end
-                    left_sum = unsigned'(32'(coordinates['h0] + coordinates['h1]));
-                    right_sum = unsigned'(32'(coordinates['h2] + coordinates['h3]));
-                    group_costs_tmp[(subset*32'h6) + group] = 32'(unsigned'(32'(left_sum)) + unsigned'(32'(right_sum)));
-                    group_points_tmp[(subset*32'h6) + group] = point;
+                    left_sums_tmp[(subset*32'h6) + group] = unsigned'(32'(coordinates['h0] + coordinates['h1]));
+                    right_sums_tmp[(subset*32'h6) + group] = unsigned'(32'(coordinates['h2] + coordinates['h3]));
+                    sum_points_tmp[(subset*32'h6) + group] = point;
                 end
             end
         end
         if (((accepted & 64'h4)) != 64'h0) begin
+            for (logic[31:0] i = 32'h0;i < 32'h30;i=i+1) begin
+                group_costs_tmp[i] = 32'(unsigned'(32'(left_sums[i])) + unsigned'(32'(right_sums[i])));
+                group_points_tmp[i] = sum_points[i];
+            end
+        end
+        if (((accepted & 64'h8)) != 64'h0) begin
             for (logic[31:0] subset = 32'h0;subset < 32'h8;subset=subset+1) begin
                 for (logic[31:0] pair = 32'h0;pair < 32'h3;pair=pair+1) begin
                     choose_right=less(unsigned'(32'(group_costs[((subset*32'h6) + (32'h2*pair)) + 32'h1])), unsigned'(32'(group_costs[(subset*32'h6) + (32'h2*pair)])));
-                    pair_cost[pair]=(choose_right) ? (unsigned'(32'(group_costs[((subset*32'h6) + (32'h2*pair)) + 32'h1]))) : (unsigned'(32'(group_costs[(subset*32'h6) + (32'h2*pair)])));
-                    pair_point[pair]=(choose_right) ? (unsigned'(32'(group_points[((subset*32'h6) + (32'h2*pair)) + 32'h1]))) : (unsigned'(32'(group_points[(subset*32'h6) + (32'h2*pair)])));
+                    pair_costs_tmp[(subset*32'h3) + pair] = unsigned'(32'((choose_right) ? (unsigned'(32'(group_costs[((subset*32'h6) + (32'h2*pair)) + 32'h1]))) : (unsigned'(32'(group_costs[(subset*32'h6) + (32'h2*pair)])))));
+                    pair_points_tmp[(subset*32'h3) + pair] = unsigned'(32'((choose_right) ? (unsigned'(32'(group_points[((subset*32'h6) + (32'h2*pair)) + 32'h1]))) : (unsigned'(32'(group_points[(subset*32'h6) + (32'h2*pair)])))));
+                end
+            end
+        end
+        if (((accepted & 64'h10)) != 64'h0) begin
+            for (logic[31:0] subset = 32'h0;subset < 32'h8;subset=subset+1) begin
+                for (logic[31:0] pair = 32'h0;pair < 32'h3;pair=pair+1) begin
+                    pair_cost[pair]=pair_costs[(subset*32'h3) + pair];
+                    pair_point[pair]=pair_points[(subset*32'h3) + pair];
                 end
                 choose_right=less(pair_cost['h1], pair_cost['h0]);
                 left_cost=(choose_right) ? (pair_cost['h1]) : (pair_cost['h0]);
@@ -316,6 +339,7 @@ module PipelinedPCSBranchMetrics (
             end
         end
         if (reset) begin
+            polarity_tmp = 64'h0;
             accepted_tmp = 64'h0;
             low_choices_tmp = 64'h0;
             for (logic[31:0] i = 32'h0;i < 32'h14;i=i+1) begin
@@ -328,8 +352,15 @@ module PipelinedPCSBranchMetrics (
                 fixed_costs_tmp[i] = 64'h0;
             end
             for (logic[31:0] i = 32'h0;i < 32'h30;i=i+1) begin
+                left_sums_tmp[i] = 64'h0;
+                right_sums_tmp[i] = 64'h0;
+                sum_points_tmp[i] = 64'h0;
                 group_costs_tmp[i] = 64'h0;
                 group_points_tmp[i] = 64'h0;
+            end
+            for (logic[31:0] i = 32'h0;i < 32'h18;i=i+1) begin
+                pair_costs_tmp[i] = 64'h0;
+                pair_points_tmp[i] = 64'h0;
             end
             for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
                 metrics_tmp[i] = 64'h0;
@@ -337,6 +368,7 @@ module PipelinedPCSBranchMetrics (
             end
         end
         if (!symbol_enable_in && !reset) begin
+            polarity_tmp = polarity;
             accepted_tmp = accepted;
             low_choices_tmp = low_choices;
             for (logic[31:0] i = 32'h0;i < 32'h14;i=i+1) begin
@@ -349,8 +381,15 @@ module PipelinedPCSBranchMetrics (
                 fixed_costs_tmp[i] = fixed_costs[i];
             end
             for (logic[31:0] i = 32'h0;i < 32'h30;i=i+1) begin
+                left_sums_tmp[i] = left_sums[i];
+                right_sums_tmp[i] = right_sums[i];
+                sum_points_tmp[i] = sum_points[i];
                 group_costs_tmp[i] = group_costs[i];
                 group_points_tmp[i] = group_points[i];
+            end
+            for (logic[31:0] i = 32'h0;i < 32'h18;i=i+1) begin
+                pair_costs_tmp[i] = pair_costs[i];
+                pair_points_tmp[i] = pair_points[i];
             end
             for (logic[31:0] i = 32'h0;i < 32'h8;i=i+1) begin
                 metrics_tmp[i] = metrics[i];
@@ -365,11 +404,17 @@ module PipelinedPCSBranchMetrics (
         nearest_tmp = nearest;
         fixed_costs_tmp = fixed_costs;
         low_choices_tmp = low_choices;
+        left_sums_tmp = left_sums;
+        right_sums_tmp = right_sums;
+        sum_points_tmp = sum_points;
         group_costs_tmp = group_costs;
         metrics_tmp = metrics;
         group_points_tmp = group_points;
         points_tmp = points;
+        pair_costs_tmp = pair_costs;
+        pair_points_tmp = pair_points;
         accepted_tmp = accepted;
+        polarity_tmp = polarity;
 
             _work(reset);
 
@@ -377,14 +422,20 @@ module PipelinedPCSBranchMetrics (
         nearest <= nearest_tmp;
         fixed_costs <= fixed_costs_tmp;
         low_choices <= low_choices_tmp;
+        left_sums <= left_sums_tmp;
+        right_sums <= right_sums_tmp;
+        sum_points <= sum_points_tmp;
         group_costs <= group_costs_tmp;
         metrics <= metrics_tmp;
         group_points <= group_points_tmp;
         points <= points_tmp;
+        pair_costs <= pair_costs_tmp;
+        pair_points <= pair_points_tmp;
         accepted <= accepted_tmp;
+        polarity <= polarity_tmp;
     end
 
-    assign valid_out = ((((accepted & 64'h8)) != 64'h0) != '0);
+    assign valid_out = ((((accepted & 64'h20)) != 64'h0) != '0);
 
 
 endmodule

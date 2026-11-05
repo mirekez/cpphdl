@@ -49,7 +49,7 @@ module ReceiveDSP (
     wire lanes__fault_out[4];
     generate
     for (__i=0; __i < 4; __i = __i + 1) begin
-        ReceiveFilter          lanes (
+        receive_dsp__ReceiveFilter          lanes (
             .clk(clk)
         ,           .reset(reset || unavailable_comb)
         ,           .sample_in(lanes__sample_in[__i])

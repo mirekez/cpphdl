@@ -43,7 +43,8 @@ module ADCReceiveBankController #(
     wire[4-1:0] adc__slice_out;
     wire adc__valid_out;
     wire adc__fault_out;
-    InterleavedSARBankController #(
+    wire[16-1:0] adc__aperture_out;
+    adc_receive_bank__InterleavedSARBankController #(
         Slices
     ) adc (
         .clk(clk)
@@ -58,6 +59,7 @@ module ADCReceiveBankController #(
 ,       .slice_out(adc__slice_out)
 ,       .valid_out(adc__valid_out)
 ,       .fault_out(adc__fault_out)
+,       .aperture_out(adc__aperture_out)
     );
     wire[8-1:0] normalizer__sample_in;
     wire[8-1:0] normalizer__offset_in;
@@ -67,7 +69,7 @@ module ADCReceiveBankController #(
     wire[8-1:0] normalizer__sample_out;
     wire normalizer__valid_out;
     wire normalizer__clipped_out;
-    ReceiveSampleNormalizer      normalizer (
+    adc_receive_bank__ReceiveSampleNormalizer      normalizer (
         .clk(clk)
 ,       .reset(reset)
 ,       .sample_in(normalizer__sample_in)

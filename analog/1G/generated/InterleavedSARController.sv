@@ -36,9 +36,10 @@ module InterleavedSARController (
     wire converters__acquire_out[16];
     wire converters__convert_out[16];
     wire converters__busy_out[16];
+    wire converters__aperture_out[16];
     generate
     for (__i=0; __i < 16; __i = __i + 1) begin
-        ADCSARController          converters (
+        adc_interleave__ADCSARController          converters (
             .clk(clk)
         ,           .reset(reset || !enable_in)
         ,           .start_in(converters__start_in[__i])
@@ -49,6 +50,7 @@ module InterleavedSARController (
         ,           .acquire_out(converters__acquire_out[__i])
         ,           .convert_out(converters__convert_out[__i])
         ,           .busy_out(converters__busy_out[__i])
+        ,           .aperture_out(converters__aperture_out[__i])
         );
     end
     endgenerate

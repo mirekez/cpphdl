@@ -42,7 +42,7 @@ module PCSTransmitter (
     wire[4-1:0] bits__sg_out;
     wire[9-1:0] bits__encoded_out;
     wire[3-1:0] bits__trellis_out;
-    PCSTransmitBits      bits (
+    pcs_transmit__PCSTransmitBits      bits (
         .clk(clk)
 ,       .reset(reset)
 ,       .data_in(bits__data_in)
@@ -71,7 +71,7 @@ module PCSTransmitter (
     wire[4-1:0] mapper__negate_in;
     wire[12-1:0] mapper__symbols_out;
     wire mapper__invalid_out;
-    PCSSymbolMapper      mapper (
+    pcs_transmit__PCSSymbolMapper      mapper (
         .clk(clk)
 ,       .reset(reset)
 ,       .point_in(mapper__point_in)

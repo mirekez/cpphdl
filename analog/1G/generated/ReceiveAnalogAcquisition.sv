@@ -52,7 +52,7 @@ module ReceiveAnalogAcquisition (
     wire[8-1:0] control__span_out;
     wire[8-1:0] control__centre_out;
     wire control__settled_out;
-    ReceiveAnalogGainControl      control (
+    receive_acquisition__ReceiveAnalogGainControl      control (
         .clk(clk)
 ,       .reset(reset)
 ,       .enable_in(control__enable_in)
@@ -84,7 +84,7 @@ module ReceiveAnalogAcquisition (
     wire calibration__ready_out;
     wire calibration__busy_out;
     wire calibration__fault_out;
-    ReceiveRangeCalibration      calibration (
+    receive_acquisition__ReceiveRangeCalibration      calibration (
         .clk(clk)
 ,       .reset(reset)
 ,       .enable_in(calibration__enable_in)

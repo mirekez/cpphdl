@@ -39,7 +39,7 @@ module ADCReceiveController (
     wire[4-1:0] adc__slice_out;
     wire adc__valid_out;
     wire adc__fault_out;
-    InterleavedSARController      adc (
+    adc_receive__InterleavedSARController      adc (
         .clk(clk)
 ,       .reset(reset)
 ,       .enable_in(adc__enable_in)
@@ -61,7 +61,7 @@ module ADCReceiveController (
     wire[8-1:0] normalizer__sample_out;
     wire normalizer__valid_out;
     wire normalizer__clipped_out;
-    ReceiveSampleNormalizer      normalizer (
+    adc_receive__ReceiveSampleNormalizer      normalizer (
         .clk(clk)
 ,       .reset(reset)
 ,       .sample_in(normalizer__sample_in)

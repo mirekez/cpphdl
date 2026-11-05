@@ -29,6 +29,7 @@ module ADCReceiveLaneController #(
 ,   output wire clear_out
 ,   output wire startup_ready_out
 ,   output wire evaluate_enable_out
+,   output wire[16-1:0] aperture_out
 );
 
 
@@ -40,7 +41,7 @@ module ADCReceiveLaneController #(
     wire startup__precharge_out;
     wire startup__clear_out;
     wire startup__ready_out;
-    ADCStartupSequencer #(
+    adc_receive_lane__ADCStartupSequencer #(
         4096
 ,       4
     ) startup (
@@ -61,7 +62,8 @@ module ADCReceiveLaneController #(
     wire[4-1:0] adc__slice_out;
     wire adc__valid_out;
     wire adc__fault_out;
-    InterleavedSARBankController #(
+    wire[16-1:0] adc__aperture_out;
+    adc_receive_lane__InterleavedSARBankController #(
         Slices
     ) adc (
         .clk(clk)
@@ -76,6 +78,7 @@ module ADCReceiveLaneController #(
 ,       .slice_out(adc__slice_out)
 ,       .valid_out(adc__valid_out)
 ,       .fault_out(adc__fault_out)
+,       .aperture_out(adc__aperture_out)
     );
     wire[8-1:0] normalizer__sample_in;
     wire[8-1:0] normalizer__offset_in;
@@ -85,7 +88,7 @@ module ADCReceiveLaneController #(
     wire[8-1:0] normalizer__sample_out;
     wire normalizer__valid_out;
     wire normalizer__clipped_out;
-    ReceiveSampleNormalizer      normalizer (
+    adc_receive_lane__ReceiveSampleNormalizer      normalizer (
         .clk(clk)
 ,       .reset(reset)
 ,       .sample_in(normalizer__sample_in)
@@ -172,6 +175,8 @@ module ADCReceiveLaneController #(
     assign startup_ready_out = ((startup__ready_out) != '0);
 
     assign evaluate_enable_out = ((enable_in && startup__ready_out) != '0);
+
+    assign aperture_out = (enable_in && startup__ready_out) ? (adc__aperture_out) : (16'(64'h0));
 
 
 endmodule

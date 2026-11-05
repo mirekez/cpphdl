@@ -16,7 +16,7 @@ module ReceiveQuality (
 ,   output wire[6-1:0] flushed_out
 ,   output wire[7-1:0] idles_out
 );
-    localparam  PIPELINE_WORDS = 'h27;
+    localparam  PIPELINE_WORDS = 'h2A;
 
 
     // regs and combs

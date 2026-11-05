@@ -29,7 +29,7 @@ module ReceiveFilter (
     wire filter__valid_out;
     wire filter__fault_out;
     wire[18-1:0] filter__coefficient_out[24];
-    PipelinedReceiveFilter      filter (
+    receive_filter_datapath__PipelinedReceiveFilter      filter (
         .clk(clk)
 ,       .reset(reset)
 ,       .sample_in(filter__sample_in)

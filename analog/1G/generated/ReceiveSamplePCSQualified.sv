@@ -53,7 +53,7 @@ module ReceiveSamplePCSQualified (
     wire[25-1:0] recovery__period_out;
     wire[14-1:0] recovery__error_out;
     wire recovery__correction_valid_out;
-    ReceiveSampleRecovery      recovery (
+    receive_sample_pcs_qualified__ReceiveSampleRecovery      recovery (
         .clk(clk)
 ,       .reset(reset)
 ,       .samples_in(recovery__samples_in)
@@ -82,7 +82,7 @@ module ReceiveSamplePCSQualified (
     wire[10-1:0] pcs__receive_out;
     wire pcs__locked_out;
     wire pcs__remote_receiver_ok_out;
-    PCSReceiver      pcs (
+    receive_sample_pcs_qualified__PCSReceiver      pcs (
         .clk(clk)
 ,       .reset(reset || restart_in)
 ,       .samples_in(pcs__samples_in)
@@ -103,7 +103,7 @@ module ReceiveSamplePCSQualified (
     wire quality__ready_out;
     wire[6-1:0] quality__flushed_out;
     wire[7-1:0] quality__idles_out;
-    ReceiveQuality      quality (
+    receive_sample_pcs_qualified__ReceiveQuality      quality (
         .clk(clk)
 ,       .reset(reset || restart_in)
 ,       .receive_in(quality__receive_in)
@@ -121,7 +121,7 @@ module ReceiveSamplePCSQualified (
     wire confidence__valid_in;
     wire confidence__fault_in;
     wire confidence__ready_out;
-    ReceiveTimingConfidence      confidence (
+    receive_sample_pcs_qualified__ReceiveTimingConfidence      confidence (
         .clk(clk)
 ,       .reset(reset || restart_in)
 ,       .error_in(confidence__error_in)

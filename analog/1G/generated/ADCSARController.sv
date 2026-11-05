@@ -14,6 +14,7 @@ module ADCSARController (
 ,   output wire acquire_out
 ,   output wire convert_out
 ,   output wire busy_out
+,   output wire aperture_out
 );
 
 
@@ -136,6 +137,8 @@ module ADCSARController (
     assign convert_out = convert;
 
     assign busy_out = ((phase != 64'h0) != '0);
+
+    assign aperture_out = ((phase == 64'h3) != '0);
 
 
 endmodule

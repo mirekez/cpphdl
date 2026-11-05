@@ -27,27 +27,27 @@ module OneGDFE(Vdd, Vss, IN, CLOCK, VCM, VREF, VLOGIC, OUT);
         I(cpphdl_n16, VCM) <+ (-0.001) * V(IN, VCM);
         // device 2, IC OneGDFE, analog/1G/dfe.hpp:28
         I(cpphdl_n16, VCM) <+ (-0.00035) * V(VCM, OUT);
-        // device 3, IC IC1, analog/1G/pam5.hpp:45
+        // device 3, IC IC1, analog/1G/pam5.hpp:44
         I(VLOGIC, cpphdl_n30) <+ min(1.0, max(0.0, (V(cpphdl_n16, VCM) - -0.377) / 0.0040000000000000036)) * V(VLOGIC, cpphdl_n30) / 100.0; // sim_controlled_resistor
-        // device 4, IC IC1, analog/1G/pam5.hpp:47
+        // device 4, IC IC1, analog/1G/pam5.hpp:46
         I(cpphdl_n30, Vss) <+ (1.0 - min(1.0, max(0.0, (V(cpphdl_n16, VCM) - -0.377) / 0.0040000000000000036))) * V(cpphdl_n30, Vss) / 100.0; // sim_controlled_resistor
         // device 5, IC IC1, analog/1G/pam5.hpp:48
         I(cpphdl_n30, Vss) <+ 2e-14 * ddt(V(cpphdl_n30, Vss)); // Bench initial voltage = 1.2 V.
-        // device 6, IC IC1, analog/1G/pam5.hpp:45
+        // device 6, IC IC1, analog/1G/pam5.hpp:44
         I(VLOGIC, cpphdl_n45) <+ min(1.0, max(0.0, (V(cpphdl_n16, VCM) - -0.127) / 0.0040000000000000036)) * V(VLOGIC, cpphdl_n45) / 100.0; // sim_controlled_resistor
-        // device 7, IC IC1, analog/1G/pam5.hpp:47
+        // device 7, IC IC1, analog/1G/pam5.hpp:46
         I(cpphdl_n45, Vss) <+ (1.0 - min(1.0, max(0.0, (V(cpphdl_n16, VCM) - -0.127) / 0.0040000000000000036))) * V(cpphdl_n45, Vss) / 100.0; // sim_controlled_resistor
         // device 8, IC IC1, analog/1G/pam5.hpp:48
         I(cpphdl_n45, Vss) <+ 2e-14 * ddt(V(cpphdl_n45, Vss)); // Bench initial voltage = 1.2 V.
-        // device 9, IC IC1, analog/1G/pam5.hpp:45
+        // device 9, IC IC1, analog/1G/pam5.hpp:44
         I(VLOGIC, cpphdl_n60) <+ min(1.0, max(0.0, (V(cpphdl_n16, VCM) - 0.123) / 0.0040000000000000036)) * V(VLOGIC, cpphdl_n60) / 100.0; // sim_controlled_resistor
-        // device 10, IC IC1, analog/1G/pam5.hpp:47
+        // device 10, IC IC1, analog/1G/pam5.hpp:46
         I(cpphdl_n60, Vss) <+ (1.0 - min(1.0, max(0.0, (V(cpphdl_n16, VCM) - 0.123) / 0.0040000000000000036))) * V(cpphdl_n60, Vss) / 100.0; // sim_controlled_resistor
         // device 11, IC IC1, analog/1G/pam5.hpp:48
         I(cpphdl_n60, Vss) <+ 2e-14 * ddt(V(cpphdl_n60, Vss)); // Bench initial voltage = 0.0 V.
-        // device 12, IC IC1, analog/1G/pam5.hpp:45
+        // device 12, IC IC1, analog/1G/pam5.hpp:44
         I(VLOGIC, cpphdl_n75) <+ min(1.0, max(0.0, (V(cpphdl_n16, VCM) - 0.373) / 0.0040000000000000036)) * V(VLOGIC, cpphdl_n75) / 100.0; // sim_controlled_resistor
-        // device 13, IC IC1, analog/1G/pam5.hpp:47
+        // device 13, IC IC1, analog/1G/pam5.hpp:46
         I(cpphdl_n75, Vss) <+ (1.0 - min(1.0, max(0.0, (V(cpphdl_n16, VCM) - 0.373) / 0.0040000000000000036))) * V(cpphdl_n75, Vss) / 100.0; // sim_controlled_resistor
         // device 14, IC IC1, analog/1G/pam5.hpp:48
         I(cpphdl_n75, Vss) <+ 2e-14 * ddt(V(cpphdl_n75, Vss)); // Bench initial voltage = 0.0 V.

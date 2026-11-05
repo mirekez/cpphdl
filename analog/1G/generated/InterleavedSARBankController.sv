@@ -19,6 +19,7 @@ module InterleavedSARBankController #(
 ,   output wire[4-1:0] slice_out
 ,   output wire valid_out
 ,   output wire fault_out
+,   output wire[16-1:0] aperture_out
 );
 
 
@@ -28,6 +29,7 @@ module InterleavedSARBankController #(
     reg[8-1:0] data;
     reg valid;
     reg fault;
+    logic[16-1:0] aperture_comb;
 
     // members
     genvar __i;
@@ -39,9 +41,10 @@ module InterleavedSARBankController #(
     wire converters__acquire_out[Slices];
     wire converters__convert_out[Slices];
     wire converters__busy_out[Slices];
+    wire converters__aperture_out[Slices];
     generate
     for (__i=0; __i < Slices; __i = __i + 1) begin
-        ADCSARController          converters (
+        adc_interleaved_bank__ADCSARController          converters (
             .clk(clk)
         ,           .reset(reset || !enable_in)
         ,           .start_in(converters__start_in[__i])
@@ -52,6 +55,7 @@ module InterleavedSARBankController #(
         ,           .acquire_out(converters__acquire_out[__i])
         ,           .convert_out(converters__convert_out[__i])
         ,           .busy_out(converters__busy_out[__i])
+        ,           .aperture_out(converters__aperture_out[__i])
         );
     end
     endgenerate
@@ -64,14 +68,23 @@ module InterleavedSARBankController #(
     logic fault_tmp;
 
 
+    always_comb begin : aperture_comb_func  // aperture_comb_func
+        logic[31:0] mask;
+        mask = 32'h0;
+        for (logic[31:0] i = 32'h0;i < unsigned'(32'(Slices));i=i+1) begin
+            mask|=unsigned'(32'(converters__aperture_out[i])) <<< i;
+        end
+        aperture_comb = mask;
+    end
+
     generate  // _assign
         genvar gi;
-        for (gi = 32'h0;gi < Slices;gi=gi+1) begin
-            assign converters__start_in[gi] = (((enable_in && sample_enable_in) && ((((((unsigned'(32'(launch_slot)) >>> gi)) & 32'h1))) != '0)) != '0);
-            assign converters__comparison_in[gi] = ((((unsigned'(32'(comparisons_in)) >>> gi)) & 32'h1) != '0);
-            assign trial_out[gi] = converters__trial_out[gi];
-            assign acquire_out[gi] = ((converters__acquire_out[gi]) != '0);
-            assign convert_out[gi] = ((converters__convert_out[gi]) != '0);
+        for (gi = 32'h0;gi < unsigned'(32'(Slices));gi=gi+1) begin
+            assign converters__start_in[gi]=(enable_in && sample_enable_in) && ((((((unsigned'(32'(launch_slot)) >>> gi)) & 32'h1))) != '0);
+            assign converters__comparison_in[gi]=((unsigned'(32'(comparisons_in)) >>> gi)) & 32'h1;
+            assign trial_out[gi]=converters__trial_out[gi];
+            assign acquire_out[gi]=converters__acquire_out[gi];
+            assign convert_out[gi]=converters__convert_out[gi];
         end
     endgenerate
 
@@ -90,9 +103,9 @@ module InterleavedSARBankController #(
             values[i]=32'h0;
             indexes[i]=32'h0;
         end
-        launch_slot_tmp = ((launch_slot <<< 'h1)) | ((launch_slot >>> ((Slices - 32'h1))));
+        launch_slot_tmp=(launch_slot << 'h1) | (launch_slot >> (Slices - 32'h1));
         valid_tmp = (('h0) != '0);
-        for (logic[31:0] i = 32'h0;i < Slices;i=i+1) begin
+        for (logic[31:0] i = 32'h0;i < unsigned'(32'(Slices));i=i+1) begin
             if (converters__valid_out[i]) begin
                 mask|='h1 <<< i;
                 values[i/32'h4]=converters__data_out[i];
@@ -117,7 +130,7 @@ module InterleavedSARBankController #(
             valid_tmp = (('h0) != '0);
         end
         if (reset || !enable_in) begin
-            launch_slot_tmp = 64'h1;
+            launch_slot_tmp='h1;
             slice_tmp = 64'h0;
             data_tmp = 64'h0;
             valid_tmp = (('h0) != '0);
@@ -149,6 +162,8 @@ module InterleavedSARBankController #(
     assign valid_out = valid;
 
     assign fault_out = fault;
+
+    assign aperture_out = (enable_in) ? (aperture_comb) : (16'(64'h0));
 
 
 endmodule

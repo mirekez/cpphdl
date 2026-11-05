@@ -852,17 +852,17 @@ module OneGReferenceClockDomain(Vdd, Vss, Vlogic, REF, CLEAR, OUT, OUT_N);
         I(cpphdl_n437, cpphdl_n425) <+ V(cpphdl_n437, cpphdl_n425) / 1000.0;
         // device 351, IC IC27, analog/basic/phase_frequency_detector.hpp:64
         I(cpphdl_n425, Vss) <+ 1e-13 * ddt(V(cpphdl_n425, Vss)); // Bench initial voltage = 0.0 V.
-        // device 352, IC IC1, analog/1G/reference_clock.hpp:45
+        // device 352, IC IC1, analog/1G/reference_clock.hpp:46
         I(cpphdl_n17, Vlogic) <+ cpphdl_channel(V(cpphdl_n289, Vlogic), V(cpphdl_n17, Vlogic), 0.01, 0.34999999999999998, -1.0);
-        // device 353, IC IC1, analog/1G/reference_clock.hpp:46
+        // device 353, IC IC1, analog/1G/reference_clock.hpp:47
         I(cpphdl_n17, cpphdl_n446) <+ V(cpphdl_n17, cpphdl_n446) / 10000.0;
-        // device 354, IC IC1, analog/1G/reference_clock.hpp:47
+        // device 354, IC IC1, analog/1G/reference_clock.hpp:48
         I(cpphdl_n446, cpphdl_n18) <+ cpphdl_channel(V(cpphdl_n419, cpphdl_n18), V(cpphdl_n446, cpphdl_n18), 0.01, 0.34999999999999998, 1.0);
-        // device 355, IC IC1, analog/1G/reference_clock.hpp:48
+        // device 355, IC IC1, analog/1G/reference_clock.hpp:49
         I(Vss, cpphdl_n18) <+ V(Vss, cpphdl_n18) / 10000.0;
-        // device 356, IC IC1, analog/1G/reference_clock.hpp:49
+        // device 356, IC IC1, analog/1G/reference_clock.hpp:50
         I(Vss, cpphdl_n17) <+ V(Vss, cpphdl_n17) / 1000000000.0;
-        // device 357, IC IC1, analog/1G/reference_clock.hpp:50
+        // device 357, IC IC1, analog/1G/reference_clock.hpp:51
         I(cpphdl_n446, Vss) <+ 5e-15 * ddt(V(cpphdl_n446, Vss)); // Bench initial voltage = 0.0 V.
         // device 358, IC IC79, analog/basic/pll.hpp:16
         I(cpphdl_n446, cpphdl_n447) <+ V(cpphdl_n446, cpphdl_n447) / 10000.0;
@@ -870,9 +870,9 @@ module OneGReferenceClockDomain(Vdd, Vss, Vlogic, REF, CLEAR, OUT, OUT_N);
         I(cpphdl_n447, cpphdl_n448) <+ 1.9999999999999999e-11 * ddt(V(cpphdl_n447, cpphdl_n448)); // Bench initial voltage = 0.0 V.
         // device 360, IC IC79, analog/basic/pll.hpp:18
         I(cpphdl_n448, Vss) <+ V(cpphdl_n448, Vss) / 2000.0;
-        // device 361, IC IC1, analog/1G/reference_clock.hpp:60
+        // device 361, IC IC1, analog/1G/reference_clock.hpp:61
         I(cpphdl_n447, cpphdl_n469) <+ V(cpphdl_n447, cpphdl_n469) / 1000.0;
-        // device 362, IC IC1, analog/1G/reference_clock.hpp:61
+        // device 362, IC IC1, analog/1G/reference_clock.hpp:62
         I(cpphdl_n469, Vss) <+ 3.0000000000000001e-12 * ddt(V(cpphdl_n469, Vss)); // Bench initial voltage = 0.0 V.
         // device 363, IC IC81, analog/basic/ring_vco.hpp:18
         I(cpphdl_n461, Vlogic) <+ cpphdl_channel(V(cpphdl_n473, Vlogic), V(cpphdl_n461, Vlogic), 0.001, 0.34999999999999998, -1.0);
@@ -904,15 +904,15 @@ module OneGReferenceClockDomain(Vdd, Vss, Vlogic, REF, CLEAR, OUT, OUT_N);
         I(cpphdl_n470, Vss) <+ V(cpphdl_n470, Vss) / 1000000000.0;
         // device 377, IC IC83, analog/basic/ring_vco.hpp:22
         I(cpphdl_n473, Vss) <+ 5.0000000000000002e-14 * ddt(V(cpphdl_n473, Vss)); // Bench initial voltage = 0.0 V.
-        // device 378, IC IC1, analog/1G/reference_clock.hpp:70
+        // device 378, IC IC1, analog/1G/reference_clock.hpp:71
         I(cpphdl_n469, cpphdl_n458) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n469, cpphdl_n458)); // Bench initial voltage = 0.0 V.
-        // device 379, IC IC1, analog/1G/reference_clock.hpp:70
+        // device 379, IC IC1, analog/1G/reference_clock.hpp:71
         I(cpphdl_n469, cpphdl_n464) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n469, cpphdl_n464)); // Bench initial voltage = 0.0 V.
-        // device 380, IC IC1, analog/1G/reference_clock.hpp:70
+        // device 380, IC IC1, analog/1G/reference_clock.hpp:71
         I(cpphdl_n469, cpphdl_n470) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n469, cpphdl_n470)); // Bench initial voltage = 0.0 V.
-        // device 381, IC IC1, analog/1G/reference_clock.hpp:72
+        // device 381, IC IC1, analog/1G/reference_clock.hpp:73
         I(cpphdl_n467, Vss) <+ cpphdl_channel(V(CLEAR, Vss), V(cpphdl_n467, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 382, IC IC1, analog/1G/reference_clock.hpp:73
+        // device 382, IC IC1, analog/1G/reference_clock.hpp:74
         I(REF, Vss) <+ 2.0000000000000002e-15 * ddt(V(REF, Vss)); // Bench initial voltage = 0.0 V.
         // device 383, IC IC84, analog/basic/inverter.hpp:11
         I(cpphdl_n477, Vlogic) <+ cpphdl_channel(V(cpphdl_n473, Vlogic), V(cpphdl_n477, Vlogic), 0.0040000000000000001, 0.34999999999999998, -1.0);
@@ -922,21 +922,21 @@ module OneGReferenceClockDomain(Vdd, Vss, Vlogic, REF, CLEAR, OUT, OUT_N);
         I(cpphdl_n498, Vlogic) <+ cpphdl_channel(V(cpphdl_n477, Vlogic), V(cpphdl_n498, Vlogic), 0.02, 0.34999999999999998, -1.0);
         // device 386, IC IC85, analog/basic/inverter.hpp:12
         I(cpphdl_n498, Vss) <+ cpphdl_channel(V(cpphdl_n477, Vss), V(cpphdl_n498, Vss), 0.02, 0.34999999999999998, 1.0);
-        // device 387, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:41
+        // device 387, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:42
         I(cpphdl_n473, Vss) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n473, Vss)); // Bench initial voltage = 0.0 V.
-        // device 388, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:42
+        // device 388, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:43
         I(cpphdl_n473, Vlogic) <+ 2.0000000000000002e-15 * ddt(V(cpphdl_n473, Vlogic)); // Bench initial voltage = 0.0 V.
-        // device 389, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:43
+        // device 389, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:44
         I(cpphdl_n473, cpphdl_n477) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n473, cpphdl_n477)); // Bench initial voltage = 0.0 V.
-        // device 390, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:44
+        // device 390, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:45
         I(cpphdl_n477, Vss) <+ 1.4999999999999999e-14 * ddt(V(cpphdl_n477, Vss)); // Bench initial voltage = 0.0 V.
-        // device 391, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:45
+        // device 391, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:46
         I(cpphdl_n477, Vlogic) <+ 1e-14 * ddt(V(cpphdl_n477, Vlogic)); // Bench initial voltage = 0.0 V.
-        // device 392, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:46
+        // device 392, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:47
         I(cpphdl_n477, cpphdl_n498) <+ 5e-15 * ddt(V(cpphdl_n477, cpphdl_n498)); // Bench initial voltage = 0.0 V.
-        // device 393, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:47
+        // device 393, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:48
         I(cpphdl_n498, Vss) <+ 1e-14 * ddt(V(cpphdl_n498, Vss)); // Bench initial voltage = 0.0 V.
-        // device 394, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:48
+        // device 394, IC OneGReferenceClockDomain, analog/1G/reference_clock_domain.hpp:49
         I(Vlogic, Vss) <+ 4.9999999999999997e-12 * ddt(V(Vlogic, Vss)); // Bench initial voltage = 0.0 V.
         // device 395, IC IC86, analog/basic/cascoded_level_shifter.hpp:18
         I(Vlogic, cpphdl_n483) <+ V(Vlogic, cpphdl_n483) / 200.0;

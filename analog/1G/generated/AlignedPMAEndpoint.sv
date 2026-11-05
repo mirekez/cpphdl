@@ -45,7 +45,7 @@ module AlignedPMAEndpoint (
     wire[2-1:0] pairs__state_out;
     wire[8-1:0] pairs__mapping_out;
     wire[20-1:0] pairs__delays_out;
-    ReceivePairAcquirer      pairs (
+    pma_aligned__ReceivePairAcquirer      pairs (
         .clk(clk)
 ,       .reset(reset)
 ,       .samples_in(pairs__samples_in)
@@ -79,7 +79,7 @@ module AlignedPMAEndpoint (
     wire endpoint__timeout_out;
     wire endpoint__locked_out;
     wire[2-1:0] endpoint__mode_out;
-    PMAEndpoint      endpoint (
+    pma_aligned__PMAEndpoint      endpoint (
         .clk(clk)
 ,       .reset(reset)
 ,       .enable_in(endpoint__enable_in)

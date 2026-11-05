@@ -15,6 +15,7 @@ module Autonegotiation (
 ,   output wire pulse_out
 ,   output wire pma_enable_out
 ,   output wire link_out
+,   output wire pause_out
 ,   output wire master_out
 ,   output wire fault_out
 ,   output wire[3-1:0] reason_out
@@ -25,7 +26,7 @@ module Autonegotiation (
 
     // members
     wire timebase__tick_out;
-    ReferenceMillisecond      timebase (
+    autonegotiation__ReferenceMillisecond      timebase (
         .clk(clk)
 ,       .reset((reset || restart_in) || !enable_in)
 ,       .tick_out(timebase__tick_out)
@@ -36,7 +37,7 @@ module Autonegotiation (
     wire tx__pulse_out;
     wire tx__burst_begin_out;
     wire tx__burst_done_out;
-    FLPTransmitter      tx (
+    autonegotiation__FLPTransmitter      tx (
         .clk(clk)
 ,       .reset(reset)
 ,       .page_in(tx__page_in)
@@ -51,7 +52,7 @@ module Autonegotiation (
     wire[16-1:0] rx__page_out;
     wire rx__valid_out;
     wire rx__fault_out;
-    FLPReceiver      rx (
+    autonegotiation__FLPReceiver      rx (
         .clk(clk)
 ,       .reset(reset)
 ,       .pulse_in(rx__pulse_in)
@@ -74,11 +75,12 @@ module Autonegotiation (
     wire control__transmit_enable_out;
     wire control__pma_enable_out;
     wire control__link_out;
+    wire control__pause_out;
     wire control__master_out;
     wire control__fault_out;
     wire[3-1:0] control__reason_out;
     wire control__retry_out;
-    Autonegotiator      control (
+    autonegotiation__Autonegotiator      control (
         .clk(clk)
 ,       .reset(reset)
 ,       .receive_page_in(control__receive_page_in)
@@ -95,6 +97,7 @@ module Autonegotiation (
 ,       .transmit_enable_out(control__transmit_enable_out)
 ,       .pma_enable_out(control__pma_enable_out)
 ,       .link_out(control__link_out)
+,       .pause_out(control__pause_out)
 ,       .master_out(control__master_out)
 ,       .fault_out(control__fault_out)
 ,       .reason_out(control__reason_out)
@@ -138,6 +141,8 @@ module Autonegotiation (
     assign pma_enable_out = ((control__pma_enable_out) != '0);
 
     assign link_out = ((control__link_out) != '0);
+
+    assign pause_out = ((control__pause_out) != '0);
 
     assign master_out = ((control__master_out) != '0);
 

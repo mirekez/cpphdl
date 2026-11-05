@@ -33,7 +33,7 @@ module PMATransmitLane (
     wire pattern__valid_out;
     wire pattern__slave_clock_out;
     wire pattern__fault_out;
-    PMATestPattern      pattern (
+    pma_transmit_lane__PMATestPattern      pattern (
         .clk(clk)
 ,       .reset(reset)
 ,       .enable_in(pattern__enable_in)
@@ -53,7 +53,7 @@ module PMATransmitLane (
     wire[4-1:0] driver__history_n_out;
     wire driver__valid_out;
     wire driver__fault_out;
-    PAM5DriverControl      driver (
+    pma_transmit_lane__PAM5DriverControl      driver (
         .clk(clk)
 ,       .reset(((reset || !enable_in) || restart_in) || (test_mode_in != previous_mode))
 ,       .symbol_in(driver__symbol_in)

@@ -841,17 +841,17 @@ module OneGReferenceClockMultiplier(Vdd, Vss, REF, CLEAR, OUT, DIVIDED);
         I(cpphdl_n430, cpphdl_n418) <+ V(cpphdl_n430, cpphdl_n418) / 1000.0;
         // device 351, IC IC26, analog/basic/phase_frequency_detector.hpp:64
         I(cpphdl_n418, Vss) <+ 1e-13 * ddt(V(cpphdl_n418, Vss)); // Bench initial voltage = 0.0 V.
-        // device 352, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:45
+        // device 352, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:46
         I(cpphdl_n10, Vdd) <+ cpphdl_channel(V(cpphdl_n282, Vdd), V(cpphdl_n10, Vdd), 0.01, 0.34999999999999998, -1.0);
-        // device 353, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:46
+        // device 353, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:47
         I(cpphdl_n10, cpphdl_n439) <+ V(cpphdl_n10, cpphdl_n439) / 10000.0;
-        // device 354, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:47
+        // device 354, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:48
         I(cpphdl_n439, cpphdl_n11) <+ cpphdl_channel(V(cpphdl_n412, cpphdl_n11), V(cpphdl_n439, cpphdl_n11), 0.01, 0.34999999999999998, 1.0);
-        // device 355, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:48
+        // device 355, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:49
         I(Vss, cpphdl_n11) <+ V(Vss, cpphdl_n11) / 10000.0;
-        // device 356, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:49
+        // device 356, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:50
         I(Vss, cpphdl_n10) <+ V(Vss, cpphdl_n10) / 1000000000.0;
-        // device 357, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:50
+        // device 357, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:51
         I(cpphdl_n439, Vss) <+ 5e-15 * ddt(V(cpphdl_n439, Vss)); // Bench initial voltage = 0.0 V.
         // device 358, IC IC78, analog/basic/pll.hpp:16
         I(cpphdl_n439, cpphdl_n440) <+ V(cpphdl_n439, cpphdl_n440) / 10000.0;
@@ -859,9 +859,9 @@ module OneGReferenceClockMultiplier(Vdd, Vss, REF, CLEAR, OUT, DIVIDED);
         I(cpphdl_n440, cpphdl_n441) <+ 1.9999999999999999e-11 * ddt(V(cpphdl_n440, cpphdl_n441)); // Bench initial voltage = 0.0 V.
         // device 360, IC IC78, analog/basic/pll.hpp:18
         I(cpphdl_n441, Vss) <+ V(cpphdl_n441, Vss) / 2000.0;
-        // device 361, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:60
+        // device 361, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:61
         I(cpphdl_n440, cpphdl_n462) <+ V(cpphdl_n440, cpphdl_n462) / 1000.0;
-        // device 362, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:61
+        // device 362, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:62
         I(cpphdl_n462, Vss) <+ 3.0000000000000001e-12 * ddt(V(cpphdl_n462, Vss)); // Bench initial voltage = 0.0 V.
         // device 363, IC IC80, analog/basic/ring_vco.hpp:18
         I(cpphdl_n454, Vdd) <+ cpphdl_channel(V(OUT, Vdd), V(cpphdl_n454, Vdd), 0.001, 0.34999999999999998, -1.0);
@@ -893,15 +893,15 @@ module OneGReferenceClockMultiplier(Vdd, Vss, REF, CLEAR, OUT, DIVIDED);
         I(cpphdl_n463, Vss) <+ V(cpphdl_n463, Vss) / 1000000000.0;
         // device 377, IC IC82, analog/basic/ring_vco.hpp:22
         I(OUT, Vss) <+ 5.0000000000000002e-14 * ddt(V(OUT, Vss)); // Bench initial voltage = 0.0 V.
-        // device 378, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:70
+        // device 378, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:71
         I(cpphdl_n462, cpphdl_n451) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n462, cpphdl_n451)); // Bench initial voltage = 0.0 V.
-        // device 379, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:70
+        // device 379, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:71
         I(cpphdl_n462, cpphdl_n457) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n462, cpphdl_n457)); // Bench initial voltage = 0.0 V.
-        // device 380, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:70
+        // device 380, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:71
         I(cpphdl_n462, cpphdl_n463) <+ 1.0000000000000001e-15 * ddt(V(cpphdl_n462, cpphdl_n463)); // Bench initial voltage = 0.0 V.
-        // device 381, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:72
+        // device 381, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:73
         I(cpphdl_n460, Vss) <+ cpphdl_channel(V(CLEAR, Vss), V(cpphdl_n460, Vss), 0.01, 0.34999999999999998, 1.0);
-        // device 382, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:73
+        // device 382, IC OneGReferenceClockMultiplier, analog/1G/reference_clock.hpp:74
         I(REF, Vss) <+ 2.0000000000000002e-15 * ddt(V(REF, Vss)); // Bench initial voltage = 0.0 V.
     end
 endmodule

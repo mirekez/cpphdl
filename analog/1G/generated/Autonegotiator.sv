@@ -20,6 +20,7 @@ module Autonegotiator (
 ,   output wire transmit_enable_out
 ,   output wire pma_enable_out
 ,   output wire link_out
+,   output wire pause_out
 ,   output wire master_out
 ,   output wire fault_out
 ,   output wire[3-1:0] reason_out
@@ -45,6 +46,7 @@ module Autonegotiator (
     reg[16-1:0] ack_word;
     reg[2-1:0] same_count;
     reg[2-1:0] ack_count;
+    reg remote_pause;
     reg remote_np;
     reg remote_toggle;
     reg local_toggle;
@@ -60,7 +62,7 @@ module Autonegotiator (
     wire roles__master_out;
     wire roles__fault_out;
     wire roles__collision_out;
-    MasterSlaveResolver      roles (
+    negotiation__MasterSlaveResolver      roles (
         .clk(clk)
 ,       .reset((reset || restart_in) || !enable_in)
 ,       .local_up1_in(roles__local_up1_in)
@@ -92,6 +94,7 @@ module Autonegotiator (
     logic[16-1:0] ack_word_tmp;
     logic[2-1:0] same_count_tmp;
     logic[2-1:0] ack_count_tmp;
+    logic remote_pause_tmp;
     logic remote_np_tmp;
     logic remote_toggle_tmp;
     logic local_toggle_tmp;
@@ -132,7 +135,7 @@ module Autonegotiator (
                 milliseconds_tmp = 64'h0;
                 local_up1_tmp = 32'(unsigned'(32'(local_up1_in)) & 32'h1F);
                 local_seed_tmp = entropy_seed_in;
-                transmit_page_tmp = 64'h8001;
+                transmit_page_tmp = 64'h8401;
                 state_tmp = 64'h1;
                 if (((local_up1_in & 64'h8)) == 64'h0) begin
                     failure=32'h4;
@@ -263,13 +266,16 @@ module Autonegotiator (
             end
             else begin
                 remote_np_tmp = ((((accepted >>> 32'shF)) & 32'h1) != '0);
-                remote_toggle_tmp = ((((accepted >>> 32'shB)) & 32'h1) != '0);
+                remote_toggle_tmp = (((stage == 64'h0) ? (32'h0) : (((accepted >>> 32'shB)) & 32'h1)) != '0);
                 complete_count_tmp = 64'h0;
                 role_wait_tmp = 64'h0;
                 milliseconds_tmp = 64'h0;
                 state_tmp = 64'h3;
-                if ((stage == 64'h0) && (((accepted & 32'h8000)) == 32'h0)) begin
-                    failure=32'h4;
+                if (stage == 64'h0) begin
+                    remote_pause_tmp = ((accepted & 32'h400)) != 32'h0;
+                    if (((accepted & 32'h8000)) == 32'h0) begin
+                        failure=32'h4;
+                    end
                 end
                 if ((stage == 64'h1) && (((((accepted & 32'h27FF)) != 32'h2008) || (((accepted & 32'h8000)) == 32'h0)))) begin
                     failure=32'h4;
@@ -304,10 +310,11 @@ module Autonegotiator (
             candidate_tmp = 64'h0;
             ability_tmp = 64'h0;
             ack_word_tmp = 64'h0;
+            remote_pause_tmp = (('h0) != '0);
             remote_np_tmp = (('h0) != '0);
             remote_toggle_tmp = (('h0) != '0);
             local_toggle_tmp = (('h0) != '0);
-            transmit_page_tmp = 64'h8001;
+            transmit_page_tmp = 64'h8401;
             if (failure == 32'h2) begin
                 collisions_tmp = collisions + 64'h1;
                 if (collisions>=64'h6) begin
@@ -333,12 +340,13 @@ module Autonegotiator (
             local_seed_tmp = 64'h0;
             remote_up1_tmp = 64'h0;
             remote_seed_tmp = 64'h0;
-            transmit_page_tmp = 64'h8001;
+            transmit_page_tmp = 64'h8401;
             candidate_tmp = 64'h0;
             ability_tmp = 64'h0;
             ack_word_tmp = 64'h0;
             same_count_tmp = 64'h0;
             ack_count_tmp = 64'h0;
+            remote_pause_tmp = (('h0) != '0);
             remote_np_tmp = (('h0) != '0);
             remote_toggle_tmp = (('h0) != '0);
             local_toggle_tmp = (('h0) != '0);
@@ -365,6 +373,7 @@ module Autonegotiator (
         ack_word_tmp = ack_word;
         same_count_tmp = same_count;
         ack_count_tmp = ack_count;
+        remote_pause_tmp = remote_pause;
         remote_np_tmp = remote_np;
         remote_toggle_tmp = remote_toggle;
         local_toggle_tmp = local_toggle;
@@ -389,6 +398,7 @@ module Autonegotiator (
         ack_word <= ack_word_tmp;
         same_count <= same_count_tmp;
         ack_count <= ack_count_tmp;
+        remote_pause <= remote_pause_tmp;
         remote_np <= remote_np_tmp;
         remote_toggle <= remote_toggle_tmp;
         local_toggle <= local_toggle_tmp;
@@ -402,6 +412,8 @@ module Autonegotiator (
     assign pma_enable_out = (((state == 64'h5) || (state == 64'h6)) != '0);
 
     assign link_out = ((state == 64'h6) != '0);
+
+    assign pause_out = (((state == 64'h6) && ((remote_pause) != '0)) != '0);
 
     assign master_out = (((((state == 64'h5) || (state == 64'h6))) && roles__master_out) != '0);
 
