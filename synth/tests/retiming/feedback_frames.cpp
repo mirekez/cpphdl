@@ -1,5 +1,5 @@
 #include "cpphdl.h"
-#include "../../../hls/examples/net/ReceiveMetadata.h"
+#include "../../../hls/examples/hft/ReceiveMetadata.h"
 
 class FrameParser : public cpphdl::Module {
 public:

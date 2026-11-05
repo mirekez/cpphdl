@@ -265,7 +265,7 @@ endforeach()
 
 add_subdirectory(std)
 add_subdirectory(../examples/map "${CMAKE_BINARY_DIR}/hls/examples/map")
-add_subdirectory(../examples/net "${CMAKE_BINARY_DIR}/hls/examples/net")
+add_subdirectory(../examples/hft "${CMAKE_BINARY_DIR}/hls/examples/hft")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")

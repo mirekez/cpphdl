@@ -1,5 +1,5 @@
 file(MAKE_DIRECTORY "${WORK}")
-foreach(source tests/graph/ClockedBoundary.cc hls/examples/net/RetimingProbe.cpp)
+foreach(source tests/graph/ClockedBoundary.cc hls/examples/hft/RetimingProbe.cpp)
     file(REMOVE "${WORK}/graph.cc")
     execute_process(COMMAND "${CPPHDL}" --lower-cpp-graph "${ROOT}/${source}"
         "${WORK}/graph.cc" cpphdl_top -- -std=c++17 "-I${ROOT}/include"

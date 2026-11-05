@@ -275,7 +275,7 @@ interlock. Use a latency-tolerant algorithm, an explicitly ordered RTL recurrenc
 or `ClockedDelayer` when calls must observe each preceding update.
 
 See [HLS contracts](hls.md) and the
-[streaming HFT example](../hls/examples/net/README.md). The HFT example combines
+[streaming HFT example](../hls/examples/hft/README.md). The HFT example combines
 three HLS pipelines with manually registered framing, validation and checksum
 logic; timing analysis also checks the logic outside the HLS regions.
 

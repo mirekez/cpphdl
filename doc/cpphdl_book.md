@@ -2772,8 +2772,8 @@ a buffer first. This is a **streaming parser with conditional response
 generation**, not an unchanged Ethernet forwarding bridge. Words pass through
 the parsing pipeline with their metadata; outgoing order frames are generated
 separately. The full example is
-[hft.cpp](../hls/examples/net/hft.cpp), with its protocol restrictions in the
-[example README](../hls/examples/net/README.md).
+[hft.cpp](../hls/examples/hft/hft.cpp), with its protocol restrictions in the
+[example README](../hls/examples/hft/README.md).
 
 The input carries 32 data bits, valid/ready, SOF, EOF, and a byte count. The first
 wire byte occupies bits 7:0. At 315 MHz, one accepted word per clock provides
@@ -2895,14 +2895,14 @@ with validation state. It can discard each header word after extracting its
 contribution. It must still wait for the final checks before authorizing an
 order: parsing early does not justify acting on a frame with a bad FCS.
 
-[`HftCollector.h`](../hls/examples/net/HftCollector.h) uses five RTL stages:
+[`HftCollector.h`](../hls/examples/hft/HftCollector.h) uses five RTL stages:
 prepare checksum contributions, accumulate and capture a frame snapshot,
 fold checksums, validate the quote, and filter its sequence. Each stage carries
 the matching valid and error fields. Backpressure freezes them together.
 Accumulation and sequence filtering have short, ordered feedback paths.
 
 Ethernet CRC uses a 32-bit-word XOR network from
-[`EthernetCrc.h`](../hls/examples/net/EthernetCrc.h), with partial-word handling
+[`EthernetCrc.h`](../hls/examples/hft/EthernetCrc.h), with partial-word handling
 at EOF. It does not store and later rescan a packet or spend four clocks on
 four incoming bytes. Section 9.3 shows why the processing width matters;
 section 9.5 explains which values need pipeline storage.
@@ -2934,7 +2934,7 @@ For the checked-in HFT top, ordinary conversion is:
 
 ```sh
 build/cpphdl --generated-dir build/book-hft-rtl \
-  hls/examples/net/hft.cpp -- -Iinclude -DHFT_PIPELINE_STAGES=4
+  hls/examples/hft/hft.cpp -- -Iinclude -DHFT_PIPELINE_STAGES=4
 ```
 
 There is no `--hls` flag. Wrapper types select their schedulers automatically.
@@ -2957,7 +2957,7 @@ packet oracle. The tests cover 1,000 randomized quotes, invalid headers and
 FCS, partial words, sequence filtering, backpressure, and reset. A further
 run supplies 20,000 consecutive RX words and checks bubble-free TX words
 within frames. The generated RTL and logs are in
-`build/hls/examples/net/rtl4/` and `rtl8/`.
+`build/hls/examples/hft/rtl4/` and `rtl8/`.
 
 This verifies more than arithmetic: a deeper pipeline must not join one
 frame's price with another frame's sequence, repeat a blocked output word, or
@@ -2992,7 +2992,7 @@ To generate the baseline gates without requesting retiming:
 
 ```sh
 build/cpphdl --synth --top Hft --module Hft \
-  --output build/book-hft-gates hls/examples/net/hft.cpp
+  --output build/book-hft-gates hls/examples/hft/hft.cpp
 ```
 
 Use a new or empty output directory. `--top` selects the C++ class or root
@@ -3074,7 +3074,7 @@ The HFT command is:
 build/cpphdl --synth --top Hft --module Hft \
   --retiming fit_pipeline_retiming \
   --clock-period-ns 3.174603175 \
-  --output build/book-hft-retimed hls/examples/net/hft.cpp
+  --output build/book-hft-retimed hls/examples/hft/hft.cpp
 ```
 
 The period corresponds to 315 MHz. For 312 MHz the period would be
@@ -3861,16 +3861,16 @@ the repository examples below provide complete build and test flows.
 
 **Streaming HFT example, chapters 7-9**
 
-- [HFT README](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/README.md): supported packet formats, restrictions, and build instructions.
-- [hft.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/hft.cpp): C++ parsing, decision, and transmit methods with their RTL wrappers.
-- [HftCollector.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/HftCollector.h): staged collection and validation of application fields.
-- [EthernetCrc.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/EthernetCrc.h): word-based Ethernet CRC processing.
-- [FrameSize.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/FrameSize.h) and [ReceiveMetadata.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/ReceiveMetadata.h): frame-size checking and receive metadata.
-- [WordMath.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/WordMath.h): word-processing helpers.
-- [market.xml](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/market.xml): example SBE market-data schema.
-- [HftTest.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/HftTest.h): packet generation and response checks.
-- [HFT test runner](https://github.com/mirekez/cpphdl/blob/main/hls/examples/net/Run.cmake) and [synthesis test runner](https://github.com/mirekez/cpphdl/blob/main/synth/tests/hls/Run.py): scheduled RTL and gate-level verification flows.
-- [Generated HFT SystemVerilog](https://github.com/mirekez/cpphdl/tree/main/hls/examples/net/generated): checked-in scheduled modules and packages.
+- [HFT README](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/README.md): supported packet formats, restrictions, and build instructions.
+- [hft.cpp](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/hft.cpp): C++ parsing, decision, and transmit methods with their RTL wrappers.
+- [HftCollector.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/HftCollector.h): staged collection and validation of application fields.
+- [EthernetCrc.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/EthernetCrc.h): word-based Ethernet CRC processing.
+- [FrameSize.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/FrameSize.h) and [ReceiveMetadata.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/ReceiveMetadata.h): frame-size checking and receive metadata.
+- [WordMath.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/WordMath.h): word-processing helpers.
+- [market.xml](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/market.xml): example SBE market-data schema.
+- [HftTest.h](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/HftTest.h): packet generation and response checks.
+- [HFT test runner](https://github.com/mirekez/cpphdl/blob/main/hls/examples/hft/Run.cmake) and [synthesis test runner](https://github.com/mirekez/cpphdl/blob/main/synth/tests/hls/Run.py): scheduled RTL and gate-level verification flows.
+- [Generated HFT SystemVerilog](https://github.com/mirekez/cpphdl/tree/main/hls/examples/hft/generated): checked-in scheduled modules and packages.
 
 **Containers and external memory**
 

@@ -288,7 +288,7 @@ packet testbench against baseline gates, then requires full-design 315 MHz
 retiming with II=1. Explicit RTL stages split the collector-to-decision boundary
 outside the HLS regions. The current full-design estimate is 3.15 ns, with
 12/6/30 clocks of latency in the three HLS regions. See
-[the HFT results](../hls/examples/net/README.md) for the manual stages and
+[the HFT results](../hls/examples/hft/README.md) for the manual stages and
 functional checks; estimated timing does not establish physical timing closure.
 
 `synth/tests/pipeline.cpp` adds a two-stage parent/child design with 4,096 cycles

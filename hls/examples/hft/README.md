@@ -157,7 +157,7 @@ latency to catch a return of the oversized formatter.
 ```sh
 build/cpphdl --synth --top Hft --module Hft \
   --retiming fit_pipeline_retiming --clock-period-ns 3.174603175 \
-  --output /tmp/hft-synthesis hls/examples/net/hft.cpp
+  --output /tmp/hft-synthesis hls/examples/hft/hft.cpp
 ```
 
 No Yosys or `--hls` flag is needed. The wrapper types select the schedulers
@@ -251,7 +251,7 @@ Direct helper checks also compare parallel carry/compare results against C++
 arithmetic and exercise the CRC network with 4,096 random states/words at
 each byte count from zero to four.
 
-Generated SV and logs are under `build/hls/examples/net/rtl4/` and
+Generated SV and logs are under `build/hls/examples/hft/rtl4/` and
 `rtl8/`. Pipeline modules are named
 `cpphdl_hls_ClockedPipelineHftWordMethods_logic31_0_logic63_0_P4.sv`,
 `cpphdl_hls_ClockedPipelineHftDecisionMethods_logic63_0_logic63_0_P4.sv` and

@@ -17,7 +17,7 @@ Clang CodeGen, `kernel-source.ll`, `kernel-lowered.ll`, or an external C++
 compiler to synthesize a method. Native test executables and Verilator's
 generated C++ still need a C++ compiler, as usual.
 
-The [packet-processing example](../hls/examples/net/README.md) uses ordinary C++
+The [packet-processing example](../hls/examples/hft/README.md) uses ordinary C++
 methods to parse Ethernet/IPv4/UDP/SBE and construct OUCH order frames, with
 1,000 randomized quotes checked in native and Verilator flows. Its scheduled
 FSM can be exported directly to the synthesis graph. Retiming that delayed
@@ -350,7 +350,7 @@ Current supported source subset:
   Reads become multiplexers and writes become decoded register assignments;
   this is not block RAM inference. Large arrays can therefore be expensive.
   The floating-feedback contract still applies to the whole object, not each
-  array row independently. The [HFT history example](../hls/examples/net/README.md#per-security-price-history)
+  array row independently. The [HFT history example](../hls/examples/hft/README.md#per-security-price-history)
   orders decision invocations explicitly so each quote sees committed history.
 - Pipeline retiming rules must include a whole streaming region. Synchronous
   reset is supported; asynchronous reset for these regions is not yet supported.
@@ -384,7 +384,7 @@ exports their hardware graph. The C++ wrapper selects the scheduling policy. The
 312 MHz estimate target. Read `timing.json` and validate the resulting latency
 and feedback behavior before integrating the design.
 
-The [HFT example](../hls/examples/net/README.md) uses `ClockedPipeline` for independent
+The [HFT example](../hls/examples/hft/README.md) uses `ClockedPipeline` for independent
 word/header parsing, per-security history decisions and explicitly indexed TX words.
 History updates are ordered by a result handshake; different security rows
 still belong to the same object snapshot. Its short

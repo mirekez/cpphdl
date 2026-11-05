@@ -449,7 +449,7 @@ changing inputs while busy, and reset during an in-flight transaction at a 312 M
 estimated target. It is a retimed frame-metadata stage, not the complete HFT
 packet parser or order generator.
 
-The [HFT pipeline example](../hls/examples/net/README.md) instead uses three
+The [HFT pipeline example](../hls/examples/hft/README.md) instead uses three
 `ClockedPipeline` regions and transfers words on physical clock edges, without
 the multicycle ready/commit adapter. Its four- and eight-stage RTL regressions
 pass continuous RX and intra-frame TX throughput checks. Its original 8.32 ns
