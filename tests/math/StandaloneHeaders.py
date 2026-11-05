@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     library = tuple('lib/math/' + name + '.h' for name in (
-        'FpConverter', 'FpAdd', 'Fp32Mac', 'Fp32Bits', 'Fp32Add')) + tuple(
+        'FpConvertBits', 'FpConverter', 'FpAdd', 'Fp32Mac', 'Fp32Bits', 'Fp32Add')) + tuple(
         'lib/basic/' + name + '.h' for name in ('Buffer', 'Fifo', 'Memory')) + tuple(
         'lib/memory/' + name + '.h' for name in ('SynchronousRam', 'MaskedSynchronousRam', 'MatrixTransfer'))
     examples = tuple('examples/math/' + name + '.h' for name in (
@@ -42,6 +42,20 @@ def main():
                 source.write_text(f'#include "{header}"\n')
                 run([args.cxx, '-std=c++23', '-I' + str(root / 'include'),
                      '-fsyntax-only', source])
+
+        # Raw conversions must also work without cpphdl.h or RTL FP wrappers.
+        source = work / 'raw-conversion.cc'
+        source.write_text(r'''
+#include "lib/math/FpConvertBits.h"
+int main() {
+    using namespace cpphdl_examples::math;
+    if (FpFormatConversion::convert(0x3c00, 16, 5, 32, 8, true, true) != 0x3f800000u) return 1;
+    if (IntFormatConversion<32, 8>::from_int_raw(-2) != 0xc0000000u) return 2;
+    return 0;
+}
+''')
+        run([args.cxx, '-std=c++17', source, '-o', work / 'raw-conversion'])
+        run([work / 'raw-conversion'])
 
         source = work / 'reuse.cc'
         source.write_text(''.join(f'#include "{header}"\n' for header in headers) + r'''
