@@ -36,6 +36,14 @@ with tempfile.TemporaryDirectory(prefix='cpphdl-header-tests-') as directory:
         subprocess.run([args.cxx, '-std=c++23', '-I' + str(root / 'include'),
                         '-fsyntax-only', '-x', 'c++', '-'], input=source, text=True,
                        env=toolchain.env, check=True, timeout=60)
+    # Memory controllers must not expose the global legacy FP wrapper names:
+    # clients such as cpuml define their own FP16E5/FP32E8 value types.
+    memory_include = '#include "' + str(root / 'lib/memory/MatrixTransfer.h') + '"\n'
+    client_types = 'struct FP16E5 {}; struct FP32E8 {};\n'
+    for source in (client_types + memory_include, memory_include + client_types):
+        subprocess.run([args.cxx, '-std=c++23', '-I' + str(root / 'include'),
+                        '-fsyntax-only', '-x', 'c++', '-'], input=source, text=True,
+                       env=toolchain.env, check=True, timeout=60)
     selected = ['lib/math/Fp32Mac.h', 'lib/basic/Fifo.h', 'lib/memory/MatrixTransfer.h']
     for header in selected:
         source = ('#define MAINFILE 17\n#include "' + str(root / header) +

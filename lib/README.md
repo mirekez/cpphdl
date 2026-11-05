@@ -7,6 +7,7 @@ included as a library. Include them without defining `MAINFILE`.
 | Header | Purpose | HLS consumer |
 | --- | --- | --- |
 | [math/FpConverter.h](math/FpConverter.h) | FP formats and conversion; signed int32 conversion | Narrow-format arithmetic pipelines |
+| [math/FpConvertBits.h](math/FpConvertBits.h) | Raw-bit format and signed integer conversion without global FP wrapper types | HLS policies and memory controllers; safe alongside client FP types |
 | [math/FpAdd.h](math/FpAdd.h) | FP addition with one enabled, registered sum stage | FP32 MAC RTL replacement |
 | [math/Fp32Mac.h](math/Fp32Mac.h) | Enabled two-stage FP32 multiply/add, separately rounded | FP32 MAC pipeline adapter |
 | [math/Fp32Bits.h](math/Fp32Bits.h) | Integer FP32 arithmetic and exact FP16 widening | `hls/math/Float.h` policies |

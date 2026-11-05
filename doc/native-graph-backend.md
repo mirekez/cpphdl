@@ -2827,3 +2827,60 @@ rollback or simulated clock counts. Choose it using complete simulation
 throughput: small commit batches can cost less than a worker wake/join, while
 large batches can benefit from more workers. The default scheduling policy is
 unchanged; there is no automatic size threshold inferred from small fixtures.
+
+### Scoped caller and worker CPU placement
+
+Native simulation can spend substantial time in caller-side publication between
+parallel dispatches. On an SMT host, spinning workers sharing that physical
+core can slow this work. `NativeAffinityScope` is an optional Linux execution
+scope for the simulator harness; it is independent of the design and partitioner:
+
+```cpp
+#include "cpphdl_graph_affinity.h"
+#include "model.h"
+int main() {
+    cpphdl::graph_runtime::NativeAffinityScope affinity;
+    cpphdl_native::Model model; // Construct new pools inside the scope.
+    // Drive model.step(), model.eval(), etc.
+} // Destroy model, then restore the caller's original affinity.
+```
+
+`CPPHDL_NATIVE_AFFINITY=caller` enables the scope; unset or `none` leaves
+placement unchanged. This setting requires a harness using the scope; setting
+it on an older executable does not install affinity support. It does not change
+the generated graph or mathematical operations. `NativeAffinityPolicy::Caller`
+and `NativeAffinityPolicy::None` can also be passed explicitly to the constructor.
+
+The scope selects the lowest CPU in the creating thread's allowed mask, reads
+its Linux `thread_siblings_list`, pins that caller to the selected CPU and binds
+new native pool workers to the original allowed mask minus all of those SMT
+siblings. Workers remain dynamically scheduled within their mask. The worker
+count does not change and no CPU outside the original allocation is added.
+Affinity calls occur only at scope/pool construction and scope destruction,
+not per graph phase or clock. Native scopes do not alter pre-existing pools
+or unrelated OpenMP threads. Worker masks remain assigned for their lifetime;
+construct and destroy the simulation's pools within the execution scope.
+
+The scope is non-copyable and thread-bound, must unwind in stack order, and
+restores the original caller mask during exception unwinding. Nested scopes
+reuse the outer allocation rather than inheriting only the pinned caller CPU.
+The scope is not model state: copying a model and sharing its executor retains
+the usual semantics. New user-created threads inherit Linux thread affinity
+normally; the scope is not implicitly propagated to another thread. Callers
+using a shared pool from other threads need their own placement arrangement.
+
+Caller isolation requires two allowed physical cores and readable Linux
+topology. Setup reports errors rather than silently claiming isolation. Other
+platforms support the disabled policy and reject the caller policy. Linux
+masks use `cpu_set_t`/`CPU_SETSIZE`; unsupported larger allocations fail during
+the affinity query. If an external CPU-allocation change prevents restoration,
+the destructor reports the error without throwing during unwinding.
+
+`NativeAffinity.cc` checks synthetic non-contiguous SMT topology, restricted
+allocations, actual worker masks, nested scopes, shared callers, exceptions and
+restoration. The existing native runtime, profiling and local-task graph tests
+also accept `CPPHDL_NATIVE_AFFINITY=caller`. Performance remains host-dependent:
+the separately measured Sirius prefill experiment improved from 45.11 to
+37.36 seconds (three alternating trials, identical device traces), but that
+experiment used external affinity assignment. The integrated scope still
+requires its own Sirius comparison; it is disabled by default.

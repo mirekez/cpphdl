@@ -3,7 +3,7 @@
 // A test build selects this header only; dependencies remain library-only.
 #pragma push_macro("MAINFILE")
 #undef MAINFILE
-#include "../math/FpConverter.h"
+#include "../math/FpConvertBits.h"
 #include "SynchronousRam.h"
 
 namespace cpphdl_examples {
@@ -107,7 +107,7 @@ class MatrixTransfer : public cpphdl::Module {
                     raw = (raw >> (((offset / 2 + lane) & 1) * 16)) & 65535;
                 write_enable_comb[index] = true;
                 write_address_comb[index] = r;
-                write_data_comb[index] = bool(half) ? uint32_t(FpFormatConversion::convert(uint16_t(raw), 16, 5, 32, 8, true, true)) : raw;
+                write_data_comb[index] = bool(half) ? uint32_t(math::FpFormatConversion::convert(uint16_t(raw), 16, 5, 32, 8, true, true)) : raw;
             }
         for (uint32_t lane = 0; lane < 16; ++lane)
             if (fetch_comb && lane < count_comb) {

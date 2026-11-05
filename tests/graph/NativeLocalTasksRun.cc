@@ -1,4 +1,5 @@
 #include "model.h"
+#include "cpphdl_graph_affinity.h"
 #include <array>
 #include <cassert>
 #include <chrono>
@@ -36,6 +37,7 @@ void check(Model& g,unsigned offset) {
  }
 }
 int main(int argc,char**argv) {
+ cpphdl::graph_runtime::NativeAffinityScope affinity;
  if(argc==1) {
   Model seed;check(seed,0);Model initial,left=initial,right=initial;
   std::thread a([&]{check(left,256);}),b([&]{check(right,512);});a.join();b.join();

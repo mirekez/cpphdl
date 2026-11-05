@@ -25,6 +25,12 @@ add_test(NAME optimizer_indexed_proof COMMAND bash
     "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/optimizer" "${CPPHDL_TEST_CXX}")
 find_package(Threads REQUIRED)
+add_executable(cpp_graph_native_affinity graph/NativeAffinity.cc)
+target_include_directories(cpp_graph_native_affinity PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_features(cpp_graph_native_affinity PRIVATE cxx_std_23)
+target_link_libraries(cpp_graph_native_affinity PRIVATE Threads::Threads)
+add_test(NAME cpp_graph_native_affinity COMMAND cpp_graph_native_affinity)
+set_tests_properties(cpp_graph_native_affinity PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 add_executable(cpp_graph_native_dispatch_profile graph/NativeDispatchProfile.cc)
 target_include_directories(cpp_graph_native_dispatch_profile PRIVATE "${CMAKE_SOURCE_DIR}/include")
 target_compile_features(cpp_graph_native_dispatch_profile PRIVATE cxx_std_23)

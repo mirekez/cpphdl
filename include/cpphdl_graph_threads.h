@@ -14,6 +14,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "cpphdl_graph_affinity.h"
 #ifdef CPPHDL_NATIVE_DISPATCH_PROFILE
 #include "cpphdl_graph_profile.h"
 #endif
@@ -85,8 +86,10 @@ public:
         : lanes_(lanes), spinLimit_(nativeSpinLimit()), commands_(new Slot[lanes]),
           completed_(new Slot[lanes]), tasks_(new Slot[tasks]) {
         try {
-            for (unsigned lane = 1; lane < lanes; ++lane)
+            for (unsigned lane = 1; lane < lanes; ++lane) {
                 workers_.emplace_back([this, lane] { worker(lane); });
+                NativeAffinityScope::bindWorker(workers_.back());
+            }
         } catch (...) { stop(); throw; }
     }
     ~Threads() {
