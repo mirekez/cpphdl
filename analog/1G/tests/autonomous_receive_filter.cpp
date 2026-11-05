@@ -5,11 +5,21 @@
 #include <iostream>
 #include <stdexcept>
 #ifdef VERILATOR
+#ifdef AUTONOMOUS_DATAPATH
+#include "VAutonomousReceiveDatapath.h"
+using DUT = VAutonomousReceiveDatapath;
+#else
 #include "VAutonomousReceiveFilter.h"
 using DUT = VAutonomousReceiveFilter;
+#endif
+#else
+#ifdef AUTONOMOUS_DATAPATH
+#include "../autonomous_receive_datapath.hpp"
+using DUT = AutonomousReceiveDatapath;
 #else
 #include "../autonomous_receive_filter.hpp"
 using DUT = AutonomousReceiveFilter;
+#endif
 long _system_clock = -1;
 #endif
 
@@ -47,20 +57,26 @@ int main(int argc, char** argv) {
                 dut.clk = 1;
                 dut.eval();
                 output = dut.sample_out; valid = dut.valid_out; fault = dut.fault_out;
+#ifndef AUTONOMOUS_DATAPATH
                 for (unsigned i = 0; i < coefficients.size(); ++i)
                     coefficients[i] = dut.coefficient_out[i];
+#endif
 #else
                 ++_system_clock;
                 dut._work(reset);
                 dut._strobe();
                 ++_system_clock;
                 output = unsigned(dut.sample_out()); valid = dut.valid_out(); fault = dut.fault_out();
+#ifndef AUTONOMOUS_DATAPATH
                 for (unsigned i = 0; i < coefficients.size(); ++i)
                     coefficients[i] = unsigned(dut.coefficient_out[i]());
 #endif
+#endif
                 trace << events++ << ',' << output << ',' << valid << ',' << fault;
+#ifndef AUTONOMOUS_DATAPATH
                 for (auto value : coefficients)
                     trace << ',' << value;
+#endif
                 trace << '\n';
                 if (fault)
                     throw std::runtime_error("autonomous filter fault");
@@ -92,6 +108,7 @@ int main(int argc, char** argv) {
                 // the output six clocks after the physical sample was admitted.
                 if (valid != (i >= 6))
                     throw std::runtime_error("changed autonomous filter latency");
+#ifndef AUTONOMOUS_DATAPATH
                 if (i < 8192)
                     for (unsigned tap = 0; tap < 4; ++tap)
                         if (coefficients[tap] != initial[tap])
@@ -100,6 +117,7 @@ int main(int argc, char** argv) {
                     held = coefficients;
                 if (i > 50000 && coefficients != held)
                     throw std::runtime_error("holdout secretly continued training");
+#endif
                 if (expected.size() > 6) {
                     const int desired = expected.front(); expected.pop_front();
                     if (i > 50000) {
@@ -118,7 +136,11 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("autonomous acquisition failed independent channel holdout");
                 checked_total += checked;
             } else {
-                if (errors < checked / 10 || coefficients != initial)
+                if (errors < checked / 10
+#ifndef AUTONOMOUS_DATAPATH
+                    || coefficients != initial
+#endif
+                )
                     throw std::runtime_error("disabled-adaptation negative control is ineffective");
                 negative_errors = errors;
             }

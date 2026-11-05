@@ -18,6 +18,24 @@ spec.loader.exec_module(timing)
 
 
 class PhysicalModule(unittest.TestCase):
+    def test_filter_uses_receiver_processing_clock_ceiling(self):
+        # DSP and PCS share the delivered processing clock. A 125 MHz symbol
+        # rate is not the physical setup constraint for either block.
+        self.assertAlmostEqual(flow.MODULES['ReceiveFilter']['period'], 1000 / 136)
+        self.assertEqual(flow.MODULES['ReceiveFilter']['period'],
+                         flow.MODULES['PCSReceiver']['period'])
+        self.assertTrue(flow.MODULES['ReceiveFilter']['split_routing'])
+        self.assertTrue(flow.MODULES['ReceiveFilter']['final_network_repair'])
+
+    def test_autonomous_lane_uses_mode_interface_and_processing_clock(self):
+        spec = flow.MODULES['AutonomousReceiveDatapath']
+        self.assertEqual(spec['period'], flow.MODULES['PCSReceiver']['period'])
+        self.assertEqual(spec['harness'], 'autonomous_receive_filter.cpp')
+        self.assertIn('-DAUTONOMOUS_DATAPATH', spec['defines'])
+        self.assertIsNone(spec['fixture'])
+        self.assertTrue(spec['large'])
+        self.assertTrue(spec['split_routing'])
+
     def test_global_checkpoint_retains_failed_estimates_without_qualification(self):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
@@ -278,7 +296,13 @@ class PhysicalModule(unittest.TestCase):
     def test_large_module_separates_global_detail_and_extraction(self):
         self.check_failed_route(False, large=True)
 
-    def check_failed_route(self, resume_routed, large=False, timing_pass=False):
+    def test_split_module_separates_global_detail_and_extraction(self):
+        self.check_failed_route(False, split=True)
+
+    def test_split_module_rejects_global_failure_before_detail(self):
+        self.check_failed_route(False, split=True, global_fail=True)
+
+    def check_failed_route(self, resume_routed, large=False, timing_pass=False, split=False, global_fail=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             mapped = root / 'mapped'
@@ -315,8 +339,11 @@ class PhysicalModule(unittest.TestCase):
                     if environment.get('REPEATER_STAGE') == 'place':
                         names = ('placed.odb', 'placed.sdc')
                     elif Path(command[-1]).name == 'route_extract.tcl' and environment.get('REPEATER_STAGE') == 'global_route':
+                        if global_fail:
+                            return SimpleNamespace(returncode=1)
                         names = ('global_repaired.odb', 'global_repaired.sdc')
                     elif Path(command[-1]).name == 'detail_route.tcl':
+                        self.assertFalse(global_fail, 'failed global timing must prevent detailed routing')
                         names = ('core.odb', 'core.def')
                     else:
                         names = ('postroute.v', 'core.cdl', 'core.spef', 'core.def')
@@ -329,18 +356,24 @@ class PhysicalModule(unittest.TestCase):
             with patch.object(flow, 'execute', side_effect=execute), \
                     patch.object(flow, 'check_timing', return_value={'status': 'pass'},
                                  side_effect=None if timing_pass else ValueError('setup timing failed: -0.09 ns')), \
-                    patch.dict(flow.MODULES['PAM5DriverControl'], {'large': large}), \
+                    patch.dict(flow.MODULES['PAM5DriverControl'], {'large': large, 'split_routing': split}), \
                     patch.object(flow, 'stream') as stream:
-                error_type = RuntimeError if timing_pass else ValueError
-                message = 'postroute-build failed' if timing_pass else 'setup timing failed'
+                error_type = RuntimeError if timing_pass or global_fail else ValueError
+                message = ('global-route-timing failed' if global_fail else
+                           'postroute-build failed' if timing_pass else 'setup timing failed')
                 with self.assertRaisesRegex(error_type, message):
                     flow.implement(args)
                 stream.assert_not_called()
             report = json.loads((args.work / 'physical_module.json').read_text())
             self.assertEqual(report['status'], 'failed')
             self.assertFalse(report.get('native_postroute_exact', False))
+            if global_fail:
+                self.assertEqual(report['stages'][-1]['name'], 'global-route-timing')
+                self.assertEqual(report['stages'][-1]['returncode'], 1)
+                self.assertNotIn('artifact_sha256', report)
+                return
             expected_artifacts = {'postroute.v', 'core.cdl', 'core.spef', 'core.def'}
-            if large:
+            if large or split:
                 self.assertEqual((args.work / 'core.odb').read_bytes(),
                                  (args.work / 'routed_checkpoint.odb').read_bytes())
                 stages = [stage['name'] for stage in report['stages']]

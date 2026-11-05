@@ -14,7 +14,7 @@ from mos_layout import append_mos
 from processing_clock_gate_process import BINDINGS
 
 
-def placement_order(parts, dbu):
+def placement_order(parts, dbu, net_weights=None):
     """Reduce actual signal span before routing; supply rails span the row.
 
     Capacitors participate in placement beside the devices they load. The
@@ -22,6 +22,10 @@ def placement_order(parts, dbu):
     consumes the upstream clock driver's already characterized load budget.
     Geometry and electrical qualification remain the acceptance criteria.
     """
+    weights = {'CLOCK': 8, 'ENABLE': 8, 'OUT': 2}
+    weights.update(net_weights or {})
+    if any(not math.isfinite(value) or value <= 0 for value in weights.values()):
+        raise ValueError('placement net weights must be finite and positive')
     widths = [cell.bbox().width() * dbu + 10 for cell, _, _, _ in parts]
     nets = defaultdict(list)
     for index, (_, _, connections, _) in enumerate(parts):
@@ -33,7 +37,7 @@ def placement_order(parts, dbu):
         for index in order:
             locations[index] = x + widths[index] / 2
             x += widths[index]
-        return sum((8 if net in ('CLOCK', 'ENABLE') else 2 if net == 'OUT' else 1)
+        return sum(weights.get(net, 1)
                    * (max(locations[i] for i in indices) - min(locations[i] for i in indices))
                    for net, indices in nets.items())
 
@@ -55,6 +59,7 @@ def placement_order(parts, dbu):
             if score < best_score:
                 best, best_score = list(order), score
     return best, dict(initial_weighted_span_um=initial, placed_weighted_span_um=best_score,
+                      net_weights=weights,
                       component_order=[parts[index][0].name for index in best])
 
 

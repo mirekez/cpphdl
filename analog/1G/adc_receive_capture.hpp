@@ -19,6 +19,8 @@ public:
     _PORT(u<8>) trial_out[64];
     _PORT(bool) acquire_out[64];
     _PORT(bool) convert_out[64];
+    _PORT(bool) clear_out[4];
+    _PORT(bool) evaluate_enable_out[4];
     _PORT(u<16>) aperture_out = _ASSIGN(lanes[0].aperture_out());
     _PORT(bool) startup_ready_out = _ASSIGN(enable_in() && lanes[0].startup_ready_out() &&
         lanes[1].startup_ready_out() && lanes[2].startup_ready_out() && lanes[3].startup_ready_out());
@@ -59,6 +61,8 @@ public:
             lanes[i].comparisons_in = _ASSIGN_I(comparisons_in[i]());
             lanes[i].offset_in = _ASSIGN_I(offset_in[i]());
             lanes[i].gain_in = _ASSIGN_I(gain_in[i]());
+            clear_out[i] = _ASSIGN_I(lanes[i].clear_out());
+            evaluate_enable_out[i] = _ASSIGN_I(lanes[i].evaluate_enable_out());
             lanes[i]._assign();
         }
         for (unsigned i = 0; i < 64; ++i) {

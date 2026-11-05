@@ -133,6 +133,23 @@ int main() {
             near(sim.voltage(output, Vss).value, 1.2);
             check(sim.components().size() == 1 && sim.components()[0].name == "inverter", "IC metadata lifetime");
         });
+        test("physical backends retain elaboration ancestry", [] {
+            simulation sim;
+            TwoStageIC pair;
+            pair.elaborate();
+            check(sim.components().size() == 3, "missing nested ICs");
+            check(sim.components()[pair.id()].parent == no_component, "root has an invented parent");
+            for (const auto& component : sim.components()) {
+                check(!component.class_name.empty(), "missing dynamic IC class");
+                if (component.id != pair.id())
+                    check(component.parent == pair.id(), "child lost its elaborating parent");
+            }
+            pair.elaborate();
+            check(sim.components()[1].parent == pair.id(), "repeat elaboration changed ancestry");
+            InverterIC independent;
+            independent.elaborate();
+            check(sim.components()[independent.id()].parent == no_component, "active parent leaked into another IC");
+        });
         test("inherited supply ports preserve independent power domains", [] {
             simulation sim;
             electrical A, rail_low, rail_high, Vss;

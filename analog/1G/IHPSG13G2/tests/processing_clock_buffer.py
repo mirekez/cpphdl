@@ -1,10 +1,12 @@
 """Keep buffer polarity, physical dimensions and the receiver load explicit."""
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from processing_clock_buffer import buffer, connect
+from processing_clock_buffer import buffer, connect, digest, reference_sources
 
 CDL = '''.SUBCKT sg13g2_buf_16 X A VDD VSS
 MN0 net1 A VSS VSS sg13_lv_nmos m=1 w=4.44u l=130.00n ng=6
@@ -20,6 +22,49 @@ Xgate VDD 0 CLOCK ENABLE OUT ExtractedAnalog
 
 
 class ClockBuffer(unittest.TestCase):
+    def test_historical_source_requires_exact_retained_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / '1G/tests/hardware.py'
+            original.parent.mkdir(parents=True)
+            original.write_text('original generator\n')
+            expected = {str(original): digest(original)}
+            snapshot = root / 'saved'
+            saved = snapshot / '1G/tests/hardware.py'
+            saved.parent.mkdir(parents=True)
+            saved.write_bytes(original.read_bytes())
+            original.write_text('new generator\n')
+            with patch('processing_clock_buffer.ROOT', root):
+                with self.assertRaisesRegex(ValueError, 'changed clock reference'):
+                    reference_sources(expected)
+                hashes, paths = reference_sources(expected, snapshot)
+                self.assertEqual(paths, {str(original): str(saved)})
+                self.assertEqual(hashes, {str(saved): expected[str(original)]})
+                saved.write_text('wrong snapshot\n')
+                with self.assertRaisesRegex(ValueError, 'snapshot differs'):
+                    reference_sources(expected, snapshot)
+
+    def test_snapshot_cannot_replace_circuit_or_escape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / '1G/tests/hardware.py'
+            original.parent.mkdir(parents=True)
+            original.write_text('original\n')
+            value = digest(original)
+            snapshot = root / 'saved'
+            target = snapshot / '1G/tests/hardware.py'
+            target.parent.mkdir(parents=True)
+            outside = root / 'outside.py'
+            outside.write_bytes(original.read_bytes())
+            target.symlink_to(outside)
+            original.write_text('changed\n')
+            with patch('processing_clock_buffer.ROOT', root):
+                with self.assertRaisesRegex(ValueError, 'escapes'):
+                    reference_sources({str(original): value}, snapshot)
+                for name in ('1G/extracted.cir', 'build/bench.py', 'pdk/IHPSG13G2/models.py'):
+                    with self.assertRaisesRegex(ValueError, 'artifact cannot'):
+                        reference_sources({str(root / name): value}, snapshot)
+
     def test_total_width_and_fingers_preserved(self):
         definition, devices = buffer(CDL, 'sg13g2_buf_16')
         self.assertEqual(len(devices), 4)

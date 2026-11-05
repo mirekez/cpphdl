@@ -56,6 +56,41 @@ private:
         return int(value ^ sign) - int(sign);
     }
 
+    int bounded_quantized_value(unsigned accumulated) {
+        // Truncate the signed Q14 observation toward zero. Values beyond
+        // signed ten-bit range already saturate both the output and error,
+        // even for every three-bit supervised target. Clamp before rounding
+        // so discarded fractional bits do not drive a wide negation chain.
+        unsigned integer;
+        bool negative;
+        u<10> clipped, rounded;
+        integer = accumulated >> 14;
+        negative = (accumulated & 1073741824u) != 0;
+        clipped = negative ? (integer < 130560u ? 512u : integer) :
+                             (integer > 511u ? 511u : integer);
+        rounded = clipped + unsigned(negative && (accumulated & 16383u) != 0);
+        return int(unsigned(rounded) ^ 512u) - 512;
+    }
+
+    unsigned sum_products(unsigned a, unsigned b, unsigned c, unsigned d) {
+        // Four sign-extended 26-bit products fit exactly in 28 bits. Reduce
+        // them without propagating carry, then use one parallel prefix adder.
+        // This replaces the measured two serial carry chains at stage 3.
+        unsigned sum, carry, initial, propagate, generate;
+        sum = a ^ b ^ c;
+        carry = ((a & b) | (a & c) | (b & c)) << 1;
+        initial = sum ^ carry ^ d;
+        carry = ((sum & carry) | (sum & d) | (carry & d)) << 1;
+        propagate = initial ^ carry;
+        generate = initial & carry;
+        initial = propagate;
+        for (unsigned shift = 1; shift < 28; shift = shift * 2) {
+            generate = generate | (propagate & (generate << shift));
+            propagate = propagate & (propagate << shift);
+        }
+        return (initial ^ (generate << 1)) & 268435455;
+    }
+
 public:
     void _assign() {
         for (unsigned i = 0; i < 24; ++i)
@@ -175,7 +210,7 @@ public:
             b = signed_value(unsigned(products[group * 4 + 1]), 33554432);
             c = signed_value(unsigned(products[group * 4 + 2]), 33554432);
             d = signed_value(unsigned(products[group * 4 + 3]), 33554432);
-            sum4[group]._next = (a + b) + (c + d);
+            sum4[group]._next = sum_products(unsigned(a), unsigned(b), unsigned(c), unsigned(d));
             energy4[group]._next =
                 (squares[group * 4] + squares[group * 4 + 1]) + (squares[group * 4 + 2] + squares[group * 4 + 3]);
         }
@@ -190,8 +225,7 @@ public:
         energy_delay._next = energy;
 
         // Stage 6: quantized output and a target aligned to this observation.
-        value = signed_value(unsigned(total), 1073741824);
-        value = value < 0 ? -int(unsigned(-value) >> 14) : int(unsigned(value) >> 14);
+        value = bounded_quantized_value(unsigned(total));
         target = (int(unsigned(targets[5])) - 2) * 32;
         // During blind acquisition the independent far-end signal acts as
         // noise in the local-reference correlation. Freeze the receive FFE

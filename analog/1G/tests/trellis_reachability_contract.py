@@ -21,6 +21,13 @@ class Reachability(unittest.TestCase):
     def test_state_and_control_only(self):
         self.assertEqual(check(self.module)['status'], 'pass')
 
+    def test_shared_core_hierarchy(self):
+        self.module['netnames']['core.reachable'] = self.module['netnames'].pop('reachable')
+        self.assertEqual(check(self.module)['status'], 'pass')
+        self.module['cells']['combine']['connections']['B'] = [4]
+        with self.assertRaises(ValueError):
+            check(self.module)
+
     def test_metric_and_path_cost_are_rejected(self):
         for bit in (4, 6):
             module = deepcopy(self.module)

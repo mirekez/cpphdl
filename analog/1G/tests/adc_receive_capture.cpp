@@ -84,6 +84,17 @@ int main(int argc, char** argv) {
                 train = (clock % 19) < 7;
                 sampling = clock < 75960 && (profile != 1 || clock % 11 != 3);
                 settle(false);
+                for (unsigned lane = 0; lane < 4; ++lane) {
+                    const bool ready = clock >= 4100;
+                    if (bool(READ(clear_out[lane])) == ready || bool(READ(evaluate_enable_out[lane])) != ready)
+                        throw std::runtime_error("analog clear/evaluation escaped startup sequence");
+                    for (unsigned slice = 0; slice < 16; ++slice) {
+                        const bool acquire = READ(acquire_out[16 * lane + slice]);
+                        if ((slice >= 13 && acquire) ||
+                            (clock < 4100 && acquire != (clock < 4096 && slice < 13)))
+                            throw std::runtime_error("physical precharge/release slice mapping");
+                    }
+                }
                 const unsigned aperture = READ(aperture_out);
                 if (aperture) {
                     Expected e{clock + 19, 0, time, local, desired, train, false};
@@ -133,6 +144,9 @@ int main(int argc, char** argv) {
             settle(false);
             if (READ(valid_out) || READ(startup_ready_out) || READ(aperture_out))
                 throw std::runtime_error("capture remained available on supply/clock withdrawal");
+            for (unsigned lane = 0; lane < 4; ++lane)
+                if (!READ(clear_out[lane]) || READ(evaluate_enable_out[lane]))
+                    throw std::runtime_error("analog control remained enabled on withdrawal");
             edge(false);
         }
         if (checked != apertures || checked < 200000 || !trace)

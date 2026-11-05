@@ -2,6 +2,14 @@ if(NOT Python3_Interpreter_FOUND)
   message(FATAL_ERROR "1G independent checks require Python3")
 endif()
 find_program(ONE_G_VERILATOR verilator)
+add_test(NAME analog.1g.trellis_prepared.cone_contract COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/trellis_prepared_cone_contract.py")
+set_tests_properties(analog.1g.trellis_prepared.cone_contract PROPERTIES LABELS "analog;1g;hardware" TIMEOUT 30)
+add_executable(analog_1g_trellis_metrics trellis_metrics.cpp)
+target_link_libraries(analog_1g_trellis_metrics PRIVATE cpphdl::runtime)
+add_test(NAME analog.1g.trellis_metrics.native COMMAND analog_1g_trellis_metrics)
+set_tests_properties(analog.1g.trellis_metrics.native PROPERTIES LABELS "analog;1g;hardware;cpp" TIMEOUT 30)
+
 add_test(NAME analog.1g.trellis.reachability_contract COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/trellis_reachability_contract.py")
 set_tests_properties(analog.1g.trellis.reachability_contract PROPERTIES LABELS "analog;1g;hardware" TIMEOUT 30)
@@ -365,6 +373,35 @@ add_dependencies(check-analog analog_1g_repeater_forwarding)
 add_executable(analog_1g_autonomous_receive_filter autonomous_receive_filter.cpp)
 target_link_libraries(analog_1g_autonomous_receive_filter PRIVATE cpphdl::runtime)
 add_dependencies(check-analog analog_1g_autonomous_receive_filter)
+add_executable(analog_1g_autonomous_receive_datapath autonomous_receive_filter.cpp)
+target_compile_definitions(analog_1g_autonomous_receive_datapath PRIVATE AUTONOMOUS_DATAPATH)
+target_link_libraries(analog_1g_autonomous_receive_datapath PRIVATE cpphdl::runtime)
+add_dependencies(check-analog analog_1g_autonomous_receive_datapath)
+add_test(NAME analog.1g.autonomous_receive_datapath.native COMMAND analog_1g_autonomous_receive_datapath
+  "${CMAKE_CURRENT_BINARY_DIR}/autonomous_receive_datapath_native.csv")
+set_tests_properties(analog.1g.autonomous_receive_datapath.native PROPERTIES
+  LABELS "analog;1g;hardware;cpp" TIMEOUT 180)
+if(EXISTS "${CPPHDL_1G_CONVERTER}" AND ONE_G_VERILATOR)
+  add_test(NAME analog.1g.autonomous_receive_datapath.rtl COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/autonomous_receive_filter.py" --datapath
+    --native "$<TARGET_FILE:analog_1g_autonomous_receive_datapath>"
+    --converter "${CPPHDL_1G_CONVERTER}" --verilator "${ONE_G_VERILATOR}"
+    --cxx "${CPPHDL_TEST_CXX}" --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/autonomous_receive_datapath")
+  set_tests_properties(analog.1g.autonomous_receive_datapath.rtl PROPERTIES
+    LABELS "analog;1g;hardware;rtl" TIMEOUT 2400)
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys" AND
+     EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell")
+    add_test(NAME analog.1g.autonomous_receive_datapath.mapped COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/composed_hardware.py" --case autonomous_receive_datapath
+      --native "$<TARGET_FILE:analog_1g_autonomous_receive_datapath>"
+      --converter "${CPPHDL_1G_CONVERTER}" --verilator "${ONE_G_VERILATOR}" --cxx "${CPPHDL_TEST_CXX}"
+      --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/autonomous_receive_datapath_mapped")
+    set_tests_properties(analog.1g.autonomous_receive_datapath.mapped PROPERTIES
+      LABELS "analog;1g;hardware;mapped" TIMEOUT 5400 RUN_SERIAL TRUE)
+  endif()
+endif()
 add_executable(analog_1g_receive_sample_pcs_qualified receive_sample_pcs_qualified.cpp)
 target_link_libraries(analog_1g_receive_sample_pcs_qualified PRIVATE cpphdl::runtime)
 add_dependencies(check-analog analog_1g_receive_sample_pcs_qualified)
@@ -548,10 +585,13 @@ add_test(NAME analog.1g.framer.reference COMMAND "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/framer_reference.py" "${CMAKE_CURRENT_BINARY_DIR}/framer-vectors.txt")
 set_tests_properties(analog.1g.framer.reference PROPERTIES LABELS "analog;1g;hardware"
   FIXTURES_SETUP one_g_framer_vectors TIMEOUT 60)
-foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics branch_metrics_pipeline trellis synchronize receiver framer filter filter_pipeline filter_datapath timing adc_sar flp_tx flp_rx master_slave negotiation autoneg_link pma_control pma_endpoint pma_aligned adc_interleave adc_receive pair_acquisition normalizer receive_calibration pam5_driver)
+foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics branch_metrics_pipeline trellis trellis_prepared synchronize receiver framer filter filter_pipeline filter_datapath timing adc_sar flp_tx flp_rx master_slave negotiation autoneg_link pma_control pma_endpoint pma_aligned adc_interleave adc_receive pair_acquisition normalizer receive_calibration pam5_driver)
   if(block STREQUAL "filter_pipeline")
     add_executable(analog_1g_${block} filter.cpp)
     target_compile_definitions(analog_1g_${block} PRIVATE PIPELINED_FILTER)
+  elseif(block STREQUAL "trellis_prepared")
+    add_executable(analog_1g_${block} trellis.cpp)
+    target_compile_definitions(analog_1g_${block} PRIVATE PREPARED_TRELLIS)
   elseif(block STREQUAL "pma_aligned")
     add_executable(analog_1g_${block} pma_endpoint.cpp)
     target_compile_definitions(analog_1g_${block} PRIVATE ALIGNED_PMA)
@@ -562,7 +602,7 @@ foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics b
     add_executable(analog_1g_${block} "${block}.cpp")
   endif()
   target_link_libraries(analog_1g_${block} PRIVATE cpphdl::runtime)
-  if(block STREQUAL "pcs" OR block MATCHES "^branch_metrics" OR block STREQUAL "trellis")
+  if(block STREQUAL "pcs" OR block MATCHES "^branch_metrics" OR block MATCHES "^trellis")
     add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_SOURCE_DIR}")
   elseif(block MATCHES "^transmit")
     add_test(NAME analog.1g.${block}.native COMMAND analog_1g_${block} "${CMAKE_CURRENT_BINARY_DIR}/transmit-vectors.txt")
@@ -613,6 +653,21 @@ foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics b
       ${block_hardware_args}
       --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/${hardware_case}")
     set_tests_properties(analog.1g.${block}.rtl PROPERTIES LABELS "analog;1g;hardware;rtl" TIMEOUT 300)
+    if(block STREQUAL "trellis_prepared" AND one_g_hardware_args)
+      set_tests_properties(analog.1g.trellis_prepared.rtl PROPERTIES FIXTURES_SETUP one_g_trellis_prepared_mapped)
+      add_test(NAME analog.1g.trellis_prepared.selector_cone COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/trellis_prepared_cone.py"
+        --mapped-json "${CMAKE_CURRENT_BINARY_DIR}/hardware/trellis_prepared/mapped.json"
+        --output "${CMAKE_CURRENT_BINARY_DIR}/hardware/trellis_prepared/selector_cone.json")
+      set_tests_properties(analog.1g.trellis_prepared.selector_cone PROPERTIES
+        LABELS "analog;1g;hardware;mapped" TIMEOUT 30 FIXTURES_REQUIRED one_g_trellis_prepared_mapped)
+      add_test(NAME analog.1g.trellis_prepared.reachability_cone COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/trellis_reachability.py" --module PreparedPCSTrellisDecoder
+        --mapped-json "${CMAKE_CURRENT_BINARY_DIR}/hardware/trellis_prepared/mapped.json"
+        --output "${CMAKE_CURRENT_BINARY_DIR}/hardware/trellis_prepared/reachability.json")
+      set_tests_properties(analog.1g.trellis_prepared.reachability_cone PROPERTIES
+        LABELS "analog;1g;hardware;mapped" TIMEOUT 30 FIXTURES_REQUIRED one_g_trellis_prepared_mapped)
+    endif()
     if(block STREQUAL "trellis" AND one_g_hardware_args)
       set_tests_properties(analog.1g.trellis.rtl PROPERTIES FIXTURES_SETUP one_g_trellis_mapped)
       add_test(NAME analog.1g.trellis.reachability_cone COMMAND "${Python3_EXECUTABLE}"
@@ -625,7 +680,7 @@ foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics b
     if(block MATCHES "^(pma_control|pma_endpoint|pma_aligned|adc_interleave|adc_receive|pair_acquisition|normalizer|receive_calibration|pam5_driver)$")
       set_tests_properties(analog.1g.${block}.rtl PROPERTIES TIMEOUT 21600 RESOURCE_LOCK one_g_heavy_hardware)
     endif()
-    if(block MATCHES "^(trellis|receiver|filter|filter_pipeline|filter_datapath|branch_metrics_pipeline)$")
+    if(block MATCHES "^(trellis|trellis_prepared|receiver|filter|filter_pipeline|filter_datapath|branch_metrics_pipeline)$")
       set_tests_properties(analog.1g.${block}.rtl PROPERTIES TIMEOUT 1200 RESOURCE_LOCK one_g_heavy_hardware)
     endif()
     if(block MATCHES "^filter")
@@ -636,25 +691,34 @@ foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics b
     endif()
     if(block STREQUAL "receiver" AND one_g_hardware_args)
       set_tests_properties(analog.1g.receiver.rtl PROPERTIES FIXTURES_SETUP one_g_receiver_rtl)
+      set(one_g_receiver_allocator)
+      set(receiver_allocator "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/root/usr/lib/x86_64-linux-gnu/libjemalloc.so.2")
+      if(EXISTS "${receiver_allocator}")
+        list(APPEND one_g_receiver_allocator --allocator "${receiver_allocator}")
+      endif()
       add_test(NAME analog.1g.receiver.mapped COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/receiver_mapped.py" ${one_g_hardware_args}
+        "${CMAKE_CURRENT_SOURCE_DIR}/receiver_mapped.py" ${one_g_hardware_args} ${one_g_receiver_allocator}
         --verilator "${ONE_G_VERILATOR}" --cxx "${CPPHDL_TEST_CXX}"
         --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/receiver")
       set_tests_properties(analog.1g.receiver.mapped PROPERTIES
-        LABELS "analog;1g;hardware;mapped" TIMEOUT 7200 RESOURCE_LOCK one_g_heavy_hardware
+        LABELS "analog;1g;hardware;mapped" TIMEOUT 14400 RESOURCE_LOCK one_g_heavy_hardware
         FIXTURES_REQUIRED one_g_receiver_rtl FIXTURES_SETUP one_g_receiver_mapped)
     endif()
-    if(block MATCHES "^(trellis|branch_metrics_pipeline|adc_sar|filter_datapath|receiver|flp_tx|flp_rx|master_slave|negotiation|autoneg_link|pma_control|pma_endpoint|pma_aligned|adc_interleave|adc_receive|pair_acquisition|normalizer|receive_calibration|pam5_driver)$" AND one_g_hardware_args
+    if(block MATCHES "^(trellis|trellis_prepared|branch_metrics_pipeline|adc_sar|filter_datapath|receiver|flp_tx|flp_rx|master_slave|negotiation|autoneg_link|pma_control|pma_endpoint|pma_aligned|adc_interleave|adc_receive|pair_acquisition|normalizer|receive_calibration|pam5_driver)$" AND one_g_hardware_args
         AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
       if(block STREQUAL "trellis")
         set(cell_module PCSTrellisDecoder)
         set(cell_period 8)
+      elseif(block STREQUAL "trellis_prepared")
+        set(cell_module PreparedPCSTrellisDecoder)
+        set(cell_period 7.352941176470588)
       elseif(block STREQUAL "branch_metrics_pipeline")
         set(cell_module PipelinedPCSBranchMetrics)
         set(cell_period 8)
       elseif(block STREQUAL "filter_datapath")
         set(cell_module ReceiveFilter)
-        set(cell_period 8)
+        # Match the maximum delivered processing clock (136 MHz).
+        set(cell_period 7.352941176470588)
       elseif(block STREQUAL "flp_tx")
         set(cell_module FLPTransmitter)
         set(cell_period 8)
@@ -715,6 +779,16 @@ foreach(block alignment pcs scrambler transmit_bits transmitter branch_metrics b
         --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain" --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2")
       set_tests_properties(analog.1g.${block}.cells PROPERTIES LABELS "analog;1g;hardware;timing"
         TIMEOUT 180 FIXTURES_REQUIRED one_g_${block}_mapped)
+      if(block STREQUAL "filter_datapath")
+        add_test(NAME analog.1g.filter_datapath.sum_formal COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/filter_sum_formal.py"
+          --rtl "${CMAKE_CURRENT_BINARY_DIR}/hardware/filter_datapath/rtl/ReceiveFilterPipelineCore.sv"
+          --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/filter_sum_formal")
+        set_tests_properties(analog.1g.filter_datapath.sum_formal PROPERTIES
+          LABELS "analog;1g;hardware;formal" TIMEOUT 420
+          FIXTURES_REQUIRED one_g_filter_datapath_mapped)
+      endif()
     endif()
     if(block STREQUAL "filter_pipeline" AND one_g_hardware_args
         AND EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
@@ -943,7 +1017,7 @@ add_custom_target(check-1g
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}" -L 1g --output-on-failure -j 2
   DEPENDS analog_1g_bench analog_1g_generate analog_1g_process analog_1g_process_fixed analog_1g_algorithms analog_1g_pcs_waveform
     analog_1g_alignment analog_1g_pcs analog_1g_scrambler analog_1g_transmit_bits analog_1g_transmitter
-    analog_1g_branch_metrics analog_1g_branch_metrics_pipeline analog_1g_trellis analog_1g_synchronize analog_1g_receiver analog_1g_framer
+    analog_1g_branch_metrics analog_1g_branch_metrics_pipeline analog_1g_trellis analog_1g_trellis_prepared analog_1g_trellis_metrics analog_1g_synchronize analog_1g_receiver analog_1g_framer
     analog_1g_receive_dsp analog_1g_receive_dsp_pcs analog_1g_receive_sample_context analog_1g_sampled_receive_phy analog_1g_adc_receive_capture analog_1g_adc_receive_phy analog_1g_reference_clock_monitor analog_1g_clocked_receive_phy analog_1g_asynchronous_receive_phy analog_1g_autonomous_receive_pcs analog_1g_autonomous_receive_phy analog_1g_autonomous_adc_receive_phy analog_1g_processing_clock_control
     analog_1g_filter analog_1g_filter_pipeline analog_1g_filter_datapath analog_1g_timing analog_1g_adc_sar
     analog_1g_adc_analog analog_1g_clock_oscillator analog_1g_reference_clock analog_1g_level_shifter analog_1g_flp_frontend analog_1g_flp_frontend_receiver
@@ -1305,4 +1379,13 @@ if(EXISTS "${CPPHDL_1G_CONVERTER}" AND ONE_G_VERILATOR
     --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/flow_control_cells")
   set_tests_properties(analog.1g.ihp_flow_control.cells PROPERTIES
     LABELS "analog;1g;ihp;hardware;mapped" TIMEOUT 3600 FIXTURES_REQUIRED one_g_flow_sram)
+endif()
+
+if(ONE_G_VERILATOR AND (one_g_converter_dependency OR EXISTS "${CPPHDL_1G_CONVERTER}"))
+  add_test(NAME analog.1g.control_crossing.rtl COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/control_crossing.py"
+    --converter "${CPPHDL_1G_CONVERTER}" --verilator "${ONE_G_VERILATOR}"
+    --cxx "${CPPHDL_TEST_CXX}" --work "${CMAKE_CURRENT_BINARY_DIR}/hardware/control_crossing")
+  set_tests_properties(analog.1g.control_crossing.rtl PROPERTIES
+    LABELS "analog;1g;hardware;cdc;rtl" TIMEOUT 300 RESOURCE_LOCK one_g_eda_memory)
 endif()

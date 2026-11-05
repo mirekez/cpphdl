@@ -18,6 +18,8 @@ public:
     _PORT(u<8>) trial_out[64];
     _PORT(bool) acquire_out[64];
     _PORT(bool) convert_out[64];
+    _PORT(bool) clear_out[4];
+    _PORT(bool) evaluate_enable_out[4];
     _PORT(u<16>) aperture_out = _ASSIGN(capture.aperture_out());
     _PORT(bool) startup_ready_out = _ASSIGN(capture.startup_ready_out());
     _PORT(bool) track_in;
@@ -59,6 +61,8 @@ public:
         capture.desired_in = _ASSIGN(1170);
         capture.train_in = _ASSIGN(false);
         for (unsigned i = 0; i < 4; ++i) {
+            clear_out[i] = _ASSIGN_I(clear_adc_in() || capture.clear_out[i]());
+            evaluate_enable_out[i] = _ASSIGN_I(!clear_adc_in() && capture.evaluate_enable_out[i]());
             capture.comparisons_in[i] = _ASSIGN_I(comparisons_in[i]());
             capture.offset_in[i] = _ASSIGN_I(offset_in[i]());
             capture.gain_in[i] = _ASSIGN_I(gain_in[i]());

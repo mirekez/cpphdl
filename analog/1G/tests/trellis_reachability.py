@@ -6,7 +6,8 @@ from pathlib import Path
 
 
 def check(module):
-    reachable = set(module['netnames']['reachable']['bits'])
+    name = 'core.reachable' if 'core.reachable' in module['netnames'] else 'reachable'
+    reachable = set(module['netnames'][name]['bits'])
     allowed = set(reachable)
     controls = {'clk', 'reset', 'start_in', 'end_in', 'advance_in', 'symbol_enable_in'}
     for name, port in module['ports'].items():
@@ -62,11 +63,13 @@ def check(module):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--module', default='PCSTrellisDecoder',
+                        choices=('PCSTrellisDecoder', 'PreparedPCSTrellisDecoder'))
     parser.add_argument('--mapped-json', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     raw = args.mapped_json.read_bytes()
-    result = check(json.loads(raw)['modules']['PCSTrellisDecoder'])
+    result = check(json.loads(raw)['modules'][args.module])
     result['mapped_json_sha256'] = hashlib.sha256(raw).hexdigest()
     args.output.write_text(json.dumps(result, indent=2) + '\n')
     print('PASS mapped trellis reachability: no cost/metric-dependent data path')

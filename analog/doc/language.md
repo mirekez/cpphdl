@@ -21,6 +21,11 @@ An IC is a class derived from `IC`. Declare `_PORT(...)` members and put device
 purposes in `_assign()`. The base supplies separate `Vdd` and `Vss` ports for
 every instance. Bind ports by name, then call `elaborate()` once before running.
 
+The transistor description in [inverter.hpp](../basic/inverter.hpp) illustrates
+intention-first descriptions: first enable the output, then add the device that
+disables it. Both purposes act on the same wire. The example below puts those
+declarations directly in an IC class.
+
 ```cpp
 #include <analog.hpp>
 
@@ -31,11 +36,12 @@ class Inverter : public IC {
 public:
     _PORT(electrical) A;
     _PORT(electrical) Y;
+    mos_model transistor_parameters{};
 
     void _assign() override {
-        auto pmos_vdd = pmos::from(Vdd);
-        Y = pmos_vdd(A); // Enable the output from Vdd when A is low.
-        Vss = nmos(A, Y); // Pull the same output toward Vss when A is high.
+        auto pmos_vdd = pmos::from(Vdd, transistor_parameters);
+        Y = pmos_vdd(A); // First purpose: enable the output from Vdd when A is low.
+        Vss = nmos(A, Y, transistor_parameters); // Second purpose: disable it by pulling toward Vss when A is high.
     }
 };
 
@@ -69,6 +75,14 @@ output. The solver combines their terminal relations across all class boundaries
 `_assign()` creates the model graph during elaboration. The registered equations
 continue to act throughout simulated time. Source order does not isolate one
 device's behavior from the next device or from external components.
+
+Circuits whose purpose can be expressed as a sequence of functional blocks—such
+as a PLL, VCO or inverter—fit this language well. Describe the main intentions
+first, then add secondary elements for biasing, compensation, decoupling or
+protection. This ordering keeps the purpose readable while allowing supporting
+and corrective elements to be developed afterward. Once declared, all elements
+participate together in the physical equations, including feedback and loading;
+their order in the description is not a sequence of simulation steps.
 
 ## Wires, active variables and hierarchy
 

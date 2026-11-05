@@ -7,8 +7,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 SOURCE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SOURCE))
+import flow
 spec = importlib.util.spec_from_file_location("repeater_checks", SOURCE / "checks.py")
 checks = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checks)
@@ -97,9 +101,14 @@ class Evidence(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             (work / "repeater_core.gds").write_bytes(b"stale success")
-            result = subprocess.run([sys.executable, str(SOURCE / "flow.py"), "--target", "chip", "--work", str(work)],
-                                    text=True, capture_output=True)
-            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            # This unit test covers the signoff gate. The separate integration
+            # CTests run the actual tools; don't repeat a full build here.
+            with patch('digital_flow.run', return_value={'status': 'pass'}) as digital, \
+                 patch('electrical_flow.run', return_value={'status': 'pass'}) as electrical:
+                result = flow.run(SimpleNamespace(target='chip', work=work))
+            self.assertEqual(result, 2)
+            digital.assert_called_once()
+            electrical.assert_called_once()
             report = json.loads((work / "flow.json").read_text())
             self.assertEqual(report["status"], "blocked")
             self.assertFalse(report["full_1000base_t_chip"])

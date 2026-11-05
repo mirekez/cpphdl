@@ -1,0 +1,74 @@
+{
+  "generated_utc": "2026-11-05T17:39:30.302898+00:00",
+  "gds_sha256": "1c865855c056f244219966aab3384ab3187543753d887bacb89adcd7a06692c8",
+  "top": "RepeaterSharedDie",
+  "png_sha256": "96dbbf62d62e05a2251a129c31499dbc69b35a850d9a09a2ac1655e5f02f6fa4",
+  "status": "shared_placement_unrouted",
+  "drawing_layers": {
+    "Active": [
+      1,
+      "#60db7c"
+    ],
+    "Poly": [
+      5,
+      "#e77773"
+    ],
+    "Contact": [
+      6,
+      "#d6f3fa"
+    ],
+    "Metal1": [
+      8,
+      "#54b9f2"
+    ],
+    "Via1": [
+      19,
+      "#e6effb"
+    ],
+    "Metal2": [
+      10,
+      "#d4cedf"
+    ],
+    "Via2": [
+      29,
+      "#efbaa0"
+    ],
+    "Metal3": [
+      30,
+      "#f57e87"
+    ],
+    "Via3": [
+      49,
+      "#c5d49a"
+    ],
+    "Metal4": [
+      50,
+      "#9bdd63"
+    ],
+    "Via4": [
+      66,
+      "#e7b57a"
+    ],
+    "Metal5": [
+      67,
+      "#e9ce5b"
+    ],
+    "TopVia1": [
+      125,
+      "#ffe3be"
+    ],
+    "TopMetal1": [
+      126,
+      "#ffe3be"
+    ],
+    "TopVia2": [
+      133,
+      "#f8ad61"
+    ],
+    "TopMetal2": [
+      134,
+      "#f8ad61"
+    ]
+  },
+  "renderer_sha256": "383db67f4667a414fc1397439d3709dd30489e2ed4d7180b27d98663e115d070"
+}

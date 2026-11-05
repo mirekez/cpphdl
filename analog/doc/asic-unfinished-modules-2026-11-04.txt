@@ -1,0 +1,90 @@
+ASIC UNFINISHED MODULES — STATUS SNAPSHOT, 4 NOVEMBER 2026
+
+Open failures and unfinished work only. Passing margins omitted.
+Snapshot preserved; no tests rerun.
+
+DIGITAL BLOCKERS
+
+Negative timing slack % = slack / clock period * 100.
+"—" means no failure measurement listed, not a passing result.
+
++-------------------------------------------------------------------+--------------------------------------------------------------+-----------------+---------------------------------------------------+
+| Module                                                            | Failure / constraint                                         | Negative margin | Remaining problem                                 |
++-------------------------------------------------------------------+--------------------------------------------------------------+-----------------+---------------------------------------------------+
+| ReceiveFilter — current DSP revision                              | Previous 1100 um route: GRT-0232; 1400 um routing pending    | —               | Routed timing and verification pending.           |
+| PCSReceiver — current prepared-metric revision                    | Prior expansion exceeded 4 GiB; checkpointed retry running   | —               | Mapping and physical qualification pending.       |
+| PCSReceiver — published physical checkpoint                       | 1.75x-C global estimate: setup -0.6615 ns; period 7.35294 ns | -9.00%          | Setup fails; detailed routing incomplete.         |
+| Four-lane DSP / autonomous receive composition                    | —                                                            | —               | Physical integration and routing pending.         |
+| ADCReceiveLaneController — startup, SAR sequencing, normalization | —                                                            | —               | Connected analog timing remains unqualified.      |
+| ProcessingClockControl                                            | —                                                            | —               | Connected clock qualification remains incomplete. |
+| PHYResetControl                                                   | —                                                            | —               | Reset distribution and reliability unverified.    |
+| FlowControlledRepeater — SRAM/PAUSE datapath                      | —                                                            | —               | SRAM characterization and integration pending.    |
+| Receive timing recovery, resampler and alignment                  | —                                                            | —               | Physical crossings and ADC integration.           |
+| PCS transmitter and PAM5 unary controller                         | —                                                            | —               | Driver loading and clock integration.             |
+| Autonegotiation / startup / PMA control                           | —                                                            | —               | Physical negotiation and retraining unqualified.  |
+| RepeaterCore — forwarding                                         | —                                                            | —               | Both PHY connections remain incomplete.           |
++-------------------------------------------------------------------+--------------------------------------------------------------+-----------------+---------------------------------------------------+
+
+Digital sources (paths relative to analog/):
+  build/clock-integration/dsp-prefix-revision/physical/physical_module.json
+  build/clock-integration/receiver-prepared-metrics-bounded/checks.json
+  1G/IHPSG13G2/adc_lane_physical.md
+  1G/IHPSG13G2/qualification-status.md
+
+ANALOG AND CLOCK MODULES
+
+Negative electrical margin % = (limit - measurement) / limit * 100.
+Electrical margins are separate from clock slack.
+
++------------------------------------------------------------------------+----------------------------------------------------------------------------------+---------------------------------------------+-------------------------------------------------------------+
+| Module                                                                 | Failure / constraint                                                             | Negative margin                             | Remaining problem                                           |
++------------------------------------------------------------------------+----------------------------------------------------------------------------------+---------------------------------------------+-------------------------------------------------------------+
+| 250 MHz reference-clock PLL — realized filter candidate                | Extracted phase wander: 293.471/80 ps; ripple: 12.0784/2 mV                      | Phase -266.84%; ripple -503.92%             | Phase wander and ripple fail.                               |
+| Reference divider                                                      | —                                                                                | —                                           | Fill and loop integration pending.                          |
+| ProcessingClockOscillator and delivery loop                            | —                                                                                | —                                           | Drivers, routing, corners remain unqualified.               |
+| ProcessingClockGate                                                    | At 100 fF: rise 112.491/100 ps; qualified load limited to 55 fF                  | -12.49% at 100 fF                           | Connected loading remains unqualified.                      |
+| ReceiveCommonReference                                                 | —                                                                                | —                                           | Latest transient qualification remains incomplete.          |
+| ReceiveSampler                                                         | Waveform mismatch: 7.7377/5 mV                                                   | -54.75%                                     | Waveform comparison exceeds error limit.                    |
+| Thirteen-slice analog SAR bank                                         | —                                                                                | —                                           | Real clocks, extraction, corners pending.                   |
+| Core-to-DAC translators and ladder                                     | —                                                                                | —                                           | Connected controller/comparator timing remains unqualified. |
+| Connected preamplifier/comparator/latch/return path                    | Maintained: 15 late windows, 2.149/2 counts; experiment: 7 late, 3.721029/3.6 ns | Accuracy -7.45%; experimental timing -3.36% | Return timing and accuracy fail.                            |
+| Shared sampling-control / TRACK distribution                           | Closing delay: 1.323–1.334 ns; error: 111.214/20 mV; EVENT idle fails            | Error -456.07%                              | Sampling error and idle-level failures.                     |
+| MDI hybrid, input amplifier, programmable gain and ADC-range reference | —                                                                                | —                                           | Connected AFE and calibration unqualified.                  |
+| TransmitBias                                                           | —                                                                                | —                                           | Corners, calibration, physical connections pending.         |
+| TransmitTranslationBias / replica and loaded translator bank           | Slow/hot departure: 101.941/100 ps; failures: 22/22                              | -1.94%                                      | Slow/hot edge comparison fails.                             |
+| TransmitTranslator                                                     | —                                                                                | —                                           | Bank corners and loading unqualified.                       |
+| Main/history TransmitCell arrays and TransmitPullup                    | —                                                                                | —                                           | Corners, calibration, MDI integration pending.              |
+| HVStorageAdapter, main/history charge storage and bias-storage banks   | —                                                                                | —                                           | Extracted corners and integration pending.                  |
+| Complete transmitter                                                   | —                                                                                | —                                           | Routing, calibration, corners, compliance pending.          |
+| Slave transmit-clock recovery                                          | —                                                                                | —                                           | Recovered-clock tracking remains unqualified.               |
++------------------------------------------------------------------------+----------------------------------------------------------------------------------+---------------------------------------------+-------------------------------------------------------------+
+
+Analog and clock sources (paths relative to analog/):
+  1G/IHPSG13G2/qualification-status.md
+  1G/IHPSG13G2/clock-input-timing.md
+  1G/IHPSG13G2/receive_timing_budget.md
+
+MEMORY AND COMPLETE-CHIP INTEGRATION
+
++----------------------------------------------+-----------------------------------------------------------------------+-------------------------------------------------------+
+| Module / assembly                            | Constraint                                                            | Remaining problem                                     |
++----------------------------------------------+-----------------------------------------------------------------------+-------------------------------------------------------+
+| Eight SRAM macros                            | —                                                                     | Macro electrical characterization remains incomplete. |
+| PAUSE/FIFO crossings                         | —                                                                     | Chip crossings and reliability unverified.            |
+| ADC analog/digital boundary                  | Return load: 21.565 fF; opposite-switching: 32.453 fF; fixture: 20 fF | Loading coverage and timing incomplete.               |
+| Clock/reset distribution between macros      | —                                                                     | Connected clock/reset delivery remains unverified.    |
+| RepeaterPadframe / ESD / seal ring           | Opening undersized                                                    | Enlarge, connect, repeat chip checks.                 |
+| Power grid, decoupling and package interface | —                                                                     | Power and package integration incomplete.             |
+| Complete two-port PHY/repeater GDSII         | Separate physical blocks; inter-block connections absent              | Connect blocks; complete chip verification.           |
++----------------------------------------------+-----------------------------------------------------------------------+-------------------------------------------------------+
+
+Published assembly scope and block inventory (relative to analog/):
+  1G/IHPSG13G2/results/development_provenance.json
+
+Rows include overlapping modules and assemblies; counts are not additive.
+Standalone passes do not establish chip integration.
+
+Clock correction: superseded detector failure removed; refreshed extracted
+detector tests pass. Complete PLL failures use the realized filter receipt:
+  1G/IHPSG13G2/reference-clock-cells.md
+  build/clock-integration/extracted-repair/clock-filter-candidate-extracted/checks.json

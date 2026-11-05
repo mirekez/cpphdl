@@ -52,7 +52,7 @@ def run(args):
     module = {"alignment": "ReceiveClockAligner", "pcs": "PCSSymbolMapper", "scrambler": "PCSSideStream",
               "transmit_bits": "PCSTransmitBits", "transmitter": "PCSTransmitter",
               "branch_metrics": "PCSBranchMetrics", "branch_metrics_pipeline": "PipelinedPCSBranchMetrics",
-              "trellis": "PCSTrellisDecoder",
+              "trellis": "PCSTrellisDecoder", "trellis_prepared": "PreparedPCSTrellisDecoder",
               "synchronize": "PCSReceiveSynchronizer", "receiver": "PCSReceiver", "framer": "PCSReceiveFramer",
               "filter": "ReceiveAdaptiveFilter", "filter_pipeline": "PipelinedReceiveFilter",
               "filter_datapath": "ReceiveFilter",
@@ -74,15 +74,15 @@ def run(args):
                       "receive_filter.cpp" if args.case == "filter" else
                       "receive_filter_pipeline.cpp" if args.case == "filter_pipeline" else
                       "pcs_branch_metrics_pipeline.cpp" if args.case == "branch_metrics_pipeline" else
-                      "pcs_receive.cpp" if args.case in ("branch_metrics", "trellis") else
+                      "pcs_receive.cpp" if args.case in ("branch_metrics", "trellis", "trellis_prepared") else
                       "pcs_transmit.cpp" if args.case.startswith("transmit") else "pcs.cpp")
-    harness_name = {"filter_pipeline": "filter.cpp", "branch_metrics_pipeline": "branch_metrics.cpp"}.get(
+    harness_name = {"filter_pipeline": "filter.cpp", "branch_metrics_pipeline": "branch_metrics.cpp", "trellis_prepared": "trellis.cpp"}.get(
         args.case, args.case + ".cpp")
     defines = {"filter_pipeline": " -DPIPELINED_FILTER",
-               "branch_metrics_pipeline": " -DPIPELINED_METRICS"}.get(args.case, "")
+               "branch_metrics_pipeline": " -DPIPELINED_METRICS", "trellis_prepared": " -DPREPARED_TRELLIS"}.get(args.case, "")
     source_hashes = source_dependencies([source / implementation, source / "tests" / harness_name], repo,
                                         args.cxx, shlex.split(defines))
-    fixture_args = [source / "tests"] if args.case in ("pcs", "branch_metrics", "branch_metrics_pipeline", "trellis") else []
+    fixture_args = [source / "tests"] if args.case in ("pcs", "branch_metrics", "branch_metrics_pipeline", "trellis", "trellis_prepared") else []
     if args.case.startswith("transmit"):
         fixture_args = [work / "transmit-vectors.txt"]
         execute(["python3", str(source / "tests/transmit_reference.py"), str(fixture_args[0])],
@@ -118,15 +118,16 @@ def run(args):
     fixture_hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in fixture_paths}
     rtl_files = [work / "rtl/Predef_pkg.sv"]
     rtl_files += [work / "rtl" / (name + ".sv") for name in
-                 (["PCSReceiveSynchronizer", "PCSReceiveFramer", "PipelinedPCSBranchMetrics", "PCSTrellisDecoder", "PCSReceiver"]
-                  if args.case == "receiver" else ["PCSSymbolMapper", "PCSTransmitBits", "PCSTransmitter"]
+                 (["PCSReceiveSynchronizer", "PCSReceiveFramer", "PipelinedPCSBranchMetrics", "PCSTrellisDecoderCore", "PreparedPCSTrellisDecoder", "PCSTrellisMetricRegister", "PCSReceiver"]
+                  if args.case == "receiver" else ["PCSTrellisDecoderCore", module]
+                  if args.case in ("trellis", "trellis_prepared") else ["PCSSymbolMapper", "PCSTransmitBits", "PCSTransmitter"]
                   if args.case == "transmitter" else ["ReceiveFilterPipelineCore", "PipelinedReceiveFilter", "ReceiveFilter"]
                   if args.case == "filter_datapath" else ["ReceiveFilterPipelineCore", "PipelinedReceiveFilter"]
                   if args.case == "filter_pipeline" else ["MasterSlaveResolver", "Autonegotiator"]
                   if args.case == "negotiation" else ["ReferenceMillisecond", "FLPTransmitter", "FLPReceiver",
                                                         "MasterSlaveResolver", "Autonegotiator", "Autonegotiation"]
                   if args.case == "autoneg_link" else [module])]
-    stage_timeout = 1200 if filter_case or args.case == "autoneg_link" else 600 if args.case in ("trellis", "receiver", "branch_metrics_pipeline") else 180
+    stage_timeout = 1200 if filter_case or args.case == "autoneg_link" else 600 if args.case in ("trellis", "trellis_prepared", "receiver", "branch_metrics_pipeline") else 180
     commands = [
         [args.native, *fixture_args, work / "cpp_trace.csv"],
         [args.converter, *clocks, "--generated-dir", work / "rtl", source / implementation, "--", "-I" + str(repo / "include")],
@@ -217,7 +218,7 @@ write_verilog {quote(work / 'frontend.v')}
         script = f'''read_liberty -lib {quote(liberty)}
 read_verilog {quote(work / 'design.v')}
 hierarchy -check -top {module}
-synth -top {module} -flatten -noabc {"-noshare" if args.case in ("trellis", "receiver") or filter_case else ""}
+synth -top {module} -flatten -noabc {"-noshare" if args.case in ("trellis", "trellis_prepared", "receiver") or filter_case else ""}
 dfflibmap -liberty {quote(liberty)}
 abc -exe {quote(binary / 'abc')} -liberty {quote(liberty)}
 hilomap -hicell sg13g2_tiehi L_HI -locell sg13g2_tielo L_LO
@@ -270,7 +271,7 @@ if __name__ == "__main__":
     configure_cleanup()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=("alignment", "pcs", "scrambler", "transmit_bits", "transmitter",
-                                          "branch_metrics", "branch_metrics_pipeline", "trellis", "synchronize", "receiver", "framer", "filter",
+                                          "branch_metrics", "branch_metrics_pipeline", "trellis", "trellis_prepared", "synchronize", "receiver", "framer", "filter",
                                           "filter_pipeline", "filter_datapath", "timing", "adc_sar", "flp_tx", "flp_rx",
                                           "master_slave", "negotiation", "autoneg_link"), required=True)
     parser.add_argument("--converter", type=Path, required=True)

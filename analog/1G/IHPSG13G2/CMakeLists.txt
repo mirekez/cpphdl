@@ -1342,6 +1342,27 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
         --pdk "${CPPHDL_IHP_PDK_ROOT}")
     set_tests_properties(analog.1g.ihp_receiver.data_native PROPERTIES
       LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.compact_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_compact_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.compact_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.clock_load_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_clock_load_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}")
+    set_tests_properties(analog.1g.ihp_receiver.clock_load_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
+    add_test(NAME analog.1g.ihp_receiver.clock_register_load_native
+      COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_clock_load_native.py"
+        --openroad "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad"
+        --pdk "${CPPHDL_IHP_PDK_ROOT}" --direct-register)
+    set_tests_properties(analog.1g.ihp_receiver.clock_register_load_native PROPERTIES
+      LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 172800)
     add_test(NAME analog.1g.ihp_receiver.skew_native
       COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/receiver_skew_native.py"
@@ -1401,6 +1422,17 @@ if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python")
   add_test(NAME analog.1g.ihp_adc_lane.physical_guards
     COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/tests/adc_lane_physical.py")
   set_tests_properties(analog.1g.ihp_adc_lane.physical_guards PROPERTIES LABELS "analog;1g;hardware;ihp;receiver" TIMEOUT 30)
+  add_custom_target(one-g-autonomous-receive-filter-gds
+    COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_BINARY_DIR}"
+      -R "^analog.1g.autonomous_receive_datapath.mapped$" --output-on-failure --no-tests=error
+    COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/physical_module.py"
+      --module AutonomousReceiveDatapath
+      --mapped-work "${CMAKE_CURRENT_BINARY_DIR}/../tests/hardware/autonomous_receive_datapath_mapped"
+      --work-root "${CMAKE_CURRENT_BINARY_DIR}/autonomous-receive-filter-runs" --die-size 1200
+      --pdk "${CPPHDL_IHP_PDK_ROOT}" --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain"
+      --verilator "${ONE_G_VERILATOR}" --cxx "${CPPHDL_TEST_CXX}"
+    DEPENDS analog_1g_autonomous_receive_datapath
+    WORKING_DIRECTORY "${CPPHDL_ANALOG_PACKAGE_ROOT}" USES_TERMINAL VERBATIM)
   add_custom_target(one-g-receive-filter-gds
     COMMAND "${CPPHDL_IHP_PDK_ROOT}/.cpphdl/venv/bin/python" "${CMAKE_CURRENT_SOURCE_DIR}/physical_module.py"
       --module ReceiveFilter --mapped-work "${CMAKE_CURRENT_BINARY_DIR}/../tests/hardware/filter_datapath"
@@ -3151,6 +3183,22 @@ add_executable(analog_1g_ihp_core_receive_dac tests/core_receive_dac.cpp)
 target_link_libraries(analog_1g_ihp_core_receive_dac PRIVATE cpphdl::analog)
 add_executable(analog_1g_ihp_core_receive_decision tests/core_receive_decision.cpp)
 target_link_libraries(analog_1g_ihp_core_receive_decision PRIVATE cpphdl::analog)
+add_executable(analog_1g_ihp_receive_evaluation_gate tests/receive_evaluation_gate.cpp)
+target_link_libraries(analog_1g_ihp_receive_evaluation_gate PRIVATE cpphdl::analog)
+add_dependencies(check-analog analog_1g_ihp_receive_evaluation_gate)
+if(OPENVAF_EXECUTABLE AND NGSPICE_EXECUTABLE)
+  set(evaluation_process_args)
+  if(EXISTS "${CPPHDL_IHP_PDK_ROOT}/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib")
+    list(APPEND evaluation_process_args --pdk "${CPPHDL_IHP_PDK_ROOT}")
+  endif()
+  add_test(NAME analog.1g.ihp_receive_evaluation_gate.compare COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/receive_evaluation_gate.py"
+    --bench "$<TARGET_FILE:analog_1g_ihp_receive_evaluation_gate>" --cxx "${CPPHDL_TEST_CXX}"
+    --openvaf "${OPENVAF_EXECUTABLE}" --ngspice "${NGSPICE_EXECUTABLE}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/tests/receive-evaluation-gate" ${evaluation_process_args})
+  set_tests_properties(analog.1g.ihp_receive_evaluation_gate.compare PROPERTIES
+    LABELS "analog;1g;ihp;receiver;veriloga" TIMEOUT 300 RESOURCE_LOCK one_g_eda_memory)
+endif()
 if(TARGET Eigen3::Eigen)
   target_link_libraries(analog_1g_ihp_core_receive_decision PRIVATE Eigen3::Eigen)
 endif()

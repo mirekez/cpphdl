@@ -57,9 +57,20 @@ MODULES = {
                         timing_driven_placement=True, placement_density=.6,
                         additional_checks=[('faults', 'receiver-fault-vectors.txt', 'cpp_fault_trace.csv'),
                                            ('enable', 'receiver-vectors.txt', 'cpp_enable_trace.csv')]),
-    'ReceiveFilter': dict(case='filter_datapath', die=1100, harness='filter_datapath.cpp',
+    'AutonomousReceiveDatapath': dict(case='autonomous_receive_datapath', die=1600,
+                         harness='autonomous_receive_filter.cpp', fixture=None,
+                         defines=' -DAUTONOMOUS_DATAPATH', period=1000 / 136,
+                         clock_distance=400, clock_branch_distance=1, capacitance_limit=.1,
+                         large=True, replay_timeout=300,
+                         timing_driven_placement=True, placement_density=.5,
+                         split_routing=True, final_network_repair=True, final_hold_margin=.15,
+                         route_setup_margin=.7, route_cap_margin=30, route_transition_target=.2),
+    'ReceiveFilter': dict(case='filter_datapath', die=1400, harness='filter_datapath.cpp',
+                         period=1000 / 136,
                          fixture='filter-vectors.txt', defines='', clock_distance=275,
                          clock_branch_distance=1, capacitance_limit=.1,
+                         timing_driven_placement=True, placement_density=.5,
+                         split_routing=True, final_network_repair=True, final_hold_margin=.15,
                          route_setup_margin=.7, route_cap_margin=30, route_transition_target=.2),
     'PipelinedReceiveFilter': dict(case='filter_pipeline', die=1600, harness='filter.cpp',
                                   fixture='filter-vectors.txt', defines=' -DPIPELINED_FILTER',
@@ -376,7 +387,8 @@ def implement(args):
     try:
         evidence = json.loads((mapped / 'hardware_checks.json').read_text())
         if (evidence.get('status') != 'pass' or
-                (top in ('ReceiveFilter', 'PipelinedReceiveFilter') and not evidence.get('native_frontend_exact')) or
+                (top in ('ReceiveFilter', 'PipelinedReceiveFilter', 'AutonomousReceiveDatapath') and
+                 not evidence.get('native_frontend_exact')) or
                 not evidence.get('native_mapped_exact') or evidence.get('module') != top or
                 evidence.get('mapped_sha256') != digest(mapped / 'mapped.v')):
             raise ValueError('filter functional evidence is absent, failed or stale')

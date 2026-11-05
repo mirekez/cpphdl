@@ -20,15 +20,9 @@ using Methods = std::map<std::string, const CXXMethodDecl*>;
 
 bool isProcess(const std::string& name, const std::string& phase)
 {
-    if (name == phase || name == phase + "_neg") {
-        return true;
-    }
-    for (const auto& clock : currProject->clocks) {
-        if (name == phase + "_" + clock.name || name == phase + "_neg_" + clock.name) {
-            return true;
-        }
-    }
-    return false;
+    // Clock names are local to a reusable child, not just CLI root names.
+    // Match the same lifecycle family as AST extraction and SV generation.
+    return name == phase || name.rfind(phase + "_", 0) == 0;
 }
 
 bool hasNamedClockVariant(const Methods& methods, const std::string& name,

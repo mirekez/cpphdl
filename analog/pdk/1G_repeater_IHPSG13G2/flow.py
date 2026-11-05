@@ -62,10 +62,23 @@ def run(args):
     try:
         # A stale successful GDS must never be advertised after a failed new run.
         (work / "repeater_core.gds").unlink(missing_ok=True)
-        if args.target == "chip":
+        if args.target in ("chip", "digital", "electrical"):
+            from digital_flow import run as check_digital
+            report["digital"] = check_digital(args, work / "digital")
+            if args.target == "digital":
+                report.update(status="passed")
+                save()
+                return 0
+            from electrical_flow import run as check_electrical
+            report["electrical"] = check_electrical(args, work / "electrical", work / "digital")
+            if args.target == "electrical":
+                report.update(status="passed")
+                save()
+                return 0
             report.update(status="blocked", missing=chip_blockers())
             save()
-            print("Full-chip implementation unavailable:\n- " + "\n- ".join(report["missing"]))
+            print("Digital and electrical connectivity checked; full-chip physical closure incomplete:\n- " +
+                  "\n- ".join(report["missing"]))
             return 2
         tools = args.tools.resolve()
         binary = tools / "bin"
@@ -192,7 +205,7 @@ write_json {quoted(work / 'mapped.json')}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("core", "chip"), default="chip")
+    parser.add_argument("--target", choices=("core", "digital", "electrical", "chip"), default="chip")
     parser.add_argument("--work", type=Path)
     parser.add_argument("--pdk", type=Path, default=SOURCE.parent / "IHPSG13G2")
     parser.add_argument("--tools", type=Path, default=SOURCE.parents[1] / "out/repeater-toolchain")
@@ -200,7 +213,8 @@ def main():
     parser.add_argument("--cxx", default="/usr/bin/c++")
     args = parser.parse_args()
     if args.work is None:
-        args.work = SOURCE / "results" / args.target
+        args.work = (SOURCE / "results" / args.target if args.target == "core" else
+                     SOURCE.parents[1] / "build/repeater" / args.target)
     return run(args)
 
 

@@ -126,6 +126,9 @@ def check_timing(work):
 
 def chip_blockers():
     return [
+        "Complete aperture-aligned local TX history and configuration/calibration control; map the connected electrical partition to process geometry, digital gates, supplies and pads",
+        "Qualify the connected direct-track ADC, translated comparator controls, shared references and FLP/PAM5 loading against the actual sampling schedule",
+        "Implement and qualify each negotiated SLAVE transmit clock against recovered timing; a shared reference-only TX clock is insufficient",
         "Qualify and integrate the implemented PCS, scrambler acquisition, trellis, master/slave startup, pair deskew and auto-negotiation with continuous physical receive training",
         "Physical receive AFE/ADC and implementation/timing of the fixed-point receive DSP; layout/characterization of the MOS-biased/trimmed transmit drivers",
         "Physical receive timing recovery, reset distribution and routed CDC proof for the implemented reference-clock aligner",

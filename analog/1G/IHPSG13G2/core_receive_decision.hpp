@@ -28,6 +28,7 @@ public:
     _PORT(electrical) EVALUATE;
     _PORT(electrical) CLEAR;
     _PORT(electrical) CORE_DECISION;
+    _PORT(electrical) BIAS;
     std::array<port<electrical>, 8> TRIAL;
     shared_bias_receive_dac dac;
     std::array<clock_level_shifter, 2> timing;
@@ -40,6 +41,7 @@ public:
         dac.Vdd = Vdd;
         dac.Vss = Vss;
         dac.Vlogic = Vlogic;
+        dac.BIAS = BIAS;
         for (unsigned bit = 0; bit < TRIAL.size(); ++bit)
             dac.TRIAL[bit] = TRIAL[bit];
         dac.elaborate();

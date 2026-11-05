@@ -5,11 +5,16 @@ from collections import Counter
 import json
 import math
 from pathlib import Path
+import shutil
+import sys
+import time
 
 from hardware import TestToolchain, configure_cleanup, execute
 from receive_sample_recovery import digest
 
 SOURCE = Path(__file__).resolve()
+sys.path.insert(0, str(SOURCE.parents[1] / 'IHPSG13G2'))
+import receiver_allocator
 
 
 def timing_mapping(delay_ps, load_ff):
@@ -32,6 +37,76 @@ def write_abc_constraints(work, mapping):
     return f' -D {mapping["delay_target_ps"]:g} -constr abc.constr'
 
 
+def synthesis_scripts(work, library, tools, abc_options):
+    def quote(path):
+        if any(c in str(path) for c in '\n\\"'):
+            raise ValueError('unsupported synthesis path')
+        return '"' + str(path) + '"'
+
+    # Keep standard Yosys synth semantics, but release frontend memory before
+    # technology lowering and retain each completed intermediate database.
+    return [
+        ('synthesis-coarse', f'''read_liberty -lib {quote(library)}
+read_verilog {quote(work / 'design.v')}
+synth -top PCSReceiver -flatten -noabc -noshare -run begin:fine
+write_ilang {quote(work / 'coarse.rtlil')}
+''', 'coarse.rtlil'),
+        # These are the installed Yosys synth fine-stage commands. Separate
+        # optimization from expansion so its temporary storage is released.
+        ('synthesis-fine', f'''read_ilang {quote(work / 'coarse.rtlil')}
+opt -fast -full
+memory_map
+opt -full
+write_ilang {quote(work / 'fine.rtlil')}
+''', 'fine.rtlil'),
+        # Recursive expansion uses depth-first traversal instead of retaining
+        # every breadth-first expansion frontier at once. No logic is omitted.
+        ('synthesis-lowering', f'''read_ilang {quote(work / 'fine.rtlil')}
+techmap -recursive
+opt -fast
+hierarchy -check
+stat
+check -assert
+write_ilang {quote(work / 'lowered.rtlil')}
+''', 'lowered.rtlil'),
+        ('synthesis-technology', f'''read_ilang {quote(work / 'lowered.rtlil')}
+dfflibmap -liberty {quote(library)}
+write_ilang {quote(work / 'technology.rtlil')}
+''', 'technology.rtlil'),
+        ('synthesis-mapping', f'''read_ilang {quote(work / 'technology.rtlil')}
+abc -exe {quote(tools / 'abc')} -liberty {quote(library)}{abc_options}
+hilomap -hicell sg13g2_tiehi L_HI -locell sg13g2_tielo L_LO
+clean
+check -assert
+write_verilog -noattr -noexpr {quote(work / 'mapped.v')}
+write_json {quote(work / 'mapped.json')}
+design -reset
+read_liberty -ignore_miss_func -ignore_miss_dir {quote(library)}
+write_verilog -noattr {quote(work / 'cells.v')}
+''', 'mapped.v'),
+    ]
+
+
+def coarse_checkpoint(origin, script):
+    """Reuse only the exact coarse program and its complete original inputs."""
+    origin = origin.resolve()
+    proof = json.loads((origin / 'hardware_checks.json').read_text())
+    if proof.get('module') != 'PCSReceiver' or not proof.get('source_sha256'):
+        raise ValueError('coarse checkpoint lacks receiver provenance')
+    path = origin / 'coarse.rtlil'
+    if proof.get('synthesis_checkpoints', {}).get('coarse.rtlil') != digest(path):
+        raise ValueError('coarse checkpoint changed')
+    if (origin / 'synthesis-coarse.ys').read_text() != script:
+        raise ValueError('coarse synthesis program changed')
+    for name, value in proof['source_sha256'].items():
+        # The driver may gain resourcing/recovery code. Its old bytes remain
+        # bound, while the exact coarse program above must remain unchanged.
+        source = origin / 'receiver_mapped.py' if Path(name) == SOURCE else Path(name)
+        if not source.is_file() or digest(source) != value:
+            raise ValueError('coarse checkpoint input changed: ' + name)
+    return path
+
+
 def run(args):
     mapping = timing_mapping(getattr(args, 'abc_delay_ps', None), getattr(args, 'abc_load_ff', 15.0))
     work = args.work.resolve()
@@ -52,23 +127,52 @@ def run(args):
     inputs = [SOURCE, proof, library, *rtl, args.verilator.resolve(),
               args.verilator.resolve().with_name('verilator_bin'), *[tools / n for n in ('yosys', 'abc', 'sv2v')]]
     hashes.update({str(p): digest(p) for p in inputs})
+    allocator_env, allocator, allocator_files = receiver_allocator.configuration(getattr(args, 'allocator', None))
+    for path in [Path(receiver_allocator.__file__), Path('/usr/bin/time'), *allocator_files]:
+        hashes[str(path)] = digest(path)
+    resume = getattr(args, 'resume_coarse', None)
+    coarse_script = synthesis_scripts(work, library, tools, '')[0][1]
+    if resume:
+        coarse = coarse_checkpoint(resume, coarse_script)
+        for path in (resume / name for name in ('hardware_checks.json', 'receiver_mapped.py',
+                                               'synthesis-coarse.ys', 'coarse.rtlil')):
+            hashes[str(path.resolve())] = digest(path)
     toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     report = dict(status='running', module='PCSReceiver', source_sha256=hashes,
                   fixture_sha256=evidence['fixture_sha256'], scope='functional mapped-gate equivalence',
-                  timing_mapping=mapping)
+                  timing_mapping=mapping, stages=[], synthesis_checkpoints={}, allocator=allocator,
+                  synthesis_address_space_bytes=4 * 1024**3,
+                  fine_optimization_address_space_bytes=1024**3)
+    if resume:
+        report['resumed_coarse'] = str(resume.resolve())
 
     def save():
-        (work / 'hardware_checks.json').write_text(json.dumps(report, indent=2) + '\n')
+        temporary = work / 'hardware_checks.tmp'
+        temporary.write_text(json.dumps(report, indent=2) + '\n')
+        temporary.replace(work / 'hardware_checks.json')
 
     def command(name, argv, timeout, cwd=None):
-        with (work / (name + '.log')).open('w') as log:
-            execute(toolchain.command(argv), env=toolchain.env, stdout=log, stderr=-2,
-                    check=True, timeout=timeout, cwd=cwd)
-
-    def quote(path):
-        if any(c in str(path) for c in '\n\\"'):
-            raise ValueError('unsupported synthesis path')
-        return '"' + str(path) + '"'
+        started = time.monotonic()
+        report['stage'] = name
+        save()
+        try:
+            environment = toolchain.env
+            synthesis = name.startswith('synthesis-')
+            fine = name == 'synthesis-fine'
+            if synthesis:
+                environment = receiver_allocator.environment(environment, allocator_env)
+                # Optimization of the compact RTLIL uses its own smaller
+                # budget; gate expansion still owns the shared heavy slot.
+                limit = (1 if fine else 4) * 1024**3
+                argv = ['/usr/bin/time', '-v', '-o', work / (name + '.resources'),
+                        'prlimit', '--as=' + str(limit), '--core=0', '--', *argv]
+            with (work / (name + '.log')).open('w') as log:
+                execute(toolchain.command(argv), env=environment, stdout=log, stderr=-2,
+                        check=True, timeout=timeout, cwd=cwd,
+                        memory_exclusive=(not fine) if synthesis else None)
+        finally:
+            report['stages'].append(dict(name=name, seconds=time.monotonic() - started))
+            save()
 
     save()
     try:
@@ -78,27 +182,22 @@ def run(args):
             hashes[str(constraints)] = digest(constraints)
         with (work / 'design.v').open('w') as output:
             execute([str(tools / 'sv2v'), *map(str, rtl)], stdout=output, check=True, timeout=180)
-        script = f'''read_liberty -lib {quote(library)}
-read_verilog {quote(work / 'design.v')}
-hierarchy -check -top PCSReceiver
-synth -top PCSReceiver -flatten -noabc -noshare
-dfflibmap -liberty {quote(library)}
-abc -exe {quote(tools / 'abc')} -liberty {quote(library)}{abc_options}
-hilomap -hicell sg13g2_tiehi L_HI -locell sg13g2_tielo L_LO
-clean
-check -assert
-write_verilog -noattr -noexpr {quote(work / 'mapped.v')}
-write_json {quote(work / 'mapped.json')}
-design -reset
-read_liberty -ignore_miss_func -ignore_miss_dir {quote(library)}
-write_verilog -noattr {quote(work / 'cells.v')}
-'''
-        (work / 'synth.ys').write_text(script)
-        hashes[str(work / 'synth.ys')] = digest(work / 'synth.ys')
-        save()
-        # Large flattened PCS mappings outgrow the generic unit runner's
-        # ten-minute deadline; this stage gets its own bounded resource budget.
-        command('synthesis', [tools / 'yosys', '-Q', '-T', '-s', work / 'synth.ys'], 3600, cwd=work)
+        for name, script, checkpoint in synthesis_scripts(work, library, tools, abc_options):
+            path = work / (name + '.ys')
+            path.write_text(script)
+            hashes[str(path)] = digest(path)
+            save()
+            # Bound each distinct workload separately. A completed frontend
+            # survives a later technology/mapping timeout for diagnosis/reuse.
+            if name == 'synthesis-coarse' and resume:
+                destination = work / checkpoint
+                if not destination.exists() or not destination.samefile(coarse):
+                    shutil.copyfile(coarse, destination)
+            else:
+                command(name, [tools / 'yosys', '-Q', '-T', '-s', path], 3600, cwd=work)
+            path = work / checkpoint
+            report['synthesis_checkpoints'][checkpoint] = digest(path)
+            save()
         module = json.loads((work / 'mapped.json').read_text())['modules']['PCSReceiver']
         counts = Counter(cell['type'] for cell in module['cells'].values())
         if not counts or any(not name.startswith('sg13g2_') for name in counts):
@@ -134,6 +233,9 @@ if __name__ == '__main__':
     for name in ('work', 'pdk', 'tools', 'verilator'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--cxx', default='/usr/bin/c++')
+    parser.add_argument('--allocator', type=Path, help='explicit local libjemalloc.so.2 for bounded synthesis')
+    parser.add_argument('--resume-coarse', type=Path,
+                        help='retained coarse checkpoint, receipt, program and original driver source')
     parser.add_argument('--abc-delay-ps', type=float,
                         help='explicit ABC delay target in ps; enables constrained timing mapping')
     parser.add_argument('--abc-load-ff', type=float, default=15.0,

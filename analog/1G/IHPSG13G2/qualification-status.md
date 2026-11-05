@@ -3249,3 +3249,167 @@ PHY/ADC/DSP layout; the equalizer/echo canceller has no physical checkpoint to
 include. Block dimensions and recorded checks are indexed in
 [`results/README.md`](results/README.md). Full-chip timing, DRC and LVS remain
 unfinished. Historical published files remain available in Git history.
+
+## November 3 clock-load repair and prepared receive arithmetic
+
+`receiver-square-lookup-revision/clock-load-repair/` is the latest completed
+receiver physical diagnostic. Six midpoint `sg13g2_buf_4` cells split two
+long clock branches, including direct register-clock loads. The helper
+preflights every requested net and rejects data nets, ports, protected nets
+and unsupported loads before changing connectivity. Independent seed,
+buffer and final-placement endpoint proofs pass. Both nominal and 1.75x-C
+slew/capacitance/fanout screens now pass. Setup/hold are
+**+0.412071288/+0.123614237 ns** nominal and
+**-0.661499321/+0.140290558 ns** with enlarged capacitance. Native stage time
+was 211.45 seconds. This fixes the two clock-capacitance violations; it does
+not close setup or supply detailed signal routes. The combined published
+GDS/receiver PNG now uses this checkpoint.
+
+A separate broad buffer-compaction experiment regressed enlarged-C setup from
+-0.6615 ns to -0.6942 ns in its first round and -0.8231 ns by round five.
+It was stopped and not adopted. The compaction stage now rejects a candidate
+at the first setup regression exceeding 5 ps. The origin checkpoint remains
+immutable. The real short-chain fixture still improves setup from -0.4435 ns
+to +0.1605 ns, demonstrating why removals need measured acceptance rather
+than unconditional application. The chain, buffered-clock-load and direct
+register-clock-load native regressions all pass.
+
+The next source revision uses [prepared trellis metrics](../trellis_preparation.md).
+Branch differences are registered at the existing metric boundary, preserving
+full-width comparisons, tie order, stalls, reset and receiver latency. Generic
+and prepared native decoders pass the independent oracle. Prepared RTL and
+IHP-mapped simulation both pass all 28,327 steps; selector-cone checking
+confirms all 24 differences are used and raw metrics do not feed selectors.
+Its cell-only setup slack is +2.09 ns at 136 MHz. The complete receiver also
+passes native/RTL normal, fault and symbol-enable comparisons. Full-receiver
+mapping and fresh physical timing remain required before replacing the
+retained physical checkpoint.
+
+The receive DSP filter now uses the actual maximum processing-clock constraint,
+136 MHz (7.352941176 ns), in both cell and physical flows. Native, RTL,
+frontend and IHP-mapped traces agree. Its slow-corner cell-only setup slack is
++1.37 ns at this constraint. The physical run is retained under
+`build/clock-integration/dsp-filter-physical-v1/`; placement/CTS completed
+in 248.50 seconds including queue time, with estimated setup/hold
++0.025520030/-0.934119463 ns. The legacy combined route was stopped before
+detailed routing. `dsp-filter-physical-v2/` resumes that exact saved placement
+through separate global timing, detail and extraction stages, with final
+network repair enabled. Failed global timing prevents detailed routing.
+All 26 physical-driver guard cases pass; routed/extracted qualification
+remains pending.
+
+The current flow-control/SRAM publication also now records the existing
+`embedded-sram-row-wells-v2-qualification/checks.json`: zero full-deck DRC
+violations and fresh extraction with complete graph correspondence. This
+corrects publication's earlier incomplete evidence inventory. SRAM electrical
+qualification and full-chip interconnection remain separate unfinished work.
+
+## November 4 receiver synthesis and DSP arithmetic
+
+Full prepared-receiver synthesis exceeded its combined 3,600-second deadline
+during technology lowering. No mapped functional or physical pass was produced.
+`receiver_mapped.py` now runs the same standard Yosys synthesis sequence in
+three processes: coarse synthesis, technology lowering, and IHP mapping.
+It retains and hashes the coarse/technology RTLIL checkpoints and records
+stage times, releasing each process's memory between stages. Each stage has
+its own bounded deadline. The actual-IHP regression reloads both checkpoints,
+maps combinational and sequential logic, and verifies the requested ABC
+driver/load/delay settings. Both mapping CTests pass. Coarse synthesis finishes
+in 440.56 seconds and retains a 24 MB database. Technology expansion completes,
+but cleanup is killed by the kernel OOM handler at 4,795,612 KiB anonymous RSS.
+The failed receipt, exact driver and coarse database are preserved under
+`receiver-prepared-metrics-revision/technology-oom/`.
+
+The mapping driver now supports an explicitly hashed jemalloc library, records
+per-stage resource measurements and caps synthesis address space at 4 GiB.
+`--resume-coarse` requires identical design inputs and the exact coarse program,
+with the original driver retained; tests reject altered sources, programs and
+intermediates. Reuse correctly rejects the saved checkpoint after a concurrent
+repository update changes `cpphdl_logic.h` and `cpphdl_port.h`. The current
+receiver is therefore rebuilt and revalidated first. Its bounded retry and
+conditional physical continuation are under `receiver-prepared-metrics-bounded/`.
+The generic decoder's separate native/RTL comparison also passed all 28,327
+oracle steps with the shared core implementation.
+
+The resumed DSP global repair finishes with setup -1.752330780 ns and hold
++0.140878975 ns. It correctly stops before detailed routing. The critical
+path runs from `filter.core.products[546]` to `filter.core.sum4[166]`:
+two serial additions plus extensive buffering consume the available period.
+`ReceiveFilterPipelineCore` now reduces the four signed products using two
+carry-save stages and one 28-bit parallel prefix addition. The four 26-bit
+products fit exactly in that width; no truncation, new cycle or change to
+the adaptation schedule is introduced. The original failed implementation
+and source hash are retained with the physical checkpoint. Independent
+native full-state and PHY-interface checks pass on 37,724 reference vectors.
+Generated RTL, frontend simulation and mapped IHP gates also match exactly
+under `dsp-prefix-revision/`. Slow-corner cell-only setup is +1.45 ns, versus
+the earlier +1.37 ns, at the same 136 MHz constraint. Fresh placement completes
+in 91.33 seconds with setup/hold +0.189477772/+0.110386372 ns. Global routing
+and repair are running. Extracted timing improvement has not yet been established.
+
+`filter_sum_formal.py` extracts the actual converted `sum_products` function
+and proves it equal to an independent signed arithmetic sum for every
+combination of its four 26-bit inputs (104 symbolic bits). The proof passes;
+an intentionally false equality is rejected as a negative control. The
+CTest `analog.1g.filter_datapath.sum_formal` retains tool/RTL hashes and proof
+logs. This establishes arithmetic equivalence, not timing closure.
+
+The smaller clock restoration buffer fails its slow-corner delay screen;
+see [clock-input-timing.md](clock-input-timing.md). Neither added buffer is
+adopted. The accidentally deleted transmitter-reference schematic trace was
+replayed from its retained deck and restored with identical original and
+compressed SHA256 hashes; `build/trace-restoration-2026-11-03/checks.json`
+records `restored_exactly`.
+
+
+## November 4 high-resolution publication and congestion retry
+
+`render_development_layout.py` renders the entire published merged GDS at
+8,000 pixels wide, checks its hash, top hierarchy and block inventory, and
+records a separate image receipt. Module numbers identify actual geometry;
+no connections or missing circuit geometry are drawn. The publisher now
+regenerates this view alongside its overview and per-module PNGs.
+
+The prefix-adder DSP's 1,100 um physical run stops with OpenROAD GRT-0232
+routing congestion after 10,322 seconds in the global stage. Its earlier
+positive placement slack did not establish routing closure. The next
+candidate uses a 1,400 um floorplan, 50% placement target density, and timing-
+and routability-driven placement, retaining the 136 MHz constraint and all
+final acceptance limits. Placement completes with setup/hold estimates
++0.104657620/+0.135113418 ns. Routing is deferred before execution to publish
+this checkpoint, then resumes through the existing placement-import flow;
+placement is not repeated. All 26 physical-flow guards pass. Four publication
+regressions also pass, including collision-safe names and preservation of
+failed source status. Neither result qualifies the full ASIC.
+
+Receiver native/RTL revalidation completed successfully after the earlier
+continuation's waiting deadline. Its exact source/fixture/trace hashes were
+checked before restarting memory-bounded mapping. Coarse synthesis completes
+in 365 seconds. Technology lowering follows under the explicit allocator and
+4 GiB address-space cap; full mapped comparison and new physical timing remain
+pending. The new continuation checks completed proof status before waiting,
+so a finished result is not hidden by supervisor process lifetime.
+
+The short blocker table previously repeated a superseded compact-detector
+failure. Current extracted detector corner receipts pass. The realized PLL
+filter candidate still fails phase wander (293.471 ps against 80 ps) and
+control ripple (12.0784 mV against 2 mV); the table now records those failures.
+
+The bounded receiver technology retry terminates at its 4 GiB address-space
+limit after 604.49 seconds of native execution, peaking at 4,012,728 KiB RSS.
+The allocator alone is insufficient. Its exact failure, original driver and
+coarse checkpoint are retained in `receiver-prepared-metrics-bounded/technology-cap-failure/`.
+The next mapping keeps the unchanged coarse program, separates fine optimization
+and gate expansion into reloadable checkpoints, and uses Yosys depth-first
+`techmap -recursive`. Fine optimization has a separate 1 GiB cap; expansion
+retains the exclusive 4 GiB budget. The fixed small IHP fixture additionally
+proves eight sequential steps of the actual lowered arithmetic/variable-shift
+circuit against its source, and rejects an inverted output. Full receiver
+mapped replay remains required. The retry has resumed from the verified coarse
+checkpoint rather than repeating the frontend.
+
+Publication now contains 22 blocks, adding the current 1,400 um DSP placement.
+The complete drawing-layer PNG is 8,000 by 9,372 pixels; GDS, inventory and PNG
+hashes agree. The DSP route has resumed from that saved placement under
+`dsp-prefix-routable-1400/resumed/`. These are current development artifacts;
+inter-block wiring and full-chip qualification remain incomplete.

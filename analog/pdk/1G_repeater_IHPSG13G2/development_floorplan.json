@@ -1,0 +1,122 @@
+{
+  "core_opening_um": 4400,
+  "core_margin_um": 100,
+  "channel_um": 100,
+  "description": "As-is candidate floorplan with a physically routed clock/controller subsystem; receive DSP above PCS beside forwarding memory, receiver analog along the north edge, transmit circuits in the east band. Other inter-block wiring and production instance inventory remain unfinished.",
+  "positions_um": {
+    "receiver_pcs": [
+      100,
+      100
+    ],
+    "receive_dsp_filter": [
+      100,
+      2600.0
+    ],
+    "flow_control": [
+      1400,
+      2600.0
+    ],
+    "reference_clock": [
+      2600.0,
+      100
+    ],
+    "realized_clock": [
+      2416.64,
+      3900
+    ],
+    "transmit_bias": [
+      3500.0,
+      1603.9
+    ],
+    "receive_reference_current": [
+      461.61,
+      3900
+    ],
+    "transmit_replica": [
+      2600.0,
+      1603.9
+    ],
+    "transmit_main": [
+      3500.0,
+      2262.34
+    ],
+    "transmit_history": [
+      3996.25,
+      1603.9
+    ],
+    "storage_adapter": [
+      3674.98,
+      3900
+    ],
+    "phy_reset": [
+      2600.0,
+      2094.4
+    ],
+    "receive_sampler": [
+      100,
+      3900
+    ],
+    "forwarding_core": [
+      2840.0,
+      2094.4
+    ],
+    "transmit_translator": [
+      3060.0,
+      2094.4
+    ],
+    "transmit_main_storage": [
+      4232.26,
+      2168.31
+    ],
+    "transmit_pullup": [
+      3204.71,
+      1603.9
+    ],
+    "transmit_history_storage": [
+      4069.76,
+      2168.31
+    ],
+    "processing_clock_system": [
+      3500.0,
+      2826.75
+    ]
+  },
+  "replacements": [
+    {
+      "replaces": [
+        "processing_clock_delivery",
+        "processing_control_current"
+      ],
+      "block": {
+        "name": "processing_clock_system",
+        "top": "ProcessingClockSystem",
+        "title": "Processing clock / routed controller and oscillator",
+        "caption": "21 physical connections; 20,938-device LVS and full DRC pass. Loaded timing pending.",
+        "status": "Oscillator, admission gate and digital controller joined by 21 physical nets. Full PDK DRC has zero violations; transistor LVS matches 20,938 devices and 22 external ports. Physical continuity and opened-wire negative control pass. Connected-load electrical performance, clock-tree loads, supply integrity and full-chip integration remain unqualified.",
+        "source": "1G/IHPSG13G2/results/processing_clock_system.gds.gz",
+        "format": "gds",
+        "receipts": [
+          "1G/IHPSG13G2/results/processing_clock_system.json"
+        ]
+      }
+    },
+    {
+      "replaces": [
+        "receive_dsp_filter"
+      ],
+      "block": {
+        "name": "receive_dsp_filter",
+        "top": "AutonomousReceiveDatapath",
+        "title": "Receive DSP / autonomous physical lane",
+        "caption": "Global setup -1.0643 ns; hold +0.1331 ns. Detailed signal routing pending.",
+        "status": "Current 1200 um autonomous receive lane with bounded quantization and parallel product reduction. C++/RTL/frontend/mapped channel checks pass. Global-route setup fails at -1.064290881 ns; hold +0.133144438 ns, no electrical or antenna violations. This export contains only geometry present in OpenDB; global guides are not fabricated metal. Detailed routing, full DRC/LVS and chip integration remain incomplete.",
+        "source": "build/clock-integration/autonomous-filter-quantized/AutonomousReceiveDatapath-kz4se59u/finished_global.odb",
+        "format": "odb",
+        "receipts": [
+          "build/clock-integration/autonomous-filter-quantized/AutonomousReceiveDatapath-kz4se59u/physical_module.json"
+        ],
+        "render_png": true
+      }
+    }
+  ]
+}

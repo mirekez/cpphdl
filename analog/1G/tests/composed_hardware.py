@@ -8,17 +8,20 @@ import json
 import re
 from pathlib import Path
 import subprocess
+import sys
 
 from hardware import TestToolchain, configure_cleanup, execute, source_dependencies
 
 SOURCE = Path(__file__).resolve()
 MODULES = {
+    'autonomous_receive_datapath': ('AutonomousReceiveDatapath', 'autonomous_receive_datapath.cpp',
+        ['ReceiveFilterPipelineCore', 'AutonomousReceiveFilter', 'AutonomousReceiveDatapath']),
     'receive_calibration': ('ReceiveGainCalibration', 'receive_calibration.cpp', ['ReceiveGainCalibration']),
     'pam5_driver': ('PAM5DriverControl', 'pam5_driver_control.cpp', ['PAM5DriverControl']),
     'normalizer': ('ReceiveSampleNormalizer', 'receive_normalizer.cpp', ['ReceiveSampleNormalizer']),
     'pma_aligned': ('AlignedPMAEndpoint', 'pma_aligned.cpp', ['ReceivePairAcquirer', 'PMAControl',
         'PCSSymbolMapper', 'PCSTransmitBits', 'PCSTransmitter', 'PCSReceiveSynchronizer',
-        'PCSReceiveFramer', 'PipelinedPCSBranchMetrics', 'PCSTrellisDecoder', 'PCSReceiver',
+        'PCSReceiveFramer', 'PipelinedPCSBranchMetrics', 'PCSTrellisDecoderCore', 'PreparedPCSTrellisDecoder', 'PCSTrellisMetricRegister', 'PCSReceiver',
         'PMAEndpoint', 'AlignedPMAEndpoint']),
     'pair_acquisition': ('ReceivePairAcquirer', 'pair_acquisition.cpp', ['ReceivePairAcquirer']),
     'adc_interleave': ('InterleavedSARController', 'adc_interleave.cpp', ['ADCSARController', 'InterleavedSARController']),
@@ -27,7 +30,7 @@ MODULES = {
     'pma_control': ('PMAControl', 'pma_control.cpp', ['PMAControl']),
     'pma_endpoint': ('PMAEndpoint', 'pma_endpoint.cpp', ['PMAControl', 'PCSSymbolMapper', 'PCSTransmitBits',
         'PCSTransmitter', 'PCSReceiveSynchronizer', 'PCSReceiveFramer', 'PipelinedPCSBranchMetrics',
-        'PCSTrellisDecoder', 'PCSReceiver', 'PMAEndpoint']),
+        'PCSTrellisDecoderCore', 'PreparedPCSTrellisDecoder', 'PCSTrellisMetricRegister', 'PCSReceiver', 'PMAEndpoint']),
     'autoneg_link': ('Autonegotiation', 'autonegotiation.cpp', ['ReferenceMillisecond', 'FLPTransmitter',
         'FLPReceiver', 'MasterSlaveResolver', 'Autonegotiator', 'Autonegotiation'])}
 
@@ -44,10 +47,16 @@ def run(args):
     work.mkdir(parents=True, exist_ok=True)
     toolchain = TestToolchain(args.cxx, args.verilator.resolve(), work)
     (work / 'hardware_checks.json').unlink(missing_ok=True)
-    harness = SOURCE.parent / ('pma_endpoint.cpp' if args.case == 'pma_aligned' else args.case + '.cpp')
-    defines = ['-DALIGNED_PMA'] if args.case == 'pma_aligned' else []
+    harness = SOURCE.parent / ('autonomous_receive_filter.cpp' if args.case == 'autonomous_receive_datapath'
+                              else 'pma_endpoint.cpp' if args.case == 'pma_aligned' else args.case + '.cpp')
+    defines = (['-DAUTONOMOUS_DATAPATH'] if args.case == 'autonomous_receive_datapath' else
+               ['-DALIGNED_PMA'] if args.case == 'pma_aligned' else [])
     provenance = source_dependencies([source / implementation, harness], repo, args.cxx, defines=defines)
     provenance[str(SOURCE)] = digest(SOURCE)
+    if args.case == 'autonomous_receive_datapath':
+        for name in ('filter_quantizer_formal.py', 'filter_sum_formal.py'):
+            path = SOURCE.with_name(name)
+            provenance[str(path)] = digest(path)
     simulation_timeout = 4200 if args.case == 'autoneg_link' else 180
 
     def stage(name, command, timeout=1200, output=None):
@@ -61,7 +70,8 @@ def run(args):
             raise ValueError('native/' + name + ' composed output trajectories differ')
 
     simulate(args.native.resolve(), 'cpp')
-    frequency = '250000000' if args.case in ('adc_interleave', 'adc_receive', 'normalizer') else '125000000'
+    frequency = ('136000000' if args.case == 'autonomous_receive_datapath' else
+                 '250000000' if args.case in ('adc_interleave', 'adc_receive', 'normalizer') else '125000000')
     stage('convert', [args.converter.resolve(), '--primary_clock', 'clk', frequency,
         '--generated-dir', work / 'rtl', source / implementation, '--', '-I' + str(repo / 'include')])
     rtl = [work / 'rtl/Predef_pkg.sv'] + [work / 'rtl' / (child + '.sv') for child in children]
@@ -87,6 +97,25 @@ def run(args):
         if any(c in str(path) for c in ('"', '\\', '\n')):
             raise ValueError('unsupported synthesis path')
         return '"' + str(path) + '"'
+
+    frontend_checked = args.case == 'autonomous_receive_datapath'
+    if frontend_checked:
+        stage('quantizer-formal', [sys.executable, SOURCE.with_name('filter_quantizer_formal.py'),
+            '--rtl', work / 'rtl/ReceiveFilterPipelineCore.sv', '--tools', args.tools.resolve(),
+            '--work', work / 'quantizer-formal'])
+        # Exercise signed arithmetic after Yosys process/memory lowering before
+        # spending time mapping and routing a potentially changed circuit.
+        frontend = f'''read_verilog {quote(work / 'design.v')}
+hierarchy -check -top {top}
+proc
+opt
+memory
+opt
+write_verilog {quote(work / 'frontend.v')}
+'''
+        (work / 'frontend.ys').write_text(frontend)
+        stage('frontend', [binary / 'yosys', '-Q', '-T', '-s', work / 'frontend.ys'])
+        simulate(build('frontend', [work / 'frontend.v']), 'frontend')
 
     script = f'''read_liberty -lib {quote(liberty)}
 read_verilog {quote(work / 'design.v')}
@@ -137,6 +166,7 @@ write_verilog -noattr {quote(work / 'cells.v')}
         raise ValueError('composed hardware sources changed during validation')
     result = dict(status='pass', module=top, scope='functional equivalence; physical implementation is separate',
                   native_rtl_exact=True, native_mapped_exact=True, mapped_sha256=digest(work / 'mapped.v'),
+                  native_frontend_exact=True if frontend_checked else None,
                   source_sha256=provenance, fixture_sha256={}, cells=cells)
     if args.case == 'adc_receive':
         result['simulation_interface_sha256'] = digest(work / 'mapped_interface.sv')

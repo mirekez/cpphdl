@@ -133,6 +133,11 @@ if(Python3_Interpreter_FOUND)
             --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
             --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/namespaced-methods")
         set_tests_properties(templates_namespaced_methods PROPERTIES TIMEOUT 180 LABELS "rtl;templates")
+        add_test(NAME child_local_clocks COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cdc/LocalClocksChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/local-clocks")
+        set_tests_properties(child_local_clocks PROPERTIES TIMEOUT 240 LABELS "rtl;cdc")
         add_test(NAME child_clock_sources COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildClockChecks.py"
             --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"

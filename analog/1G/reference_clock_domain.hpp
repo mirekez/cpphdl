@@ -15,6 +15,7 @@ public:
     _PORT(electrical) CLEAR;
     _PORT(electrical) OUT;
     _PORT(electrical) OUT_N;
+    _PORT(electrical) CORE_OUT; // Buffered low-voltage clock for SAR logic.
     Multiplier multiplier;
     cmos<> predriver, driver;
     level_shift_bias bias;
@@ -35,6 +36,7 @@ public:
         predriver.Vss = Vss;
         predriver.elaborate();
         driver.A = predriver.Y;
+        driver.Y = CORE_OUT;
         driver.model.transistor_parameters = {channel_strength(.02), voltage(.35)};
         driver.Vdd = Vlogic;
         driver.Vss = Vss;

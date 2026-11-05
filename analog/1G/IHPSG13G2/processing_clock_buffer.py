@@ -17,6 +17,35 @@ from processing_clock_slew import (HERE, ROOT, CONDITIONS, HEADER, clock_limit,
 from mos_geometry import size_mos_instances
 
 
+def reference_sources(expected, snapshot=None):
+    """Bind historical generator code without replacing circuit/model evidence."""
+    hashes, retained = dict(expected), {}
+    for name, value in expected.items():
+        original = Path(name)
+        if original.is_file() and digest(original) == value:
+            continue
+        if snapshot is None:
+            raise ValueError('changed clock reference source: ' + name)
+        relative = original.resolve().relative_to(ROOT.resolve())
+        # Only historical generator/test source may move. Decks, traces,
+        # extracted circuits, libraries and executables must remain exact at
+        # their original paths, independently of a supplied snapshot.
+        source_roots = ('1G/', 'pdk/1G_repeater_IHPSG13G2/')
+        if (not relative.as_posix().startswith(source_roots) or
+                original.suffix not in ('.py', '.tcl', '.hpp', '.cpp')):
+            raise ValueError('clock reference artifact cannot use a source snapshot: ' + name)
+        target = (snapshot.resolve() / relative).resolve()
+        if not target.is_relative_to(snapshot.resolve()):
+            raise ValueError('clock reference snapshot escapes its directory')
+        if not target.is_file() or digest(target) != value:
+            raise ValueError('clock reference snapshot differs: ' + name)
+        del hashes[name]
+        hashes[str(target)] = value
+        retained[name] = str(target)
+    verify_files(hashes)
+    return hashes, retained
+
+
 def buffer(cdl, master):
     if master not in ('sg13g2_buf_8', 'sg13g2_buf_16'):
         raise ValueError('unsupported clock restoration buffer')
@@ -56,8 +85,8 @@ def run(args):
         raise ValueError('completed extracted clock-gate PVT reference required')
     if not args.conditions or len(set(args.conditions)) != len(args.conditions):
         raise ValueError('unique nonempty process conditions required')
-    hashes = dict(proof['source_sha256'])
-    verify_files(hashes)
+    hashes, retained = reference_sources(proof['source_sha256'],
+                                        getattr(args, 'reference_source_snapshot', None))
     cdl = args.pdk.resolve() / 'ihp-sg13g2/libs.ref/sg13g2_stdcell/cdl/sg13g2_stdcell.cdl'
     if hashes.get(str(cdl)) != digest(cdl):
         raise ValueError('buffer library differs from the physical controller reference')
@@ -82,7 +111,8 @@ def run(args):
     work = args.output.resolve()
     work.mkdir(parents=True, exist_ok=False)
     report = dict(status='running', stage='waiting_for_simulation', pid=os.getpid(),
-        source_sha256=hashes, cases={}, master=args.master, transistor_geometry=geometry,
+        source_sha256=hashes, reference_source_paths=retained,
+        cases={}, master=args.master, transistor_geometry=geometry,
         link_resistance_ohm=30, link_capacitance_F=20e-15,
         output_load_F=args.load_ff * 1e-15, conditions=args.conditions,
         physical_qualified=False, full_chip_qualified=False, scope=__doc__)
@@ -133,6 +163,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('reference', 'constraints', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--reference-source-snapshot', type=Path,
+                        help='exact historical source tree for the retained circuit; never replaces physical evidence')
     parser.add_argument('--master', choices=['sg13g2_buf_8', 'sg13g2_buf_16'], default='sg13g2_buf_16')
     parser.add_argument('--load-ff', type=float, default=200)
     parser.add_argument('--conditions', choices=list(CONDITIONS), nargs='+', default=list(CONDITIONS))

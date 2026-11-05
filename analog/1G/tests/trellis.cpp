@@ -4,11 +4,20 @@
 #include <iostream>
 #include <vector>
 #ifdef VERILATOR
+#ifdef PREPARED_TRELLIS
+#include "VPreparedPCSTrellisDecoder.h"
+using DUT = VPreparedPCSTrellisDecoder;
+#else
 #include "VPCSTrellisDecoder.h"
 using DUT = VPCSTrellisDecoder;
+#endif
 #else
 #include "../pcs_receive.hpp"
+#ifdef PREPARED_TRELLIS
+using DUT = PreparedPCSTrellisDecoder;
+#else
 using DUT = PCSTrellisDecoder;
+#endif
 long _system_clock = -1;
 #endif
 
@@ -113,8 +122,11 @@ int main(int argc, char** argv) {
             if (!trace)
                 throw std::runtime_error("cannot open trellis trace");
         }
-        bool advance = false, start = false, end = false;
+        bool advance = false, start = false, end = false, symbol_enable = true;
         std::array<unsigned, 8> metric{}, point{};
+#ifdef PREPARED_TRELLIS
+        std::array<unsigned, 24> differences{};
+#endif
 #ifndef VERILATOR
         dut.advance_in = _ASSIGN(advance);
         dut.start_in = _ASSIGN(start);
@@ -123,20 +135,37 @@ int main(int argc, char** argv) {
             dut.metric_in[i] = _ASSIGN_I(metric[i]);
             dut.point_in[i] = _ASSIGN_I(point[i]);
         }
-        dut.symbol_enable_in = _ASSIGN(true);
+#ifdef PREPARED_TRELLIS
+        for (unsigned i = 0; i < 24; ++i)
+            dut.difference_in[i] = _ASSIGN_I(differences[i]);
+#endif
+        dut.symbol_enable_in = _ASSIGN(symbol_enable);
         dut._assign();
 #endif
         unsigned cycles = 0;
         bool observed_valid = false;
+        unsigned held_data = 0, held_state = 0;
+        bool held_valid = false;
         auto step = [&](bool reset = false) {
-            unsigned expected_data = reset ? 0 : oracle.data;
-            unsigned expected_state = reset ? 0 : oracle.state;
-            bool expected_valid = reset ? false : oracle.valid;
-            oracle.step(metric, point, advance, start, end, reset);
+#ifdef PREPARED_TRELLIS
+            unsigned slot = 0;
+            // Independent enumeration of both directed differences. Avoid the
+            // implementation's indexing formula in the correctness oracle.
+            for (unsigned parity = 0; parity < 2; ++parity)
+                for (unsigned s = parity; s < 8; s += 2)
+                    for (unsigned t = parity; t < 8; t += 2)
+                        if (s != t)
+                            differences[slot++] = (metric[s] + 2097152 - metric[t]) % 2097152;
+#endif
+            unsigned expected_data = reset ? 0 : symbol_enable ? oracle.data : held_data;
+            unsigned expected_state = reset ? 0 : symbol_enable ? oracle.state : held_state;
+            bool expected_valid = reset ? false : symbol_enable ? oracle.valid : held_valid;
+            if (symbol_enable || reset)
+                oracle.step(metric, point, advance, start, end, reset);
 #ifdef VERILATOR
             dut.clk = 0;
             dut.reset = reset;
-            dut.symbol_enable_in = true;
+            dut.symbol_enable_in = symbol_enable;
             dut.start_in = start;
             dut.end_in = end;
             dut.advance_in = advance;
@@ -158,6 +187,22 @@ int main(int argc, char** argv) {
                 dut.point_in[i] = point[i];
             }
 #endif
+#ifdef PREPARED_TRELLIS
+#ifdef MAPPED
+            for (unsigned word = 0; word < 16; ++word)
+                dut.difference_in[word] = 0;
+            for (unsigned i = 0; i < 24; ++i) {
+                unsigned offset = (23 - i) * 21;
+                unsigned long shifted = (unsigned long)differences[i] << (offset % 32);
+                dut.difference_in[offset / 32] |= unsigned(shifted);
+                if (offset % 32 + 21 > 32)
+                    dut.difference_in[offset / 32 + 1] |= unsigned(shifted >> 32);
+            }
+#else
+            for (unsigned i = 0; i < 24; ++i)
+                dut.difference_in[i] = differences[i];
+#endif
+#endif
             dut.eval();
             dut.clk = 1;
             dut.eval();
@@ -173,6 +218,9 @@ int main(int argc, char** argv) {
             if (trace.is_open())
                 trace << data << ',' << valid << ',' << state << '\n';
             observed_valid = valid;
+            held_data = data;
+            held_state = state;
+            held_valid = valid;
             if (data != expected_data || valid != expected_valid || state != expected_state)
                 throw std::runtime_error("trellis/full-path oracle mismatch at cycle " + std::to_string(cycles));
             ++cycles;
@@ -337,6 +385,19 @@ int main(int argc, char** argv) {
             advance = false;
             step();
             step();
+        }
+        // Poison every control and metric while the symbol clock is paused.
+        // Reset must still clear state during a disabled tick.
+        for (unsigned index = 0; index < 1024; ++index) {
+            symbol_enable = (index % 7) < 3;
+            advance = true;
+            start = !symbol_enable || (index % 73 == 0);
+            end = !symbol_enable || (index % 91 == 0);
+            for (unsigned subset = 0; subset < 8; ++subset) {
+                metric[subset] = next_random(random) & 262143;
+                point[subset] = next_random(random) & 63;
+            }
+            step(index % 97 == 5);
         }
         std::cout << cycles << " trellis/full-path oracle steps; 4096 clean bytes exact; noisy byte errors "
                   << soft_errors << " versus " << hard_errors << " without trellis decoding\n";

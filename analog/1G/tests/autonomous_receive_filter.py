@@ -27,14 +27,17 @@ def run(args):
     args.work.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='run-', dir=args.work.resolve()))
     fixture = SOURCE.with_suffix('.cpp')
-    entry = ANALOG / '1G/autonomous_receive_filter.cpp'
-    hashes = source_dependencies([fixture, entry], ANALOG.parent, args.cxx)
+    top = 'AutonomousReceiveDatapath' if args.datapath else 'AutonomousReceiveFilter'
+    entry = ANALOG / ('1G/autonomous_receive_datapath.cpp' if args.datapath else '1G/autonomous_receive_filter.cpp')
+    defines = ['-DAUTONOMOUS_DATAPATH'] if args.datapath else []
+    hashes = source_dependencies([fixture, entry], ANALOG.parent, args.cxx, defines=defines)
     paths = [SOURCE, SOURCE.with_name('hardware.py'), ANALOG / 'VerilogA/trace_storage.py',
              ANALOG / 'pdk/1G_repeater_IHPSG13G2/tool_process.py', args.native.resolve(),
              args.converter.resolve(), args.verilator.resolve(),
              args.verilator.resolve().with_name('verilator_bin'), Path(args.cxx).resolve()]
     hashes.update({str(p): digest(p) for p in paths})
     report = dict(status='running', source_sha256=hashes, work=str(work),
+                  top=top, coefficient_probes=not args.datapath,
                   scope='Fixed-point autonomous echo/decision adaptation on synthetic channels; no cable, startup-controller or physical PHY qualification')
 
     def save():
@@ -61,10 +64,10 @@ def run(args):
             raise ValueError('missing shared receive arithmetic')
         objects = work / 'rtl_obj'
         command('rtl_build', [args.verilator.resolve(), '--cc', '--exe', '--build', '--no-skip-identical',
-                             '-j', '1', '--top-module', 'AutonomousReceiveFilter', '-Wno-fatal',
-                             '--Mdir', objects, '-CFLAGS', '-DVERILATOR -std=c++17', *rtl, fixture,
+                             '-j', '1', '--top-module', top, '-Wno-fatal',
+                             '--Mdir', objects, '-CFLAGS', ' '.join(['-DVERILATOR', '-std=c++17', *defines]), *rtl, fixture,
                              '-MAKEFLAGS', 'CXX=' + args.cxx + ' LINK=' + args.cxx])
-        command('rtl', [objects / 'VAutonomousReceiveFilter', work / 'rtl.csv'])
+        command('rtl', [objects / ('V' + top), work / 'rtl.csv'])
         expected = ('PASS 8 autonomous channel cases, 124280 error-free held-out symbols, '
                     '6835 disabled-adaptation errors, 589833 complete states\n')
         if any((work / (flow + '.log')).read_text() != expected for flow in ('native', 'rtl')):
@@ -76,7 +79,7 @@ def run(args):
                 count = 0
                 for row in stream:
                     fields = row.strip().split(',')
-                    if len(fields) != 28 or int(fields[0]) != count:
+                    if len(fields) != (4 if args.datapath else 28) or int(fields[0]) != count:
                         raise ValueError('missing complete event state')
                     count += 1
                 if count != 589833:
@@ -103,4 +106,5 @@ if __name__ == '__main__':
     for name in ('native', 'converter', 'verilator', 'work'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--cxx', required=True)
+    parser.add_argument('--datapath', action='store_true', help='check the physical lane interface without coefficient probe pins')
     run(parser.parse_args())

@@ -2,6 +2,7 @@
 #include "pcs_synchronize.hpp"
 #include "pcs_framer.hpp"
 #include "pcs_receive.hpp"
+#include "pcs_trellis_metrics.hpp"
 #include "pcs_branch_metrics_pipeline.hpp"
 
 // Digital receive PCS: an unseeded synchronizer, delimiter recognition, soft
@@ -34,11 +35,11 @@ private:
     PCSReceiveSynchronizer sync;
     PCSReceiveFramer framer;
     PipelinedPCSBranchMetrics metrics;
-    PCSTrellisDecoder decoder;
+    PreparedPCSTrellisDecoder decoder;
+    PCSTrellisMetricRegister decoder_metrics;
     reg<u<12>> hard_delayed{};
     reg<u<32>> samples_delayed{}, samples_for_metrics{};
     reg<u<42>> control_history{};
-    reg<u<18>> decoder_metrics[8]{};
     reg<u<6>> decoder_points[8]{};
     reg<u<3>> decoder_flags{};
     reg<logic<TAG_BITS * TAG_DEPTH>> tags{};
@@ -56,12 +57,20 @@ private:
         return packed;
     }
 
+    unsigned effective_metric(unsigned subset) {
+        unsigned control;
+        control = unsigned(control_history >> 35) & 127;
+        return (control & 8) ? (((control >> 4) & 7) == subset ? 0 : 262143)
+                             : unsigned(metrics.metric_out[subset]());
+    }
+
 public:
     void _assign() {
         sync.symbol_enable_in = _ASSIGN(symbol_enable_in());
         framer.symbol_enable_in = _ASSIGN(symbol_enable_in());
         metrics.symbol_enable_in = _ASSIGN(symbol_enable_in());
         decoder.symbol_enable_in = _ASSIGN(symbol_enable_in());
+        decoder_metrics.symbol_enable_in = _ASSIGN(symbol_enable_in());
         sync.symbols_in = _ASSIGN(slice(unsigned(samples_in())));
         sync.remote_master_in = _ASSIGN(remote_master_in());
         sync.pma_ok_in = _ASSIGN(pma_ok_in());
@@ -79,15 +88,19 @@ public:
         metrics.negate_in = _ASSIGN(framer.negate_out());
         metrics.advance_in = _ASSIGN((framer.control_out() & 1) != 0);
         for (unsigned i = 0; i < 8; ++i) {
-            decoder.metric_in[i] = _ASSIGN_REG_I(decoder_metrics[i]);
+            decoder_metrics.metric_in[i] = _ASSIGN_I(effective_metric(i));
+            decoder.metric_in[i] = _ASSIGN_I(decoder_metrics.metric_out[i]());
             decoder.point_in[i] = _ASSIGN_REG_I(decoder_points[i]);
         }
+        for (unsigned i = 0; i < 24; ++i)
+            decoder.difference_in[i] = _ASSIGN_I(decoder_metrics.difference_out[i]());
         decoder.advance_in = _ASSIGN((decoder_flags & 1) != 0);
         decoder.start_in = _ASSIGN((decoder_flags & 2) != 0);
         decoder.end_in = _ASSIGN((decoder_flags & 4) != 0);
         sync._assign();
         framer._assign();
         metrics._assign();
+        decoder_metrics._assign();
         decoder._assign();
     }
     void _work(bool reset) {
@@ -99,9 +112,6 @@ public:
             // boundary. The trellis recurrence receives complete 18-bit costs
             // without the control mux and its fanout on the addition path.
             for (unsigned i = 0; i < 8; ++i) {
-                decoder_metrics[i]._next = (control & 8)
-                    ? (((control >> 4) & 7) == i ? 0 : 262143)
-                    : unsigned(metrics.metric_out[i]());
                 decoder_points[i]._next = (control & 8)
                     ? 0 : unsigned(metrics.point_out[i]());
             }
@@ -145,6 +155,7 @@ public:
         sync._work(reset);
         framer._work(reset);
         metrics._work(reset);
+        decoder_metrics._work(reset);
         decoder._work(reset);
         if (!pma_ok_in()) {
             output_reg._next = 512;
@@ -162,7 +173,6 @@ public:
             output_reg._next = 0;
             decoder_flags._next = 0;
             for (unsigned i = 0; i < 8; ++i) {
-                decoder_metrics[i]._next = 0;
                 decoder_points[i]._next = 0;
             }
         }
@@ -171,13 +181,13 @@ public:
         sync._strobe();
         framer._strobe();
         metrics._strobe();
+        decoder_metrics._strobe();
         decoder._strobe();
         hard_delayed.strobe();
         samples_delayed.strobe();
         samples_for_metrics.strobe();
         control_history.strobe();
         for (unsigned i = 0; i < 8; ++i) {
-            decoder_metrics[i].strobe();
             decoder_points[i].strobe();
         }
         decoder_flags.strobe();

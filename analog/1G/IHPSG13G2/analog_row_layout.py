@@ -11,7 +11,7 @@ import klayout.db as db
 from processing_clock_gate_layout import placement_order
 
 
-def create_row(name, ports, build_parts):
+def create_row(name, ports, build_parts, net_weights=None):
     layout = db.Layout()
     layout.dbu = .001
     top = layout.create_cell(name)
@@ -113,7 +113,7 @@ def create_row(name, ports, build_parts):
         cursor = math.ceil((dx + bounds.right * layout.dbu + 5) * 100) / 100
 
     parts = build_parts(layout)
-    order, placement = placement_order(parts, layout.dbu)
+    order, placement = placement_order(parts, layout.dbu, net_weights)
     for index in order:
         place(*parts[index])
     terminals = {}

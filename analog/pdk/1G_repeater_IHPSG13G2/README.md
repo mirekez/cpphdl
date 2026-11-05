@@ -1,6 +1,30 @@
 # Single-reference 1G repeater implementation project
 
-The implemented C++RTL top is [`RepeaterCore`](repeater.hpp). It forwards two
+The [shared-die physical flow](shared-space.md) connects the full analog leaf
+inventory, digital cells, SRAM and pads in one placement area. Its as-is PnR
+stages run without requiring timing closure.
+
+The connected digital top is [`RepeaterDigital`](repeater_digital.hpp), with
+two [`RepeaterPort`](repeater_port.hpp) instances. Each port contains the actual
+ADC sequencers, receive timing recovery, four DSP lanes, receive PCS,
+auto-negotiation, PMA state machine and transmit PCS/driver controls. The
+`FlowControlledRepeater` connects their receive and transmit words through
+frame memory and PAUSE handling. Its six clock domains are wired explicitly.
+
+`--target digital` checks this hierarchy in native C++ and generated RTL,
+compares startup output digests, and audits the elaborated instance inventory
+and critical connections. It includes negative checks for a missing PHY, a
+missing SAR, a swapped receive input and accidentally shared TX clocks.
+This establishes digital connectivity and startup containment; it does not
+establish an end-to-end electrical link or full-chip physical implementation.
+
+`--target electrical` additionally builds the actual analog IC assembly and
+joins its 1,213 control/decision/clock connections to the converted digital
+hierarchy. See [electrical-integration.md](electrical-integration.md) for the
+connected circuit, validation commands and remaining physical work. The chip
+target runs both integration stages before checking the physical blockers.
+
+The older physical core target remains [`RepeaterCore`](repeater.hpp). It forwards two
 clock-aligned GMII streams in opposite directions at 125 MHz, one octet per
 clock per direction. The flow converts that class with the root `cpphdl` tool,
 synthesizes actual IHP SG13G2 cells, places and routes the core, extracts routed
@@ -12,8 +36,9 @@ The [recorded validation](validation.md) reports the passing core implementation
 open. New hardware clock alignment, partial PCS datapaths, MOS-biased drivers and
 a real IHP padframe are described in [chip assembly and verification](chip.md).
 The common-ground padframe passes full DRC and deep transistor LVS as a separate
-component; complete PHY integration remains open. `--target chip` reports missing blocks and exits with
-status 2. The earlier [`1G/`](../../1G/README.md) PAM5 models include sampled
+component; complete PHY integration remains open. `--target chip` now performs
+the digital integration checks before reporting physical blockers and exiting
+with status 2. The earlier [`1G/`](../../1G/README.md) PAM5 models include sampled
 simulation algorithms and ideal sources that cannot become physical cells
 automatically. See [requirements and remaining work](requirements.md).
 
@@ -23,9 +48,10 @@ package, magnetics and connectors; this project does not generate PCB files.
 ## One reference clock
 
 The intended chip has **one external 125 MHz reference**. Its two copper PHYs
-still require receive phase recovery and explicit clock alignment. The initial
-integration plan uses both ports as MASTER, with their partners as SLAVE. A
-different negotiated role requires additional clock-domain/elastic-buffer
+negotiate their roles independently. The digital top exposes a separate TX
+clock for each port; the physical clock circuit must follow recovered timing
+when that port is SLAVE. These delivered clocks and their qualification remain
+electrical integration boundaries. Different negotiated roles require clock-domain/elastic-buffer
 implementation and validation; an unrelated receive clock cannot feed the core.
 
 ```mermaid

@@ -143,18 +143,18 @@ def evidence(entry, source_hash, hashes):
         keys = ('status', 'stage', 'error', 'timing', 'setup_ns', 'hold_ns',
                 'timing_qualified', 'physical_qualified', 'geometry_qualified',
                 'drc_qualified', 'lvs_qualified', 'full_chip_qualified',
-                'local_drc_violations', 'drc', 'lvs', 'electrical_pass',
+                'local_drc_violations', 'drc', 'lvs', 'assembly_audit', 'full_sram_qualified', 'electrical_pass',
                 'global_electrical_pass', 'global_estimates', 'native_postroute_exact')
         records.append(dict(path=relative(path), sha256=digest(path),
             source_hash_recorded=contains(data), recorded={k: data[k] for k in keys if k in data}))
     return records
 
 
-def pictures(gds, top_name, bounds, work, output, records):
+def pictures(gds, top_name, bounds, work, output, records, floorplan=False):
     canvas = Image.new('RGB', (2400, 1490), BACKGROUND)
     draw = ImageDraw.Draw(canvas)
-    label(draw, (50, 25), '1G repeater / current physical block assembly', 38)
-    label(draw, (50, 78), 'Actual mask geometry · separate block placements · inter-block routing unfinished', 23, ACCENT)
+    label(draw, (50, 25), '1G repeater / ' + ('single-die floorplan' if floorplan else 'current physical block assembly'), 38)
+    label(draw, (50, 78), 'Actual mask geometry · ' + ('shared I/O padframe' if floorplan else 'separate block placements') + ' · inter-block routing unfinished', 23, ACCENT)
     groups = [('All drawing layers', list(LAYERS)),
               ('Devices and lower metals', list(LAYERS)[:9]),
               ('Upper metals', list(LAYERS)[9:])]
@@ -167,12 +167,16 @@ def pictures(gds, top_name, bounds, work, output, records):
         column, row = index // 11, index % 11
         label(draw, (50 + column * 1170, 1035 + row * 30),
               f'{index + 1:02d}  {record["title"]}', 23, MUTED)
-    label(draw, (50, 1400), f'{len(records)} blocks · {bounds[2]-bounds[0]:.1f} × {bounds[3]-bounds[1]:.1f} µm review arrangement; not a die-size claim', 24, MUTED)
+    extent = 'proposed die' if floorplan else 'µm review arrangement; not a die-size claim'
+    label(draw, (50, 1400), f'{len(records)} blocks · {bounds[2]-bounds[0]:.1f} × {bounds[3]-bounds[1]:.1f} ' + ('µm ' if floorplan else '') + extent, 24, MUTED)
     label(draw, (50, 1445), 'Timing/DRC/LVS failures and untested connections remain recorded. See README and provenance.', 23, MUTED)
     canvas.save(output / 'repeater_layers.png', optimize=True)
 
 
 def run(args):
+    full_width = getattr(args, 'full_resolution_width', 0)
+    if full_width and not 2000 <= full_width <= 16000:
+        raise ValueError('full-resolution width must be zero or 2000 to 16000')
     selection = json.loads(args.selection.read_text())
     entries = selection['blocks']
     names = [entry['name'] for entry in entries]
@@ -269,8 +273,12 @@ def run(args):
             "- [Provenance and recorded checks](development_provenance.json): source hashes, status, placements and namespace mapping.", "",
             "![Current layout layers](repeater_layers.png)", "",
             "## Current contents", "",
-            "The receiver export uses the latest completed pin-repair candidate, even though its timing screen fails. Global-route guides are not converted into metal: only geometry actually present in the OpenROAD checkpoint is exported. The receiver therefore contains placement/CTS/power geometry and still needs detailed signal routing.",
-            "The PCS includes soft branch metrics and the trellis decoder. The receive equalizer/echo-canceller DSP, complete ADC/AFE and complete transmitter do not yet have integrated layouts in this package; their separate available physical constituents are listed below.",
+            "The receiver export uses the completed clock-load repair after equivalent-input pin repair, even though its setup timing screen still fails. Global-route guides are not converted into metal: only geometry actually present in the OpenROAD checkpoint is exported. The receiver therefore contains placement/CTS/power geometry and still needs detailed signal routing.",
+            "The PCS includes soft branch metrics and the trellis decoder. " +
+            ("A standalone receive DSP filter placement is also included; its signal routing is unfinished. "
+             if any(record['top'] == 'ReceiveFilter' for record in records) else
+             "The receive DSP filter has no physical checkpoint in this package. ") +
+            "Complete ADC/AFE and transmitter integration remain unfinished; available constituent layouts are listed below.",
             "The old forwarding core and padframe have no newer physical revisions, so their latest available October 24 geometry is retained. The padframe opening is too small for this collection. The combined bounding box is a review arrangement, not a proposed die size.", "",
             "| ID / cell in combined GDS | Current module view | Recorded state |",
             "| --- | --- | --- |"]
@@ -298,6 +306,16 @@ def run(args):
         verify(hashes)
         for path in outputs + [work / 'development_provenance.json', work / 'README.md']:
             shutil.copyfile(path, args.output / path.name)
+        if full_width:
+            from render_development_layout import run as render_full
+            render_full(argparse.Namespace(provenance=args.output / 'development_provenance.json',
+                output=args.output / 'repeater_full_resolution.png', width=full_width, work=args.work))
+            readme = args.output / 'README.md'
+            text = readme.read_text().replace(
+                '- [Layer overview](repeater_layers.png):',
+                '- [High-resolution full assembly](repeater_full_resolution.png): all published blocks; '
+                '[render receipt](repeater_full_resolution.json).\n- [Layer overview](repeater_layers.png):')
+            readme.write_text(text)
         print(json.dumps(dict(blocks=len(entries), bytes=sum(p.stat().st_size for p in outputs),
                               gds=str(args.output / packed.name)), indent=2))
 
@@ -310,4 +328,6 @@ if __name__ == '__main__':
     parser.add_argument('--work', type=Path, default=ROOT / 'build/layout-publication')
     parser.add_argument('--pdk', type=Path, default=ROOT / 'pdk/IHPSG13G2')
     parser.add_argument('--tools', type=Path, default=ROOT / 'out/repeater-toolchain')
+    parser.add_argument('--full-resolution-width', type=int, default=8000,
+                        help='full assembly PNG width, 2000 to 16000 pixels; zero disables it')
     run(parser.parse_args())

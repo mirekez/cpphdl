@@ -204,13 +204,24 @@ public:
 // registers retain 32 symbols. Circular metrics avoid global-min subtraction
 // on the recurrence path; balanced selection preserves predecessor tie order.
 // start_in initializes a new data stream at known convolutional state zero.
-class PCSTrellisDecoder : public Module {
+// PREPARED selects an exact, shorter recurrence when the upstream stage
+// supplies all directed same-parity branch differences with the metrics.
+// Use PCSTrellisDecoder for independent metrics, or PreparedPCSTrellisDecoder
+// with PCSTrellisMetricRegister. Both retain the same decoder latency.
+template<bool PREPARED>
+class PCSTrellisDecoderCore : public Module {
+    static constexpr bool PREPARED_METRICS = PREPARED;
     static constexpr unsigned DEPTH = 32;
 
 public:
     // Hold the entire symbol pipeline between recovered observations.
     _PORT(bool) symbol_enable_in;
     _PORT(u<18>) metric_in[8];
+    // Used only by the prepared specialization. Index (s, t), s != t and
+    // equal parity: (s & 1)*12 + (s >> 1)*3 + (t >> 1) - ((t >> 1) > (s >> 1)).
+    // Each value must equal (metric_in[s] - metric_in[t]) modulo 2^21 for
+    // this same symbol. The generic specialization never reads these ports.
+    _PORT(u<21>) difference_in[24];
     _PORT(u<6>) point_in[8];
     _PORT(bool) advance_in;
     _PORT(bool) start_in;
@@ -270,24 +281,29 @@ private:
         return (initial ^ (generate << 1)) & 2097151;
     }
 
-    bool branch_better(unsigned a, unsigned b, unsigned c, unsigned d,
+    bool branch_better(unsigned a, unsigned b, unsigned c, unsigned d, unsigned s, unsigned t,
                        bool candidate_valid, bool current_valid) {
         // Carry-save reduction of a + b - c - d, followed by one prefix sum.
         // Each shifted carry has a zero low bit. Inject one complement-correction
         // bit there after each reduction: a + b + ~c + ~d + 2. This avoids a
         // third full-width compressor on the recurrent metric-decision path.
         // The 21-bit circular bound is the same as for candidate metrics.
-        unsigned x, y, z, sum, carry;
+        unsigned x, y, z, sum, carry, index;
+        index = (s & 1) * 12 + (s >> 1) * 3 + (t >> 1) - ((t >> 1) > (s >> 1) ? 1 : 0);
         x = a;
-        y = b;
+        y = PREPARED_METRICS ? unsigned(difference_in[index]()) : b;
         z = ~c;
         sum = x ^ y ^ z;
         carry = ((x & y) | (x & z) | (y & z)) << 1;
-        x = sum;
-        y = carry | 1;
-        z = ~d;
-        sum = x ^ y ^ z;
-        carry = ((x & y) | (x & z) | (y & z)) << 1;
+        if (!PREPARED_METRICS) {
+            x = sum;
+            y = carry | 1;
+            z = ~d;
+            sum = x ^ y ^ z;
+            carry = ((x & y) | (x & z) | (y & z)) << 1;
+        }
+        // Prepared mode reduces a + (b - d) + ~c + 1 in one compressor.
+        // Both directions are registered upstream; no negation is on this path.
         return candidate_valid && (!current_valid || ((add_metric(sum, carry | 1) >> 20) & 1) != 0);
     }
 
@@ -296,7 +312,7 @@ public:
     void _work(bool reset) {
         unsigned next_cost[8];
         logic<DEPTH * 8> next_survivor[8];
-        unsigned candidates[4], candidate_bytes[4], branch[4];
+        unsigned candidates[4], candidate_bytes[4], branch[4], branch_subset[4];
         bool candidate_valid[4];
         unsigned cost2[2], state2[2];
         bool valid2[2], outranks[64], is_best;
@@ -334,6 +350,7 @@ public:
         for (unsigned i = 0; i < 4; ++i) {
             candidates[i] = 0;
             branch[i] = 0;
+            branch_subset[i] = 0;
             candidate_bytes[i] = 0;
             candidate_valid[i] = false;
         }
@@ -372,6 +389,7 @@ public:
                     sd7 = ((destination >> 2) ^ (predecessor >> 1)) & 1;
                     subset = sd6 * 4 + sd7 * 2 + (destination & 1);
                     branch[choice] = unsigned(metric_in[subset]());
+                    branch_subset[choice] = subset;
                     candidates[choice] = add_metric(unsigned(costs[(destination & 1) * 4 + choice]),
                                                     unsigned(metric_in[subset]()));
                     candidate_valid[choice] = ((unsigned(reachable) >> ((destination & 1) * 4 + choice)) & 1) != 0;
@@ -381,21 +399,27 @@ public:
                 // remove a second serial comparison from the metric recurrence.
                 win01 = branch_better(unsigned(costs[(destination & 1) * 4 + 1]), branch[1],
                                       unsigned(costs[(destination & 1) * 4 + 0]), branch[0],
+                                      branch_subset[1], branch_subset[0],
                                       candidate_valid[1], candidate_valid[0]);
                 win02 = branch_better(unsigned(costs[(destination & 1) * 4 + 2]), branch[2],
                                       unsigned(costs[(destination & 1) * 4 + 0]), branch[0],
+                                      branch_subset[2], branch_subset[0],
                                       candidate_valid[2], candidate_valid[0]);
                 win03 = branch_better(unsigned(costs[(destination & 1) * 4 + 3]), branch[3],
                                       unsigned(costs[(destination & 1) * 4 + 0]), branch[0],
+                                      branch_subset[3], branch_subset[0],
                                       candidate_valid[3], candidate_valid[0]);
                 win12 = branch_better(unsigned(costs[(destination & 1) * 4 + 2]), branch[2],
                                       unsigned(costs[(destination & 1) * 4 + 1]), branch[1],
+                                      branch_subset[2], branch_subset[1],
                                       candidate_valid[2], candidate_valid[1]);
                 win13 = branch_better(unsigned(costs[(destination & 1) * 4 + 3]), branch[3],
                                       unsigned(costs[(destination & 1) * 4 + 1]), branch[1],
+                                      branch_subset[3], branch_subset[1],
                                       candidate_valid[3], candidate_valid[1]);
                 win23 = branch_better(unsigned(costs[(destination & 1) * 4 + 3]), branch[3],
                                       unsigned(costs[(destination & 1) * 4 + 2]), branch[2],
+                                      branch_subset[3], branch_subset[2],
                                       candidate_valid[3], candidate_valid[2]);
                 choose1 = win01 && !win12 && !win13;
                 choose2 = win02 && win12 && !win23;
@@ -549,4 +573,73 @@ public:
         drain_left.strobe();
         drain_valid.strobe();
     }
+};
+
+// Shared parameterized recurrence; the wrapper fixes its arithmetic mode.
+class PCSTrellisDecoder : public Module {
+public:
+    _PORT(bool) symbol_enable_in;
+    _PORT(u<18>) metric_in[8];
+    _PORT(u<6>) point_in[8];
+    _PORT(bool) advance_in;
+    _PORT(bool) start_in;
+    _PORT(bool) end_in;
+    _PORT(u<8>) data_out = _ASSIGN(core.data_out());
+    _PORT(bool) valid_out = _ASSIGN(core.valid_out());
+    _PORT(u<3>) state_out = _ASSIGN(core.state_out());
+
+private:
+    PCSTrellisDecoderCore<false> core;
+
+public:
+    void _assign() {
+        core.symbol_enable_in = _ASSIGN(symbol_enable_in());
+        core.advance_in = _ASSIGN(advance_in());
+        core.start_in = _ASSIGN(start_in());
+        core.end_in = _ASSIGN(end_in());
+        for (unsigned i = 0; i < 8; ++i) {
+            core.metric_in[i] = _ASSIGN_I(metric_in[i]());
+            core.point_in[i] = _ASSIGN_I(point_in[i]());
+        }
+        for (unsigned i = 0; i < 24; ++i)
+            core.difference_in[i] = _ASSIGN(0);
+        core._assign();
+    }
+    void _work(bool reset) { core._work(reset); }
+    void _strobe() { core._strobe(); }
+};
+
+// Shared parameterized recurrence; the wrapper fixes its arithmetic mode.
+class PreparedPCSTrellisDecoder : public Module {
+public:
+    _PORT(bool) symbol_enable_in;
+    _PORT(u<18>) metric_in[8];
+    _PORT(u<21>) difference_in[24];
+    _PORT(u<6>) point_in[8];
+    _PORT(bool) advance_in;
+    _PORT(bool) start_in;
+    _PORT(bool) end_in;
+    _PORT(u<8>) data_out = _ASSIGN(core.data_out());
+    _PORT(bool) valid_out = _ASSIGN(core.valid_out());
+    _PORT(u<3>) state_out = _ASSIGN(core.state_out());
+
+private:
+    PCSTrellisDecoderCore<true> core;
+
+public:
+    void _assign() {
+        core.symbol_enable_in = _ASSIGN(symbol_enable_in());
+        core.advance_in = _ASSIGN(advance_in());
+        core.start_in = _ASSIGN(start_in());
+        core.end_in = _ASSIGN(end_in());
+        for (unsigned i = 0; i < 8; ++i) {
+            core.metric_in[i] = _ASSIGN_I(metric_in[i]());
+            core.point_in[i] = _ASSIGN_I(point_in[i]());
+        }
+        for (unsigned i = 0; i < 24; ++i)
+            core.difference_in[i] = _ASSIGN_I(difference_in[i]());
+        core._assign();
+    }
+    void _work(bool reset) { core._work(reset); }
+    void _strobe() { core._strobe(); }
 };

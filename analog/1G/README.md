@@ -80,6 +80,7 @@ and recovers complete FCS-checked frames from each solver's voltages.
 | `pcs_framer.hpp` | Receive framing, control tags, error containment and re-acquisition requests |
 | `pcs_receive.hpp` | Soft branch metrics, eight-state Viterbi decoding and terminated tail buffering |
 | `pcs_receiver.hpp` | Composed ADC-sample-to-GMII receiver with aligned masks and metadata |
+| `pcs_trellis_metrics.hpp` | [Registered branch differences](trellis_preparation.md) that shorten the trellis comparison without changing precision or latency |
 | `pma_control.hpp`, `pma_endpoint.hpp` | Startup, receiver-readiness exchange, mode control and connected TX/RX PCS; [interfaces and current tests](pma_control.md) |
 
 All electrical modules derive from `IC`, declare member ports and define purposes

@@ -261,9 +261,45 @@ bool hasClockStrobeSignature(const Method& method)
     return method.ret.empty() && method.arguments.empty();
 }
 
+// Nested reusable components declare local clock names. Their parent selects
+// physical clock sources with lifecycle calls; CLI clocks describe the root.
+bool isNestedModule(const Module& module)
+{
+    for (const auto& parent : currProject->modules)
+        for (const auto& member : parent.members) {
+            auto type = member.expr;
+            if (currProject->findModule(type.str()) == &module)
+                return true;
+        }
+    return false;
+}
+
+std::vector<ClockDomain> moduleClockDomains(const Module& module)
+{
+    auto clocks = currProject->clocks;
+    if (clocks.empty())
+        clocks.push_back({"clk", 0});
+    if (!isNestedModule(module))
+        return clocks;
+    for (const auto& method : module.methods) {
+        if (method.name == "_work_neg" || method.name == "_strobe_neg")
+            continue;
+        for (const std::string prefix : {"_work_neg_", "_strobe_neg_", "_work_", "_strobe_"}) {
+            if (method.name.rfind(prefix, 0) != 0)
+                continue;
+            const auto name = method.name.substr(prefix.size());
+            if (std::none_of(clocks.begin(), clocks.end(), [&](const auto& clock) { return clock.name == name; }))
+                clocks.push_back({name, clocks.front().frequency});
+            break;
+        }
+    }
+    return clocks;
+}
+
 bool hasNamedClockProcess(const Module& module)
 {
-    return std::any_of(currProject->clocks.begin(), currProject->clocks.end(),
+    const auto clocks = moduleClockDomains(module);
+    return std::any_of(clocks.begin(), clocks.end(),
         [&](const ClockDomain& clock) {
             return findMethod(module, "_work_" + clock.name) != nullptr
                 || findMethod(module, "_strobe_" + clock.name) != nullptr;
@@ -383,22 +419,23 @@ std::unordered_set<std::string> methodRegisters(Module& module,
 bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes)
 {
     std::unordered_map<std::string, std::string> owners;
+    const auto clocks = moduleClockDomains(module);
     const bool namedClockProcess = hasNamedClockProcess(module);
-    const auto& primaryClock = currProject->clocks.front();
+    const auto& primaryClock = clocks.front();
     const bool explicitPrimary = findMethod(module, "_work_" + primaryClock.name) != nullptr
         || findMethod(module, "_strobe_" + primaryClock.name) != nullptr;
     // Existing modules keep _work/_strobe as their primary-domain process even
     // after adding named secondary clocks. An explicit named primary process
     // takes precedence when both APIs are present.
     const bool legacyPrimary = findMethod(module, "_work") != nullptr && !explicitPrimary;
-    if (namedClockProcess && currProject->clocks.size() > 1) {
-        const auto& primary = currProject->clocks.front();
+    if (namedClockProcess && clocks.size() > 1) {
+        const auto& primary = clocks.front();
         const bool hasPrimaryWork = legacyPrimary
             || findMethod(module, "_work_" + primary.name) != nullptr;
         const bool hasPrimaryStrobe = legacyPrimary
             || findMethod(module, "_strobe_" + primary.name) != nullptr;
         const bool hasCompleteSecondary = std::any_of(
-            currProject->clocks.begin() + 1, currProject->clocks.end(),
+            clocks.begin() + 1, clocks.end(),
             [&](const ClockDomain& clock) {
                 return findMethod(module, "_work_" + clock.name) != nullptr
                     && findMethod(module, "_strobe_" + clock.name) != nullptr;
@@ -412,13 +449,22 @@ bool validateClockProcesses(Module& module, std::vector<ClockProcess>& processes
     }
     if (!namedClockProcess) {
         const size_t firstNoopClock = legacyPrimary ? 1 : 0;
-        for (size_t i = firstNoopClock; i < currProject->clocks.size(); ++i) {
-            ensureNoopClockProcess(module, currProject->clocks[i]);
+        for (size_t i = firstNoopClock; i < clocks.size(); ++i) {
+            ensureNoopClockProcess(module, clocks[i]);
         }
     }
 
-    for (size_t clockIndex = 0; clockIndex < currProject->clocks.size(); ++clockIndex) {
-        const auto& clock = currProject->clocks[clockIndex];
+    if (isNestedModule(module)) {
+        for (const auto& clock : clocks) {
+            if (!findMethod(module, "_work_" + clock.name)
+                && !findMethod(module, "_strobe_" + clock.name)
+                && !(legacyPrimary && clock.name == clocks.front().name))
+                ensureNoopClockProcess(module, clock);
+        }
+    }
+
+    for (size_t clockIndex = 0; clockIndex < clocks.size(); ++clockIndex) {
+        const auto& clock = clocks[clockIndex];
         ClockProcess process;
         process.clock = clock;
         const bool useLegacyPrimary = legacyPrimary && clockIndex == 0;
@@ -650,13 +696,13 @@ void printClockBlock(std::ofstream& out, Module& module, const std::string& edge
     out << "    end\n";
 }
 
-std::vector<std::string> generatedClockNames()
+std::vector<std::string> generatedClockNames(const Module* module = currModule)
 {
     if (currProject->clocks.empty()) {
         return {"clk"};
     }
     std::vector<std::string> names;
-    for (const auto& clock : currProject->clocks) {
+    for (const auto& clock : moduleClockDomains(*module)) {
         names.push_back(clock.name);
     }
     return names;
@@ -723,7 +769,7 @@ bool Module::print(std::ofstream& out)
 {
     currModule = this;
     onceAccessedRegs.clear();
-    const bool multipleClocks = currProject->clocks.size() >= 2;
+    const bool multipleClocks = moduleClockDomains(*this).size() >= 2;
     std::vector<ClockProcess> clockProcesses;
     if (multipleClocks && !validateClockProcesses(*this, clockProcesses)) {
         return false;
@@ -905,7 +951,11 @@ bool childClockConnections(Module& module, const Field& member,
     std::map<std::string, std::string>& connections)
 {
     const auto clocks = generatedClockNames();
-    for (const auto& clock : clocks)
+    auto type = member.expr;
+    const auto* child = currProject->findModule(type.str());
+    if (!child) return false;
+    const auto childNames = generatedClockNames(child);
+    for (const auto& clock : childNames)
         connections[clock] = clock;
     std::map<std::string, std::string> selected;
     bool valid = true;
@@ -913,14 +963,14 @@ bool childClockConnections(Module& module, const Field& member,
     auto clockMethod = [&](const std::string& name, std::string& clock, bool& negative) {
         negative = name == "_work_neg" || name.rfind("_work_neg_", 0) == 0;
         if (name == "_work" || name == "_work_neg") {
-            clock = clocks.front();
+            clock = childNames.front();
             return true;
         }
         const std::string prefix = negative ? "_work_neg_" : "_work_";
         if (name.rfind(prefix, 0) != 0)
             return false;
         clock = name.substr(prefix.size());
-        return std::find(clocks.begin(), clocks.end(), clock) != clocks.end();
+        return std::find(childNames.begin(), childNames.end(), clock) != childNames.end();
     };
 
     for (const auto& clock : clocks) {
@@ -970,6 +1020,12 @@ bool childClockConnections(Module& module, const Field& member,
                 }
             };
             visit(root);
+        }
+    }
+    for (const auto& clock : childNames) {
+        if (std::find(clocks.begin(), clocks.end(), clock) == clocks.end() && !selected.count(clock)) {
+            std::cerr << "ERROR: unmapped child clock: " << module.name << "::" << member.name << "::" << clock << "\n";
+            valid = false;
         }
     }
     return valid;
@@ -1119,7 +1175,7 @@ bool Module::printMembers(std::ofstream& out)
                 out << std::string(4 + member.array.size() * 4, ' ');
             }
             out << " " << member.name << " (" << "\n";
-            const auto clockNames = generatedClockNames();
+            const auto clockNames = generatedClockNames(mod);
             out << std::string(8 + member.array.size() * 4, ' ') << "."
                 << clockNames.front() << "(" << childClocks[clockNames.front()] << ")\n";
             for (size_t i = 1; i < clockNames.size(); ++i) {
@@ -1175,7 +1231,7 @@ bool Module::printMembers(std::ofstream& out)
                 out << "    ";
             }
             out << " " << member.name << " (" << "\n";
-            const auto clockNames = generatedClockNames();
+            const auto clockNames = generatedClockNames(mod);
             out << "        ." << clockNames.front() << "(" << childClocks[clockNames.front()] << ")\n";
             for (size_t i = 1; i < clockNames.size(); ++i) {
                 out << ",       ." << clockNames[i] << "(" << childClocks[clockNames[i]] << ")\n";

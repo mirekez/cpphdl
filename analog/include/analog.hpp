@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 #include <cpphdl_port_traits.h>
@@ -92,6 +93,8 @@ struct component_info {
     std::size_t id;
     std::string name;
     component_state state = component_state::declared;
+    std::size_t parent = no_component;
+    std::string class_name;
 };
 
 struct bit_state {
@@ -446,6 +449,10 @@ public:
             throw diagnostic("E_ELABORATION", "recursive or previously failed IC declaration");
         owner_->components_[id_].state = component_state::assigning;
         auto previous = owner_->active_component_;
+        // Physical backends need the elaboration hierarchy to select each
+        // instance's process binding, including identically parameterized ICs.
+        owner_->components_[id_].parent = previous;
+        owner_->components_[id_].class_name = typeid(*this).name();
         owner_->active_component_ = id_;
         try {
             _assign(); // Virtual dispatch supplies this IC's line-by-line purposes.

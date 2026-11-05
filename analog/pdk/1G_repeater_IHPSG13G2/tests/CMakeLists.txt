@@ -3,6 +3,43 @@ add_test(NAME analog.pdk.1g_repeater.native COMMAND analog_1g_repeater_core_test
 set_tests_properties(analog.pdk.1g_repeater.native PROPERTIES LABELS "analog;pdk;repeater;cpp" TIMEOUT 30
   FIXTURES_SETUP repeater_native_vectors)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME analog.pdk.1g_repeater.shared_memory COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shared_memory.py")
+  set_tests_properties(analog.pdk.1g_repeater.shared_memory PROPERTIES
+    LABELS "analog;pdk;repeater;integration" TIMEOUT 15)
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad" AND
+     EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2/ihp-sg13g2/libs.ref/sg13g2_stdcell/lef/sg13g2_tech.lef")
+    add_test(NAME analog.pdk.1g_repeater.shared_route_grid COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/shared_route_grid.py")
+    set_tests_properties(analog.pdk.1g_repeater.shared_route_grid PROPERTIES
+      LABELS "analog;pdk;repeater;integration" TIMEOUT 30)
+  endif()
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/sv2v")
+    add_test(NAME analog.pdk.1g_repeater.shared_physical COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/shared_physical.py")
+    set_tests_properties(analog.pdk.1g_repeater.shared_physical PROPERTIES
+      LABELS "analog;pdk;repeater;integration" TIMEOUT 30)
+  endif()
+  add_test(NAME analog.pdk.1g_repeater.unified_archive_recipe COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unified_archive_recipe.py")
+  set_tests_properties(analog.pdk.1g_repeater.unified_archive_recipe PROPERTIES
+    LABELS "analog;pdk;repeater;integration" TIMEOUT 15)
+  add_test(NAME analog.pdk.1g_repeater.unified_checkpoint COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unified_checkpoint.py")
+  set_tests_properties(analog.pdk.1g_repeater.unified_checkpoint PROPERTIES
+    LABELS "analog;pdk;repeater;integration" TIMEOUT 15)
+  add_test(NAME analog.pdk.1g_repeater.unified_inventory COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/unified_synthesis.py")
+  set_tests_properties(analog.pdk.1g_repeater.unified_inventory PROPERTIES
+    LABELS "analog;pdk;repeater;integration" TIMEOUT 15)
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys")
+    add_test(NAME analog.pdk.1g_repeater.unified_parameters COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/unified_parameters.py"
+      --yosys "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/yosys"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/unified-parameters")
+    set_tests_properties(analog.pdk.1g_repeater.unified_parameters PROPERTIES
+      LABELS "analog;pdk;repeater;integration;formal" TIMEOUT 90 RESOURCE_LOCK one_g_eda_memory)
+  endif()
   add_test(NAME analog.pdk.1g_repeater.package_clock_results COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/package_clock_results.py")
   set_tests_properties(analog.pdk.1g_repeater.package_clock_results PROPERTIES
@@ -44,6 +81,21 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(analog.pdk.1g_repeater.ideal_contacts PROPERTIES LABELS "analog;pdk;repeater" TIMEOUT 90)
   endif()
   if(EXISTS "${repeater_pdk}/.cpphdl/venv/bin/python")
+    add_test(NAME analog.pdk.1g_repeater.clock_control_guards
+      COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/clock_control_guards.py")
+    set_tests_properties(analog.pdk.1g_repeater.clock_control_guards PROPERTIES
+      LABELS "analog;pdk;repeater;geometry" TIMEOUT 30)
+    add_test(NAME analog.pdk.1g_repeater.compact_analog_rows
+      COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/compact_analog_rows.py")
+    set_tests_properties(analog.pdk.1g_repeater.compact_analog_rows PROPERTIES
+      LABELS "analog;pdk;repeater;geometry" TIMEOUT 30)
+    add_test(NAME analog.pdk.1g_repeater.development_floorplan
+      COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
+      "${CMAKE_CURRENT_SOURCE_DIR}/development_floorplan.py")
+    set_tests_properties(analog.pdk.1g_repeater.development_floorplan PROPERTIES
+      LABELS "analog;pdk;repeater;geometry" TIMEOUT 60)
     add_test(NAME analog.pdk.1g_repeater.package_development_layout
       COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
       "${CMAKE_CURRENT_SOURCE_DIR}/package_development_layout.py")
@@ -53,6 +105,18 @@ if(Python3_Interpreter_FOUND)
       "${CMAKE_CURRENT_SOURCE_DIR}/fill_remainder.py")
     set_tests_properties(analog.pdk.1g_repeater.fill_remainder PROPERTIES LABELS "analog;pdk;repeater;geometry" TIMEOUT 30)
     if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/klayout")
+      add_test(NAME analog.pdk.1g_repeater.compact_processing_clock
+        COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/compact_processing_clock.py"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/compact-processing-clock")
+      set_tests_properties(analog.pdk.1g_repeater.compact_processing_clock PROPERTIES
+        LABELS "analog;pdk;repeater;geometry;lvs" TIMEOUT 600 RUN_SERIAL TRUE)
+      add_test(NAME analog.pdk.1g_repeater.processing_clock_integration
+        COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
+        "${CMAKE_CURRENT_SOURCE_DIR}/processing_clock_integration.py"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/processing-clock-integration")
+      set_tests_properties(analog.pdk.1g_repeater.processing_clock_integration PROPERTIES
+        LABELS "analog;pdk;repeater;geometry;lvs" TIMEOUT 420)
       add_test(NAME analog.pdk.1g_repeater.fill_active_hierarchy COMMAND "${repeater_pdk}/.cpphdl/venv/bin/python"
         "${CMAKE_CURRENT_SOURCE_DIR}/fill_active_hierarchy.py" --pdk "${repeater_pdk}"
         --klayout "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/klayout"
@@ -64,6 +128,11 @@ if(Python3_Interpreter_FOUND)
       --work "${CMAKE_CURRENT_BINARY_DIR}/padframe")
     set_tests_properties(analog.pdk.1g_repeater.padframe PROPERTIES LABELS "analog;pdk;repeater;padframe" TIMEOUT 120)
     if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain/bin/openroad")
+      add_test(NAME analog.pdk.1g_repeater.unified_net_repair COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/unified_net_repair.py" --pdk "${repeater_pdk}"
+        --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")
+      set_tests_properties(analog.pdk.1g_repeater.unified_net_repair PROPERTIES
+        LABELS "analog;pdk;repeater;timing;formal" TIMEOUT 120 RESOURCE_LOCK one_g_eda_memory)
       add_test(NAME analog.pdk.1g_repeater.routing_rc_margin COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/routing_rc_margin.py" --pdk "${repeater_pdk}"
         --tools "${CPPHDL_ANALOG_REAL_ROOT}/out/repeater-toolchain")
@@ -99,5 +168,32 @@ if(Python3_Interpreter_FOUND)
       --work "${CPPHDL_REPEATER_PHYSICAL_WORK}")
     set_tests_properties(analog.pdk.1g_repeater.physical PROPERTIES LABELS "analog;pdk;repeater;physical"
       TIMEOUT 1200 RUN_SERIAL TRUE)
+  endif()
+endif()
+
+if(Python3_Interpreter_FOUND AND ONE_G_VERILATOR AND EXISTS "${CPPHDL_1G_CONVERTER}")
+  add_test(NAME analog.pdk.1g_repeater.digital_integration COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../flow.py" --target digital
+    --cpphdl "${CPPHDL_1G_CONVERTER}" --cxx "${CPPHDL_TEST_CXX}"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/digital-integration")
+  set_tests_properties(analog.pdk.1g_repeater.digital_integration PROPERTIES
+    LABELS "analog;pdk;repeater;rtl;integration" TIMEOUT 2100 RESOURCE_LOCK one_g_eda_memory
+    FIXTURES_SETUP repeater_digital_checked)
+  add_test(NAME analog.pdk.1g_repeater.electrical_integration COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../electrical_flow.py"
+    --digital "${CMAKE_CURRENT_BINARY_DIR}/digital-integration/digital"
+    --work "${CMAKE_CURRENT_BINARY_DIR}/electrical-integration" --cxx "${CPPHDL_TEST_CXX}")
+  set_tests_properties(analog.pdk.1g_repeater.electrical_integration PROPERTIES
+    LABELS "analog;pdk;repeater;integration;electrical" TIMEOUT 600 RESOURCE_LOCK one_g_eda_memory
+    FIXTURES_REQUIRED repeater_digital_checked FIXTURES_SETUP repeater_electrical_checked)
+  if(EXISTS "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2/.cpphdl/venv/bin/python")
+    add_test(NAME analog.pdk.1g_repeater.pad_integration COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../pad_integration.py"
+      --electrical "${CMAKE_CURRENT_BINARY_DIR}/electrical-integration"
+      --pdk "${CPPHDL_ANALOG_REAL_ROOT}/pdk/IHPSG13G2"
+      --work "${CMAKE_CURRENT_BINARY_DIR}/pad-integration" --core-size 6000)
+    set_tests_properties(analog.pdk.1g_repeater.pad_integration PROPERTIES
+      LABELS "analog;pdk;repeater;integration;electrical;padframe" TIMEOUT 420
+      RESOURCE_LOCK one_g_eda_memory FIXTURES_REQUIRED repeater_electrical_checked)
   endif()
 endif()

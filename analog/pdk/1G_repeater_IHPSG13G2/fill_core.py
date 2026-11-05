@@ -37,7 +37,8 @@ for group in ("ActGatP", "Metal", "TopMetal"):
             raise RuntimeError("PDK Active/Poly fill calls changed")
         macro.text = "deep\n" + macro.text.replace(".fill(", ".flatten.fill(")
     if group == "Metal":
-        receive_module = os.environ.get("REPEATER_TOP", "RepeaterCore") not in ("RepeaterCore", "ReferenceClockGenerator")
+        receive_module = os.environ.get("REPEATER_TOP", "RepeaterCore") not in (
+            "RepeaterCore", "ReferenceClockGenerator", "ProcessingClockDelivery", "ProcessingClockSystem")
         def spacing(match):
             distance = 0.6 if receive_module and match[2] in ("2", "3") else 1.0
             if os.environ.get("REPEATER_TOP") in ("ReceiveSampleNormalizer", "ADCReceiveController",
