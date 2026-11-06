@@ -9,3 +9,4 @@ all:
 	pandoc synthesis.md -o synthesis.pdf --pdf-engine=lualatex -H code-style.tex --lua-filter=use_minted.lua --pdf-engine-opt=-shell-escape -V geometry:margin=2.5cm -V fontsize=12pt
 	pandoc retiming.md -o retiming.pdf --pdf-engine=lualatex -H code-style.tex --lua-filter=use_minted.lua --pdf-engine-opt=-shell-escape -V geometry:margin=2.5cm -V fontsize=12pt
 	pandoc hls.md -o hls.pdf --pdf-engine=lualatex -H code-style.tex --lua-filter=use_minted.lua --pdf-engine-opt=-shell-escape -V geometry:margin=2.5cm -V fontsize=12pt
+	pandoc analog.md -f markdown+gfm_auto_identifiers -o analog.pdf --pdf-engine=lualatex -H code-style.tex --lua-filter=use_minted.lua --pdf-engine-opt=-shell-escape -V geometry:margin=2.5cm -V fontsize=12pt -V papersize=a4 -V monofont="DejaVu Sans Mono" -V monofontoptions=Scale=0.85
