@@ -10,6 +10,8 @@ Best practice: https://github.com/mirekez/cpphdl/blob/main/doc/best_practice.pdf
 
 The book: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl_book.pdf
 
+Analog part: https://github.com/mirekez/cpphdl/blob/main/doc/analog.pdf
+
 Some resources on wiki: https://github.com/mirekez/cpphdl/wiki
 
 ![Inverted pyramid: C++HLS for generic C++ hardware and pipelines, C++Analog for analog modelling and mixed-signal simulation, and C++RTL as a C++ reflection of SystemVerilog.](doc/cpphdl-layers.png)
