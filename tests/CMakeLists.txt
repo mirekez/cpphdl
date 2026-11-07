@@ -105,13 +105,19 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/SlangPinChecks.py")
     set_tests_properties(hdlcpp_slang_pin PROPERTIES TIMEOUT 60)
     find_program(CONSTANTS_VERILATOR verilator)
+    add_test(NAME static_test_registration COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StaticTestRegistrationChecks.py")
+    set_tests_properties(static_test_registration PROPERTIES TIMEOUT 30 LABELS "cmake;toolchain")
+    add_test(NAME elf_tool_output COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ElfToolsChecks.py")
+    set_tests_properties(elf_tool_output PROPERTIES TIMEOUT 30 LABELS "cmake;toolchain")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
        AND CPPHDL_BUILD_HLS_TESTS)
         find_program(TEST_ISA_CXX NAMES clang++ HINTS "${CMAKE_SOURCE_DIR}/.conda/bin" REQUIRED)
         find_program(TEST_READELF NAMES llvm-readelf readelf REQUIRED)
         add_test(NAME hls_gnu_property COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GnuPropertyChecks.py"
-            --cmake "${CMAKE_COMMAND}" --cxx "${TEST_ISA_CXX}" --readelf "${TEST_READELF}")
+            --cmake "${CMAKE_COMMAND}" --real-cxx "${TEST_ISA_CXX}" --readelf "${TEST_READELF}")
         set_tests_properties(hls_gnu_property PROPERTIES TIMEOUT 300 LABELS "cmake;toolchain;hls")
     endif()
     if(CPPHDL_STATIC_TESTS)

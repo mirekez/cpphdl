@@ -5,11 +5,13 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from ElfTools import readelf_output
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cmake', required=True)
-    parser.add_argument('--cxx', required=True)
+    parser.add_argument('--real-cxx', required=True)
     parser.add_argument('--readelf', required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
@@ -25,7 +27,7 @@ def main():
         return result.stdout
 
     def notes(path):
-        return run([args.readelf, '--notes', path])
+        return readelf_output(args.readelf, '--notes', path)
 
     with tempfile.TemporaryDirectory(prefix='cpphdl-isa-note-') as directory:
         work = Path(directory)
@@ -48,7 +50,7 @@ asm(R"(
         plain = source / 'plain.cpp'
         plain.write_text(marker + 'int main() { return 0; }\n')
         raw = work / 'unstripped'
-        run([args.cxx, plain, '-o', raw])
+        run([args.real_cxx, plain, '-o', raw])
         assert 'x86-64-v3' in notes(raw), notes(raw)
         (source / 'CMakeLists.txt').write_text('''
 cmake_minimum_required(VERSION 3.20)
@@ -68,7 +70,7 @@ cpphdl_strip_gnu_property_after_build(post_link)
             build = work / mode
             output = run([args.cmake, '-S', source, '-B', build,
                           '-G', 'Unix Makefiles', f'-DCPPHDL_ROOT={root}',
-                          f'-DCMAKE_CXX_COMPILER={args.cxx}', f'-DHLS_CXX={args.cxx}',
+                          f'-DCMAKE_CXX_COMPILER={args.real_cxx}', f'-DHLS_CXX={args.real_cxx}',
                           f'-DCPPHDL_STATIC_TESTS={mode}'], success=success)
             return build, output
 
@@ -109,7 +111,7 @@ cpphdl_strip_gnu_property_after_build(post_link)
             header.write_text('struct Value { int field; };\n')
             run([wrapper, '-stdlib=libc++', '-x', 'c++-header', header,
                  '-o', work / 'probe.pch'])
-            assert run([wrapper, '--version']) == run([args.cxx, '--version'])
+            assert run([wrapper, '--version']) == run([args.real_cxx, '--version'])
 
         # The configure error must retain the executable's actual diagnostic.
         probe.write_text('#include <cstdio>\nint main() {\n'
