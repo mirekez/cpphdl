@@ -145,6 +145,7 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME child_local_clocks COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/cdc/LocalClocksChecks.py"
             --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --ctest "${CMAKE_CTEST_COMMAND}" --build "${CMAKE_BINARY_DIR}"
             --verilator "${CONSTANTS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/local-clocks")
         set_tests_properties(child_local_clocks PROPERTIES TIMEOUT 240 LABELS "rtl;cdc")
         add_test(NAME child_clock_sources COMMAND "${Python3_EXECUTABLE}"
@@ -822,10 +823,11 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "~$")
 # directory. They contain generated .cpp files, not independent C++HDL tests.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/obj_dir/")
 # These model-only CDC fixtures have separate native/RTL testbench drivers
-# registered above as child_clock_sources and child_reset_expressions.
+# registered above as child_clock_sources, child_reset_expressions and child_local_clocks.
 list(REMOVE_ITEM TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildClock.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildReset.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/cdc/ChildReset.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cdc/LocalClocks.cpp")
 # These fixtures are built by SwitchControlChecks.py with a separate runner
 # and flow-specific definitions, not as standalone inline-test executables.
 list(REMOVE_ITEM TEST_SOURCES

@@ -1,5 +1,6 @@
 """Check module-local clocks without adding them to the root clock interface."""
 import argparse
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -10,7 +11,20 @@ from TestToolchain import TestToolchain
 parser = argparse.ArgumentParser(description=__doc__)
 for name in ('cpphdl', 'cxx', 'verilator', 'work'):
     parser.add_argument('--' + name, type=Path, required=True)
+parser.add_argument('--ctest', type=Path)
+parser.add_argument('--build', type=Path)
 args = parser.parse_args()
+if bool(args.ctest) != bool(args.build):
+    parser.error('--ctest and --build must be provided together')
+if args.build:
+    listing = subprocess.check_output([str(args.ctest), '--test-dir', str(args.build),
+                                       '--show-only=json-v1'], text=True, timeout=60)
+    names = [test['name'] for test in json.loads(listing)['tests']]
+    for fixture in ('LocalClocks', 'ChildClock', 'ChildReset'):
+        if 'cdc_' + fixture in names:
+            raise ValueError(f'{fixture}.cpp is model-only, not a standalone executable')
+    if names.count('child_local_clocks') != 1:
+        raise ValueError('Expected exactly one child_local_clocks regression')
 source = Path(__file__).resolve().parent
 repo = source.parents[1]
 work = args.work.resolve()
