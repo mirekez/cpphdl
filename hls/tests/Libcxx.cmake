@@ -35,9 +35,11 @@ execute_process(COMMAND "${HLS_CXX}" ${HLS_CXX_FLAGS}
 if(NOT hls_libcxx_result EQUAL 0)
     message(FATAL_ERROR "HLS tests need Clang and libc++ development headers/libraries. Set HLS_CXX and, if needed, HLS_LIBCXX_LIBRARY_DIR.\n${output}\n${error}")
 endif()
-execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/libcxx-check" RESULT_VARIABLE hls_libcxx_result)
+cpphdl_strip_gnu_property_file("${CMAKE_CURRENT_BINARY_DIR}/libcxx-check")
+execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/libcxx-check"
+    RESULT_VARIABLE hls_libcxx_result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 if(NOT hls_libcxx_result EQUAL 0)
-    message(FATAL_ERROR "HLS libc++ runtime check failed: ${hls_libcxx_result}")
+    message(FATAL_ERROR "HLS libc++ runtime check failed: ${hls_libcxx_result}\n${output}\n${error}")
 endif()
 set(HLS_TOOLCHAIN "${CMAKE_CURRENT_BINARY_DIR}/LibcxxToolchain.cmake")
 file(CONFIGURE OUTPUT "${HLS_TOOLCHAIN}" CONTENT "set(CXX [==[${HLS_CXX}]==])\nset(HLS_CXX_FLAGS [==[${HLS_CXX_FLAGS}]==])\nset(HLS_PARSE_FLAGS [==[${HLS_PARSE_FLAGS}]==])\nset(HLS_LINK_FLAGS [==[${HLS_LINK_FLAGS}]==])\n" @ONLY)

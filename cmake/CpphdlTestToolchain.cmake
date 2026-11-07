@@ -1,4 +1,5 @@
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/CpphdlGnuProperty.cmake")
 
 set(static_test_default OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -11,6 +12,10 @@ set(CPPHDL_TEST_CXX "${CMAKE_CXX_COMPILER}")
 function(cpphdl_test_compiler output compiler name)
   if(CPPHDL_STATIC_TESTS)
     set(CPPHDL_TEST_REAL_CXX "${compiler}")
+    set(CPPHDL_TEST_OBJCOPY "")
+    if(CPPHDL_OBJCOPY)
+      set(CPPHDL_TEST_OBJCOPY "${CPPHDL_OBJCOPY}")
+    endif()
     # Some Verilator fixtures derive -L paths from the compiler executable.
     # A wrapper lives outside that prefix, so retain the actual atomic runtime
     # search directory explicitly (Conda does not ship a static libatomic).

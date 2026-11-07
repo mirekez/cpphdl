@@ -36,6 +36,8 @@ def main():
             return result.stdout
 
         def check(binary):
+            notes = run([args.readelf, '--notes', binary])
+            assert '.note.gnu.property' not in notes, notes
             dynamic = run([args.readelf, '--dynamic', binary])
             needed = '\n'.join(line for line in dynamic.splitlines() if '(NEEDED)' in line)
             assert not re.search(r'lib(?:stdc\+\+|c\+\+(?:abi)?|gcc_s)\.', needed), needed

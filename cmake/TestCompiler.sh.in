@@ -4,10 +4,20 @@ set -euo pipefail
 # preprocessing, object builds and shared-library ABI tests unchanged.
 link=1
 libcxx=0
+output=a.out
+output_pending=0
 for arg in "$@"; do
+    if (( output_pending )); then
+        output="$arg"
+        output_pending=0
+        continue
+    fi
     case "$arg" in
-        -c|-S|-E|-fsyntax-only|-shared|-M|-MM|c++-header|c-header|--version|-dump*|-print*|--print*) link=0 ;;
+        -c|-S|-E|-fsyntax-only|-shared|-r|-M|-MM|c++-header|c-header|--version|--help|-###|-dump*|-print*|--print*) link=0 ;;
         -stdlib=libc++) libcxx=1 ;;
+        -o|--output) output_pending=1 ;;
+        -o?*) output="${arg#-o}" ;;
+        --output=*) output="${arg#--output=}" ;;
     esac
 done
 if (( ! link )); then
@@ -27,4 +37,9 @@ done
 if (( libcxx )); then
     args+=(-Wl,-Bstatic -Wl,--start-group -lc++ -lc++abi -Wl,--end-group -Wl,-Bdynamic)
 fi
-exec "@CPPHDL_TEST_REAL_CXX@" "${args[@]}" -static-libstdc++ -static-libgcc
+"@CPPHDL_TEST_REAL_CXX@" "${args[@]}" -static-libstdc++ -static-libgcc
+# Match the converter's executable post-link policy. This removes metadata,
+# not instructions; the linked code must still support the intended CPU.
+if [[ -n "@CPPHDL_TEST_OBJCOPY@" && -f "$output" ]]; then
+    "@CPPHDL_TEST_OBJCOPY@" --remove-section=.note.gnu.property "$output"
+fi
