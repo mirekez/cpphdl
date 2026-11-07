@@ -86,6 +86,8 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     std::function<void(const Stmt*)> declarations = [&](const Stmt* stmt) {
         if (!stmt) return;
         if (auto* ds = dyn_cast<DeclStmt>(stmt)) for (auto* decl : ds->decls()) {
+            // Type aliases introduce no storage or cross-lane state.
+            if (isa<TypedefNameDecl>(decl)) continue;
             auto* var = dyn_cast<VarDecl>(decl);
             if (!var || var->isStaticLocal() || var->getType()->isReferenceType() || var->getType()->isPointerType())
                 unsupported("lane locals must be automatic values, not aliases or pointers");
@@ -118,6 +120,7 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
         std::function<void(const Stmt*)> collect = [&](const Stmt* stmt) {
             if (!stmt) return;
             if (auto* ds = dyn_cast<DeclStmt>(stmt)) for (auto* declaration : ds->decls()) {
+                if (isa<TypedefNameDecl>(declaration)) continue;
                 auto* var = dyn_cast<VarDecl>(declaration);
                 if (!var || var->isStaticLocal() || !scalar(var->getType()))
                     unsupported("pure helpers require automatic arithmetic locals");

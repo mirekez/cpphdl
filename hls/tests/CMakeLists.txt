@@ -9,6 +9,11 @@ add_test(NAME hls_fp32_mac_direct_native_graph
 set_tests_properties(hls_fp32_mac_direct_native_graph PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
 find_program(HLS_HDLCPP NAMES hdlcpp HINTS "${CMAKE_BINARY_DIR}/hdlcpp" "${CMAKE_SOURCE_DIR}/build/hdlcpp")
 if(HLS_HDLCPP)
+    add_test(NAME hls_openmp_type_aliases_native_graph
+        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/OpenMPTypeAliases.sh"
+            "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "${HLS_HDLCPP}" "${CMAKE_SOURCE_DIR}"
+            "${CPPHDL_TEST_CXX}" "${CMAKE_CURRENT_BINARY_DIR}/openmp-type-aliases")
+    set_tests_properties(hls_openmp_type_aliases_native_graph PROPERTIES TIMEOUT 600 LABELS "hls;openmp;native")
     add_test(NAME hls_fp32_reduction_retimed_replacement
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32ReductionPipelineChecks.py"
             --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --hdlcpp "${HLS_HDLCPP}" --cxx "${CPPHDL_TEST_CXX}"
@@ -269,7 +274,7 @@ add_subdirectory(../examples/hft "${CMAKE_BINARY_DIR}/hls/examples/hft")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
-foreach(case RANGE 0 35)
+foreach(case RANGE 0 37)
     add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"
