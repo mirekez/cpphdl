@@ -399,6 +399,13 @@ class Lowering {
             const auto& call = expression.as<CallExpression>();
             if (call.isSystemCall()) {
                 auto name=call.getSubroutineName();
+                if(name=="$signed" || name=="$unsigned") {
+                    if(call.arguments().size()!=1)fail("invalid signedness cast",expression.sourceRange);
+                    // These casts preserve the operand bits. Slang carries the
+                    // resulting signedness into comparisons, shifts and any
+                    // enclosing width conversion; no numeric conversion occurs.
+                    return resize(expr(*call.arguments()[0]),width(*expression.type),name=="$signed");
+                }
                 if(name=="$bitstoreal" || name=="$realtobits" || name=="$bitstoshortreal" || name=="$shortrealtobits") {
                     if(call.arguments().size()!=1)fail("invalid real bit conversion",expression.sourceRange);
                     return resize(expr(*call.arguments()[0]),width(*expression.type));
