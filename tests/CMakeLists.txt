@@ -105,6 +105,14 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/hdlcpp/SlangPinChecks.py")
     set_tests_properties(hdlcpp_slang_pin PROPERTIES TIMEOUT 60)
     find_program(CONSTANTS_VERILATOR verilator)
+    if(CONSTANTS_VERILATOR)
+        add_test(NAME tuple_execute_arithmetic COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tuple/ExecuteArithmeticChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${CONSTANTS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/tuple-execute-arithmetic")
+        set_tests_properties(tuple_execute_arithmetic PROPERTIES TIMEOUT 600 LABELS "rtl;tuple")
+    endif()
     add_test(NAME static_test_registration COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StaticTestRegistrationChecks.py")
     set_tests_properties(static_test_registration PROPERTIES TIMEOUT 30 LABELS "cmake;toolchain")

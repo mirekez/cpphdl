@@ -75,8 +75,9 @@ private:
             case Alu::PASS: alu_result_comb = b; break;
             case Alu::MUL:  alu_result_comb = a * b; break;
             case Alu::MULH: alu_result_comb = ((uint64_t)a * b) >> 32; break;
-            case Alu::DIV:  alu_result_comb = a / b; break;
-            case Alu::REM:  alu_result_comb = a % b; break;
+            // DIVU/REMU must also be defined for zero divisors in pipeline bubbles.
+            case Alu::DIV:  alu_result_comb = b == 0 ? uint32_t(0xffffffffu) : a / b; break;
+            case Alu::REM:  alu_result_comb = b == 0 ? a : a % b; break;
             case Alu::ANONE: break;
         }
         if (alu_op == Alu::SLT || alu_op == Alu::SLTU) {
