@@ -7,8 +7,26 @@ import subprocess
 import sys
 import tempfile
 
+from ElfTools import readelf_output
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from TestToolchain import TestToolchain
+
+
+def check_test_registrations(tests, cpphdl, cxx):
+    """--cxx uses the wrapper; --real-cxx explicitly selects a control compiler."""
+    converter_calls = 0
+    shared_converter = str(Path(cpphdl).with_name('cpphdl'))
+    for test in tests:
+        command = test.get('command', [])
+        for index, arg in enumerate(command):
+            assert arg != shared_converter, (test['name'], arg)
+            assert not arg.startswith(('-DCPPHDL=', '-DCONVERTER=')) or arg.split('=', 1)[1] != shared_converter, (test['name'], arg)
+            if arg == '--cxx':
+                assert command[index + 1] == cxx, (test['name'], command)
+            if arg == cpphdl or arg.endswith('=' + cpphdl):
+                converter_calls += 1
+    assert converter_calls > 0, 'No tests use cpphdl-static'
 
 
 def main():
@@ -36,14 +54,14 @@ def main():
             return result.stdout
 
         def check(binary):
-            notes = run([args.readelf, '--notes', binary])
+            notes = readelf_output(args.readelf, '--notes', binary, env=env)
             assert '.note.gnu.property' not in notes, notes
-            dynamic = run([args.readelf, '--dynamic', binary])
+            dynamic = readelf_output(args.readelf, '--dynamic', binary, env=env)
             needed = '\n'.join(line for line in dynamic.splitlines() if '(NEEDED)' in line)
             assert not re.search(r'lib(?:stdc\+\+|c\+\+(?:abi)?|gcc_s)\.', needed), needed
             run([binary])
 
-        headers = run([args.readelf, '--program-headers', '--dynamic', args.cpphdl])
+        headers = readelf_output(args.readelf, '--program-headers', '--dynamic', args.cpphdl, env=env)
         assert 'INTERP' not in headers and '(NEEDED)' not in headers, headers
         run([args.cpphdl, '--help'])
         if args.libcxx_probe:
@@ -51,18 +69,7 @@ def main():
         # Catch registrations accidentally reverting to the shared converter
         # or bypassing the runtime wrapper when compiling their own runners.
         tests = json.loads(run([args.ctest, '--test-dir', args.build, '--show-only=json-v1']))['tests']
-        converter_calls = 0
-        for test in tests:
-            command = test.get('command', [])
-            for index, arg in enumerate(command):
-                assert arg != str(Path(args.cpphdl).with_name('cpphdl')), (test['name'], arg)
-                assert not arg.startswith(('-DCPPHDL=', '-DCONVERTER=')) or arg.split('=', 1)[1] != str(
-                    Path(args.cpphdl).with_name('cpphdl')), (test['name'], arg)
-                if arg == '--cxx':
-                    assert command[index + 1] == args.cxx, (test['name'], command)
-                if arg == args.cpphdl or arg.endswith('=' + args.cpphdl):
-                    converter_calls += 1
-        assert converter_calls > 0, 'No tests use cpphdl-static'
+        check_test_registrations(tests, args.cpphdl, args.cxx)
 
         # Introspection must return the underlying toolchain's paths. Native
         # graph and HLS header discovery both rely on these queries.
