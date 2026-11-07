@@ -225,3 +225,7 @@ if(Python3_Interpreter_FOUND)
         --work "${CMAKE_CURRENT_BINARY_DIR}/native-returns")
     set_tests_properties(hdlcpp_native_returns PROPERTIES TIMEOUT 300)
 endif()
+
+add_test(NAME hdlcpp_native_signed_casts COMMAND bash
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_signed_casts.sh"
+    "$<TARGET_FILE:hdlcpp>" "${CMAKE_CURRENT_SOURCE_DIR}/../include" "${CPPHDL_TEST_CXX}")

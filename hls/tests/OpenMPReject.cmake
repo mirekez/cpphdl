@@ -10,7 +10,8 @@ set(reasons "constant integers" "shared scalar write" "cross-lane read/write dep
     "cross-lane read/write dependence" "disjoint array writes"
     "outside the fixed array" "bounded static affine" "bounded static affine"
     "address budget" "bounded static affine"
-    "cross-lane read/write dependence" "cross-lane read/write dependence")
+    "cross-lane read/write dependence" "cross-lane read/write dependence"
+    "automatic arithmetic locals" "automatic arithmetic locals")
 list(GET reasons ${CASE} reason)
 file(REMOVE_RECURSE "${WORK}/generated")
 file(MAKE_DIRECTORY "${WORK}")

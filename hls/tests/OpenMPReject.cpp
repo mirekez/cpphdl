@@ -6,6 +6,16 @@ struct OpenMPRejectedMethods {
     static uint32_t aliased(const uint32_t& x) { return x; }
     static uint32_t recursive(uint32_t x) { return x?recursive(x-1):0; }
     static uint32_t helper(uint32_t value) { return value * 3u + mutable_seed++; }
+    static uint32_t typed_pointer(uint32_t value) {
+        using Pointer = uint32_t*;
+        Pointer ptr = &value;
+        return *ptr;
+    }
+    static uint32_t typed_static(uint32_t value) {
+        typedef uint32_t Word;
+        static Word state = 0;
+        return state += value;
+    }
     uint64_t command(uint32_t operation, uint32_t index, uint32_t value) const {
         uint32_t sum = 0, values[8]{}, scratch = 0;
 #if OPENMP_REJECT == 0
@@ -141,6 +151,12 @@ struct OpenMPRejectedMethods {
             values[row] = cells[row][columns[(row + 1) % 4] % 8];
             columns[row] = index;
         }
+#elif OPENMP_REJECT == 36
+#pragma omp simd reduction(+:sum)
+        for (unsigned lane = 0; lane < 4; ++lane) sum += typed_pointer(value);
+#elif OPENMP_REJECT == 37
+#pragma omp simd reduction(+:sum)
+        for (unsigned lane = 0; lane < 4; ++lane) sum += typed_static(value);
 #endif
         return sum ^ values[0] ^ scratch;
     }

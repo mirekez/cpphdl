@@ -421,7 +421,9 @@ combined lanes (including 64x64). The subset supports private/firstprivate
 unsigned integers and FP32, unsigned `+`, `*`, `&`, `|`, `^` reductions,
 FP32 `+`/`*` reductions through an explicit math policy, and `collapse(1..3)`.
 Pure scalar helpers and fixed control loops are supported after transitive
-value/purity checks. Constant lane indices are propagated into arrays/guards;
+value/purity checks. Local `using` and `typedef` type aliases are allowed in
+lane bodies and pure helpers; variables declared through them must still
+satisfy the same storage and type checks. Constant lane indices are propagated into arrays/guards;
 bounded affine indices and read-only neighbor snapshots are accepted. Bounds,
 write ownership and cross-lane read/write dependence remain checked.
 Runtime bounds, escaping pointers, mutable helper globals and unsafe state
