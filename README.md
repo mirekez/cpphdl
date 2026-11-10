@@ -8,7 +8,7 @@ C++HDL is a Hardware Description Language framework built over C++RTL dialect. I
 3. Build very large RTL models in C++ and run them on clusters and GPUs, integrate through streams
 4. HLS and Synthesis layers with retiming capabilities to translate generic C++ classes to C++RTL or gates level
 
-!!! C++RTL natively reflects SystemVerilog or VerilogA: register to register, clock to clock, transistor to transistor - no transformation happens between them.
+!!! C++RTL natively reflects SystemVerilog or VerilogA: register to register, clock to clock, transistor to transistor - no transformation happens between them. It supports both direction conversion just by language substitution.
 
 >But I dont know C++
 
