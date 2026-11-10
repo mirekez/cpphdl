@@ -9,9 +9,11 @@ C++HDL is a Hardware Description Language for description of C++RTL models:
 4. HLS and Synthesis layers with retiming capabilities to translate generic C++ classes to C++RTL or gates level
 
 >But I dont know C++
+
 Ask codex or claude to port your project to C++HDL and measure example speed with native graph simulation
 
 >But C++ is dangerous and needs to be replaced with Rust
+
 I agree C++ should be replaced or enhanced in system programming, fortunately RTL simulation is not security critical field
 
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
