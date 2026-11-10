@@ -28,7 +28,7 @@ Analog part: https://github.com/mirekez/cpphdl/blob/main/doc/analog.pdf
 
 Some resources on wiki: https://github.com/mirekez/cpphdl/wiki
 
-<img src="doc/cpphdl-layers.png" width="33%" alt="Inverted pyramid: C++HLS for generic C++ hardware and pipelines, C++Analog for analog modelling and mixed-signal simulation, and C++RTL as a C++ reflection of SystemVerilog.">
+<img src="doc/cpphdl-layers.png" width="50%" alt="Inverted pyramid: C++HLS for generic C++ hardware and pipelines, C++Analog for analog modelling and mixed-signal simulation, and C++RTL as a C++ reflection of SystemVerilog.">
 
 - **C++Analog:** Describe analog behaviour in C++ and connect the models to mixed-signal simulations.
 - **C++RTL:** Describe explicit RTL models in C++, with ports, registers, combinational logic, and clocks.
