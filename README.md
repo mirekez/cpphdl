@@ -1,6 +1,18 @@
 # C++HDL
 
-C++HDL is a Hardware Description Language for description of C++RTL models
+C++HDL is a Hardware Description Language for description of C++RTL models:
+
+0. Open Source HDL from RTL model to SystemVerilog or gates level output
+1. 10-50x Faster simulation (run) for digital and analog C++RTL, based on registers, clocks, gates and transistors
+2. Digital and Analog in one bottle - you can deliver your models simulation as binary, link to third patry IP
+3. Build very large RTL models in C++ and run them on clusters and GPUs, integrate through streams
+4. HLS and Synthesis layers with retiming capabilities to translate generic C++ classes to C++RTL or gates level
+
+>But I dont know C++
+Ask codex or claude to port your project to C++HDL and measure example speed with native graph simulation
+
+>But C++ is dangerous and needs to be replaced with Rust
+I agree C++ should be replaced or enhanced in system programming, fortunately RTL simulation is not security critical field
 
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
