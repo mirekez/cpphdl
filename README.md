@@ -14,7 +14,7 @@ Ask codex or claude to port your project to C++HDL and measure example speed wit
 
 >But C++ is dangerous and needs to be replaced with Rust
 
-I agree C++ should be replaced or enhanced in system programming, fortunately RTL simulation is not security critical field
+I agree C++ should be replaced or enhanced in system programming, fortunately RTL simulation is not security critical
 
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
