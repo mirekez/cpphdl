@@ -16,7 +16,7 @@ Ask codex or claude to port your project to C++HDL and measure example speed wit
 
 I agree C++ should be replaced or enhanced in system programming, fortunately RTL simulation is not security critical
 
-
+<br>
 Slides: https://github.com/user-attachments/files/24297702/cpphdl.pdf
 
 Spec: https://github.com/mirekez/cpphdl/blob/main/doc/cpphdl.pdf
