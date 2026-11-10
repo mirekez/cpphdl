@@ -31,7 +31,7 @@ public:
     std::array<std::array<port<electrical>, 5>, lanes> GAIN_N;
     std::array<std::array<port<electrical>, 6>, lanes> TRIM_N;
     std::array<std::array<port<electrical>, 4>, lanes> MAIN_P, MAIN_N, HISTORY_P, HISTORY_N;
-    std::array<std::array<port<electrical>, slices_per_lane>, lanes> TRACK, DECISION;
+    std::array<std::array<port<electrical>, slices_per_lane>, lanes> TRACK, CONVERT, DECISION;
     std::array<std::array<std::array<port<electrical>, 8>, slices_per_lane>, lanes> TRIAL;
 
     std::array<core_receive_lane, lanes> receivers;
@@ -100,6 +100,7 @@ public:
             }
             for (unsigned slice = 0; slice < slices_per_lane; ++slice) {
                 rx.TRACK[slice] = TRACK[lane][slice];
+                rx.CONVERT[slice] = CONVERT[lane][slice];
                 rx.DECISION[slice] = DECISION[lane][slice];
                 for (unsigned bit = 0; bit < 8; ++bit)
                     rx.TRIAL[slice][bit] = TRIAL[lane][slice][bit];

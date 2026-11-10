@@ -10,7 +10,8 @@ from digital_connections import check, nodes
 
 def run(tree):
     result = check(tree)
-    for fault in ('missing_phy', 'shared_tx_clock', 'wrong_forwarding_input', 'missing_sar'):
+    for fault in ('missing_phy', 'shared_tx_clock', 'wrong_forwarding_input', 'missing_sar',
+                  'wrong_recovered_sample', 'wrong_recovered_period'):
         damaged = copy.deepcopy(tree)
         modules = damaged['modulesp']
         top = next(m for m in modules if m.get('origName') == 'RepeaterDigital')
@@ -24,6 +25,13 @@ def run(tree):
             assignment = next(n for n in nodes(top['stmtsp']) if n.get('type') == 'ASSIGNW'
                               and n['lhsp'][0].get('name') == 'forwarding__rx_b_in')
             assignment['rhsp'][0]['name'] = 'port_a__receive_out'
+        elif fault in ('wrong_recovered_sample', 'wrong_recovered_period'):
+            name = 'crossing__samples_in' if fault == 'wrong_recovered_sample' else 'interpolator__period_in'
+            owner = 'AutonomousReceivePHY' if fault == 'wrong_recovered_sample' else 'ReceiveSampleRecovery'
+            module = next(m for m in modules if m.get('origName') == owner)
+            assignment = next(n for n in nodes(module['stmtsp']) if n.get('type') == 'ASSIGNW'
+                              and n['lhsp'][0].get('name') == name)
+            assignment['rhsp'][0]['name'] = 'samples_in' if fault == 'wrong_recovered_sample' else 'interval_in'
         else:
             bank = next(m for m in modules if m.get('origName') == 'InterleavedSARBankController')
             instance = next(n for n in nodes(bank['stmtsp']) if n.get('type') == 'CELL')
@@ -33,7 +41,7 @@ def run(tree):
         except ValueError:
             continue
         raise ValueError('connectivity audit accepted ' + fault)
-    result['rejected_mutations'] = 4
+    result['rejected_mutations'] = 6
     return result
 
 

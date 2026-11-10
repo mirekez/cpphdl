@@ -19,7 +19,7 @@ public:
     _PORT(electrical) EVALUATE_ENABLE;
     _PORT(electrical) CLEAR;
     std::array<port<electrical>, 5> GAIN_N;
-    std::array<port<electrical>, slice_count> TRACK, DECISION;
+    std::array<port<electrical>, slice_count> TRACK, CONVERT, DECISION;
     std::array<std::array<port<electrical>, 8>, slice_count> TRIAL;
     biased_mdi_input_network input;
     differential_receive_preamplifier preamplifier;
@@ -65,6 +65,7 @@ public:
             slice.IN = preamplifier.OUT;
             slice.TRACK = TRACK[index];
             slice.EVALUATE = evaluation.OUT;
+            slice.CONVERT = CONVERT[index];
             slice.CLEAR = CLEAR;
             slice.CORE_DECISION = DECISION[index];
             slice.Vdd = Vdd;

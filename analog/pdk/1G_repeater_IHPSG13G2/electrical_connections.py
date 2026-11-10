@@ -25,6 +25,7 @@ def expected_bindings():
                 result[f'{bank}_{lane}_{bit}'] = f'{bank.lower()}_out[{lane}][{bit}]'
         for s in range(13):
             result[f'TRACK_{lane}_{s}'] = f'acquire_out[{16 * lane + s}]'
+            result[f'CONVERT_{lane}_{s}'] = f'convert_out[{16 * lane + s}]'
             result[f'DECISION_{lane}_{s}'] = f'comparisons_in[{lane}][{s}]'
             for bit in range(8):
                 result[f'TRIAL_{lane}_{s}_{bit}'] = f'trial_out[{16 * lane + s}][{bit}]'
@@ -124,11 +125,14 @@ def check(data):
             supplies(path)
             same(r + '.preamp.OUT', path + '.IN', path + '.sampler.IN')
             same(f'TRACK_{lane}_{s}', path + '.tracking.A')
+            same(f'CONVERT_{lane}_{s}', path + '.CONVERT', path + '.gate.CONVERT', path + '.select.B')
+            same(r + '.evaluation.OUT', path + '.EVALUATE', path + '.gate.EVALUATE', path + '.select.A')
+            same(path + '.select.Y', path + '.selected.A')
+            same(path + '.selected.Y', path + '.gate.OUT', path + '.decision.EVALUATE')
             same(path + '.tracking.Y', path + '.sampler.CLOCK')
             same(path + '.sampler.OUT', path + '.decision.IN')
             same(path + '.decision.BIAS', path + '.tracking.BIAS')
             same(f'CLEAR_{lane}', path + '.CLEAR', path + '.decision.CLEAR')
-            same(r + '.evaluation.OUT', path + '.EVALUATE', path + '.decision.EVALUATE')
             same(f'DECISION_{lane}_{s}', path + '.decision.CORE_DECISION')
             for bit in range(8):
                 same(f'TRIAL_{lane}_{s}_{bit}', f'{path}.decision.TRIAL[{bit}]', f'{path}.dac.A[{bit}]')

@@ -77,7 +77,17 @@ def check(tree):
                    ('RepeaterDigital', 'port_a__transmit_in', 'forwarding__tx_a_out'),
                    ('RepeaterDigital', 'port_b__transmit_in', 'forwarding__tx_b_out'),
                    ('RepeaterPort', 'receive_out', 'receiver__receive_out'),
-                   ('RepeaterPort', 'symbols_out', 'transmitter__symbols_out')]
+                   ('RepeaterPort', 'symbols_out', 'transmitter__symbols_out'),
+                   ('AutonomousADCReceivePHY', 'receiver__samples_in', 'capture__samples_out'),
+                   ('AutonomousADCReceivePHY', 'receiver__sample_tag_in', 'capture__tag_out'),
+                   ('AutonomousReceivePHY', 'recovery__samples_in', 'samples_in'),
+                   ('AutonomousReceivePHY', 'recovery__tag_in', 'sample_tag_in'),
+                   ('AutonomousReceivePHY', 'crossing__samples_in', 'recovery__samples_out'),
+                   ('AutonomousReceivePHY', 'crossing__tag_in', 'recovery__tag_out'),
+                   ('AutonomousReceivePHY', 'receiver__samples_in', 'crossing__samples_out'),
+                   ('ReceiveSampleRecovery', 'interpolator__samples_in', 'samples_in'),
+                   ('ReceiveSampleRecovery', 'interpolator__tag_in', 'tag_in'),
+                   ('ReceiveSampleRecovery', 'interpolator__period_in', 'timing__period_out')]
     for parent, destination, source in connections:
         assignments = [n for n in nodes(module(parent)['stmtsp']) if n.get('type') == 'ASSIGNW'
                        and direct(n['lhsp'], destination)]

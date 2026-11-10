@@ -31,6 +31,8 @@ def run(data, rtl):
     negative('unprotected FLP receive', lambda d: d['anchors'].__setitem__('flp1.RX_N', d['anchors']['N_5']))
     negative('wrong slice comparator', lambda d: next(p for p in d['ports'] if p['name'] == 'DECISION_3_12').__setitem__('digital', 'comparisons_in[3][11]'))
     negative('wrong trial bit', lambda d: next(p for p in d['ports'] if p['name'] == 'TRIAL_7_12_7').__setitem__('digital', 'trial_out[124][6]'))
+    negative('wrong conversion slice', lambda d: next(p for p in d['ports'] if p['name'] == 'CONVERT_3_12').__setitem__('digital', 'convert_out[59]'))
+    negative('bypassed conversion gate', lambda d: d['anchors'].__setitem__('rx3.s12.decision.EVALUATE', d['anchors']['rx3.evaluation.OUT']))
     negative('missing comparator', lambda d: d['ports'].remove(next(p for p in d['ports'] if p['name'] == 'DECISION_0_0')))
     negative('shorted samples', lambda d: d['anchors'].__setitem__('rx1.s0.sampler.OUT', d['anchors']['rx0.s0.sampler.OUT']))
     negative('wrong core supply', lambda d: d['anchors'].__setitem__('rx5.s12.Vlogic', d['anchors']['VDD']))

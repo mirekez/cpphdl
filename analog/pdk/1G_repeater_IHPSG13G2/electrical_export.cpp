@@ -132,10 +132,17 @@ int main(int argc, char** argv) {
                 const auto s = r + ".s" + std::to_string(slice);
                 const auto& cell = rx.slices[slice];
                 port("TRACK_" + number, chip.TRACK[lane][slice], "input", index("acquire_out", 16 * lane + slice));
+                port("CONVERT_" + number, chip.CONVERT[lane][slice], "input", index("convert_out", 16 * lane + slice));
                 port("DECISION_" + number, chip.DECISION[lane][slice], "output", index(index("comparisons_in", lane), slice));
                 for (const auto& item : std::vector<verilog_a::named_port>{
                         {"IN", cell.IN}, {"Vdd", cell.Vdd}, {"Vss", cell.Vss}, {"Vlogic", cell.Vlogic},
-                        {"CLEAR", cell.CLEAR}, {"EVALUATE", cell.EVALUATE}, {"tracking.A", cell.tracking.A},
+                        {"CLEAR", cell.CLEAR}, {"EVALUATE", cell.EVALUATE}, {"CONVERT", cell.CONVERT},
+                        {"gate.EVALUATE", cell.evaluation_gate.EVALUATE},
+                        {"gate.CONVERT", cell.evaluation_gate.CONVERT}, {"gate.OUT", cell.evaluation_gate.OUT},
+                        {"select.A", cell.evaluation_gate.select.A}, {"select.B", cell.evaluation_gate.select.B},
+                        {"select.Y", cell.evaluation_gate.select.Y},
+                        {"selected.A", cell.evaluation_gate.selected.A},
+                        {"selected.Y", cell.evaluation_gate.selected.Y}, {"tracking.A", cell.tracking.A},
                         {"tracking.Y", cell.tracking.Y}, {"tracking.BIAS", cell.tracking.BIAS},
                         {"sampler.IN", cell.sampler.IN}, {"sampler.OUT", cell.sampler.OUT}, {"sampler.CLOCK", cell.sampler.CLOCK},
                         {"decision.IN", cell.decision.IN}, {"decision.CORE_DECISION", cell.decision.CORE_DECISION},

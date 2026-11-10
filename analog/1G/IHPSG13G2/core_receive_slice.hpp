@@ -1,6 +1,8 @@
 #pragma once
 #include "core_receive_decision.hpp"
 #include <basic/mos_track_hold.hpp>
+#include <basic/cmos_logic.hpp>
+#include <basic/inverter.hpp>
 
 namespace analog::one_g::ihp_sg13g2 {
 
@@ -30,6 +32,35 @@ public:
     }
 };
 
+// Only the selected SAR slice sees the lane-wide evaluation pulse. This
+// physical NAND/inverter pair stays in the coupled network with its loads.
+class receive_conversion_gate : public IC {
+public:
+    _PORT(electrical) EVALUATE;
+    _PORT(electrical) CONVERT;
+    _PORT(electrical) OUT;
+    cmos_nand select;
+    cmos<channel_model> selected;
+
+    void _assign() override {
+        select.A = EVALUATE;
+        select.B = CONVERT;
+        select.Vdd = Vdd;
+        select.Vss = Vss;
+        select.parameters = mos_model{channel_strength(.002), voltage(.35)};
+        select.output_capacitance = capacitance_value(10e-15);
+        select.weak_returns = false;
+        select.elaborate();
+        selected.A = select.Y;
+        selected.Vdd = Vdd;
+        selected.Vss = Vss;
+        selected.Y = OUT;
+        selected.model.transistor_parameters = mos_model{channel_strength(.002), voltage(.35)};
+        selected.elaborate();
+        OUT = capacitor(Vss, capacitance_value(10e-15));
+    }
+};
+
 // Direct tracking control preserves the existing SAR startup/acquire schedule.
 // This is a composed circuit candidate: the loaded translator, held-node
 // kickback and first decision still require process and extracted verification.
@@ -39,19 +70,27 @@ public:
     _PORT(electrical) IN;
     _PORT(electrical) TRACK;
     _PORT(electrical) EVALUATE;
+    _PORT(electrical) CONVERT;
     _PORT(electrical) CLEAR;
     _PORT(electrical) CORE_DECISION;
     std::array<port<electrical>, 8> TRIAL;
     clock_level_shifter tracking;
+    receive_conversion_gate evaluation_gate;
     mos_track_hold sampler;
     core_receive_decision decision;
 
     void _assign() override {
+        evaluation_gate.EVALUATE = EVALUATE;
+        evaluation_gate.CONVERT = CONVERT;
+        evaluation_gate.Vdd = Vlogic;
+        evaluation_gate.Vss = Vss;
+        evaluation_gate.elaborate();
+
         decision.IN = sampler.OUT;
         decision.Vdd = Vdd;
         decision.Vss = Vss;
         decision.Vlogic = Vlogic;
-        decision.EVALUATE = EVALUATE;
+        decision.EVALUATE = evaluation_gate.OUT;
         decision.CLEAR = CLEAR;
         decision.CORE_DECISION = CORE_DECISION;
         for (unsigned bit = 0; bit < 8; ++bit)
