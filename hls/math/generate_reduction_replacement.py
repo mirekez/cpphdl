@@ -37,7 +37,9 @@ def reduction(rows,cols):
     if not 1 <= rows <= 64:
         raise ValueError('Reduction rows must be in 1..64')
     stages=minimum_latency(cols);words=rows*cols+1
-    body=[primitive(),f'''
+    delay=(Path(__file__).resolve().parent/'rtl/EnabledDelay.sv').read_text()
+    delay=delay.replace('CpphdlEnabledDelay','CpphdlReductionEnabledDelay').replace('CPPHDL_ENABLED_DELAY','CPPHDL_REDUCTION_ENABLED_DELAY')
+    body=[primitive(),delay,f'''
 module Fp32Reduction_{rows}_{cols} #(parameter LATENCY={stages})(
     input wire clk,reset,command_valid_in,response_ready_in,
     input wire [{words*32-1}:0] operation_in,index_in,value_in,
@@ -45,20 +47,24 @@ module Fp32Reduction_{rows}_{cols} #(parameter LATENCY={stages})(
     output wire [{(rows+1)*32-1}:0] result_out,output wire [31:0] fault_out);
     initial if(LATENCY<{stages})$fatal(1,"FP32 reduction LATENCY is smaller than its addition tree");
     reg [LATENCY-1:0] valid;
-    reg [31:0] tags[0:LATENCY-1];
+    reg [31:0] tags[0:{stages-1}];
+    wire [{(rows+1)*32-1}:0] selected;
     wire advance=!valid[LATENCY-1] || response_ready_in;
     assign command_ready_out=advance;
     assign response_valid_out=valid[LATENCY-1];
     assign fault_out=0;
-    assign result_out[{rows*32}+:32]=tags[LATENCY-1];
+    assign selected[{rows*32}+:32]=tags[{stages-1}];
+    CpphdlReductionEnabledDelay #(.WIDTH({(rows+1)*32}),.DEPTH(LATENCY-{stages})) delay_result(
+        .clk(clk),.reset(reset),.advance(advance),.data_in(selected),.data_out(result_out));
     integer tag_index;
     always @(posedge clk)begin
-        if(reset)begin valid<=0;for(tag_index=0;tag_index<LATENCY;tag_index=tag_index+1)tags[tag_index]<=0;end
+        if(reset)valid<=0;
         else if(advance)begin
             valid[0]<=command_valid_in;tags[0]<=operation_in[{rows*cols*32}+:32];
             for(tag_index=1;tag_index<LATENCY;tag_index=tag_index+1)begin
-                valid[tag_index]<=valid[tag_index-1];tags[tag_index]<=tags[tag_index-1];
+                valid[tag_index]<=valid[tag_index-1];
             end
+            for(tag_index=1;tag_index<{stages};tag_index=tag_index+1)tags[tag_index]<=tags[tag_index-1];
         end
     end
 ''']
@@ -76,17 +82,7 @@ module Fp32Reduction_{rows}_{cols} #(parameter LATENCY={stages})(
             inputs=outputs;level+=1
         body.append(f'''wire [31:0] row{row}_sum;
 Fp32ReductionAdd row{row}_identity(.clk(clk),.reset(reset),.en_in(advance),.a_in(32'b0),.b_in({inputs[0]}),.result_out(row{row}_sum));
-generate if(LATENCY=={stages})begin
-    assign result_out[{row*32}+:32]=row{row}_sum;
-end else if(LATENCY>{stages})begin
-    reg [31:0] delay_data[0:LATENCY-{stages}-1];integer i;
-    always @(posedge clk)begin
-        if(reset)for(i=0;i<LATENCY-{stages};i=i+1)delay_data[i]<=0;
-        else if(advance)begin delay_data[0]<=row{row}_sum;
-            for(i=1;i<LATENCY-{stages};i=i+1)delay_data[i]<=delay_data[i-1];end
-    end
-    assign result_out[{row*32}+:32]=delay_data[LATENCY-{stages}-1];
-end endgenerate
+assign selected[{row*32}+:32]=row{row}_sum;
 ''')
     body.append('endmodule\n')
     return ''.join(body)

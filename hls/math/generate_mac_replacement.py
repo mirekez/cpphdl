@@ -16,7 +16,9 @@ def primitive():
 
 
 def pipeline():
-    return primitive()+r'''
+    delay=(Path(__file__).resolve().parent/'rtl/EnabledDelay.sv').read_text()
+    delay=delay.replace('CpphdlEnabledDelay','CpphdlMacEnabledDelay').replace('CPPHDL_ENABLED_DELAY','CPPHDL_MAC_ENABLED_DELAY')
+    return primitive()+delay+r'''
 `ifndef CPPHDL_FP32_MAC_PIPELINE
 `define CPPHDL_FP32_MAC_PIPELINE
 module Fp32MacPipeline #(parameter LATENCY=2)(
@@ -42,20 +44,8 @@ module Fp32MacPipeline #(parameter LATENCY=2)(
             for(i=1;i<LATENCY;i=i+1)valid[i]<=valid[i-1];
         end
     end
-    generate if(LATENCY==2)begin
-        assign result_out=computed;
-    end else if(LATENCY>2)begin
-        reg [31:0] delay_data [0:LATENCY-3];
-        integer j;
-        always @(posedge clk) begin
-            if(reset)for(j=0;j<LATENCY-2;j=j+1)delay_data[j]<=0;
-            else if(advance)begin
-                delay_data[0]<=computed;
-                for(j=1;j<LATENCY-2;j=j+1)delay_data[j]<=delay_data[j-1];
-            end
-        end
-        assign result_out=delay_data[LATENCY-3];
-    end endgenerate
+    CpphdlMacEnabledDelay #(.WIDTH(32),.DEPTH(LATENCY-2)) delay_result(
+        .clk(clk),.reset(reset),.advance(advance),.data_in(computed),.data_out(result_out));
 endmodule
 `endif
 
@@ -72,34 +62,41 @@ module Fp32MacArray_{rows}_{cols} #(parameter LATENCY=2)(
     output wire [{(lanes+1)*32-1}:0] result_out,output wire [31:0] fault_out
 );
     initial if(LATENCY<2)$fatal(1,"FP32 MAC array requires LATENCY >= 2");
-    reg [31:0] tags[0:LATENCY-1];reg [{lanes-1}:0] masks[0:LATENCY-1];
-    reg [{lanes*32-1}:0] initials[0:LATENCY-1];
-    wire advance=command_ready_out;wire [{lanes-1}:0] mask_in;
-    assign result_out[{lanes*32}+:32]=tags[LATENCY-1];assign fault_out=0;
+    // Mask at the arithmetic boundary, not after LATENCY cycles. Only the
+    // selected payload and its tag occupy the deep, shared RAM delay.
+    reg [31:0] tags[0:1];reg [{lanes-1}:0] masks[0:1];
+    reg [{lanes*32-1}:0] initials[0:1];
+    reg [LATENCY-1:0] valid;
+    wire advance=!valid[LATENCY-1] || response_ready_in;
+    wire [{lanes-1}:0] mask_in;
+    wire [{(lanes+1)*32-1}:0] selected;
+    assign command_ready_out=advance;assign response_valid_out=valid[LATENCY-1];
+    assign selected[{lanes*32}+:32]=tags[1];assign fault_out=0;
+    CpphdlMacEnabledDelay #(.WIDTH({(lanes+1)*32}),.DEPTH(LATENCY-2)) delay_result(
+        .clk(clk),.reset(reset),.advance(advance),.data_in(selected),.data_out(result_out));
     genvar row,col;
     generate for(row=0;row<{rows};row=row+1)begin: rows
         for(col=0;col<{cols};col=col+1)begin: columns
             localparam LANE=row*{cols}+col;
-            wire [31:0] computed;wire ready,valid;
+            wire [31:0] computed;
             wire [31:0] a=operation_in[{(words-1)*32}+:32]==0 ?
                 operation_in[{(2*lanes+cols)*32}+row*32+:32] : operation_in[LANE*32+:32];
-            Fp32MacPipeline #(.LATENCY(LATENCY)) mac(
-                .clk(clk),.reset(reset),.command_valid_in(command_valid_in),.response_ready_in(response_ready_in),
-                .operation_in(operation_in[{(lanes+cols)*32}+LANE*32+:32]),.index_in(a),
-                .value_in(operation_in[{lanes*32}+col*32+:32]),.command_ready_out(ready),
-                .response_valid_out(valid),.result_out(computed),.fault_out());
+            Fp32Mac mac(.clk(clk),.reset(reset),.en_in(advance),
+                .c_in(operation_in[{(lanes+cols)*32}+LANE*32+:32]),.a_in(a),
+                .b_in(operation_in[{lanes*32}+col*32+:32]),.result_out(computed));
             assign mask_in[LANE]=(row<operation_in[{(words-4)*32}+:32] && col<operation_in[{(words-3)*32}+:32]);
-            assign result_out[LANE*32+:32]=masks[LATENCY-1][LANE] ? computed : initials[LATENCY-1][LANE*32+:32];
-            if(row==0 && col==0)begin assign command_ready_out=ready;assign response_valid_out=valid;end
+            assign selected[LANE*32+:32]=masks[1][LANE] ? computed : initials[1][LANE*32+:32];
         end
     end endgenerate
     integer i;
     always @(posedge clk)begin
-        if(reset)begin for(i=0;i<LATENCY;i=i+1)begin tags[i]<=0;masks[i]<=0;initials[i]<=0;end end
+        if(reset)valid<=0;
         else if(advance)begin
+            valid[0]<=command_valid_in;
+            for(i=1;i<LATENCY;i=i+1)valid[i]<=valid[i-1];
             tags[0]<=operation_in[{(words-2)*32}+:32];masks[0]<=mask_in;
             initials[0]<=operation_in[{(lanes+cols)*32}+:{lanes*32}];
-            for(i=1;i<LATENCY;i=i+1)begin tags[i]<=tags[i-1];masks[i]<=masks[i-1];initials[i]<=initials[i-1];end
+            tags[1]<=tags[0];masks[1]<=masks[0];initials[1]<=initials[0];
         end
     end
 endmodule

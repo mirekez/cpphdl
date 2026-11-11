@@ -16,13 +16,24 @@ module cpphdl_examples_SynchronousRam #(parameter WORDS=1,parameter DEPTH=64)(
  input wire [31:0] read_address_in,write_address_in,
  input wire [WORDS*32-1:0] data_in,output reg [WORDS*32-1:0] data_out
 );
- (* ramstyle="M20K", ram_style="block" *) reg [WORDS*32-1:0] words[0:DEPTH-1];
- always @(posedge clk) begin
-   if(!reset) begin
-     if(write_in)words[write_address_in]<=data_in;
-     if(read_in)data_out<=words[read_address_in];
+ // Shallow banks otherwise waste an M20K for as few as four words.
+ generate if(DEPTH<=64) begin: shallow
+   (* ramstyle="MLAB", ram_style="distributed" *) reg [WORDS*32-1:0] words[0:DEPTH-1];
+   always @(posedge clk) begin
+     if(!reset) begin
+       if(write_in)words[write_address_in]<=data_in;
+       if(read_in)data_out<=words[read_address_in];
+     end
    end
- end
+ end else begin: deep
+   (* ramstyle="M20K", ram_style="block" *) reg [WORDS*32-1:0] words[0:DEPTH-1];
+   always @(posedge clk) begin
+     if(!reset) begin
+       if(write_in)words[write_address_in]<=data_in;
+       if(read_in)data_out<=words[read_address_in];
+     end
+   end
+ end endgenerate
 endmodule
 ;)")]] SynchronousRam : public cpphdl::Module {
   public:

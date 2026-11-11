@@ -65,7 +65,7 @@ Fp32Reduction_{rows}_{cols} #(.LATENCY({latency})) reducer(.*);endmodule\n''')
             assert 'initial parameter assertion failed' in (case/'invalid.log').read_text()
             report['cases'].append(dict(rows=rows,cols=cols,latency=latency,work=str(case),simulation_fp_add=rows*cols,
                 retimed_reference=a.retimed_reference,result=(case/'check.log').read_text()));save()
-        paths=[root/'hls/math/generate_reduction_replacement.py',root/'hls/math/rtl/Fp32ReductionAddSimulation.sv',
+        paths=[root/'hls/math/generate_reduction_replacement.py',root/'hls/math/rtl/Fp32ReductionAddSimulation.sv',root/'hls/math/rtl/EnabledDelay.sv',
                root/'hls/math/rtl/FpAdd.sv',root/'hls/tests/Fp32ReductionBranchesCheck.cpp',Path(__file__).resolve()]
         for c in report['cases']:
             case=Path(c['work']);paths.extend(case/n for n in ['converted.cc','converted.cc.synthesis.cc','converted.cc.simulation.cc','hardware.h','replacement.h','check','check.log','invalid.log'])

@@ -50,6 +50,28 @@ bit-level adder rounds and then flushes, so the underflow boundary is a known
 contract difference. Implementations and inline tests live together in
 `lib/math/`; see [library build instructions](../../lib/README.md).
 
+The generated MAC replacement selects masked lanes at the two-stage arithmetic
+boundary. Original accumulator bits (including signed zero and NaN payloads)
+are carried only to that boundary. The selected result and its tag then share
+one enabled delay. The reduction replacement uses the same delay after its
+addition tree. `rtl/EnabledDelay.sv` uses ordinary registers below eight delay
+stages and an inferred M20K circular buffer at larger depths. Its registered
+read is included in the declared latency; read and write addresses differ.
+Reset clears validity and the buffer pointer, not the payload RAM. Output data
+is unspecified when response-valid is false. Backpressure freezes arithmetic,
+validity, pointers and payload together. This changes neither initiation
+interval nor the retiming-assigned external latency.
+
+These RAM delays preserve the replacement's protocol; they do not improve the
+combinational timing of its FP arithmetic. FPGA timing must still be checked
+on the replacement itself. `Fp32MacRtlPipeline.h` remains a register-based C++
+reference for equivalence, rather than the resource-optimized FPGA replacement.
+
+`hls_enabled_delay_storage` verifies RAM inference with Yosys, including the
+4x4, 48-cycle MAC wrapper with arithmetic treated as black boxes. The native
+graph branch tests compare both hardware and simulation arithmetic against
+the FP32 reference through stalls, reset, masks and latency boundaries.
+
 The project compatibility runner checks all four original native examples.
 FP32 tests compare 200,000 add/multiply references and all 65,536 FP16 inputs.
 The OpenMP Float regression verifies the policies through native/RTL/retimed

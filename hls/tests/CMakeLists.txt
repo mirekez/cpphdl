@@ -2,6 +2,14 @@ find_program(HLS_VERILATOR NAMES verilator HINTS "${CMAKE_SOURCE_DIR}/.conda/bin
 find_program(HLS_MAKE NAMES gmake make REQUIRED)
 add_custom_target(hls_tests DEPENDS ${CPPHDL_TEST_TARGET})
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+find_program(HLS_YOSYS NAMES yosys)
+find_program(HLS_JQ NAMES jq)
+if(HLS_YOSYS AND HLS_JQ)
+    add_test(NAME hls_enabled_delay_storage
+        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/EnabledDelayStorage.sh"
+            "${HLS_YOSYS}" "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/enabled-delay-storage" "${Python3_EXECUTABLE}")
+    set_tests_properties(hls_enabled_delay_storage PROPERTIES TIMEOUT 60 LABELS "hls;memory;replacement")
+endif()
 add_test(NAME hls_fp32_mac_direct_native_graph
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/Fp32MacDirectChecks.py"
         --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
@@ -9,6 +17,11 @@ add_test(NAME hls_fp32_mac_direct_native_graph
 set_tests_properties(hls_fp32_mac_direct_native_graph PROPERTIES TIMEOUT 1200 LABELS "hls;native;replacement")
 find_program(HLS_HDLCPP NAMES hdlcpp HINTS "${CMAKE_BINARY_DIR}/hdlcpp" "${CMAKE_SOURCE_DIR}/build/hdlcpp")
 if(HLS_HDLCPP)
+    add_test(NAME hls_ram_storage_policy
+        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/RamStoragePolicy.sh"
+            "${HLS_HDLCPP}" "${CPPHDL_TEST_CXX}" "${CMAKE_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/ram-storage-policy")
+    set_tests_properties(hls_ram_storage_policy PROPERTIES TIMEOUT 300 LABELS "hls;native;memory")
     add_test(NAME hls_openmp_type_aliases_native_graph
         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/OpenMPTypeAliases.sh"
             "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "${HLS_HDLCPP}" "${CMAKE_SOURCE_DIR}"

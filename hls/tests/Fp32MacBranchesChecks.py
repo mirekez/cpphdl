@@ -17,7 +17,7 @@ def main():
   with log.open('w') as f:subprocess.run(list(map(str,cmd)),stdout=f,stderr=f,check=True,preexec_fn=limit)
  sys.path.insert(0,str(root/'hls/math'));from generate_mac_replacement import array
  try:
-  for rows,cols,latency in [(1,1,2),(2,3,3),(4,4,a.latency)]:
+  for rows,cols,latency in [(1,1,2),(2,3,3),(1,1,9),(1,1,10),(4,4,a.latency)]:
    case=Path(tempfile.mkdtemp(prefix=f'{rows}x{cols}-l{latency}-',dir=work));n=rows*cols;words=2*n+rows+cols+4
    (case/'input.sv').write_text(array(rows,cols)+f'''\nmodule Test(input clk,reset,command_valid_in,response_ready_in,
 input [{words*32-1}:0] operation_in,index_in,value_in,output command_ready_out,response_valid_out,
@@ -40,7 +40,7 @@ Fp32MacArray_{rows}_{cols} #(.LATENCY({latency})) mac(.*);endmodule\n''')
    report['cases'].append(dict(rows=rows,cols=cols,latency=latency,work=str(case),fp_mul=n,fp_add=n,result=(case/'check.log').read_text()));save()
   report.update(status='passed',clocks=8192,model=str(case/'replacement.h'),legacy_sha256=digest(a.legacy) if a.legacy else None)
   paths=[f for f in work.rglob('*') if f.is_file() and f.name!='results.json']
-  paths += [Path(__file__).resolve(),root/'hls/tests/Fp32MacBranchesCheck.cpp',root/'hls/math/generate_mac_replacement.py',root/'hls/math/rtl/Fp32MacSimulation.sv']
+  paths += [Path(__file__).resolve(),root/'hls/tests/Fp32MacBranchesCheck.cpp',root/'hls/math/generate_mac_replacement.py',root/'hls/math/rtl/Fp32MacSimulation.sv',root/'hls/math/rtl/EnabledDelay.sv']
   if a.legacy:paths.append(a.legacy.resolve())
   report['artifacts']={str(x):digest(x) for x in paths};save();print(work/'results.json',flush=True)
  except BaseException as e:report.update(status='failed',error=str(e));save();raise

@@ -17,6 +17,15 @@ module cpphdl_examples_MaskedSynchronousRam #(parameter WORDS=16,parameter DEPTH
 );
  genvar lane;
  generate for(lane=0;lane<WORDS;lane=lane+1) begin: lanes
+ if(DEPTH<=64) begin: shallow
+   (* ramstyle="MLAB", ram_style="distributed" *) reg [31:0] words[0:DEPTH-1];
+   always @(posedge clk) begin
+     if(!reset) begin
+       if(write_in && write_mask_in[lane])words[write_address_in]<=data_in[lane*32+:32];
+       if(read_in)data_out[lane*32+:32]<=words[read_address_in];
+     end
+   end
+ end else begin: deep
    (* ramstyle="M20K", ram_style="block" *) reg [31:0] words[0:DEPTH-1];
    always @(posedge clk) begin
      if(!reset) begin
@@ -24,6 +33,7 @@ module cpphdl_examples_MaskedSynchronousRam #(parameter WORDS=16,parameter DEPTH
        if(read_in)data_out[lane*32+:32]<=words[read_address_in];
      end
    end
+ end
  end endgenerate
 endmodule
 ;)")]] MaskedSynchronousRam : public cpphdl::Module {

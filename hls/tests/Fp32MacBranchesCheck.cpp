@@ -33,7 +33,7 @@ int main(){
   bool reset=cycle<3 || cycle%997==0,valid=cycle<Clocks-300 && cycle%7!=1,ready=cycle%211>=53 && cycle%11!=3;
   std::array<uint32_t,W> in;for(auto& x:in)x=cycle%3==0?edges[next()%20]:next();
   if(N==1 && cycle<8000){in[0]=in[3]=edges[cycle%20];in[1]=edges[(cycle/20)%20];in[2]=edges[(cycle/400)%20];}
-  in[W-4]=cycle<8000?R:next()%(R+1);in[W-3]=cycle<8000?C:next()%(C+1);in[W-2]=cycle;in[W-1]=next()%3;
+  in[W-4]=(N==1 && cycle<8000)?R:next()%(R+1);in[W-3]=(N==1 && cycle<8000)?C:next()%(C+1);in[W-2]=cycle;in[W-1]=next()%3;
   auto drive=[&](auto& g){g.clk[0]=0;g.reset[0]=reset;g.command_valid_in[0]=valid;g.response_ready_in[0]=ready;
    for(unsigned i=0;i<W;i++){g.operation_in[i]=in[i];g.index_in[i]=next();g.value_in[i]=next();}g.step();};
   drive(hardware);drive(simulation);
