@@ -53,7 +53,19 @@ Fp32Reduction_{rows}_{cols} #(.LATENCY({latency})) reducer(.*);endmodule\n''')
                 run([case/(label+'-emit'),case/(label+'.h')],case/(label+'-emit.log'))
             assert ' + std::bit_cast<double>' in (case/'replacement.h').read_text()
             if a.retimed_reference:
-                run([a.cxx,'-std=c++23','-O1','-pthread','-I'+str(root/'include'),case/'retimed_graph.cc','-o',case/'reference-emit'],case/'reference-compile.log')
+                # Retiming expands this reference to tens of thousands of nodes.
+                # Bound each native function rather than asking the host compiler
+                # to optimize one enormous evaluator. Keep the complete graph and
+                # all transaction, stall, reset and bit-exact FP32 checks.
+                emitter=case/'reference-emit.cc'
+                emitter.write_text('''#define CPPHDL_GRAPH_NO_MAIN
+#include "retimed_graph.cc"
+int main(int argc, char** argv) {
+    if (argc != 2) return 2;
+    makeGraph().emit(argv[1], 512, 1);
+}
+''')
+                run([a.cxx,'-std=c++23','-O1','-pthread','-I'+str(root/'include'),emitter,'-o',case/'reference-emit'],case/'reference-compile.log')
                 run([case/'reference-emit',case/'reference.h'],case/'reference-emit.log')
             command=[a.cxx,'-std=c++23','-O1','-ffp-contract=off','-pthread','-I'+str(root/'include'),'-I'+str(case),
                 f'-DREDUCTION_ROWS={rows}',f'-DREDUCTION_COLS={cols}',f'-DREDUCTION_LATENCY={latency}',
@@ -70,7 +82,7 @@ Fp32Reduction_{rows}_{cols} #(.LATENCY({latency})) reducer(.*);endmodule\n''')
         for c in report['cases']:
             case=Path(c['work']);paths.extend(case/n for n in ['converted.cc','converted.cc.synthesis.cc','converted.cc.simulation.cc','hardware.h','replacement.h','check','check.log','invalid.log'])
         if a.design:paths.extend(a.design/n for n in ['gates.v','timing.json','retimed_graph.cc'])
-        if a.retimed_reference:paths.append(case/'reference.h')
+        if a.retimed_reference:paths.extend(case/n for n in ['reference-emit.cc','reference.h'])
         report.update(status='passed',clocks=8192,artifacts={str(x.resolve()):digest(x) for x in paths})
         if a.design:report.update(latency=latency,model_sha256=digest(case/'replacement.h'),verilog_sha256=digest(source))
         save();print(work/'results.json',flush=True)

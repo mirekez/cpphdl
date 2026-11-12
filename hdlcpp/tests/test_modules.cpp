@@ -50,6 +50,17 @@ static void expectNotContains(const std::string& text, const std::string& needle
     }
 }
 
+static void expectLineContains(const std::string& text, const std::string& lineStart,
+                               const std::string& needle,
+                               std::source_location location = std::source_location::current())
+{
+    expectContains(text, lineStart, location);
+    const auto start = text.find(lineStart);
+    if (start != std::string::npos) {
+        expectContains(text.substr(start, text.find('\n', start) - start), needle, location);
+    }
+}
+
 static size_t countContains(const std::string& text, const std::string& needle)
 {
     size_t count = 0;
@@ -758,8 +769,8 @@ z_implicit_ctor<> support;
     expectContains(externs, "using cpphdl_opt_t1 = z_implicit_ctor<>;");
     expectContains(externs, "using cpphdl_opt_t2 = worker<((31>= 0) ? 9 : 8)>;");
     expectContains(externs, "using cpphdl_opt_t3 = worker<((31>> 1) & 7)>;");
-    expectContains(externs, "using cpphdl_opt_t4 = worker<(1ull<< 4)>;");
-    expectContains(externs, "using cpphdl_opt_t5 = worker<7>;");
+    expectContains(externs, "using cpphdl_opt_t4 = worker<((1ull<< 4))>;");
+    expectContains(externs, "using cpphdl_opt_t5 = worker<(7)>;");
     expectNotContains(externs, "worker<13>");
     expectNotContains(externs, "worker<Other>");
     expectNotContains(externs, "uint64_t Late");
@@ -795,7 +806,9 @@ z_implicit_ctor<> support;
     assert(fs::last_write_time(dir / "cpphdl_optimized_inst_0.cpp") == inst0WriteTime);
 
     fs::current_path(dir);
-    command = "make -f Makefile.optimize -j1 "
+    // Toolchain environments and command-line flags must not remove the
+    // generated build's required include paths.
+    command = "make -f Makefile.optimize -j1 CXXFLAGS='-O0' "
               "build/opt/cpphdl_optimized_main.o "
               "build/opt/cpphdl_optimized_inst_0.o "
               "build/opt/cpphdl_optimized_inst_1.o "
@@ -6449,9 +6462,11 @@ endmodule
     auto h = convertModule(argv0, "always_comb_array_merge", sv, "");
     expectContains(h, "ex_o_comb[(unsigned)(0ull)] = (from_i_in())[(unsigned)(0ull)];");
     expectContains(h, "ex_o_comb[(unsigned)(1ull)] = (from_i_in())[(unsigned)(1ull)];");
-    expectContains(h, "ex_o_comb[(unsigned)(2ull)].data_gnt &= sel_i_in();");
+    expectLineContains(h, "ex_o_comb[(unsigned)(2ull)].data_gnt =", " & logic<");
+    expectLineContains(h, "ex_o_comb[(unsigned)(2ull)].data_gnt =", "(sel_i_in()));");
     expectContains(h, "acc_o_comb[(unsigned)(0ull)] = (from_i_in())[(unsigned)(2ull)];");
-    expectContains(h, "acc_o_comb[(unsigned)(1ull)].data_gnt &= !sel_i_in();");
+    expectLineContains(h, "acc_o_comb[(unsigned)(1ull)].data_gnt =", " & logic<");
+    expectLineContains(h, "acc_o_comb[(unsigned)(1ull)].data_gnt =", "(!sel_i_in()));");
     expectNotContains(h, "ex_o[2].data_gnt");
     expectNotContains(h, "acc_o[1].data_gnt");
 }
@@ -6492,7 +6507,8 @@ endmodule
     auto h = convertModule(argv0, "always_comb_internal_array_merge", sv, "");
     expectContains(h, "routed_comb[(unsigned)(0ull)] = (from_i_in())[(unsigned)(0ull)];");
     expectContains(h, "routed_comb[(unsigned)(1ull)] = (from_i_in())[(unsigned)(1ull)];");
-    expectContains(h, "routed_comb[(unsigned)(2ull)].data_gnt &= sel_i_in();");
+    expectLineContains(h, "routed_comb[(unsigned)(2ull)].data_gnt =", " & logic<");
+    expectLineContains(h, "routed_comb[(unsigned)(2ull)].data_gnt =", "(sel_i_in()));");
     expectContains(h, "u_sink.req_i_in = _ASSIGN(");
     expectNotContains(h, "routed[2].data_gnt");
 }
@@ -7356,7 +7372,7 @@ endmodule
     auto h = convertModule(argv0, "nested_generate_local_comb", sv, "");
     expectContains(h, "match_bits = {};");
     expectContains(h, "for (unsigned k =");
-    expectContains(h, "match_bits[(unsigned)(uint64_t)((uint64_t)((uint64_t)(k)))]");
+    expectContains(h, "match_bits[(unsigned)(uint64_t)((uint64_t)(((uint64_t)(k) & ((1ull << 32) - 1ull))))]");
     expectContains(h, "return match_bits;");
     expectNotContains(h, "([&]()");
 }
@@ -7390,8 +7406,8 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "nested_generate_module_array", sv, "");
-    expectContains(h, "array<((uint64_t)(ROWS)");
-    expectContains(h, "array<((uint64_t)(COLS)");
+    expectContains(h, "array<uint64_t(ROWS)");
+    expectContains(h, "array<uint64_t(COLS)");
     expectContains(h, ",class ::generated_grid_leaf>> leaf_i;");
     expectContains(h, "leaf_i[(unsigned)(uint64_t)((uint64_t)(i))][(unsigned)(uint64_t)((uint64_t)(k))].data_i_in");
     expectContains(h, "leaf_i[(unsigned)(uint64_t)((uint64_t)(i))][(unsigned)(uint64_t)((uint64_t)(k))]._work(reset);");

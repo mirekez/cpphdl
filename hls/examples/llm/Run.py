@@ -57,8 +57,8 @@ if args.gates:
     sources = [rtl / 'gates.v']
 else:
     run([args.cpphdl, '--generated-dir', rtl, source, '--', *flags], 'conversion')
-    sources = [rtl / 'Predef_pkg.sv', *sorted(rtl.glob('cpphdl_hls_*.sv'))]
-    sources += [path for path in sorted(rtl.glob('*.sv')) if path not in sources]
+    sources = sorted(rtl.glob('*.sv'), key=lambda path: (
+        path.name != 'Predef_pkg.sv', not path.name.endswith('_pkg.sv'), path.name))
 if args.top == 'ScalarMath':
     math_rtl = work / 'math-rtl'
     if math_rtl.exists():

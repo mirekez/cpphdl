@@ -5,6 +5,7 @@ import io
 import json
 import os
 import pathlib
+import random
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,44 @@ import run_riscv_arch_test as arch
 import run_riscv_tests as isa
 import run_riscv_dv as dv
 import run_spike_fragments as fragments
+
+
+class InstructionSelectionTests(unittest.TestCase):
+    def setUp(self):
+        # Isolate the patched selection block from PyVSC and instruction ASTs.
+        # The pinned caller constructs these candidate/exclusion lists first.
+        source = '''class Generator:
+    @classmethod
+    def choose(cls, include_instr, allowed_instr, disallowed_instr):
+        # TODO Randomization logic needs to be frame with PyVSC library
+        raise AssertionError("unpatched selector")
+        # rs1 rs2 values are overwriting
+        return name
+'''
+        namespace = {"random": random}
+        exec(dv.patch_instruction_selection(source), namespace)
+        self.generator = namespace["Generator"]
+        self.generator.instr_names = ["ADD", "SUB", "C_ADDI16SP"]
+
+    def test_exclusions_apply_to_each_candidate_source(self):
+        for included, allowed in (([], []), ([], ["ADD", "C_ADDI16SP"]),
+                                  (["SUB", "C_ADDI16SP"], [])):
+            expected = [name for name in (included or allowed or self.generator.instr_names)
+                        if name != "C_ADDI16SP"]
+            with self.subTest(included=included, allowed=allowed):
+                with patch.object(random, "choice", side_effect=lambda names: names[-1]) as choice:
+                    self.assertEqual(self.generator.choose(included, allowed, ["C_ADDI16SP"]),
+                                     expected[-1])
+                    choice.assert_called_once_with(expected)
+
+    def test_singleton_and_last_candidate_remain_selectable(self):
+        self.assertEqual(self.generator.choose(["ADD"], [], []), "ADD")
+        with patch.object(random, "choice", side_effect=lambda names: names[-1]):
+            self.assertEqual(self.generator.choose(["ADD", "SUB"], [], []), "SUB")
+
+    def test_impossible_filter_fails_before_randomization(self):
+        with self.assertRaisesRegex(ValueError, "No instructions satisfy"):
+            self.generator.choose(["ADD"], [], ["ADD"])
 
 
 class CheckoutTests(unittest.TestCase):

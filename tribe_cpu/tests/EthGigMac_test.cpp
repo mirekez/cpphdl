@@ -158,6 +158,10 @@ public:
     }
 };
 
+// Instantiate the test DUT even when the native harness is excluded for RTL
+// conversion. Its dependent child modules require a concrete specialization.
+template class EthGigMacChain<128>;
+
 #if !defined(SYNTHESIS) && !defined(NO_MAINFILE)
 
 class TestEthGigMac : public Module

@@ -155,6 +155,20 @@ def git_head_file(checkout: pathlib.Path, relpath: str) -> str:
     return result.stdout
 
 
+def patch_instruction_selection(text: str) -> str:
+    # The pinned generator collects exclusions but never applies them. This
+    # admits compressed instructions into numeric-corner streams whose register
+    # sets need not satisfy compressed-instruction constraints.
+    start = text.index("        # TODO Randomization logic needs to be frame with PyVSC library\n")
+    end = text.index("        # rs1 rs2 values are overwriting", start)
+    return text[:start] + '''        candidates = include_instr or allowed_instr or cls.instr_names
+        candidates = [name for name in candidates if name not in disallowed_instr]
+        if not candidates:
+            raise ValueError("No instructions satisfy the requested inclusion/exclusion filters")
+        name = random.choice(candidates)
+''' + text[end:]
+
+
 def patch_riscv_dv_pygen(checkout: pathlib.Path) -> None:
     # The pinned riscv-dv pygen still imports reload from Python's removed
     # ``imp`` module.  Python 3.12 deleted that compatibility module; reload
@@ -163,6 +177,7 @@ def patch_riscv_dv_pygen(checkout: pathlib.Path) -> None:
     instr_path = checkout / "pygen" / "pygen_src" / "isa" / "riscv_instr.py"
     text = git_head_file(checkout, "pygen/pygen_src/isa/riscv_instr.py")
     text = text.replace("from imp import reload\n", "from importlib import reload\n")
+    text = patch_instruction_selection(text)
     instr_path.write_text(text, encoding="utf-8")
 
     path = checkout / "pygen" / "pygen_src" / "riscv_amo_instr_lib.py"

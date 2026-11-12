@@ -18,11 +18,25 @@ namespace {
 using namespace clang;
 using Methods = std::map<std::string, const CXXMethodDecl*>;
 
-bool isProcess(const std::string& name, const std::string& phase)
+bool isProcess(const std::string& name, const std::string& phase, bool nested = true)
 {
-    // Clock names are local to a reusable child, not just CLI root names.
-    // Match the same lifecycle family as AST extraction and SV generation.
-    return name == phase || name.rfind(phase + "_", 0) == 0;
+    if (name == phase || name == phase + "_neg") {
+        return true;
+    }
+    // Only nested modules infer local clocks from method names. Root clocks
+    // are selected by the CLI, as in Module.cpp::moduleClockDomains. A root
+    // helper such as _strobe_unused must not satisfy a missing commit.
+    if (nested) {
+        return name.rfind(phase + "_", 0) == 0;
+    }
+    if (currProject->clocks.empty()) {
+        return name == phase + "_clk" || name == phase + "_neg_clk";
+    }
+    return std::any_of(currProject->clocks.begin(), currProject->clocks.end(),
+        [&](const auto& clock) {
+            return name == phase + "_" + clock.name
+                || name == phase + "_neg_" + clock.name;
+        });
 }
 
 bool hasNamedClockVariant(const Methods& methods, const std::string& name,
@@ -337,7 +351,7 @@ void report(const CXXRecordDecl* record, const FieldDecl* field,
     std::cerr << "/" << std::string(width - 2, '*') << "/\n";
 }
 
-void check(const CXXRecordDecl* record, ASTContext& context)
+void check(const CXXRecordDecl* record, ASTContext& context, bool nested)
 {
     Methods methods;
     std::vector<const FieldDecl*> fields;
@@ -345,10 +359,10 @@ void check(const CXXRecordDecl* record, ASTContext& context)
     collectMembers(record, methods, fields, visited);
     ProcessCalls work(context, methods, fields), strobe(context, methods, fields);
     for (const auto& [name, decl] : methods) {
-        if (isProcess(name, "_work")) {
+        if (isProcess(name, "_work", nested)) {
             work.method(decl);
         }
-        if (isProcess(name, "_strobe")) {
+        if (isProcess(name, "_strobe", nested)) {
             strobe.method(decl);
         }
     }
@@ -437,7 +451,7 @@ public:
         for (const auto* record : records) {
             const auto* canonical = record->getCanonicalDecl();
             if (!moduleBases.count(canonical) || composedModules.count(canonical)) {
-                check(record, context);
+                check(record, context, composedModules.count(canonical) != 0);
             }
         }
     }

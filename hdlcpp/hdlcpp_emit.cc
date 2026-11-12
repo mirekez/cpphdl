@@ -7724,6 +7724,12 @@
             return sourceElem.rfind("logic<", 0) != 0 && sourceElem.rfind("u<", 0) != 0;
         };
         auto needsArrayUnpackAssignment = [&](const std::string& target, const std::string& source) {
+            // Metadata uses public extent-first array syntax, while parsed
+            // declarations may still use the internal type-first form. Equal
+            // arrays need no adapter (which would hide child field projections).
+            if (postProcessCppLine(target) == postProcessCppLine(source)) {
+                return false;
+            }
             auto targetArgs = templateArgsFor(target, target.rfind("std::array<", 0) == 0 ? "std::array" : "array");
             auto sourceArgs = templateArgsFor(source, source.rfind("std::array<", 0) == 0 ? "std::array" : "array");
             if (targetArgs.size() < 2 || sourceArgs.size() < 2) {
@@ -14966,8 +14972,14 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
 
     std::ostringstream make;
     make << "CXX ?= g++\n";
-    make << "CPPHDL_INCLUDE ?= /home/me/cpphdl/include\n";
-    make << "CXXFLAGS ?= -std=c++23 -O0 -g0 -w -pipe -fno-asynchronous-unwind-tables -I$(CPPHDL_INCLUDE) -I$(CURDIR)\n";
+#ifdef HDLCPP_SOURCE_DIR
+    const auto cpphdlRoot = std::filesystem::path(HDLCPP_SOURCE_DIR);
+#else
+    const auto cpphdlRoot = std::filesystem::path(__FILE__).parent_path().parent_path();
+#endif
+    make << "CPPHDL_INCLUDE ?= " << (cpphdlRoot / "include").lexically_normal().string() << "\n";
+    make << "CXXFLAGS ?= -O0 -g0 -w -pipe -fno-asynchronous-unwind-tables\n";
+    make << "CPPHDL_CPPFLAGS := -I\"$(CPPHDL_INCLUDE)\" -I\"$(CURDIR)\"\n";
     make << "DEPFLAGS ?= -MMD -MP\n";
     // Isolated constructors and _assign methods elaborate deep hierarchies but
     // never execute in the cycle loop. Compile those units cheaply without
@@ -14998,7 +15010,7 @@ static int optimizeConcreteRun(const std::filesystem::path& mainPath)
     }
     make << "build/opt/%.o: %.cpp all_generated.h cpphdl_optimized_externs.h\n";
     make << "\t@mkdir -p $(dir $@)\n";
-    make << "\t$(CXX) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@\n\n";
+    make << "\t$(CXX) -std=c++23 $(CPPFLAGS) $(CPPHDL_CPPFLAGS) $(CXXFLAGS) $(DEPFLAGS) -c $< -o $@\n\n";
     make << "$(RUNNER): $(OBJS)\n";
     make << "\t$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LDFLAGS)\n\n";
     make << "clean:\n";
