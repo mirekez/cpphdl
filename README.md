@@ -47,6 +47,7 @@ And for Linux:
 
  - git clone ssh://github.com/mirekez/cpphdl; cd cpphdl
  - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; chmod a+x Miniconda3-latest-Linux-x86_64.sh; ./Miniconda3-latest-Linux-x86_64.sh
+ - source ~/miniconda3/etc/profile.d/conda.sh
  - source ~/miniconda3/bin/activate; conda init
 
 Then for both Win&Lin:
@@ -54,23 +55,11 @@ Then for both Win&Lin:
  - conda create -p ./.conda; source activate base; conda activate ./.conda; conda env update --file requirements.yaml
  - mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" ..; make
 
-### Build cpphdl and hdlcpp together
+### Enable hdlcpp build
 
 `cpphdl` converts C++ RTL to Verilog. `hdlcpp` converts Verilog/SystemVerilog
 back to C++ and also provides the `--native-graph` simulation conversion mode.
 The `hdlcpp` target is optional and must be enabled explicitly.
-
-Run the following from the **cpphdl repository root**, with the compiler
-environment activated. Building hdlcpp requires **CMake 3.28 or newer**, a
-C++23 compiler, and Git. Building cpphdl also requires the LLVM/Clang development
-packages described above. The current `requirements.yaml` pins CMake 3.26.4;
-if you use that Conda environment, upgrade CMake first:
-
-```sh
-conda install -p ./.conda -c conda-forge 'cmake>=3.28,<4'
-conda activate ./.conda
-cmake --version
-```
 
 Fetch the Slang revision pinned by `hdlcpp/slang-revision.txt`, configure both
 converters, and build them:
