@@ -44,7 +44,10 @@ def main():
         source = work / 'closed-fsm.cc'
         source.write_text('#include "generated/CppGraphClosedFsm.h"\nextern ClosedFsm cpphdl_top;\n')
         runner = fixtures / 'CppGraphClosedFsm.cc'
-        run([args.cxx, '-std=c++23', '-O1', '-I' + str(include), '-I' + str(work),
+        # Make accidental reads of default-initialized register storage visible
+        # instead of relying on the stack happening to contain zeroes.
+        run([args.cxx, '-std=c++23', '-O1', '-ftrivial-auto-var-init=pattern',
+             '-I' + str(include), '-I' + str(work),
              runner, '-o', work / 'ordinary-fsm'])
         expected = run([work / 'ordinary-fsm']).stdout
         for threads in (1, 4):

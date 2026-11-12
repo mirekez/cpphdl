@@ -4,7 +4,17 @@ hdlcpp=$(realpath "$1")
 cxx=$2
 root=$(realpath "$3")
 mkdir -p "$4"
-work=$(realpath "$4")
+work=$(mktemp -d "$(realpath "$4")/run.XXXXXX")
+echo "RAM storage policy artifacts: $work"
+run_logged() {
+    local log="$work/$1"
+    shift
+    "$@" > "$log" 2>&1 || {
+        local status=$?
+        cat "$log" >&2
+        return "$status"
+    }
+}
 source_file="$work/input.sv"
 for header in SynchronousRam MaskedSynchronousRam; do
     awk '/^module cpphdl_examples_/ {emit=1} emit {print} /^endmodule/ {exit}' \
@@ -31,9 +41,9 @@ RTL
     done
 done
 echo endmodule >> "$source_file"
-"$hdlcpp" --native-graph --top Test --output "$work/converted.cc" "$source_file" > "$work/convert.log" 2>&1
-"$cxx" -std=c++23 -O1 -pthread -I"$root/include" "$work/converted.cc" -o "$work/emit" > "$work/compile-emit.log" 2>&1
-"$work/emit" "$work/model.h" > "$work/emit.log" 2>&1
-"$cxx" -std=c++23 -O1 -pthread -I"$root/include" -I"$work" \
-    "$root/hls/tests/RamStoragePolicyCheck.cpp" -o "$work/check" > "$work/compile-check.log" 2>&1
+run_logged convert.log "$hdlcpp" --native-graph --top Test --output "$work/converted.cc" "$source_file"
+run_logged compile-emit.log "$cxx" -std=c++23 -O1 -pthread -I"$root/include" "$work/converted.cc" -o "$work/emit"
+run_logged emit.log "$work/emit" "$work/model.h"
+run_logged compile-check.log "$cxx" -std=c++23 -O1 -pthread -I"$root/include" -I"$work" \
+    "$root/hls/tests/RamStoragePolicyCheck.cpp" -o "$work/check"
 "$work/check"
