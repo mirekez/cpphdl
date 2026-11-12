@@ -47,8 +47,7 @@ And for Linux:
 
  - git clone ssh://github.com/mirekez/cpphdl; cd cpphdl
  - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; chmod a+x Miniconda3-latest-Linux-x86_64.sh; ./Miniconda3-latest-Linux-x86_64.sh
- - source ~/miniconda3/etc/profile.d/conda.sh
- - source ~/miniconda3/bin/activate; conda init
+ - source ~/miniconda3/bin/activate; conda init;      (or source ~/miniconda3/etc/profile.d/conda.sh)
 
 Then for both Win&Lin:
 
