@@ -12609,7 +12609,10 @@
                     (configuredNameEquals("HDLCPP_READONLY_COMB_OUTPUTS", mod.name + "|" + m.returnBase) ||
                      configuredNameEquals("HDLCPP_READONLY_COMB_OUTPUTS", mod.name + "|" + mod.outputPortCppNames.at(m.returnBase)));
                 if (!readonlyCombOutput) {
-                    out << "    " << postProcessCppLine(type) << " " << m.returnName << ";\n";
+                    // Indexed writes read/modify whole storage bytes and leave
+                    // padding above the signal width untouched. Initialize once
+                    // so a complete bit-level write also has defined storage.
+                    out << "    " << postProcessCppLine(type) << " " << m.returnName << "{};\n";
                 }
 		        out << "    " << postProcessCppLine(type) << "& " << m.name << "()\n    {\n";
 		    }

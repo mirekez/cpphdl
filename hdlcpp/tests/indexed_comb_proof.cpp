@@ -48,9 +48,18 @@ int main()
                 tree |= (parent ^ ((value >> (level + 2)) & 1)) << (child + 1);
             }
         }
-        if (uint64_t(model.copied_o_out()) != value ||
-            uint64_t(model.prefix_o_out()) != prefix ||
-            uint64_t(model.tree_o_out()) != tree) return 1;
+        const auto actual_copy = uint64_t(model.copied_o_out());
+        const auto actual_prefix = uint64_t(model.prefix_o_out());
+        const auto actual_tree = uint64_t(model.tree_o_out());
+        if (actual_copy != value || actual_prefix != prefix || actual_tree != tree) {
+            std::fprintf(stderr,
+                "indexed comb proof: input=%u copied=%llu (expected %u), "
+                "prefix=%llu (expected %u), tree=%llu (expected %u)\n",
+                value, static_cast<unsigned long long>(actual_copy), value,
+                static_cast<unsigned long long>(actual_prefix), prefix,
+                static_cast<unsigned long long>(actual_tree), tree);
+            return 1;
+        }
     }
     std::puts("indexed comb proof: 256 input patterns passed");
 }

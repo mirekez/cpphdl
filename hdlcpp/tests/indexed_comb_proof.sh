@@ -13,7 +13,10 @@ HDLCPP_NOCACHE_COMB_METHODS=copied_o_comb,partial_o_comb,cyclic_comb,prefix_comb
 ! grep -q '__cpphdl_complete_dynamic_o_comb' generated/indexed_comb_proof.h
 ! grep -q '__cpphdl_complete_cyclic_comb' generated/indexed_comb_proof.h
 for optimization in -O0 -O2; do
-    "$cxx" -std=c++23 "$optimization" -g0 -fno-access-control -I"$include_dir" -I. \
+    # Complete indexed writes must also leave deterministic storage padding.
+    # Poison default-initialized locals so this cannot pass by luck of stack contents.
+    echo "indexed comb proof: $optimization"
+    "$cxx" -std=c++23 "$optimization" -g0 -ftrivial-auto-var-init=pattern -fno-access-control -I"$include_dir" -I. \
         "$source_dir/indexed_comb_proof.cpp" -o run
     ./run
 done
@@ -27,7 +30,8 @@ if [[ -n "$cpphdl" ]]; then
         grep -q 'copied_o_comb_func complete=1 memoizable=1' optimize.log
         grep -q 'tree_comb_func complete=1 memoizable=1' optimize.log
         for optimization in -O0 -O2; do
-            "$cxx" -std=c++23 "$optimization" -g0 -fno-access-control -DCPPHDL_TEST_OPTIMIZED \
+            echo "indexed comb proof: $mode $optimization"
+            "$cxx" -std=c++23 "$optimization" -g0 -ftrivial-auto-var-init=pattern -fno-access-control -DCPPHDL_TEST_OPTIMIZED \
                 -I"$include_dir" -I. -I"$output" "$source_dir/indexed_comb_proof.cpp" \
                 "$output"/*.cpp -o run
             ./run
