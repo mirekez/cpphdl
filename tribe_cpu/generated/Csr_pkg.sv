@@ -1,6 +1,6 @@
 package Csr_pkg;
 
-typedef enum {
+typedef enum logic[32-1:0] {
     CNONE,
     CSRRW,
     CSRRS,

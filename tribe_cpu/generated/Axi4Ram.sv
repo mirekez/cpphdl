@@ -4,13 +4,14 @@ import Predef_pkg::*;
 
 
 module Axi4Ram #(
-    parameter ADDR_WIDTH
-,   parameter ID_WIDTH
-,   parameter DATA_WIDTH
-,   parameter DEPTH
+    parameter ADDR_WIDTH = 'h20
+,   parameter ID_WIDTH = 'h4
+,   parameter DATA_WIDTH = 'h100
+,   parameter DEPTH = 'h800
  )
  (
     input wire clk
+,   input wire l2_clock
 ,   input wire reset
 ,   input wire axi_in__awvalid_in
 ,   output wire axi_in__awready_out
@@ -19,6 +20,7 @@ module Axi4Ram #(
 ,   input wire axi_in__wvalid_in
 ,   output wire axi_in__wready_out
 ,   input wire[DATA_WIDTH-1:0] axi_in__wdata_in
+,   input wire[unsigned'(64'(DATA_WIDTH))/64'h8-1:0] axi_in__wstrb_in
 ,   input wire axi_in__wlast_in
 ,   output wire axi_in__bvalid_out
 ,   input wire axi_in__bready_in
@@ -34,7 +36,6 @@ module Axi4Ram #(
 ,   output wire[ID_WIDTH-1:0] axi_in__rid_out
 ,   input wire debugen_in
 );
-    localparam  FULL_MASK = ((DATA_WIDTH/'h8>='h40)) ? (~'h0) : (((('h1 <<< ((DATA_WIDTH/'h8)))) - 'h1));
 
 
     // regs and combs
@@ -47,26 +48,27 @@ module Axi4Ram #(
     reg write_resp_valid_reg;
 
     // members
-      wire[$clog2((DEPTH))-1:0] ram__addr0_in;
-      wire ram__write0_in;
-      wire[(DATA_WIDTH/'h8)*'h8-1:0] ram__write0_data_in;
-      wire[(DATA_WIDTH/'h8)-1:0] ram__write0_mask_in;
-      wire ram__read0_in;
-      wire[(DATA_WIDTH/'h8)*'h8-1:0] ram__read0_data_out;
-      wire[$clog2((DEPTH))-1:0] ram__addr1_in;
-      wire ram__write1_in;
-      wire[(DATA_WIDTH/'h8)*'h8-1:0] ram__write1_data_in;
-      wire[(DATA_WIDTH/'h8)-1:0] ram__write1_mask_in;
-      wire ram__read1_in;
-      wire[(DATA_WIDTH/'h8)*'h8-1:0] ram__read1_data_out;
-      wire ram__debugen_in;
+    wire[unsigned'(64'($clog2(unsigned'(32'(DEPTH)))))-1:0] ram__addr0_in;
+    wire ram__write0_in;
+    wire[(unsigned'(64'(DATA_WIDTH))/64'h8)*64'h8-1:0] ram__write0_data_in;
+    wire[unsigned'(64'(DATA_WIDTH))/64'h8-1:0] ram__write0_mask_in;
+    wire ram__read0_in;
+    wire[(unsigned'(64'(DATA_WIDTH))/64'h8)*64'h8-1:0] ram__read0_data_out;
+    wire[unsigned'(64'($clog2(unsigned'(32'(DEPTH)))))-1:0] ram__addr1_in;
+    wire ram__write1_in;
+    wire[(unsigned'(64'(DATA_WIDTH))/64'h8)*64'h8-1:0] ram__write1_data_in;
+    wire[unsigned'(64'(DATA_WIDTH))/64'h8-1:0] ram__write1_mask_in;
+    wire ram__read1_in;
+    wire[(unsigned'(64'(DATA_WIDTH))/64'h8)*64'h8-1:0] ram__read1_data_out;
+    wire ram__debugen_in;
     Memory #(
-        DATA_WIDTH/'h8
+        unsigned'(64'(DATA_WIDTH))/64'h8
 ,       DEPTH
 ,       1
 ,       'h0
     ) ram (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .addr0_in(ram__addr0_in)
 ,       .write0_in(ram__write0_in)
@@ -94,25 +96,25 @@ module Axi4Ram #(
 
 
     generate  // _assign
-        assign axi_in__awready_out = !write_addr_valid_reg && !write_resp_valid_reg;
-        assign axi_in__wready_out = write_addr_valid_reg && !write_resp_valid_reg;
+        assign axi_in__awready_out = ((!((write_addr_valid_reg) != '0) && !((write_resp_valid_reg) != '0)) != '0);
+        assign axi_in__wready_out = ((((write_addr_valid_reg) != '0) && !((write_resp_valid_reg) != '0)) != '0);
         assign axi_in__bvalid_out = write_resp_valid_reg;
         assign axi_in__bid_out = write_id_reg;
-        assign axi_in__arready_out = !read_valid_reg;
+        assign axi_in__arready_out = ((!((read_valid_reg) != '0)) != '0);
         assign axi_in__rvalid_out = read_valid_reg;
         assign axi_in__rdata_out = ram__read0_data_out;
         assign axi_in__rlast_out = read_valid_reg;
         assign axi_in__rid_out = read_id_reg;
-        assign ram__addr0_in = unsigned'($clog2(DEPTH)'(unsigned'($clog2(DEPTH)'(((read_valid_reg) ? (unsigned'(32'(read_addr_reg))/((DATA_WIDTH/'h8))) : (axi_in__araddr_in/((DATA_WIDTH/'h8))))))));
-        assign ram__read0_in = axi_in__arvalid_in && axi_in__arready_out;
-        assign ram__write0_in = 0;
-        assign ram__write0_data_in = 'h0;
-        assign ram__write0_mask_in = 'h0;
-        assign ram__addr1_in = unsigned'($clog2(DEPTH)'(unsigned'($clog2(DEPTH)'((unsigned'(32'(write_addr_reg))/((DATA_WIDTH/'h8)))))));
-        assign ram__read1_in = 0;
-        assign ram__write1_in = axi_in__wvalid_in && axi_in__wready_out;
+        assign ram__addr0_in = (unsigned'(64'($clog2(unsigned'(32'(DEPTH))))))'(unsigned'(64'(((((read_valid_reg) != '0)) ? (64'(unsigned'(32'(read_addr_reg)))/((DATA_WIDTH/64'h8))) : (axi_in__araddr_in/((DATA_WIDTH/64'h8)))))));
+        assign ram__read0_in = ((axi_in__arvalid_in && axi_in__arready_out) != '0);
+        assign ram__write0_in = ((0) != '0);
+        assign ram__write0_data_in = DATA_WIDTH'('h0);
+        assign ram__write0_mask_in = (DATA_WIDTH/64'h8)'('h0);
+        assign ram__addr1_in = (unsigned'(64'($clog2(unsigned'(32'(DEPTH))))))'(64'((64'(unsigned'(32'(write_addr_reg)))/((DATA_WIDTH/64'h8)))));
+        assign ram__read1_in = ((0) != '0);
+        assign ram__write1_in = ((axi_in__wvalid_in && axi_in__wready_out) != '0);
         assign ram__write1_data_in = axi_in__wdata_in;
-        assign ram__write1_mask_in = FULL_MASK;
+        assign ram__write1_mask_in = axi_in__wstrb_in;
         assign ram__debugen_in=debugen_in;
     endgenerate
 
@@ -121,22 +123,22 @@ module Axi4Ram #(
         if (axi_in__arvalid_in && axi_in__arready_out) begin
             read_addr_reg_tmp = axi_in__araddr_in;
             read_id_reg_tmp = axi_in__arid_in;
-            read_valid_reg_tmp = unsigned'(1'(1));
+            read_valid_reg_tmp = 1;
         end
-        if (read_valid_reg && axi_in__rready_in) begin
-            read_valid_reg_tmp = unsigned'(1'(0));
+        if (((read_valid_reg) != '0) && axi_in__rready_in) begin
+            read_valid_reg_tmp = 0;
         end
         if (axi_in__awvalid_in && axi_in__awready_out) begin
             write_addr_reg_tmp = axi_in__awaddr_in;
             write_id_reg_tmp = axi_in__awid_in;
-            write_addr_valid_reg_tmp = unsigned'(1'(1));
+            write_addr_valid_reg_tmp = 1;
         end
         if (axi_in__wvalid_in && axi_in__wready_out) begin
-            write_addr_valid_reg_tmp = unsigned'(1'(0));
-            write_resp_valid_reg_tmp = unsigned'(1'(1));
+            write_addr_valid_reg_tmp = 0;
+            write_resp_valid_reg_tmp = 1;
         end
-        if (write_resp_valid_reg && axi_in__bready_in) begin
-            write_resp_valid_reg_tmp = unsigned'(1'(0));
+        if (((write_resp_valid_reg) != '0) && axi_in__bready_in) begin
+            write_resp_valid_reg_tmp = 0;
         end
         if (reset) begin
             read_addr_reg_tmp = '0;
@@ -150,7 +152,12 @@ module Axi4Ram #(
     end
     endtask
 
-    always @(posedge clk) begin
+    task _work_l2_clock (input logic reset);
+    begin: _work_l2_clock
+    end
+    endtask
+
+    always_ff @(posedge clk) begin
         read_addr_reg_tmp = read_addr_reg;
         read_id_reg_tmp = read_id_reg;
         read_valid_reg_tmp = read_valid_reg;
@@ -159,7 +166,7 @@ module Axi4Ram #(
         write_addr_valid_reg_tmp = write_addr_valid_reg;
         write_resp_valid_reg_tmp = write_resp_valid_reg;
 
-        _work(reset);
+            _work(reset);
 
         read_addr_reg <= read_addr_reg_tmp;
         read_id_reg <= read_id_reg_tmp;
@@ -168,6 +175,12 @@ module Axi4Ram #(
         write_id_reg <= write_id_reg_tmp;
         write_addr_valid_reg <= write_addr_valid_reg_tmp;
         write_resp_valid_reg <= write_resp_valid_reg_tmp;
+    end
+
+    always_ff @(posedge l2_clock) begin
+
+            _work_l2_clock(reset);
+
     end
 
 

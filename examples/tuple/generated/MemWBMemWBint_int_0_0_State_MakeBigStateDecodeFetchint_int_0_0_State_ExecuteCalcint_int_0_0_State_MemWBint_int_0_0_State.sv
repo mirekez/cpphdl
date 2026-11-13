@@ -26,9 +26,7 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
 
     // regs and combs
     logic[31:0] regs_out_comb;
-;
     logic regs_write_comb;
-;
     MemWBint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
     // members
@@ -38,21 +36,21 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
 
 
     always_comb begin : regs_out_comb_func  // regs_out_comb_func
-        regs_out_comb='h0;
-        if (state_in[(ID - 'h1)].wb_op == Wb_pkg::PC2) begin
-            regs_out_comb=state_in[(ID - 'h1)].pc + 'h2;
+        regs_out_comb=32'h0;
+        if (signed'(32'(state_in[(ID - 64'h1)].wb_op)) == signed'(32'(Wb_pkg::PC2))) begin
+            regs_out_comb=state_in[(ID - 64'h1)].pc + 32'h2;
         end
         else begin
-            if (state_in[(ID - 'h1)].wb_op == Wb_pkg::PC4) begin
-                regs_out_comb=state_in[(ID - 'h1)].pc + 'h4;
+            if (signed'(32'(state_in[(ID - 64'h1)].wb_op)) == signed'(32'(Wb_pkg::PC4))) begin
+                regs_out_comb=state_in[(ID - 64'h1)].pc + 32'h4;
             end
             else begin
-                if (state_in[(ID - 'h1)].wb_op == Wb_pkg::ALU) begin
-                    regs_out_comb=state_in[ID - 'h1].alu_result;
+                if (signed'(32'(state_in[(ID - 64'h1)].wb_op)) == signed'(32'(Wb_pkg::ALU))) begin
+                    regs_out_comb=state_in[ID - 64'h1].alu_result;
                 end
                 else begin
-                    if (state_in[(ID - 'h1)].wb_op == Wb_pkg::MEM) begin
-                        case (state_in[ID - 'h1].funct3)
+                    if (signed'(32'(state_in[(ID - 64'h1)].wb_op)) == signed'(32'(Wb_pkg::MEM))) begin
+                        case (signed'(32'(state_in[ID - 64'h1].funct3)))
                         'h0: begin
                             regs_out_comb=signed'(8'(mem_data_in));
                         end
@@ -76,17 +74,17 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
     end
 
     always_comb begin : regs_write_comb_func  // regs_write_comb_func
-        regs_write_comb='h0;
-        if (state_in[(ID - 'h1)].wb_op != Wb_pkg::WNONE) begin
-            regs_write_comb=state_in[ID - 'h1].valid;
+        regs_write_comb=(('h0) != '0);
+        if (signed'(32'(state_in[(ID - 64'h1)].wb_op)) != signed'(32'(Wb_pkg::WNONE))) begin
+            regs_write_comb=((state_in[ID - 64'h1].valid) != '0);
         end
     end
 
     task PipelineStage____work (input logic reset);
     begin: PipelineStage____work
         logic[63:0] i;
-        for (i='h1;i < (LENGTH - ID);i=i+1) begin
-            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 'h1];
+        for (i=64'h1;i < (LENGTH - ID);i=i+1) begin
+            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 64'h1];
         end
     end
     endtask
@@ -103,14 +101,14 @@ module MemWBMemWBint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_0_State_Exec
     always @(posedge clk) begin
         PipelineStage___state_reg_tmp = PipelineStage___state_reg;
 
-        _work(reset);
+            _work(reset);
 
         PipelineStage___state_reg <= PipelineStage___state_reg_tmp;
     end
 
     assign regs_data_out = regs_out_comb;
 
-    assign regs_wr_id_out = state_in[ID - 'h1].rd;
+    assign regs_wr_id_out = state_in[ID - 64'h1].rd;
 
     assign regs_write_out = regs_write_comb;
 

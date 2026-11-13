@@ -5,6 +5,7 @@ import Predef_pkg::*;
 
 module InterruptController (
     input wire clk
+,   input wire l2_clock
 ,   input wire reset
 ,   input wire[31:0] mstatus_in
 ,   input wire[31:0] mie_in
@@ -19,8 +20,8 @@ module InterruptController (
 ,   output wire[31:0] interrupt_cause_out
 ,   output wire interrupt_to_supervisor_out
 );
-    localparam  MSTATUS_SIE = 'h1 <<< 'h1;
-    localparam  MSTATUS_MIE = 'h1 <<< 'h3;
+    localparam  MSTATUS_SIE = 'h2;
+    localparam  MSTATUS_MIE = 'h8;
     localparam  PRIV_S = 'h1;
     localparam  PRIV_M = 'h3;
     localparam  IRQ_SSIP = 'h1;
@@ -29,20 +30,15 @@ module InterruptController (
     localparam  IRQ_MTIP = 'h7;
     localparam  IRQ_SEIP = 'h9;
     localparam  IRQ_MEIP = 'hB;
-    localparam  MIP_SOFTWARE_WRITABLE_MASK = 'h1 <<< IRQ_SSIP;
+    localparam  MIP_SOFTWARE_WRITABLE_MASK = 'h2;
 
 
     // regs and combs
     logic[31:0] mip_comb;
-;
     logic[31:0] enabled_pending_comb;
-;
     logic[31:0] interrupt_cause_comb;
-;
     logic interrupt_to_supervisor_comb;
-;
     logic interrupt_valid_comb;
-;
 
     // members
 
@@ -52,13 +48,13 @@ module InterruptController (
     always_comb begin : mip_comb_func  // mip_comb_func
         mip_comb=mip_sw_in & MIP_SOFTWARE_WRITABLE_MASK;
         if (clint_msip_in) begin
-            mip_comb|='h1 <<< (((priv_in == PRIV_M)) ? (IRQ_MSIP) : (IRQ_SSIP));
+            mip_comb|='h1 <<< (((priv_in == unsigned'(64'(PRIV_M)))) ? (IRQ_MSIP) : (IRQ_SSIP));
         end
         if (clint_mtip_in) begin
-            mip_comb|='h1 <<< (((priv_in == PRIV_M)) ? (IRQ_MTIP) : (IRQ_STIP));
+            mip_comb|='h1 <<< (((priv_in == unsigned'(64'(PRIV_M)))) ? (IRQ_MTIP) : (IRQ_STIP));
         end
         if (external_irq_in) begin
-            mip_comb|='h1 <<< (((priv_in == PRIV_M)) ? (IRQ_MEIP) : (IRQ_SEIP));
+            mip_comb|='h1 <<< (((priv_in == unsigned'(64'(PRIV_M)))) ? (IRQ_MEIP) : (IRQ_SEIP));
         end
     end
 
@@ -69,32 +65,32 @@ module InterruptController (
     always_comb begin : interrupt_cause_comb_func  // interrupt_cause_comb_func
         logic[31:0] pending;
         pending=enabled_pending_comb;
-        interrupt_cause_comb='h0;
-        if (pending & (('h1 <<< IRQ_MEIP))) begin
+        interrupt_cause_comb=32'h0;
+        if (((pending & (('h1 <<< IRQ_MEIP))) != '0)) begin
             interrupt_cause_comb=IRQ_MEIP;
         end
         else begin
-            if ((((pending & (('h1 <<< IRQ_STIP)))) && (priv_in != PRIV_M)) && ((((mideleg_in >>> IRQ_STIP)) & 'h1))) begin
+            if ((((((pending & (('h1 <<< IRQ_STIP))))) != '0) && (priv_in != unsigned'(64'(PRIV_M)))) && ((((((mideleg_in >>> unsigned'(32'(IRQ_STIP)))) & 'h1))) != '0)) begin
                 interrupt_cause_comb=IRQ_STIP;
             end
             else begin
-                if (pending & (('h1 <<< IRQ_MSIP))) begin
+                if (((pending & (('h1 <<< IRQ_MSIP))) != '0)) begin
                     interrupt_cause_comb=IRQ_MSIP;
                 end
                 else begin
-                    if (pending & (('h1 <<< IRQ_MTIP))) begin
+                    if (((pending & (('h1 <<< IRQ_MTIP))) != '0)) begin
                         interrupt_cause_comb=IRQ_MTIP;
                     end
                     else begin
-                        if (pending & (('h1 <<< IRQ_SEIP))) begin
+                        if (((pending & (('h1 <<< IRQ_SEIP))) != '0)) begin
                             interrupt_cause_comb=IRQ_SEIP;
                         end
                         else begin
-                            if (pending & (('h1 <<< IRQ_SSIP))) begin
+                            if (((pending & (('h1 <<< IRQ_SSIP))) != '0)) begin
                                 interrupt_cause_comb=IRQ_SSIP;
                             end
                             else begin
-                                if (pending & (('h1 <<< IRQ_STIP))) begin
+                                if (((pending & (('h1 <<< IRQ_STIP))) != '0)) begin
                                     interrupt_cause_comb=IRQ_STIP;
                                 end
                             end
@@ -109,7 +105,7 @@ module InterruptController (
         logic[31:0] cause;
         cause=interrupt_cause_comb;
         interrupt_to_supervisor_comb=0;
-        if (((cause != 'h0) && (priv_in != PRIV_M)) && ((((mideleg_in >>> cause)) & 'h1))) begin
+        if (((cause != 32'h0) && (priv_in != unsigned'(64'(PRIV_M)))) && ((((((mideleg_in >>> cause)) & 'h1))) != '0)) begin
             interrupt_to_supervisor_comb=1;
         end
     end
@@ -121,15 +117,15 @@ module InterruptController (
         cause=interrupt_cause_comb;
         to_s=interrupt_to_supervisor_comb;
         global_enable=0;
-        if (cause != 'h0) begin
+        if (cause != 32'h0) begin
             if (to_s) begin
-                global_enable=(priv_in < PRIV_S) || ((mstatus_in & MSTATUS_SIE));
+                global_enable=(priv_in < unsigned'(64'(PRIV_S))) || ((((mstatus_in & MSTATUS_SIE))) != '0);
             end
             else begin
-                global_enable=(priv_in < PRIV_M) || ((mstatus_in & MSTATUS_MIE));
+                global_enable=(priv_in < unsigned'(64'(PRIV_M))) || ((((mstatus_in & MSTATUS_MIE))) != '0);
             end
         end
-        interrupt_valid_comb=(cause != 'h0) && global_enable;
+        interrupt_valid_comb=(cause != 32'h0) && global_enable;
     end
 
     task _work (input logic reset);
@@ -137,9 +133,20 @@ module InterruptController (
     end
     endtask
 
-    always @(posedge clk) begin
+    task _work_l2_clock (input logic reset);
+    begin: _work_l2_clock
+    end
+    endtask
 
-        _work(reset);
+    always_ff @(posedge clk) begin
+
+            _work(reset);
+
+    end
+
+    always_ff @(posedge l2_clock) begin
+
+            _work_l2_clock(reset);
 
     end
 

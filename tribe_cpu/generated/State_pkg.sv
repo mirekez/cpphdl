@@ -1,9 +1,10 @@
 package State_pkg;
 
 typedef struct packed {
-    logic[7-1:0] _align0;
+    logic[6-1:0] _align0;
     logic[4-1:0] trap_op;
     logic[4-1:0] sys_op;
+    logic[1-1:0] csr_illegal;
     logic[5-1:0] csr_imm;
     logic[3-1:0] csr_op;
     logic[12-1:0] csr_addr;

@@ -1,6 +1,6 @@
 package Trap_pkg;
 
-typedef enum {
+typedef enum logic[32-1:0] {
     TNONE,
     INST_MISALIGNED,
     ILLEGAL_INST,

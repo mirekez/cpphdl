@@ -7,8 +7,9 @@ import Wb_pkg::*;
 
 module Writeback (
     input wire clk
+,   input wire l2_clock
 ,   input wire reset
-,   input State state_in
+,   input wire State state_in
 ,   input wire[31:0] alu_result_in
 ,   input wire[31:0] mem_data_in
 ,   input wire[31:0] mem_data_hi_in
@@ -22,11 +23,8 @@ module Writeback (
 
     // regs and combs
     logic[31:0] mem_word_comb;
-;
     logic[31:0] regs_out_comb;
-;
     logic regs_write_comb;
-;
 
     // members
 
@@ -39,22 +37,22 @@ module Writeback (
 
     always_comb begin : regs_out_comb_func  // regs_out_comb_func
         logic[31:0] mem_word;
-        regs_out_comb='h0;
+        regs_out_comb=32'h0;
         mem_word=mem_word_comb;
-        if (state_in.wb_op == Wb_pkg::PC2) begin
-            regs_out_comb=state_in.pc + 'h2;
+        if (signed'(32'(state_in.wb_op)) == signed'(32'(Wb_pkg::PC2))) begin
+            regs_out_comb=state_in.pc + 32'h2;
         end
         else begin
-            if (state_in.wb_op == Wb_pkg::PC4) begin
-                regs_out_comb=state_in.pc + 'h4;
+            if (signed'(32'(state_in.wb_op)) == signed'(32'(Wb_pkg::PC4))) begin
+                regs_out_comb=state_in.pc + 32'h4;
             end
             else begin
-                if (state_in.wb_op == Wb_pkg::ALU) begin
+                if (signed'(32'(state_in.wb_op)) == signed'(32'(Wb_pkg::ALU))) begin
                     regs_out_comb=alu_result_in;
                 end
                 else begin
-                    if (state_in.wb_op == Wb_pkg::MEM) begin
-                        case (state_in.funct3)
+                    if (signed'(32'(state_in.wb_op)) == signed'(32'(Wb_pkg::MEM))) begin
+                        case (signed'(32'(state_in.funct3)))
                         'h0: begin
                             regs_out_comb=signed'(8'(mem_word));
                         end
@@ -65,10 +63,10 @@ module Writeback (
                             regs_out_comb=signed'(32'(mem_word));
                         end
                         'h4: begin
-                            regs_out_comb=unsigned'(8'(mem_word));
+                            regs_out_comb=8'(mem_word);
                         end
                         'h5: begin
-                            regs_out_comb=unsigned'(16'(mem_word));
+                            regs_out_comb=16'(mem_word);
                         end
                         endcase
                     end
@@ -78,9 +76,9 @@ module Writeback (
     end
 
     always_comb begin : regs_write_comb_func  // regs_write_comb_func
-        regs_write_comb='h0;
-        if (state_in.wb_op != Wb_pkg::WNONE) begin
-            regs_write_comb=state_in.valid;
+        regs_write_comb=(('h0) != '0);
+        if (signed'(32'(state_in.wb_op)) != signed'(32'(Wb_pkg::WNONE))) begin
+            regs_write_comb=((state_in.valid) != '0);
         end
     end
 
@@ -92,9 +90,20 @@ module Writeback (
     generate  // _assign
     endgenerate
 
-    always @(posedge clk) begin
+    task _work_l2_clock (input logic reset);
+    begin: _work_l2_clock
+    end
+    endtask
 
-        _work(reset);
+    always_ff @(posedge clk) begin
+
+            _work(reset);
+
+    end
+
+    always_ff @(posedge l2_clock) begin
+
+            _work_l2_clock(reset);
 
     end
 

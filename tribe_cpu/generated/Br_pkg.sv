@@ -1,6 +1,6 @@
 package Br_pkg;
 
-typedef enum {
+typedef enum logic[32-1:0] {
     BNONE,
     BEQ,
     BNE,

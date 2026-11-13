@@ -1,0 +1,8 @@
+package MakeStagesTupleImplMakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_3_std_integer_sequencelogic63_0_0_1_2_pkg;
+
+typedef struct packed {
+    logic[1-1:0] _pad1;
+} MakeStagesTupleImplMakeBigStateDecodeFetchint_int_0_0_State_ExecuteCalcint_int_0_0_State_MemWBint_int_0_0_State_3_std_integer_sequencelogic63_0_0_1_2;
+
+
+endpackage

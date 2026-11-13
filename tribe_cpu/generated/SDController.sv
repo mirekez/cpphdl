@@ -4,13 +4,14 @@ import Predef_pkg::*;
 
 
 module SDController #(
-    parameter ADDR_WIDTH
-,   parameter ID_WIDTH
-,   parameter DATA_WIDTH
-,   parameter FIFO_DEPTH
+    parameter ADDR_WIDTH = 'h20
+,   parameter ID_WIDTH = 'h4
+,   parameter DATA_WIDTH = 'h40
+,   parameter FIFO_DEPTH = 'h20
  )
  (
     input wire clk
+,   input wire l2_clock
 ,   input wire reset
 ,   input wire axi_in__awvalid_in
 ,   output wire axi_in__awready_out
@@ -19,6 +20,7 @@ module SDController #(
 ,   input wire axi_in__wvalid_in
 ,   output wire axi_in__wready_out
 ,   input wire[DATA_WIDTH-1:0] axi_in__wdata_in
+,   input wire[unsigned'(64'(DATA_WIDTH))/64'h8-1:0] axi_in__wstrb_in
 ,   input wire axi_in__wlast_in
 ,   output wire axi_in__bvalid_out
 ,   input wire axi_in__bready_in
@@ -39,6 +41,7 @@ module SDController #(
 ,   output wire dma_out__wvalid_out
 ,   input wire dma_out__wready_in
 ,   output wire[DATA_WIDTH-1:0] dma_out__wdata_out
+,   output wire[unsigned'(64'(DATA_WIDTH))/64'h8-1:0] dma_out__wstrb_out
 ,   output wire dma_out__wlast_out
 ,   input wire dma_out__bvalid_in
 ,   output wire dma_out__bready_out
@@ -67,17 +70,17 @@ module SDController #(
 ,   output wire[31:0] debug_count_out
 ,   output wire[31:0] debug_len_out
 );
-    localparam  DATA_BYTES = DATA_WIDTH/'h8;
-    localparam  HEADER_BYTES = 'h7;
+    localparam  DATA_BYTES = 32'(unsigned'(64'(DATA_WIDTH))/64'h8);
+    localparam  HEADER_BYTES = 'h9;
     localparam  C_REG_TXDATA = 'h18;
     localparam  C_REG_DMA_DESC_ADDR = 'h28;
     localparam  C_REG_DMA_DESC_LEN = 'h2C;
     localparam  C_REG_DMA_DESC_PUSH = 'h30;
     localparam  C_REG_DMA_DESC_STATUS = 'h34;
-    localparam  C_STATUS_DESC_READY = 'h1 <<< 'h6;
-    localparam  C_DESC_STATUS_READY = 'h1 <<< 'h0;
-    localparam  C_DESC_STATUS_EMPTY = 'h1 <<< 'h1;
-    localparam  C_DESC_STATUS_FULL = 'h1 <<< 'h2;
+    localparam  C_STATUS_DESC_READY = 'h40;
+    localparam  C_DESC_STATUS_READY = 'h1;
+    localparam  C_DESC_STATUS_EMPTY = 'h2;
+    localparam  C_DESC_STATUS_FULL = 'h4;
     localparam  C_DESC_STATUS_COUNT_SHIFT = 'h8;
     localparam  ST_IDLE = 'h0;
     localparam  ST_HEADER = 'h1;
@@ -94,8 +97,33 @@ module SDController #(
     localparam  ST_DONE = 'hC;
     localparam  ST_ERROR = 'hD;
     localparam  ST_DMA_LOAD_DESC = 'hE;
-    localparam  FIFO_INDEX_BITS = $clog2(FIFO_DEPTH);
-    localparam  FIFO_COUNT_BITS = $clog2(FIFO_DEPTH + 'h1);
+    localparam  ST_DMA_READ_DONE = 'hF;
+    localparam  FIFO_INDEX_BITS = unsigned'(64'($clog2(unsigned'(32'(FIFO_DEPTH)))));
+    localparam  FIFO_COUNT_BITS = unsigned'(64'($clog2(32'(FIFO_DEPTH + 64'h1))));
+    localparam  C_CMD17_READ_SINGLE_BLOCK = 'h51;
+    localparam  C_CMD24_WRITE_SINGLE_BLOCK = 'h58;
+    localparam  C_R1_READY = 'h0;
+    localparam  C_DEFAULT_BLOCK_BYTES = 'h200;
+    localparam  C_REG_CONTROL = 'h0;
+    localparam  C_REG_STATUS = 'h4;
+    localparam  C_REG_CMD = 'h8;
+    localparam  C_REG_ARG = 'hC;
+    localparam  C_REG_LEN = 'h10;
+    localparam  C_REG_DMA_ADDR = 'h14;
+    localparam  C_REG_RXDATA = 'h1C;
+    localparam  C_REG_IRQ_ENABLE = 'h20;
+    localparam  C_REG_IRQ_PENDING = 'h24;
+    localparam  C_CTRL_START = 'h1;
+    localparam  C_CTRL_WRITE = 'h2;
+    localparam  C_CTRL_DMA = 'h4;
+    localparam  C_CTRL_CLEAR_DONE = 'h10;
+    localparam  C_STATUS_BUSY = 'h1;
+    localparam  C_STATUS_DONE = 'h2;
+    localparam  C_STATUS_ERROR = 'h4;
+    localparam  C_STATUS_RX_VALID = 'h8;
+    localparam  C_STATUS_TX_READY = 'h10;
+    localparam  C_STATUS_IRQ = 'h20;
+    localparam  C_IRQ_DONE = 'h1;
 
 
     // regs and combs
@@ -151,57 +179,31 @@ module SDController #(
     reg[32-1:0] active_desc_remaining_reg;
     reg active_desc_valid_reg;
     logic tx_fifo_full_comb;
-;
     logic tx_fifo_valid_comb;
-;
     logic[8-1:0] tx_fifo_data_comb;
-;
     logic[FIFO_INDEX_BITS-1:0] tx_fifo_rd_next_comb;
-;
     logic[FIFO_INDEX_BITS-1:0] tx_fifo_wr_next_comb;
-;
     logic rx_fifo_full_comb;
-;
     logic rx_fifo_valid_comb;
-;
     logic[8-1:0] rx_fifo_data_comb;
-;
     logic[FIFO_INDEX_BITS-1:0] rx_fifo_rd_next_comb;
-;
     logic[FIFO_INDEX_BITS-1:0] rx_fifo_wr_next_comb;
-;
     logic desc_fifo_full_comb;
-;
     logic desc_fifo_valid_comb;
-;
     logic[FIFO_INDEX_BITS-1:0] desc_fifo_rd_next_comb;
-;
     logic[FIFO_INDEX_BITS-1:0] desc_fifo_wr_next_comb;
-;
     logic[31:0] dma_remaining_comb;
-;
     logic[31:0] dma_next_beat_limit_comb;
-;
     logic[31:0] write_word_comb;
-;
     logic[8-1:0] header_byte_comb;
-;
     logic[8-1:0] tx_byte_comb;
-;
     logic phy_tx_valid_comb;
-;
     logic[8-1:0] phy_tx_data_comb;
-;
     logic phy_tx_last_comb;
-;
     logic phy_rx_ready_comb;
-;
     logic[DATA_WIDTH-1:0] read_data_comb;
-;
     logic[31:0] debug_status_comb;
-;
     logic[ADDR_WIDTH-1:0] dma_addr_comb;
-;
 
     // members
 
@@ -257,98 +259,102 @@ module SDController #(
     logic active_desc_valid_reg_tmp;
 
 
+    always_comb begin : rx_fifo_valid_comb_func  // rx_fifo_valid_comb_func
+        rx_fifo_valid_comb=rx_fifo_count_reg != 64'h0;
+    end
+
     always_comb begin : tx_fifo_full_comb_func  // tx_fifo_full_comb_func
         tx_fifo_full_comb=tx_fifo_count_reg == FIFO_DEPTH;
-    end
-
-    always_comb begin : tx_fifo_valid_comb_func  // tx_fifo_valid_comb_func
-        tx_fifo_valid_comb=tx_fifo_count_reg != 'h0;
-    end
-
-    always_comb begin : tx_fifo_data_comb_func  // tx_fifo_data_comb_func
-        tx_fifo_data_comb = tx_fifo_data_reg[unsigned'(32'(tx_fifo_rd_reg))];
-    end
-
-    always_comb begin : tx_fifo_rd_next_comb_func  // tx_fifo_rd_next_comb_func
-        if (unsigned'(32'(tx_fifo_rd_reg)) + 'h1>=FIFO_DEPTH) begin
-            tx_fifo_rd_next_comb = 'h0;
-            disable tx_fifo_rd_next_comb_func;
-        end
-        tx_fifo_rd_next_comb = tx_fifo_rd_reg + 'h1;
-    end
-
-    always_comb begin : tx_fifo_wr_next_comb_func  // tx_fifo_wr_next_comb_func
-        if (unsigned'(32'(tx_fifo_wr_reg)) + 'h1>=FIFO_DEPTH) begin
-            tx_fifo_wr_next_comb = 'h0;
-            disable tx_fifo_wr_next_comb_func;
-        end
-        tx_fifo_wr_next_comb = tx_fifo_wr_reg + 'h1;
-    end
-
-    always_comb begin : rx_fifo_full_comb_func  // rx_fifo_full_comb_func
-        rx_fifo_full_comb=rx_fifo_count_reg == FIFO_DEPTH;
-    end
-
-    always_comb begin : rx_fifo_valid_comb_func  // rx_fifo_valid_comb_func
-        rx_fifo_valid_comb=rx_fifo_count_reg != 'h0;
-    end
-
-    always_comb begin : rx_fifo_data_comb_func  // rx_fifo_data_comb_func
-        rx_fifo_data_comb = rx_fifo_data_reg[unsigned'(32'(rx_fifo_rd_reg))];
-    end
-
-    always_comb begin : rx_fifo_rd_next_comb_func  // rx_fifo_rd_next_comb_func
-        if (unsigned'(32'(rx_fifo_rd_reg)) + 'h1>=FIFO_DEPTH) begin
-            rx_fifo_rd_next_comb = 'h0;
-            disable rx_fifo_rd_next_comb_func;
-        end
-        rx_fifo_rd_next_comb = rx_fifo_rd_reg + 'h1;
-    end
-
-    always_comb begin : rx_fifo_wr_next_comb_func  // rx_fifo_wr_next_comb_func
-        if (unsigned'(32'(rx_fifo_wr_reg)) + 'h1>=FIFO_DEPTH) begin
-            rx_fifo_wr_next_comb = 'h0;
-            disable rx_fifo_wr_next_comb_func;
-        end
-        rx_fifo_wr_next_comb = rx_fifo_wr_reg + 'h1;
     end
 
     always_comb begin : desc_fifo_full_comb_func  // desc_fifo_full_comb_func
         desc_fifo_full_comb=desc_count_reg == FIFO_DEPTH;
     end
 
+    always_comb begin : debug_status_comb_func  // debug_status_comb_func
+        debug_status_comb=(((((((((busy_reg) != '0)) ? ('h1) : ('h0)) | ((((done_reg) != '0)) ? ('h2) : ('h0))) | ((((error_reg) != '0)) ? ('h4) : ('h0))) | ((rx_fifo_valid_comb) ? ('h8) : ('h0))) | ((!tx_fifo_full_comb) ? ('h10) : ('h0))) | ((((irq_pending_reg) != '0)) ? ('h20) : ('h0))) | ((!desc_fifo_full_comb) ? (C_STATUS_DESC_READY) : ('h0));
+    end
+
+    always_comb begin : tx_fifo_valid_comb_func  // tx_fifo_valid_comb_func
+        tx_fifo_valid_comb=tx_fifo_count_reg != 64'h0;
+    end
+
+    always_comb begin : tx_fifo_data_comb_func  // tx_fifo_data_comb_func
+        tx_fifo_data_comb = tx_fifo_data_reg[64'(unsigned'(32'(tx_fifo_rd_reg)))];
+    end
+
+    always_comb begin : tx_fifo_rd_next_comb_func  // tx_fifo_rd_next_comb_func
+        if (unsigned'(32'(tx_fifo_rd_reg)) + 'h1>=FIFO_DEPTH) begin
+            tx_fifo_rd_next_comb = 64'h0;
+            disable tx_fifo_rd_next_comb_func;
+        end
+        tx_fifo_rd_next_comb = tx_fifo_rd_reg + 64'h1;
+    end
+
+    always_comb begin : tx_fifo_wr_next_comb_func  // tx_fifo_wr_next_comb_func
+        if (unsigned'(32'(tx_fifo_wr_reg)) + 'h1>=FIFO_DEPTH) begin
+            tx_fifo_wr_next_comb = 64'h0;
+            disable tx_fifo_wr_next_comb_func;
+        end
+        tx_fifo_wr_next_comb = tx_fifo_wr_reg + 64'h1;
+    end
+
+    always_comb begin : rx_fifo_full_comb_func  // rx_fifo_full_comb_func
+        rx_fifo_full_comb=rx_fifo_count_reg == FIFO_DEPTH;
+    end
+
+    always_comb begin : rx_fifo_data_comb_func  // rx_fifo_data_comb_func
+        rx_fifo_data_comb = rx_fifo_data_reg[64'(unsigned'(32'(rx_fifo_rd_reg)))];
+    end
+
+    always_comb begin : rx_fifo_rd_next_comb_func  // rx_fifo_rd_next_comb_func
+        if (unsigned'(32'(rx_fifo_rd_reg)) + 'h1>=FIFO_DEPTH) begin
+            rx_fifo_rd_next_comb = 64'h0;
+            disable rx_fifo_rd_next_comb_func;
+        end
+        rx_fifo_rd_next_comb = rx_fifo_rd_reg + 64'h1;
+    end
+
+    always_comb begin : rx_fifo_wr_next_comb_func  // rx_fifo_wr_next_comb_func
+        if (unsigned'(32'(rx_fifo_wr_reg)) + 'h1>=FIFO_DEPTH) begin
+            rx_fifo_wr_next_comb = 64'h0;
+            disable rx_fifo_wr_next_comb_func;
+        end
+        rx_fifo_wr_next_comb = rx_fifo_wr_reg + 64'h1;
+    end
+
     always_comb begin : desc_fifo_valid_comb_func  // desc_fifo_valid_comb_func
-        desc_fifo_valid_comb=desc_count_reg != 'h0;
+        desc_fifo_valid_comb=desc_count_reg != 64'h0;
     end
 
     always_comb begin : desc_fifo_rd_next_comb_func  // desc_fifo_rd_next_comb_func
         if (unsigned'(32'(desc_rd_reg)) + 'h1>=FIFO_DEPTH) begin
-            desc_fifo_rd_next_comb = 'h0;
+            desc_fifo_rd_next_comb = 64'h0;
             disable desc_fifo_rd_next_comb_func;
         end
-        desc_fifo_rd_next_comb = desc_rd_reg + 'h1;
+        desc_fifo_rd_next_comb = desc_rd_reg + 64'h1;
     end
 
     always_comb begin : desc_fifo_wr_next_comb_func  // desc_fifo_wr_next_comb_func
         if (unsigned'(32'(desc_wr_reg)) + 'h1>=FIFO_DEPTH) begin
-            desc_fifo_wr_next_comb = 'h0;
+            desc_fifo_wr_next_comb = 64'h0;
             disable desc_fifo_wr_next_comb_func;
         end
-        desc_fifo_wr_next_comb = desc_wr_reg + 'h1;
+        desc_fifo_wr_next_comb = desc_wr_reg + 64'h1;
     end
 
     always_comb begin : dma_remaining_comb_func  // dma_remaining_comb_func
         logic[31:0] total_left;
         logic[31:0] desc_left;
         total_left=unsigned'(32'(len_reg)) - unsigned'(32'(count_reg));
-        desc_left=(active_desc_valid_reg) ? (unsigned'(32'(active_desc_remaining_reg))) : (total_left);
+        desc_left=(((active_desc_valid_reg) != '0)) ? (unsigned'(32'(active_desc_remaining_reg))) : (total_left);
         dma_remaining_comb=(desc_left < total_left) ? (desc_left) : (total_left);
     end
 
     always_comb begin : dma_next_beat_limit_comb_func  // dma_next_beat_limit_comb_func
         logic[31:0] limit;
         limit=dma_remaining_comb;
-        if (limit > DATA_BYTES) begin
+        if (limit > unsigned'(32'(DATA_BYTES))) begin
             limit=DATA_BYTES;
         end
         dma_next_beat_limit_comb=limit;
@@ -356,52 +362,52 @@ module SDController #(
 
     always_comb begin : write_word_comb_func  // write_word_comb_func
         logic[63:0] lane;
-        write_word_comb='h0;
-        for (lane='h0;lane < (DATA_BYTES/'h4);lane=lane+1) begin
-            write_word_comb|=unsigned'(32'(axi_in__wdata_in[lane*'h20 +:32]));
+        write_word_comb=32'h0;
+        for (lane=64'h0;lane < 64'(32'((unsigned'(32'(DATA_BYTES))/32'h4)));lane=lane+1) begin
+            write_word_comb|=unsigned'(32'(axi_in__wdata_in[lane*64'h20 +:32]));
         end
     end
 
     always_comb begin : header_byte_comb_func  // header_byte_comb_func
         logic[31:0] idx;
         idx=header_index_reg;
-        if (idx == 'h0) begin
+        if (idx == 32'h0) begin
             header_byte_comb = cmd_reg;
             disable header_byte_comb_func;
         end
-        if (idx>='h1 && idx<='h4) begin
-            header_byte_comb = unsigned'(8'((((unsigned'(32'(arg_reg)) >>> ((((idx - 'h1))*'h8)))) & 'hFF)));
+        if (idx>=32'h1 && idx<=32'h4) begin
+            header_byte_comb = 8'((((unsigned'(32'(arg_reg)) >>> ((((idx - 'h1))*'h8)))) & 'hFF));
             disable header_byte_comb_func;
         end
-        if (idx == 'h5) begin
-            header_byte_comb = unsigned'(8'((unsigned'(32'(len_reg)) & 'hFF)));
+        if (idx>=32'h5 && idx<=32'h8) begin
+            header_byte_comb = 8'((((unsigned'(32'(len_reg)) >>> ((((idx - 'h5))*'h8)))) & 'hFF));
             disable header_byte_comb_func;
         end
-        header_byte_comb = unsigned'(8'((((unsigned'(32'(len_reg)) >>> 'h8)) & 'hFF)));
+        header_byte_comb = 64'h0;
     end
 
     always_comb begin : tx_byte_comb_func  // tx_byte_comb_func
         logic[63:0] i;
         logic[31:0] idx;
-        tx_byte_comb = 'h0;
-        idx=unsigned'(32'(dma_byte_index_reg)) % DATA_BYTES;
-        for (i='h0;i < DATA_BYTES;i=i+1) begin
-            if (idx == i) begin
-                tx_byte_comb = unsigned'(8'((unsigned'(32'(dma_beat_reg[i*'h8 +:8])))));
+        tx_byte_comb = 64'h0;
+        idx=unsigned'(32'(dma_byte_index_reg)) % unsigned'(32'(DATA_BYTES));
+        for (i=64'h0;i < unsigned'(64'(DATA_BYTES));i=i+1) begin
+            if (64'(idx) == i) begin
+                tx_byte_comb = unsigned'(8'((unsigned'(32'(dma_beat_reg[i*64'h8 +:8])))));
             end
         end
     end
 
     always_comb begin : phy_tx_valid_comb_func  // phy_tx_valid_comb_func
-        if (state_reg == ST_HEADER) begin
+        if (state_reg == unsigned'(64'(ST_HEADER))) begin
             phy_tx_valid_comb=1;
             disable phy_tx_valid_comb_func;
         end
-        if (state_reg == ST_PIO_WRITE) begin
+        if (state_reg == unsigned'(64'(ST_PIO_WRITE))) begin
             phy_tx_valid_comb=tx_fifo_valid_comb;
             disable phy_tx_valid_comb_func;
         end
-        if (state_reg == ST_DMA_WRITE_SEND) begin
+        if (state_reg == unsigned'(64'(ST_DMA_WRITE_SEND))) begin
             phy_tx_valid_comb=count_reg < len_reg;
             disable phy_tx_valid_comb_func;
         end
@@ -409,11 +415,11 @@ module SDController #(
     end
 
     always_comb begin : phy_tx_data_comb_func  // phy_tx_data_comb_func
-        if (state_reg == ST_HEADER) begin
+        if (state_reg == unsigned'(64'(ST_HEADER))) begin
             phy_tx_data_comb = header_byte_comb;
             disable phy_tx_data_comb_func;
         end
-        if (state_reg == ST_PIO_WRITE) begin
+        if (state_reg == unsigned'(64'(ST_PIO_WRITE))) begin
             phy_tx_data_comb = tx_fifo_data_comb;
             disable phy_tx_data_comb_func;
         end
@@ -421,31 +427,27 @@ module SDController #(
     end
 
     always_comb begin : phy_tx_last_comb_func  // phy_tx_last_comb_func
-        if (state_reg == ST_HEADER) begin
-            phy_tx_last_comb=!write_mode_reg && (header_index_reg == (HEADER_BYTES - 'h1));
+        if (state_reg == unsigned'(64'(ST_HEADER))) begin
+            phy_tx_last_comb=!((write_mode_reg) != '0) && (header_index_reg == 64'(32'((HEADER_BYTES - 'h1))));
             disable phy_tx_last_comb_func;
         end
-        if ((state_reg == ST_PIO_WRITE) || (state_reg == ST_DMA_WRITE_SEND)) begin
-            phy_tx_last_comb=count_reg + 'h1>=len_reg;
+        if ((state_reg == unsigned'(64'(ST_PIO_WRITE))) || (state_reg == unsigned'(64'(ST_DMA_WRITE_SEND)))) begin
+            phy_tx_last_comb=count_reg + 64'h1>=len_reg;
             disable phy_tx_last_comb_func;
         end
         phy_tx_last_comb=0;
     end
 
     always_comb begin : phy_rx_ready_comb_func  // phy_rx_ready_comb_func
-        if (state_reg == ST_PIO_READ) begin
+        if (state_reg == unsigned'(64'(ST_PIO_READ))) begin
             phy_rx_ready_comb=!rx_fifo_full_comb;
             disable phy_rx_ready_comb_func;
         end
-        if ((state_reg == ST_DMA_READ_RECV) || (state_reg == ST_WAIT_ACK)) begin
+        if ((state_reg == unsigned'(64'(ST_DMA_READ_RECV))) || (state_reg == unsigned'(64'(ST_WAIT_ACK)))) begin
             phy_rx_ready_comb=1;
             disable phy_rx_ready_comb_func;
         end
         phy_rx_ready_comb=0;
-    end
-
-    always_comb begin : debug_status_comb_func  // debug_status_comb_func
-        debug_status_comb=(((((((busy_reg) ? ('h1) : ('h0)) | ((done_reg) ? ('h2) : ('h0))) | ((error_reg) ? ('h4) : ('h0))) | ((rx_fifo_valid_comb) ? ('h8) : ('h0))) | ((!tx_fifo_full_comb) ? ('h10) : ('h0))) | ((irq_pending_reg) ? ('h20) : ('h0))) | ((!desc_fifo_full_comb) ? (C_STATUS_DESC_READY) : ('h0));
     end
 
     always_comb begin : read_data_comb_func  // read_data_comb_func
@@ -453,7 +455,7 @@ module SDController #(
         logic[31:0] word;
         logic[63:0] lane;
         read_data_comb = 'h0;
-        word='h0;
+        word=32'h0;
         raddr=(axi_in__arvalid_in) ? (unsigned'(32'(axi_in__araddr_in))) : (unsigned'(32'(read_addr_reg)));
         if (raddr == 'h4) begin
             word=debug_status_comb;
@@ -480,22 +482,22 @@ module SDController #(
                             end
                             else begin
                                 if (raddr == 'h20) begin
-                                    word=(irq_enable_reg) ? ('h1) : ('h0);
+                                    word=(((irq_enable_reg) != '0)) ? ('h1) : ('h0);
                                 end
                                 else begin
                                     if (raddr == 'h24) begin
-                                        word=(irq_pending_reg) ? ('h1) : ('h0);
+                                        word=(((irq_pending_reg) != '0)) ? ('h1) : ('h0);
                                     end
                                     else begin
-                                        if (raddr == C_REG_DMA_DESC_ADDR) begin
+                                        if (raddr == unsigned'(32'(C_REG_DMA_DESC_ADDR))) begin
                                             word=dma_desc_addr_reg;
                                         end
                                         else begin
-                                            if (raddr == C_REG_DMA_DESC_LEN) begin
+                                            if (raddr == unsigned'(32'(C_REG_DMA_DESC_LEN))) begin
                                                 word=dma_desc_len_reg;
                                             end
                                             else begin
-                                                if (raddr == C_REG_DMA_DESC_STATUS) begin
+                                                if (raddr == unsigned'(32'(C_REG_DMA_DESC_STATUS))) begin
                                                     word=((((!desc_fifo_full_comb) ? (C_DESC_STATUS_READY) : ('h0)) | ((!desc_fifo_valid_comb) ? (C_DESC_STATUS_EMPTY) : ('h0))) | ((desc_fifo_full_comb) ? (C_DESC_STATUS_FULL) : ('h0))) | ((unsigned'(32'(desc_count_reg)) <<< C_DESC_STATUS_COUNT_SHIFT));
                                                 end
                                             end
@@ -508,38 +510,39 @@ module SDController #(
                 end
             end
         end
-        for (lane='h0;lane < (DATA_BYTES/'h4);lane=lane+1) begin
-            read_data_comb[lane*'h20 +:32] = word;
+        for (lane=64'h0;lane < 64'(32'((unsigned'(32'(DATA_BYTES))/32'h4)));lane=lane+1) begin
+            read_data_comb[lane*64'h20 +:32] = 64'(word);
         end
     end
 
     always_comb begin : dma_addr_comb_func  // dma_addr_comb_func
         logic[31:0] addr;
-        addr=(active_desc_valid_reg) ? (unsigned'(32'(active_desc_addr_reg))) : (unsigned'(32'(dma_addr_reg)) + unsigned'(32'(dma_beat_base_reg)));
-        dma_addr_comb = unsigned'(ADDR_WIDTH'(unsigned'(ADDR_WIDTH'(addr))));
+        addr=(((active_desc_valid_reg) != '0)) ? (unsigned'(32'(active_desc_addr_reg))) : (unsigned'(32'(dma_addr_reg)) + unsigned'(32'(dma_beat_base_reg)));
+        dma_addr_comb = ADDR_WIDTH'(64'(addr));
     end
 
     generate  // _assign
-        assign axi_in__awready_out = !write_addr_valid_reg && !write_resp_valid_reg;
-        assign axi_in__wready_out = ((write_addr_valid_reg && !write_resp_valid_reg) && (((unsigned'(32'(write_addr_reg)) != C_REG_TXDATA) || !tx_fifo_full_comb))) && (((unsigned'(32'(write_addr_reg)) != C_REG_DMA_DESC_PUSH) || !desc_fifo_full_comb));
+        assign axi_in__awready_out = ((!((write_addr_valid_reg) != '0) && !((write_resp_valid_reg) != '0)) != '0);
+        assign axi_in__wready_out = ((((((write_addr_valid_reg) != '0) && !((write_resp_valid_reg) != '0)) && (((unsigned'(32'(write_addr_reg)) != unsigned'(32'(C_REG_TXDATA))) || !tx_fifo_full_comb))) && (((unsigned'(32'(write_addr_reg)) != unsigned'(32'(C_REG_DMA_DESC_PUSH))) || !desc_fifo_full_comb))) != '0);
         assign axi_in__bvalid_out = write_resp_valid_reg;
         assign axi_in__bid_out = write_id_reg;
-        assign axi_in__arready_out = !read_valid_reg;
+        assign axi_in__arready_out = ((!((read_valid_reg) != '0)) != '0);
         assign axi_in__rvalid_out = read_valid_reg;
         assign axi_in__rdata_out = read_data_reg;
         assign axi_in__rlast_out = read_valid_reg;
         assign axi_in__rid_out = read_id_reg;
-        assign dma_out__awvalid_out = state_reg == ST_DMA_READ_AW;
-        assign dma_out__awaddr_out = unsigned'(ADDR_WIDTH'(dma_addr_comb));
-        assign dma_out__awid_out = unsigned'(ID_WIDTH'(unsigned'(ID_WIDTH'('h0))));
-        assign dma_out__wvalid_out = state_reg == ST_DMA_READ_W;
+        assign dma_out__awvalid_out = ((state_reg == unsigned'(64'(ST_DMA_READ_AW))) != '0);
+        assign dma_out__awaddr_out = dma_addr_comb;
+        assign dma_out__awid_out = ID_WIDTH'(64'h0);
+        assign dma_out__wvalid_out = ((state_reg == unsigned'(64'(ST_DMA_READ_W))) != '0);
         assign dma_out__wdata_out = dma_beat_reg;
-        assign dma_out__wlast_out = state_reg == ST_DMA_READ_W;
-        assign dma_out__bready_out = state_reg == ST_DMA_READ_B;
-        assign dma_out__arvalid_out = state_reg == ST_DMA_WRITE_AR;
-        assign dma_out__araddr_out = unsigned'(ADDR_WIDTH'(dma_addr_comb));
-        assign dma_out__arid_out = unsigned'(ID_WIDTH'(unsigned'(ID_WIDTH'('h0))));
-        assign dma_out__rready_out = state_reg == ST_DMA_WRITE_R;
+        assign dma_out__wstrb_out = $bits((DATA_WIDTH/64'h8)'('h0))'(~((DATA_WIDTH/64'h8)'('h0)));
+        assign dma_out__wlast_out = ((state_reg == unsigned'(64'(ST_DMA_READ_W))) != '0);
+        assign dma_out__bready_out = ((state_reg == unsigned'(64'(ST_DMA_READ_B))) != '0);
+        assign dma_out__arvalid_out = ((state_reg == unsigned'(64'(ST_DMA_WRITE_AR))) != '0);
+        assign dma_out__araddr_out = dma_addr_comb;
+        assign dma_out__arid_out = ID_WIDTH'(64'h0);
+        assign dma_out__rready_out = ((state_reg == unsigned'(64'(ST_DMA_WRITE_R))) != '0);
     endgenerate
 
     task _work (input logic reset);
@@ -550,7 +553,6 @@ module SDController #(
         logic[31:0] next_byte_index;
         logic[31:0] beat_limit;
         logic[63:0] i;
-        logic[64-1:0] beat;
         logic tx_push;
         logic tx_pop;
         logic rx_push;
@@ -558,53 +560,54 @@ module SDController #(
         logic desc_push;
         logic desc_pop;
         logic[31:0] next_desc_remaining;
+        logic[DATA_WIDTH-1:0] beat;
         tx_push=0;
         desc_push=0;
         desc_pop=0;
-        dma_write_complete_reg_tmp = unsigned'(1'(0));
-        if (tx_valid_reg && sd_cmd_ready_in) begin
-            tx_valid_reg_tmp = unsigned'(1'(0));
+        dma_write_complete_reg_tmp = 0;
+        if (((tx_valid_reg) != '0) && sd_cmd_ready_in) begin
+            tx_valid_reg_tmp = 0;
         end
-        if (!tx_valid_reg && phy_tx_valid_comb) begin
-            tx_valid_reg_tmp = unsigned'(1'(1));
+        if (!((tx_valid_reg) != '0) && phy_tx_valid_comb) begin
+            tx_valid_reg_tmp = 1;
             tx_data_reg_tmp = phy_tx_data_comb;
-            tx_last_reg_tmp = unsigned'(1'(phy_tx_last_comb));
+            tx_last_reg_tmp = phy_tx_last_comb;
         end
-        if (rx_valid_reg && phy_rx_ready_comb) begin
-            rx_valid_reg_tmp = unsigned'(1'(0));
+        if (((rx_valid_reg) != '0) && phy_rx_ready_comb) begin
+            rx_valid_reg_tmp = 0;
         end
-        if (!rx_valid_reg && sd_rsp_valid_in) begin
-            rx_valid_reg_tmp = unsigned'(1'(1));
+        if (!((rx_valid_reg) != '0) && sd_rsp_valid_in) begin
+            rx_valid_reg_tmp = 1;
             rx_data_reg_tmp = sd_rsp_data_in;
-            rx_last_reg_tmp = unsigned'(1'(sd_rsp_last_in));
+            rx_last_reg_tmp = sd_rsp_last_in;
         end
-        tx_pop=((state_reg == ST_PIO_WRITE) && !tx_valid_reg) && tx_fifo_valid_comb;
-        rx_push=((state_reg == ST_PIO_READ) && rx_valid_reg) && !rx_fifo_full_comb;
+        tx_pop=((state_reg == unsigned'(64'(ST_PIO_WRITE))) && !((tx_valid_reg) != '0)) && tx_fifo_valid_comb;
+        rx_push=((state_reg == unsigned'(64'(ST_PIO_READ))) && ((rx_valid_reg) != '0)) && !rx_fifo_full_comb;
         rx_pop=((axi_in__arvalid_in && axi_in__arready_out) && (unsigned'(32'(axi_in__araddr_in)) == 'h1C)) && rx_fifo_valid_comb;
         if (axi_in__arvalid_in && axi_in__arready_out) begin
             read_addr_reg_tmp = axi_in__araddr_in;
             read_id_reg_tmp = axi_in__arid_in;
             read_data_reg_tmp = read_data_comb;
-            read_valid_reg_tmp = unsigned'(1'(1));
+            read_valid_reg_tmp = 1;
         end
-        if (read_valid_reg && axi_in__rready_in) begin
-            read_valid_reg_tmp = unsigned'(1'(0));
+        if (((read_valid_reg) != '0) && axi_in__rready_in) begin
+            read_valid_reg_tmp = 0;
         end
         if (axi_in__awvalid_in && axi_in__awready_out) begin
             write_addr_reg_tmp = axi_in__awaddr_in;
             write_id_reg_tmp = axi_in__awid_in;
-            write_addr_valid_reg_tmp = unsigned'(1'(1));
+            write_addr_valid_reg_tmp = 1;
         end
         if (axi_in__wvalid_in && axi_in__wready_out) begin
-            addr=unsigned'(32'(write_addr_reg));
+            addr=write_addr_reg;
             word=write_word_comb;
-            write_addr_valid_reg_tmp = unsigned'(1'(0));
-            write_resp_valid_reg_tmp = unsigned'(1'(1));
+            write_addr_valid_reg_tmp = 0;
+            write_resp_valid_reg_tmp = 1;
             if (addr == 'h0) begin
-                if (((word & 'h10)) && !((word & 'h1))) begin
-                    done_reg_tmp = unsigned'(1'(0));
-                    error_reg_tmp = unsigned'(1'(0));
-                    irq_pending_reg_tmp = unsigned'(1'(0));
+                if (((((word & 'h10))) != '0) && !((((word & 'h1))) != '0)) begin
+                    done_reg_tmp = 0;
+                    error_reg_tmp = 0;
+                    irq_pending_reg_tmp = 0;
                     desc_rd_reg_tmp = '0;
                     desc_wr_reg_tmp = '0;
                     desc_count_reg_tmp = '0;
@@ -612,74 +615,74 @@ module SDController #(
                     active_desc_addr_reg_tmp = '0;
                     active_desc_remaining_reg_tmp = '0;
                 end
-                if (((word & 'h1)) && !busy_reg) begin
-                    busy_reg_tmp = unsigned'(1'(1));
-                    done_reg_tmp = unsigned'(1'(0));
-                    error_reg_tmp = unsigned'(1'(0));
-                    irq_pending_reg_tmp = unsigned'(1'(0));
-                    write_mode_reg_tmp = unsigned'(1'(((word & 'h2)) != 'h0));
-                    dma_mode_reg_tmp = unsigned'(1'(((word & 'h4)) != 'h0));
-                    header_index_reg_tmp = 'h0;
-                    count_reg_tmp = unsigned'(32'('h0));
+                if (((((word & 'h1))) != '0) && !((busy_reg) != '0)) begin
+                    busy_reg_tmp = 1;
+                    done_reg_tmp = 0;
+                    error_reg_tmp = 0;
+                    irq_pending_reg_tmp = 0;
+                    write_mode_reg_tmp = ((word & 'h2)) != 32'h0;
+                    dma_mode_reg_tmp = ((word & 'h4)) != 32'h0;
+                    header_index_reg_tmp = 64'h0;
+                    count_reg_tmp = 32'h0;
                     dma_beat_reg_tmp = 'h0;
-                    dma_beat_base_reg_tmp = unsigned'(32'('h0));
-                    dma_byte_index_reg_tmp = unsigned'(32'('h0));
-                    dma_beat_limit_reg_tmp = unsigned'(32'('h0));
-                    active_desc_valid_reg_tmp = unsigned'(1'(0));
-                    active_desc_addr_reg_tmp = unsigned'(32'('h0));
-                    active_desc_remaining_reg_tmp = unsigned'(32'('h0));
+                    dma_beat_base_reg_tmp = 32'h0;
+                    dma_byte_index_reg_tmp = 32'h0;
+                    dma_beat_limit_reg_tmp = 32'h0;
+                    active_desc_valid_reg_tmp = 0;
+                    active_desc_addr_reg_tmp = 32'h0;
+                    active_desc_remaining_reg_tmp = 32'h0;
                     state_reg_tmp = ST_HEADER;
-                    if (((word & 'h2)) != 'h0) begin
-                        cmd_reg_tmp = 'h58;
+                    if (((word & 'h2)) != 32'h0) begin
+                        cmd_reg_tmp = 64'h58;
                     end
                     else begin
-                        cmd_reg_tmp = 'h51;
+                        cmd_reg_tmp = 64'h51;
                     end
                 end
             end
             else begin
                 if (addr == 'h8) begin
-                    cmd_reg_tmp = unsigned'(8'(word));
+                    cmd_reg_tmp = 8'(word);
                 end
                 else begin
                     if (addr == 'hC) begin
-                        arg_reg_tmp = unsigned'(32'(word));
+                        arg_reg_tmp = word;
                     end
                     else begin
                         if (addr == 'h10) begin
-                            len_reg_tmp = unsigned'(32'(word));
+                            len_reg_tmp = word;
                         end
                         else begin
                             if (addr == 'h14) begin
-                                dma_addr_reg_tmp = unsigned'(32'(word));
+                                dma_addr_reg_tmp = word;
                             end
                             else begin
-                                if (addr == C_REG_DMA_DESC_ADDR) begin
-                                    dma_desc_addr_reg_tmp = unsigned'(32'(word));
+                                if (addr == unsigned'(32'(C_REG_DMA_DESC_ADDR))) begin
+                                    dma_desc_addr_reg_tmp = word;
                                 end
                                 else begin
-                                    if (addr == C_REG_DMA_DESC_LEN) begin
-                                        dma_desc_len_reg_tmp = unsigned'(32'(word));
+                                    if (addr == unsigned'(32'(C_REG_DMA_DESC_LEN))) begin
+                                        dma_desc_len_reg_tmp = word;
                                     end
                                     else begin
-                                        if ((addr == C_REG_DMA_DESC_PUSH) && !desc_fifo_full_comb) begin
+                                        if ((addr == unsigned'(32'(C_REG_DMA_DESC_PUSH))) && !desc_fifo_full_comb) begin
                                             desc_push=1;
-                                            desc_addr_data_reg_tmp[unsigned'(32'(desc_wr_reg))] = dma_desc_addr_reg;
-                                            desc_len_data_reg_tmp[unsigned'(32'(desc_wr_reg))] = dma_desc_len_reg;
+                                            desc_addr_data_reg_tmp[64'(unsigned'(32'(desc_wr_reg)))] = dma_desc_addr_reg;
+                                            desc_len_data_reg_tmp[64'(unsigned'(32'(desc_wr_reg)))] = dma_desc_len_reg;
                                             desc_wr_reg_tmp = desc_fifo_wr_next_comb;
                                         end
                                         else begin
                                             if (addr == 'h20) begin
-                                                irq_enable_reg_tmp = unsigned'(1'(((word & 'h1)) != 'h0));
+                                                irq_enable_reg_tmp = ((word & 'h1)) != 32'h0;
                                             end
                                             else begin
-                                                if ((addr == 'h24) && ((word & 'h1))) begin
-                                                    irq_pending_reg_tmp = unsigned'(1'(0));
+                                                if ((addr == 'h24) && ((((word & 'h1))) != '0)) begin
+                                                    irq_pending_reg_tmp = 0;
                                                 end
                                                 else begin
                                                     if ((addr == 'h18) && !tx_fifo_full_comb) begin
                                                         tx_push=1;
-                                                        tx_fifo_data_reg[unsigned'(32'(tx_fifo_wr_reg))] <= unsigned'(8'(unsigned'(8'((word & 'hFF)))));
+                                                        tx_fifo_data_reg[64'(unsigned'(32'(tx_fifo_wr_reg)))] <= 64'(32'((word & 'hFF)));
                                                         tx_fifo_wr_reg_tmp = tx_fifo_wr_next_comb;
                                                     end
                                                 end
@@ -693,44 +696,44 @@ module SDController #(
                 end
             end
         end
-        if (write_resp_valid_reg && axi_in__bready_in) begin
-            write_resp_valid_reg_tmp = unsigned'(1'(0));
+        if (((write_resp_valid_reg) != '0) && axi_in__bready_in) begin
+            write_resp_valid_reg_tmp = 0;
         end
         if (tx_pop) begin
             tx_fifo_rd_reg_tmp = tx_fifo_rd_next_comb;
         end
         if (tx_push && !tx_pop) begin
-            tx_fifo_count_reg_tmp = tx_fifo_count_reg + 'h1;
+            tx_fifo_count_reg_tmp = tx_fifo_count_reg + 64'h1;
         end
         else begin
             if (!tx_push && tx_pop) begin
-                tx_fifo_count_reg_tmp = tx_fifo_count_reg - 'h1;
+                tx_fifo_count_reg_tmp = tx_fifo_count_reg - 64'h1;
             end
         end
         if (rx_push) begin
-            rx_fifo_data_reg[unsigned'(32'(rx_fifo_wr_reg))] <= sd_rsp_data_in;
+            rx_fifo_data_reg[64'(unsigned'(32'(rx_fifo_wr_reg)))] <= sd_rsp_data_in;
             rx_fifo_wr_reg_tmp = rx_fifo_wr_next_comb;
         end
         if (rx_pop) begin
             rx_fifo_rd_reg_tmp = rx_fifo_rd_next_comb;
         end
         if (rx_push && !rx_pop) begin
-            rx_fifo_count_reg_tmp = rx_fifo_count_reg + 'h1;
+            rx_fifo_count_reg_tmp = rx_fifo_count_reg + 64'h1;
         end
         else begin
             if (!rx_push && rx_pop) begin
-                rx_fifo_count_reg_tmp = rx_fifo_count_reg - 'h1;
+                rx_fifo_count_reg_tmp = rx_fifo_count_reg - 64'h1;
             end
         end
-        if (state_reg == ST_HEADER) begin
-            if (!tx_valid_reg) begin
-                if (header_index_reg + 'h1>=HEADER_BYTES) begin
-                    count_reg_tmp = unsigned'(32'('h0));
-                    if (dma_mode_reg) begin
+        if (state_reg == unsigned'(64'(ST_HEADER))) begin
+            if (!((tx_valid_reg) != '0)) begin
+                if (header_index_reg + 64'h1>=unsigned'(64'(HEADER_BYTES))) begin
+                    count_reg_tmp = 32'h0;
+                    if (((dma_mode_reg) != '0)) begin
                         state_reg_tmp = ST_DMA_LOAD_DESC;
                     end
                     else begin
-                        if (write_mode_reg) begin
+                        if (((write_mode_reg) != '0)) begin
                             state_reg_tmp = ST_PIO_WRITE;
                         end
                         else begin
@@ -739,31 +742,31 @@ module SDController #(
                     end
                 end
                 else begin
-                    header_index_reg_tmp = header_index_reg + 'h1;
+                    header_index_reg_tmp = header_index_reg + 64'h1;
                 end
             end
         end
         else begin
-            if (state_reg == ST_PIO_READ) begin
+            if (state_reg == unsigned'(64'(ST_PIO_READ))) begin
                 if (rx_push) begin
-                    if (count_reg + 'h1>=len_reg) begin
+                    if (count_reg + 64'h1>=len_reg) begin
                         state_reg_tmp = ST_DONE;
                     end
-                    count_reg_tmp = unsigned'(32'(count_reg + 'h1));
+                    count_reg_tmp = count_reg + 64'h1;
                 end
             end
             else begin
-                if (state_reg == ST_PIO_WRITE) begin
+                if (state_reg == unsigned'(64'(ST_PIO_WRITE))) begin
                     if (tx_pop) begin
-                        if (count_reg + 'h1>=len_reg) begin
+                        if (count_reg + 64'h1>=len_reg) begin
                             state_reg_tmp = ST_WAIT_ACK;
                         end
-                        count_reg_tmp = unsigned'(32'(count_reg + 'h1));
+                        count_reg_tmp = count_reg + 64'h1;
                     end
                 end
                 else begin
-                    if (state_reg == ST_WAIT_ACK) begin
-                        if (rx_valid_reg) begin
+                    if (state_reg == unsigned'(64'(ST_WAIT_ACK))) begin
+                        if (((rx_valid_reg) != '0)) begin
                             if (unsigned'(32'(rx_data_reg)) == 'h0) begin
                                 state_reg_tmp = ST_DONE;
                             end
@@ -773,148 +776,155 @@ module SDController #(
                         end
                     end
                     else begin
-                        if (state_reg == ST_DMA_LOAD_DESC) begin
+                        if (state_reg == unsigned'(64'(ST_DMA_LOAD_DESC))) begin
                             dma_beat_reg_tmp = 'h0;
-                            dma_byte_index_reg_tmp = unsigned'(32'('h0));
-                            dma_beat_limit_reg_tmp = unsigned'(32'('h0));
+                            dma_byte_index_reg_tmp = 32'h0;
+                            dma_beat_limit_reg_tmp = 32'h0;
                             if (count_reg>=len_reg) begin
-                                state_reg_tmp = (write_mode_reg) ? (ST_WAIT_ACK) : (ST_DONE);
+                                state_reg_tmp = unsigned'(32'((((write_mode_reg) != '0)) ? (ST_WAIT_ACK) : (ST_DONE)));
                             end
                             else begin
                                 if (desc_fifo_valid_comb) begin
                                     desc_pop=1;
-                                    active_desc_valid_reg_tmp = unsigned'(1'(1));
-                                    active_desc_addr_reg_tmp = desc_addr_data_reg[unsigned'(32'(desc_rd_reg))];
-                                    active_desc_remaining_reg_tmp = desc_len_data_reg[unsigned'(32'(desc_rd_reg))];
+                                    active_desc_valid_reg_tmp = 1;
+                                    active_desc_addr_reg_tmp = desc_addr_data_reg[64'(unsigned'(32'(desc_rd_reg)))];
+                                    active_desc_remaining_reg_tmp = desc_len_data_reg[64'(unsigned'(32'(desc_rd_reg)))];
                                     desc_rd_reg_tmp = desc_fifo_rd_next_comb;
-                                    state_reg_tmp = (write_mode_reg) ? (ST_DMA_WRITE_AR) : (ST_DMA_READ_RECV);
+                                    state_reg_tmp = unsigned'(32'((((write_mode_reg) != '0)) ? (ST_DMA_WRITE_AR) : (ST_DMA_READ_RECV)));
                                 end
                                 else begin
-                                    active_desc_valid_reg_tmp = unsigned'(1'(1));
-                                    active_desc_addr_reg_tmp = unsigned'(32'(unsigned'(32'(dma_addr_reg)) + unsigned'(32'(count_reg))));
-                                    active_desc_remaining_reg_tmp = unsigned'(32'(unsigned'(32'(len_reg)) - unsigned'(32'(count_reg))));
-                                    state_reg_tmp = (write_mode_reg) ? (ST_DMA_WRITE_AR) : (ST_DMA_READ_RECV);
+                                    active_desc_valid_reg_tmp = 1;
+                                    active_desc_addr_reg_tmp = 32'(unsigned'(32'(dma_addr_reg)) + unsigned'(32'(count_reg)));
+                                    active_desc_remaining_reg_tmp = 32'(unsigned'(32'(len_reg)) - unsigned'(32'(count_reg)));
+                                    state_reg_tmp = unsigned'(32'((((write_mode_reg) != '0)) ? (ST_DMA_WRITE_AR) : (ST_DMA_READ_RECV)));
                                 end
                             end
                         end
                         else begin
-                            if (state_reg == ST_DMA_READ_RECV) begin
-                                beat_limit=(dma_beat_limit_reg) ? (unsigned'(32'(dma_beat_limit_reg))) : (dma_next_beat_limit_comb);
-                                if (rx_valid_reg && (beat_limit != 'h0)) begin
-                                    if (dma_byte_index_reg == 'h0) begin
-                                        dma_beat_limit_reg_tmp = unsigned'(32'(beat_limit));
+                            if (state_reg == unsigned'(64'(ST_DMA_READ_RECV))) begin
+                                beat_limit=(((dma_beat_limit_reg) != '0)) ? (unsigned'(32'(dma_beat_limit_reg))) : (dma_next_beat_limit_comb);
+                                if (((rx_valid_reg) != '0) && (beat_limit != 32'h0)) begin
+                                    if (dma_byte_index_reg == 64'h0) begin
+                                        dma_beat_limit_reg_tmp = beat_limit;
                                     end
                                     beat = dma_beat_reg;
-                                    for (i='h0;i < DATA_BYTES;i=i+1) begin
-                                        if (unsigned'(32'(dma_byte_index_reg)) == i) begin
-                                            beat[i*'h8 +:8] = rx_data_reg;
+                                    for (i=64'h0;i < unsigned'(64'(DATA_BYTES));i=i+1) begin
+                                        if (64'(unsigned'(32'(dma_byte_index_reg))) == i) begin
+                                            beat[i*64'h8 +:8] = rx_data_reg;
                                         end
                                     end
                                     dma_beat_reg_tmp = beat;
                                     next_count=unsigned'(32'(count_reg)) + 'h1;
                                     next_byte_index=unsigned'(32'(dma_byte_index_reg)) + 'h1;
-                                    next_desc_remaining=(active_desc_remaining_reg) ? (unsigned'(32'(active_desc_remaining_reg)) - 'h1) : ('h0);
-                                    count_reg_tmp = unsigned'(32'(next_count));
-                                    dma_byte_index_reg_tmp = unsigned'(32'(next_byte_index));
-                                    active_desc_remaining_reg_tmp = unsigned'(32'(next_desc_remaining));
+                                    next_desc_remaining=(((active_desc_remaining_reg) != '0)) ? (unsigned'(32'(active_desc_remaining_reg)) - 'h1) : ('h0);
+                                    count_reg_tmp = next_count;
+                                    dma_byte_index_reg_tmp = next_byte_index;
+                                    active_desc_remaining_reg_tmp = next_desc_remaining;
                                     if (next_byte_index>=beat_limit || next_count>=unsigned'(32'(len_reg))) begin
-                                        dma_beat_limit_reg_tmp = unsigned'(32'(next_byte_index));
+                                        dma_beat_limit_reg_tmp = next_byte_index;
                                         state_reg_tmp = ST_DMA_READ_AW;
                                     end
                                 end
                             end
                             else begin
-                                if (state_reg == ST_DMA_READ_AW) begin
+                                if (state_reg == unsigned'(64'(ST_DMA_READ_AW))) begin
                                     if (dma_out__awvalid_out && dma_out__awready_in) begin
                                         state_reg_tmp = ST_DMA_READ_W;
                                     end
                                 end
                                 else begin
-                                    if (state_reg == ST_DMA_READ_W) begin
+                                    if (state_reg == unsigned'(64'(ST_DMA_READ_W))) begin
                                         if (dma_out__wvalid_out && dma_out__wready_in) begin
                                             state_reg_tmp = ST_DMA_READ_B;
                                         end
                                     end
                                     else begin
-                                        if (state_reg == ST_DMA_READ_B) begin
-                                            if (dma_out__bvalid_in && dma_out__bready_out) begin
-                                                dma_write_complete_reg_tmp = unsigned'(1'(1));
-                                                if (count_reg>=len_reg) begin
-                                                    state_reg_tmp = ST_DONE;
-                                                end
-                                                else begin
-                                                    if (active_desc_remaining_reg == 'h0) begin
-                                                        active_desc_valid_reg_tmp = unsigned'(1'(0));
+                                        if ((((state_reg == unsigned'(64'(ST_DMA_READ_B))) && dma_out__bvalid_in) && dma_out__bready_out) && count_reg>=len_reg) begin
+                                            state_reg_tmp = ST_DMA_READ_DONE;
+                                        end
+                                        else begin
+                                            if (state_reg == unsigned'(64'(ST_DMA_READ_B))) begin
+                                                if (dma_out__bvalid_in && dma_out__bready_out) begin
+                                                    if (active_desc_remaining_reg == 64'h0) begin
+                                                        dma_write_complete_reg_tmp = 0;
+                                                        active_desc_valid_reg_tmp = 0;
                                                         state_reg_tmp = ST_DMA_LOAD_DESC;
                                                     end
                                                     else begin
-                                                        active_desc_addr_reg_tmp = unsigned'(32'(unsigned'(32'(active_desc_addr_reg)) + unsigned'(32'(dma_beat_limit_reg))));
+                                                        dma_write_complete_reg_tmp = 0;
+                                                        active_desc_addr_reg_tmp = 32'(unsigned'(32'(active_desc_addr_reg)) + unsigned'(32'(dma_beat_limit_reg)));
                                                         dma_beat_reg_tmp = 'h0;
-                                                        dma_byte_index_reg_tmp = unsigned'(32'('h0));
-                                                        dma_beat_limit_reg_tmp = unsigned'(32'('h0));
+                                                        dma_byte_index_reg_tmp = 32'h0;
+                                                        dma_beat_limit_reg_tmp = 32'h0;
                                                         state_reg_tmp = ST_DMA_READ_RECV;
                                                     end
                                                 end
                                             end
-                                        end
-                                        else begin
-                                            if (state_reg == ST_DMA_WRITE_AR) begin
-                                                if (dma_out__arvalid_out && dma_out__arready_in) begin
-                                                    state_reg_tmp = ST_DMA_WRITE_R;
-                                                end
-                                            end
                                             else begin
-                                                if (state_reg == ST_DMA_WRITE_R) begin
-                                                    if (dma_out__rvalid_in && dma_out__rready_out) begin
-                                                        dma_beat_reg_tmp = dma_out__rdata_in;
-                                                        dma_byte_index_reg_tmp = unsigned'(32'('h0));
-                                                        dma_beat_limit_reg_tmp = unsigned'(32'(dma_next_beat_limit_comb));
-                                                        state_reg_tmp = ST_DMA_WRITE_SEND;
-                                                    end
+                                                if (state_reg == unsigned'(64'(ST_DMA_READ_DONE))) begin
+                                                    dma_write_complete_reg_tmp = 1;
+                                                    state_reg_tmp = ST_DONE;
                                                 end
                                                 else begin
-                                                    if (state_reg == ST_DMA_WRITE_SEND) begin
-                                                        beat_limit=dma_beat_limit_reg;
-                                                        if ((!tx_valid_reg && (count_reg < len_reg)) && (beat_limit != 'h0)) begin
-                                                            next_count=unsigned'(32'(count_reg)) + 'h1;
-                                                            next_byte_index=unsigned'(32'(dma_byte_index_reg)) + 'h1;
-                                                            next_desc_remaining=(active_desc_remaining_reg) ? (unsigned'(32'(active_desc_remaining_reg)) - 'h1) : ('h0);
-                                                            count_reg_tmp = unsigned'(32'(next_count));
-                                                            dma_byte_index_reg_tmp = unsigned'(32'(next_byte_index));
-                                                            active_desc_remaining_reg_tmp = unsigned'(32'(next_desc_remaining));
-                                                            if (next_count>=unsigned'(32'(len_reg))) begin
-                                                                state_reg_tmp = ST_WAIT_ACK;
-                                                            end
-                                                            else begin
-                                                                if (next_byte_index>=beat_limit) begin
-                                                                    if (next_desc_remaining == 'h0) begin
-                                                                        active_desc_valid_reg_tmp = unsigned'(1'(0));
-                                                                        state_reg_tmp = ST_DMA_LOAD_DESC;
-                                                                    end
-                                                                    else begin
-                                                                        active_desc_addr_reg_tmp = unsigned'(32'(unsigned'(32'(active_desc_addr_reg)) + beat_limit));
-                                                                        dma_byte_index_reg_tmp = unsigned'(32'('h0));
-                                                                        dma_beat_limit_reg_tmp = unsigned'(32'('h0));
-                                                                        state_reg_tmp = ST_DMA_WRITE_AR;
-                                                                    end
-                                                                end
-                                                            end
+                                                    if (state_reg == unsigned'(64'(ST_DMA_WRITE_AR))) begin
+                                                        if (dma_out__arvalid_out && dma_out__arready_in) begin
+                                                            state_reg_tmp = ST_DMA_WRITE_R;
                                                         end
                                                     end
                                                     else begin
-                                                        if (state_reg == ST_DONE) begin
-                                                            busy_reg_tmp = unsigned'(1'(0));
-                                                            done_reg_tmp = unsigned'(1'(1));
-                                                            irq_pending_reg_tmp = unsigned'(1'(1));
-                                                            state_reg_tmp = ST_IDLE;
+                                                        if (state_reg == unsigned'(64'(ST_DMA_WRITE_R))) begin
+                                                            if (dma_out__rvalid_in && dma_out__rready_out) begin
+                                                                dma_beat_reg_tmp = dma_out__rdata_in;
+                                                                dma_byte_index_reg_tmp = 32'h0;
+                                                                dma_beat_limit_reg_tmp = dma_next_beat_limit_comb;
+                                                                state_reg_tmp = ST_DMA_WRITE_SEND;
+                                                            end
                                                         end
                                                         else begin
-                                                            if (state_reg == ST_ERROR) begin
-                                                                busy_reg_tmp = unsigned'(1'(0));
-                                                                done_reg_tmp = unsigned'(1'(1));
-                                                                error_reg_tmp = unsigned'(1'(1));
-                                                                irq_pending_reg_tmp = unsigned'(1'(1));
-                                                                state_reg_tmp = ST_IDLE;
+                                                            if (state_reg == unsigned'(64'(ST_DMA_WRITE_SEND))) begin
+                                                                beat_limit=dma_beat_limit_reg;
+                                                                if ((!((tx_valid_reg) != '0) && (count_reg < len_reg)) && (beat_limit != 32'h0)) begin
+                                                                    next_count=unsigned'(32'(count_reg)) + 'h1;
+                                                                    next_byte_index=unsigned'(32'(dma_byte_index_reg)) + 'h1;
+                                                                    next_desc_remaining=(((active_desc_remaining_reg) != '0)) ? (unsigned'(32'(active_desc_remaining_reg)) - 'h1) : ('h0);
+                                                                    count_reg_tmp = next_count;
+                                                                    dma_byte_index_reg_tmp = next_byte_index;
+                                                                    active_desc_remaining_reg_tmp = next_desc_remaining;
+                                                                    if (next_count>=unsigned'(32'(len_reg))) begin
+                                                                        state_reg_tmp = ST_WAIT_ACK;
+                                                                    end
+                                                                    else begin
+                                                                        if (next_byte_index>=beat_limit) begin
+                                                                            if (next_desc_remaining == 32'h0) begin
+                                                                                active_desc_valid_reg_tmp = 0;
+                                                                                state_reg_tmp = ST_DMA_LOAD_DESC;
+                                                                            end
+                                                                            else begin
+                                                                                active_desc_addr_reg_tmp = 32'(unsigned'(32'(active_desc_addr_reg)) + beat_limit);
+                                                                                dma_byte_index_reg_tmp = 32'h0;
+                                                                                dma_beat_limit_reg_tmp = 32'h0;
+                                                                                state_reg_tmp = ST_DMA_WRITE_AR;
+                                                                            end
+                                                                        end
+                                                                    end
+                                                                end
+                                                            end
+                                                            else begin
+                                                                if (state_reg == unsigned'(64'(ST_DONE))) begin
+                                                                    busy_reg_tmp = 0;
+                                                                    done_reg_tmp = 1;
+                                                                    irq_pending_reg_tmp = 1;
+                                                                    state_reg_tmp = ST_IDLE;
+                                                                end
+                                                                else begin
+                                                                    if (state_reg == unsigned'(64'(ST_ERROR))) begin
+                                                                        busy_reg_tmp = 0;
+                                                                        done_reg_tmp = 1;
+                                                                        error_reg_tmp = 1;
+                                                                        irq_pending_reg_tmp = 1;
+                                                                        state_reg_tmp = ST_IDLE;
+                                                                    end
+                                                                end
                                                             end
                                                         end
                                                     end
@@ -930,11 +940,11 @@ module SDController #(
             end
         end
         if (desc_push && !desc_pop) begin
-            desc_count_reg_tmp = desc_count_reg + 'h1;
+            desc_count_reg_tmp = desc_count_reg + 64'h1;
         end
         else begin
             if (!desc_push && desc_pop) begin
-                desc_count_reg_tmp = desc_count_reg - 'h1;
+                desc_count_reg_tmp = desc_count_reg - 64'h1;
             end
         end
         if (reset) begin
@@ -946,9 +956,9 @@ module SDController #(
             write_id_reg_tmp = '0;
             write_addr_valid_reg_tmp = '0;
             write_resp_valid_reg_tmp = '0;
-            cmd_reg_tmp = 'h51;
+            cmd_reg_tmp = 64'h51;
             arg_reg_tmp = '0;
-            len_reg_tmp = unsigned'(32'('h200));
+            len_reg_tmp = 'h200;
             dma_addr_reg_tmp = '0;
             dma_desc_addr_reg_tmp = '0;
             dma_desc_len_reg_tmp = '0;
@@ -989,7 +999,12 @@ module SDController #(
     end
     endtask
 
-    always @(posedge clk) begin
+    task _work_l2_clock (input logic reset);
+    begin: _work_l2_clock
+    end
+    endtask
+
+    always_ff @(posedge clk) begin
         tx_fifo_rd_reg_tmp = tx_fifo_rd_reg;
         tx_fifo_wr_reg_tmp = tx_fifo_wr_reg;
         tx_fifo_count_reg_tmp = tx_fifo_count_reg;
@@ -1040,7 +1055,7 @@ module SDController #(
         active_desc_remaining_reg_tmp = active_desc_remaining_reg;
         active_desc_valid_reg_tmp = active_desc_valid_reg;
 
-        _work(reset);
+            _work(reset);
 
         tx_fifo_rd_reg <= tx_fifo_rd_reg_tmp;
         tx_fifo_wr_reg <= tx_fifo_wr_reg_tmp;
@@ -1093,15 +1108,21 @@ module SDController #(
         active_desc_valid_reg <= active_desc_valid_reg_tmp;
     end
 
+    always_ff @(posedge l2_clock) begin
+
+            _work_l2_clock(reset);
+
+    end
+
     assign sd_cmd_valid_out = tx_valid_reg;
 
     assign sd_cmd_data_out = tx_data_reg;
 
     assign sd_cmd_last_out = tx_last_reg;
 
-    assign sd_rsp_ready_out = !rx_valid_reg;
+    assign sd_rsp_ready_out = ((!((rx_valid_reg) != '0)) != '0);
 
-    assign irq_out = (irq_pending_reg && irq_enable_reg);
+    assign irq_out = (((((irq_pending_reg) != '0) && ((irq_enable_reg) != '0))) != '0);
 
     assign dma_write_complete_out = dma_write_complete_reg;
 

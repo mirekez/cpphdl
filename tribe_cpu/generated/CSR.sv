@@ -3,21 +3,35 @@
 import Predef_pkg::*;
 import State_pkg::*;
 import Sys_pkg::*;
-import Trap_pkg::*;
 import Csr_pkg::*;
+import Trap_pkg::*;
 
 
 module CSR (
     input wire clk
+,   input wire l2_clock
 ,   input wire reset
-,   input State state_in
-,   input State trap_check_state_in
+,   input wire State state_in
+,   input wire commit_in
+,   input wire State read_state_in
+,   input wire State trap_check_state_in
+,   input wire State legality_state_in
+,   output wire legality_out
+,   input wire State redirect_state_in
 ,   input wire[2-1:0] reset_priv_in
+,   input wire[31:0] hartid_in
 ,   input wire interrupt_valid_in
 ,   input wire[31:0] interrupt_cause_in
 ,   input wire interrupt_to_supervisor_in
+,   input wire redirect_interrupt_valid_in
+,   input wire[31:0] redirect_interrupt_cause_in
+,   input wire redirect_interrupt_to_supervisor_in
 ,   input wire[31:0] irq_pending_bits_in
+,   input wire software_irq_set_in
+,   output wire write_pending_out
 ,   output wire[31:0] read_data_out
+,   input wire[31:0] time_lo_in
+,   input wire[31:0] time_hi_in
 ,   output wire[31:0] trap_vector_out
 ,   output wire[31:0] epc_out
 ,   output wire[31:0] mepc_out
@@ -32,30 +46,31 @@ module CSR (
 ,   output wire[31:0] mstatus_out
 ,   output wire[31:0] mie_out
 ,   output wire[31:0] mideleg_out
+,   output wire[31:0] medeleg_out
 ,   output wire[31:0] mip_sw_out
 ,   output wire[31:0] satp_out
 ,   output wire[2-1:0] priv_out
 );
-    localparam  MISA_RV32IMC = ((('h40000000 | (('h1 <<< ((73 - 65))))) | (('h1 <<< ((77 - 65))))) | (('h1 <<< ((67 - 65))))) | (('h1 <<< ((65 - 65))));
+    localparam  MISA_RV32IMC = 'h40001105;
     localparam  PRIV_U = 'h0;
     localparam  PRIV_S = 'h1;
     localparam  PRIV_M = 'h3;
-    localparam  MSTATUS_UIE = 'h1 <<< 'h0;
-    localparam  MSTATUS_SIE = 'h1 <<< 'h1;
-    localparam  MSTATUS_MIE = 'h1 <<< 'h3;
-    localparam  MSTATUS_UPIE = 'h1 <<< 'h4;
-    localparam  MSTATUS_SPIE = 'h1 <<< 'h5;
-    localparam  MSTATUS_MPIE = 'h1 <<< 'h7;
-    localparam  MSTATUS_SPP = 'h1 <<< 'h8;
+    localparam  MSTATUS_UIE = 'h1;
+    localparam  MSTATUS_SIE = 'h2;
+    localparam  MSTATUS_MIE = 'h8;
+    localparam  MSTATUS_UPIE = 'h10;
+    localparam  MSTATUS_SPIE = 'h20;
+    localparam  MSTATUS_MPIE = 'h80;
+    localparam  MSTATUS_SPP = 'h100;
     localparam  MSTATUS_MPP_SHIFT = 'hB;
-    localparam  MSTATUS_MPP_MASK = 'h3 <<< MSTATUS_MPP_SHIFT;
-    localparam  MSTATUS_WRITABLE = (((((((((((MSTATUS_UIE | MSTATUS_SIE) | MSTATUS_MIE) | MSTATUS_UPIE) | MSTATUS_SPIE) | MSTATUS_MPIE) | MSTATUS_SPP) | MSTATUS_MPP_MASK) | (('h3 <<< 'hD))) | (('h3 <<< 'hF))) | (('h3 <<< 'h11))) | (('h1 <<< 'h12))) | (('h1 <<< 'h13));
-    localparam  SSTATUS_MASK = ((((((MSTATUS_UIE | MSTATUS_SIE) | MSTATUS_UPIE) | MSTATUS_SPIE) | MSTATUS_SPP) | (('h3 <<< 'hD))) | (('h3 <<< 'hF))) | (('h1 <<< 'h12));
-    localparam  IRQ_SSIP = 'h1 <<< 'h1;
-    localparam  IRQ_STIP = 'h1 <<< 'h5;
-    localparam  IRQ_SEIP = 'h1 <<< 'h9;
-    localparam  XIP_VISIBLE_MASK = (IRQ_SSIP | IRQ_STIP) | IRQ_SEIP;
-    localparam  XIP_SOFTWARE_WRITABLE_MASK = IRQ_SSIP;
+    localparam  MSTATUS_MPP_MASK = 'h1800;
+    localparam  MSTATUS_WRITABLE = 'hFF9BB;
+    localparam  SSTATUS_MASK = 'h5E133;
+    localparam  IRQ_SSIP = 'h2;
+    localparam  IRQ_STIP = 'h20;
+    localparam  IRQ_SEIP = 'h200;
+    localparam  XIP_VISIBLE_MASK = 'h222;
+    localparam  XIP_SOFTWARE_WRITABLE_MASK = 'h2;
 
 
     // regs and combs
@@ -89,17 +104,20 @@ module CSR (
     reg[32-1:0] dscratch1_reg;
     reg[64-1:0] cycle_reg;
     reg[64-1:0] instret_reg;
+    reg[32-1:0] csr_write_select_reg;
+    reg[32-1:0] csr_write_value_reg;
+    reg[32-1:0] csr_read_data_reg;
     reg[2-1:0] priv_reg;
+    logic commit_new_comb;
+    logic write_pending_comb;
+    logic[31:0] software_pending_comb;
     logic[31:0] interrupt_enable_comb;
-;
     logic[31:0] trap_vector_comb;
-;
     logic[31:0] epc_comb;
-;
     logic illegal_trap_comb;
-;
-    logic[31:0] read_data_comb;
-;
+    logic legality_comb;
+    logic[31:0] commit_read_data_comb;
+    logic[31:0] execute_read_data_comb;
 
     // members
 
@@ -134,280 +152,50 @@ module CSR (
     logic[32-1:0] dscratch1_reg_tmp;
     logic[64-1:0] cycle_reg_tmp;
     logic[64-1:0] instret_reg_tmp;
+    logic[32-1:0] csr_write_select_reg_tmp;
+    logic[32-1:0] csr_write_value_reg_tmp;
+    logic[32-1:0] csr_read_data_reg_tmp;
     logic[2-1:0] priv_reg_tmp;
 
 
-    function logic[31:0] csr_read (input logic[31:0] addr);
-        logic[63:0] cycle_value;
-        logic[63:0] instret_value;
-        cycle_value=cycle_reg;
-        instret_value=instret_reg;
-        if (addr == 'h1) begin
-            return 'h0;
-        end
-        if (addr == 'h2) begin
-            return 'h0;
-        end
-        if (addr == 'h3) begin
-            return 'h0;
-        end
-        if ((addr == 'hC00) || (addr == 'hB00)) begin
-            return unsigned'(32'(cycle_value));
-        end
-        if ((addr == 'hC80) || (addr == 'hB80)) begin
-            return unsigned'(32'((cycle_value >>> 'h20)));
-        end
-        if (addr == 'hC01) begin
-            return unsigned'(32'(cycle_value));
-        end
-        if (addr == 'hC81) begin
-            return unsigned'(32'((cycle_value >>> 'h20)));
-        end
-        if ((addr == 'hC02) || (addr == 'hB02)) begin
-            return unsigned'(32'(instret_value));
-        end
-        if ((addr == 'hC82) || (addr == 'hB82)) begin
-            return unsigned'(32'((instret_value >>> 'h20)));
-        end
-        if (((((addr>='hC03 && addr<='hC1F)) || ((addr>='hC83 && addr<='hC9F))) || ((addr>='hB03 && addr<='hB1F))) || ((addr>='hB83 && addr<='hB9F))) begin
-            return 'h0;
-        end
-        if (addr == 'h100) begin
-            return mstatus_reg & SSTATUS_MASK;
-        end
-        if (addr == 'h104) begin
-            return sie_reg;
-        end
-        if (addr == 'h105) begin
-            return stvec_reg;
-        end
-        if (addr == 'h106) begin
-            return scounteren_reg;
-        end
-        if (addr == 'h140) begin
-            return sscratch_reg;
-        end
-        if (addr == 'h141) begin
-            return sepc_reg;
-        end
-        if (addr == 'h142) begin
-            return scause_reg;
-        end
-        if (addr == 'h143) begin
-            return stval_reg;
-        end
-        if (addr == 'h144) begin
-            return ((((sip_reg & XIP_SOFTWARE_WRITABLE_MASK)) | irq_pending_bits_in)) & XIP_VISIBLE_MASK;
-        end
-        if (addr == 'h180) begin
-            return satp_reg;
-        end
-        if (addr == 'h300) begin
-            return mstatus_reg;
-        end
-        if (addr == 'h301) begin
-            return MISA_RV32IMC;
-        end
-        if (addr == 'h302) begin
-            return medeleg_reg;
-        end
-        if (addr == 'h303) begin
-            return mideleg_reg;
-        end
-        if (addr == 'h304) begin
-            return mie_reg;
-        end
-        if (addr == 'h305) begin
-            return mtvec_reg;
-        end
-        if (addr == 'h306) begin
-            return mcounteren_reg;
-        end
-        if (addr == 'h310) begin
-            return mstatus_reg >>> 'h20;
-        end
-        if (addr == 'h320) begin
-            return mcountinhibit_reg;
-        end
-        if (addr == 'h340) begin
-            return mscratch_reg;
-        end
-        if (addr == 'h341) begin
-            return mepc_reg;
-        end
-        if (addr == 'h342) begin
-            return mcause_reg;
-        end
-        if (addr == 'h343) begin
-            return mtval_reg;
-        end
-        if (addr == 'h344) begin
-            return ((mip_reg & XIP_SOFTWARE_WRITABLE_MASK)) | irq_pending_bits_in;
-        end
-        if (addr == 'h348) begin
-            return mscratchcsw_reg;
-        end
-        if (addr == 'h349) begin
-            return mscratchcswl_reg;
-        end
-        if (addr == 'hF11) begin
-            return 'h0;
-        end
-        if (addr == 'hF12) begin
-            return 'h0;
-        end
-        if (addr == 'hF13) begin
-            return 'h0;
-        end
-        if (addr == 'hF14) begin
-            return 'h0;
-        end
-        if (addr == 'hF15) begin
-            return 'h0;
-        end
-        if (addr == 'h7B0) begin
-            return dcsr_reg;
-        end
-        if (addr == 'h7B1) begin
-            return dpc_reg;
-        end
-        if (addr == 'h7B2) begin
-            return dscratch0_reg;
-        end
-        if (addr == 'h7B3) begin
-            return dscratch1_reg;
-        end
-        if (((((((addr>='h323 && addr<='h33F)) || ((addr>='h3A0 && addr<='h3EF))) || ((addr>='h5A8 && addr<='h5AF))) || ((addr>='h7C0 && addr<='h7FF))) || ((addr>='h9C0 && addr<='h9FF))) || ((addr>='hA00 && addr<='hAFF))) begin
-            return 'h0;
-        end
-        return 'h0;
-    endfunction
-
-    always_comb begin : read_data_comb_func  // read_data_comb_func
-        read_data_comb=csr_read(state_in.csr_addr);
-    end
-
-    function logic[31:0] trap_cause_code ();
-        if (interrupt_valid_in) begin
-            return interrupt_cause_in;
-        end
-        if (state_in.sys_op == Sys_pkg::ECALL) begin
-            if (priv_reg == PRIV_U) begin
-                return 'h8;
-            end
-            if (priv_reg == PRIV_S) begin
-                return 'h9;
-            end
-            return 'hB;
-        end
-        if (state_in.sys_op == Sys_pkg::EBREAK) begin
-            return 'h3;
-        end
-        case (state_in.trap_op)
-        Trap_pkg::TNONE: begin
-            return 'h2;
-        end
-        Trap_pkg::INST_MISALIGNED: begin
-            return 'h0;
-        end
-        Trap_pkg::ILLEGAL_INST: begin
-            return 'h2;
-        end
-        Trap_pkg::BREAKPOINT: begin
-            return 'h3;
-        end
-        Trap_pkg::LOAD_MISALIGNED: begin
-            return 'h4;
-        end
-        Trap_pkg::STORE_MISALIGNED: begin
-            return 'h6;
-        end
-        Trap_pkg::INST_PAGE_FAULT: begin
-            return 'hC;
-        end
-        Trap_pkg::LOAD_PAGE_FAULT: begin
-            return 'hD;
-        end
-        Trap_pkg::STORE_PAGE_FAULT: begin
-            return 'hF;
-        end
-        Trap_pkg::ECALL_U: begin
-            return 'h8;
-        end
-        Trap_pkg::ECALL_S: begin
-            return 'h9;
-        end
-        Trap_pkg::ECALL_M: begin
-            return 'hB;
-        end
-        default: begin
-        end
-        endcase
-        return 'h2;
-    endfunction
-
-    function logic trap_to_supervisor (input logic[31:0] cause);
-        if (interrupt_valid_in) begin
-            return interrupt_to_supervisor_in;
-        end
-        return (priv_reg != PRIV_M) && ((((medeleg_reg >>> cause)) & 'h1));
-    endfunction
-
-    always_comb begin : trap_vector_comb_func  // trap_vector_comb_func
-        logic[31:0] cause;
-        logic[31:0] tvec;
-        cause=trap_cause_code();
-        tvec=(trap_to_supervisor(cause)) ? (unsigned'(32'(stvec_reg))) : (unsigned'(32'(mtvec_reg)));
-        trap_vector_comb=tvec & ~'h3;
-        if (interrupt_valid_in && ((((tvec & 'h3)) == 'h1))) begin
-            trap_vector_comb=((tvec & ~'h3)) + (cause*'h4);
-        end
-    end
-
-    always_comb begin : epc_comb_func  // epc_comb_func
-        epc_comb=mepc_reg;
-        if (state_in.sys_op == Sys_pkg::SRET) begin
-            epc_comb=sepc_reg;
-        end
-    end
-
     function logic csr_state_writes (input State st);
-        logic[31:0] op; op = st.csr_op;
-        if (!st.valid || (op == Csr_pkg::CNONE)) begin
+        logic[31:0] op;
+        op = 32'(st.csr_op);
+        if (!((st.valid) != '0) || (op == unsigned'(32'(Csr_pkg::CNONE)))) begin
             return 0;
         end
-        if ((op == Csr_pkg::CSRRS) || (op == Csr_pkg::CSRRC)) begin
-            return st.rs1 != 'h0;
+        if ((op == unsigned'(32'(Csr_pkg::CSRRS))) || (op == unsigned'(32'(Csr_pkg::CSRRC)))) begin
+            return signed'(32'(st.rs1)) != 32'sh0;
         end
-        if ((op == Csr_pkg::CSRRSI) || (op == Csr_pkg::CSRRCI)) begin
-            return st.csr_imm != 'h0;
+        if ((op == unsigned'(32'(Csr_pkg::CSRRSI))) || (op == unsigned'(32'(Csr_pkg::CSRRCI)))) begin
+            return signed'(32'(st.csr_imm)) != 32'sh0;
         end
         return 1;
     endfunction
 
     function logic csr_supported (input logic[31:0] addr);
-        if (((addr == 'h1) || (addr == 'h2)) || (addr == 'h3)) begin
+        if (((addr == 32'h1) || (addr == 32'h2)) || (addr == 32'h3)) begin
             return 1;
         end
-        if ((((((((((addr == 'hC00) || (addr == 'hC80)) || (addr == 'hC01)) || (addr == 'hC81)) || (addr == 'hC02)) || (addr == 'hC82)) || (addr == 'hB00)) || (addr == 'hB80)) || (addr == 'hB02)) || (addr == 'hB82)) begin
+        if ((((((((((addr == 32'hC00) || (addr == 32'hC80)) || (addr == 32'hC01)) || (addr == 32'hC81)) || (addr == 32'hC02)) || (addr == 32'hC82)) || (addr == 32'hB00)) || (addr == 32'hB80)) || (addr == 32'hB02)) || (addr == 32'hB82)) begin
             return 1;
         end
-        if (((((addr>='hC03 && addr<='hC1F)) || ((addr>='hC83 && addr<='hC9F))) || ((addr>='hB03 && addr<='hB1F))) || ((addr>='hB83 && addr<='hB9F))) begin
+        if (((((addr>=32'hC03 && addr<=32'hC1F)) || ((addr>=32'hC83 && addr<=32'hC9F))) || ((addr>=32'hB03 && addr<=32'hB1F))) || ((addr>=32'hB83 && addr<=32'hB9F))) begin
             return 1;
         end
-        if ((((addr>='h100 && addr<='h106)) || ((addr>='h140 && addr<='h144))) || (addr == 'h180)) begin
+        if ((((addr>=32'h100 && addr<=32'h106)) || ((addr>=32'h140 && addr<=32'h144))) || (addr == 32'h180)) begin
             return 1;
         end
-        if (((((((((addr>='h300 && addr<='h306)) || (addr == 'h310)) || (addr == 'h320)) || ((addr>='h340 && addr<='h344))) || (addr == 'h348)) || (addr == 'h349)) || ((addr>='h323 && addr<='h33F))) || ((addr>='h3A0 && addr<='h3EF))) begin
+        if (((((((((addr>=32'h300 && addr<=32'h306)) || (addr == 32'h310)) || (addr == 32'h320)) || ((addr>=32'h340 && addr<=32'h344))) || (addr == 32'h348)) || (addr == 32'h349)) || ((addr>=32'h323 && addr<=32'h33F))) || ((addr>=32'h3A0 && addr<=32'h3EF))) begin
             return 1;
         end
-        if (addr>='hF11 && addr<='hF15) begin
+        if (addr>=32'hF11 && addr<=32'hF15) begin
             return 1;
         end
-        if (addr>='h7B0 && addr<='h7B3) begin
+        if (addr>=32'h7B0 && addr<=32'h7B3) begin
             return 1;
         end
-        if (((((addr>='h5A8 && addr<='h5AF)) || ((addr>='h7C0 && addr<='h7FF))) || ((addr>='h9C0 && addr<='h9FF))) || ((addr>='hA00 && addr<='hAFF))) begin
+        if (((((addr>=32'h5A8 && addr<=32'h5AF)) || ((addr>=32'h7C0 && addr<=32'h7FF))) || ((addr>=32'h9C0 && addr<=32'h9FF))) || ((addr>=32'hA00 && addr<=32'hAFF))) begin
             return 1;
         end
         return 0;
@@ -417,188 +205,612 @@ module CSR (
         logic[31:0] addr;
         logic[31:0] csr_priv;
         logic[31:0] index;
-        if (!st.valid) begin
+        if (!((st.valid) != '0)) begin
             return 0;
         end
-        if (st.sys_op == Sys_pkg::MRET) begin
-            return priv_reg != PRIV_M;
+        if (signed'(32'(st.sys_op)) == signed'(32'(Sys_pkg::MRET))) begin
+            return priv_reg != unsigned'(64'(PRIV_M));
         end
-        if (st.sys_op == Sys_pkg::SRET) begin
-            return priv_reg < PRIV_S;
+        if (signed'(32'(st.sys_op)) == signed'(32'(Sys_pkg::SRET))) begin
+            return priv_reg < unsigned'(64'(PRIV_S));
         end
-        if (st.sys_op == Sys_pkg::SFENCE_VMA) begin
-            return priv_reg < PRIV_S;
+        if (signed'(32'(st.sys_op)) == signed'(32'(Sys_pkg::SFENCE_VMA))) begin
+            return priv_reg < unsigned'(64'(PRIV_S));
         end
-        if (st.csr_op == Csr_pkg::CNONE) begin
+        if (signed'(32'(st.csr_op)) == signed'(32'(Csr_pkg::CNONE))) begin
             return 0;
         end
         addr=st.csr_addr;
-        csr_priv=((addr >>> 'h8)) & 'h3;
-        if (csr_priv > priv_reg) begin
+        csr_priv=((addr >>> 32'sh8)) & 'h3;
+        if (64'(csr_priv) > priv_reg) begin
             return 1;
         end
-        if ((((((addr >>> 'hA)) & 'h3)) == 'h3) && csr_state_writes(st)) begin
+        if ((((((addr >>> 32'shA)) & 'h3)) == 'h3) && csr_state_writes(st)) begin
             return 1;
         end
         if (!csr_supported(addr)) begin
             return 1;
         end
-        if (((priv_reg != PRIV_M) && addr>='hC00) && addr<='hC9F) begin
+        if (((priv_reg != unsigned'(64'(PRIV_M))) && addr>=32'hC00) && addr<=32'hC9F) begin
             index=addr & 'h1F;
-            if (((((mcounteren_reg >>> index)) & 'h1)) == 'h0) begin
+            if (((((mcounteren_reg >>> index)) & 64'h1)) == 64'h0) begin
                 return 1;
             end
         end
         return 0;
     endfunction
 
+    always_comb begin : legality_comb_func  // legality_comb_func
+        legality_comb=state_causes_illegal_trap(legality_state_in);
+    end
+
+    always_comb begin : write_pending_comb_func  // write_pending_comb_func
+        write_pending_comb=csr_write_select_reg != 64'h0;
+    end
+
+    function logic[31:0] csr_read (input logic[31:0] addr);
+        logic[63:0] cycle_value;
+        logic[63:0] time_value;
+        logic[63:0] instret_value;
+        cycle_value=cycle_reg;
+        time_value=((unsigned'(64'(time_hi_in)) <<< 'h20)) | unsigned'(64'(time_lo_in));
+        instret_value=instret_reg;
+        if (addr == 32'h1) begin
+            return 32'h0;
+        end
+        if (addr == 32'h2) begin
+            return 32'h0;
+        end
+        if (addr == 32'h3) begin
+            return 32'h0;
+        end
+        if ((addr == 32'hC00) || (addr == 32'hB00)) begin
+            return 32'(cycle_value);
+        end
+        if ((addr == 32'hC80) || (addr == 32'hB80)) begin
+            return 32'((cycle_value >>> 32'sh20));
+        end
+        if (addr == 32'hC01) begin
+            return 32'(time_value);
+        end
+        if (addr == 32'hC81) begin
+            return 32'((time_value >>> 32'sh20));
+        end
+        if ((addr == 32'hC02) || (addr == 32'hB02)) begin
+            return 32'(instret_value);
+        end
+        if ((addr == 32'hC82) || (addr == 32'hB82)) begin
+            return 32'((instret_value >>> 32'sh20));
+        end
+        if (((((addr>=32'hC03 && addr<=32'hC1F)) || ((addr>=32'hC83 && addr<=32'hC9F))) || ((addr>=32'hB03 && addr<=32'hB1F))) || ((addr>=32'hB83 && addr<=32'hB9F))) begin
+            return 32'h0;
+        end
+        if (addr == 32'h100) begin
+            return 32'(mstatus_reg & unsigned'(64'(SSTATUS_MASK)));
+        end
+        if (addr == 32'h104) begin
+            return unsigned'(32'(sie_reg));
+        end
+        if (addr == 32'h105) begin
+            return unsigned'(32'(stvec_reg));
+        end
+        if (addr == 32'h106) begin
+            return unsigned'(32'(scounteren_reg));
+        end
+        if (addr == 32'h140) begin
+            return unsigned'(32'(sscratch_reg));
+        end
+        if (addr == 32'h141) begin
+            return unsigned'(32'(sepc_reg));
+        end
+        if (addr == 32'h142) begin
+            return unsigned'(32'(scause_reg));
+        end
+        if (addr == 32'h143) begin
+            return unsigned'(32'(stval_reg));
+        end
+        if (addr == 32'h144) begin
+            return 32'(((((sip_reg & unsigned'(64'(XIP_SOFTWARE_WRITABLE_MASK)))) | unsigned'(64'(irq_pending_bits_in)))) & unsigned'(64'(XIP_VISIBLE_MASK)));
+        end
+        if (addr == 32'h180) begin
+            return unsigned'(32'(satp_reg));
+        end
+        if (addr == 32'h300) begin
+            return unsigned'(32'(mstatus_reg));
+        end
+        if (addr == 32'h301) begin
+            return MISA_RV32IMC;
+        end
+        if (addr == 32'h302) begin
+            return unsigned'(32'(medeleg_reg));
+        end
+        if (addr == 32'h303) begin
+            return unsigned'(32'(mideleg_reg));
+        end
+        if (addr == 32'h304) begin
+            return unsigned'(32'(mie_reg));
+        end
+        if (addr == 32'h305) begin
+            return unsigned'(32'(mtvec_reg));
+        end
+        if (addr == 32'h306) begin
+            return unsigned'(32'(mcounteren_reg));
+        end
+        if (addr == 32'h310) begin
+            return unsigned'(32'(mstatus_reg >>> 32'sh20));
+        end
+        if (addr == 32'h320) begin
+            return unsigned'(32'(mcountinhibit_reg));
+        end
+        if (addr == 32'h340) begin
+            return unsigned'(32'(mscratch_reg));
+        end
+        if (addr == 32'h341) begin
+            return unsigned'(32'(mepc_reg));
+        end
+        if (addr == 32'h342) begin
+            return unsigned'(32'(mcause_reg));
+        end
+        if (addr == 32'h343) begin
+            return unsigned'(32'(mtval_reg));
+        end
+        if (addr == 32'h344) begin
+            return 32'(((mip_reg & unsigned'(64'(XIP_SOFTWARE_WRITABLE_MASK)))) | unsigned'(64'(irq_pending_bits_in)));
+        end
+        if (addr == 32'h348) begin
+            return unsigned'(32'(mscratchcsw_reg));
+        end
+        if (addr == 32'h349) begin
+            return unsigned'(32'(mscratchcswl_reg));
+        end
+        if (addr == 32'hF11) begin
+            return 32'h0;
+        end
+        if (addr == 32'hF12) begin
+            return 32'h0;
+        end
+        if (addr == 32'hF13) begin
+            return 32'h0;
+        end
+        if (addr == 32'hF14) begin
+            return hartid_in;
+        end
+        if (addr == 32'hF15) begin
+            return 32'h0;
+        end
+        if (addr == 32'h7B0) begin
+            return unsigned'(32'(dcsr_reg));
+        end
+        if (addr == 32'h7B1) begin
+            return unsigned'(32'(dpc_reg));
+        end
+        if (addr == 32'h7B2) begin
+            return unsigned'(32'(dscratch0_reg));
+        end
+        if (addr == 32'h7B3) begin
+            return unsigned'(32'(dscratch1_reg));
+        end
+        if (((((((addr>=32'h323 && addr<=32'h33F)) || ((addr>=32'h3A0 && addr<=32'h3EF))) || ((addr>=32'h5A8 && addr<=32'h5AF))) || ((addr>=32'h7C0 && addr<=32'h7FF))) || ((addr>=32'h9C0 && addr<=32'h9FF))) || ((addr>=32'hA00 && addr<=32'hAFF))) begin
+            return 32'h0;
+        end
+        return 32'h0;
+    endfunction
+
+    always_comb begin : execute_read_data_comb_func  // execute_read_data_comb_func
+        logic matching_commit;
+        matching_commit=((((((state_in.valid) != '0) && ((read_state_in.valid) != '0)) && (signed'(32'(state_in.csr_op)) != signed'(32'(Csr_pkg::CNONE)))) && (signed'(32'(read_state_in.csr_op)) != signed'(32'(Csr_pkg::CNONE)))) && (state_in.pc == read_state_in.pc)) && (signed'(32'(state_in.csr_addr)) == signed'(32'(read_state_in.csr_addr)));
+        execute_read_data_comb=(matching_commit) ? (unsigned'(32'(csr_read_data_reg))) : (csr_read(32'(read_state_in.csr_addr)));
+    end
+
+    function logic[31:0] redirect_trap_cause_code (input State state);
+        if (redirect_interrupt_valid_in) begin
+            return redirect_interrupt_cause_in;
+        end
+        if (signed'(32'(state.sys_op)) == signed'(32'(Sys_pkg::ECALL))) begin
+            if (priv_reg == unsigned'(64'(PRIV_U))) begin
+                return 32'h8;
+            end
+            if (priv_reg == unsigned'(64'(PRIV_S))) begin
+                return 32'h9;
+            end
+            return 32'hB;
+        end
+        if (signed'(32'(state.sys_op)) == signed'(32'(Sys_pkg::EBREAK))) begin
+            return 32'h3;
+        end
+        case (signed'(32'(state.trap_op)))
+        signed'(32'(Trap_pkg::TNONE)): begin
+            return 32'h2;
+        end
+        signed'(32'(Trap_pkg::INST_MISALIGNED)): begin
+            return 32'h0;
+        end
+        signed'(32'(Trap_pkg::ILLEGAL_INST)): begin
+            return 32'h2;
+        end
+        signed'(32'(Trap_pkg::BREAKPOINT)): begin
+            return 32'h3;
+        end
+        signed'(32'(Trap_pkg::LOAD_MISALIGNED)): begin
+            return 32'h4;
+        end
+        signed'(32'(Trap_pkg::STORE_MISALIGNED)): begin
+            return 32'h6;
+        end
+        signed'(32'(Trap_pkg::INST_PAGE_FAULT)): begin
+            return 32'hC;
+        end
+        signed'(32'(Trap_pkg::LOAD_PAGE_FAULT)): begin
+            return 32'hD;
+        end
+        signed'(32'(Trap_pkg::STORE_PAGE_FAULT)): begin
+            return 32'hF;
+        end
+        signed'(32'(Trap_pkg::ECALL_U)): begin
+            return 32'h8;
+        end
+        signed'(32'(Trap_pkg::ECALL_S)): begin
+            return 32'h9;
+        end
+        signed'(32'(Trap_pkg::ECALL_M)): begin
+            return 32'hB;
+        end
+        default: begin
+            return 32'h2;
+        end
+        endcase
+        return 32'h2;
+    endfunction
+
+    function logic redirect_trap_to_supervisor (input logic[31:0] cause);
+        if (redirect_interrupt_valid_in) begin
+            return redirect_interrupt_to_supervisor_in;
+        end
+        return (priv_reg != unsigned'(64'(PRIV_M))) && ((((((medeleg_reg >>> cause)) & 64'h1))) != '0);
+    endfunction
+
+    always_comb begin : trap_vector_comb_func  // trap_vector_comb_func
+        logic[31:0] cause;
+        logic[31:0] tvec;
+        cause=redirect_trap_cause_code(redirect_state_in);
+        tvec=(redirect_trap_to_supervisor(cause)) ? (unsigned'(32'(stvec_reg))) : (unsigned'(32'(mtvec_reg)));
+        trap_vector_comb=tvec & ~'h3;
+        if (redirect_interrupt_valid_in && ((((tvec & 'h3)) == 'h1))) begin
+            trap_vector_comb=((tvec & ~'h3)) + (cause*'h4);
+        end
+    end
+
+    always_comb begin : epc_comb_func  // epc_comb_func
+        epc_comb=mepc_reg;
+        if (signed'(32'(redirect_state_in.sys_op)) == signed'(32'(Sys_pkg::SRET))) begin
+            epc_comb=sepc_reg;
+        end
+    end
+
     always_comb begin : illegal_trap_comb_func  // illegal_trap_comb_func
-        illegal_trap_comb=state_causes_illegal_trap(trap_check_state_in);
+        illegal_trap_comb=((trap_check_state_in.csr_illegal) != '0);
     end
 
     always_comb begin : interrupt_enable_comb_func  // interrupt_enable_comb_func
         interrupt_enable_comb=unsigned'(32'(mie_reg)) | unsigned'(32'(sie_reg));
     end
 
+    always_comb begin : software_pending_comb_func  // software_pending_comb_func
+        software_pending_comb=unsigned'(32'(mip_reg)) | unsigned'(32'(sip_reg));
+    end
+
+    always_comb begin : commit_new_comb_func  // commit_new_comb_func
+        commit_new_comb=((state_in.valid) != '0) && commit_in;
+    end
+
     function logic[31:0] sanitize_mstatus (input logic[31:0] value);
         return value & MSTATUS_WRITABLE;
     endfunction
 
+    function logic[31:0] trap_cause_code (input State state);
+        if (interrupt_valid_in) begin
+            return interrupt_cause_in;
+        end
+        if (signed'(32'(state.sys_op)) == signed'(32'(Sys_pkg::ECALL))) begin
+            if (priv_reg == unsigned'(64'(PRIV_U))) begin
+                return 32'h8;
+            end
+            if (priv_reg == unsigned'(64'(PRIV_S))) begin
+                return 32'h9;
+            end
+            return 32'hB;
+        end
+        if (signed'(32'(state.sys_op)) == signed'(32'(Sys_pkg::EBREAK))) begin
+            return 32'h3;
+        end
+        case (signed'(32'(state.trap_op)))
+        signed'(32'(Trap_pkg::TNONE)): begin
+            return 32'h2;
+        end
+        signed'(32'(Trap_pkg::INST_MISALIGNED)): begin
+            return 32'h0;
+        end
+        signed'(32'(Trap_pkg::ILLEGAL_INST)): begin
+            return 32'h2;
+        end
+        signed'(32'(Trap_pkg::BREAKPOINT)): begin
+            return 32'h3;
+        end
+        signed'(32'(Trap_pkg::LOAD_MISALIGNED)): begin
+            return 32'h4;
+        end
+        signed'(32'(Trap_pkg::STORE_MISALIGNED)): begin
+            return 32'h6;
+        end
+        signed'(32'(Trap_pkg::INST_PAGE_FAULT)): begin
+            return 32'hC;
+        end
+        signed'(32'(Trap_pkg::LOAD_PAGE_FAULT)): begin
+            return 32'hD;
+        end
+        signed'(32'(Trap_pkg::STORE_PAGE_FAULT)): begin
+            return 32'hF;
+        end
+        signed'(32'(Trap_pkg::ECALL_U)): begin
+            return 32'h8;
+        end
+        signed'(32'(Trap_pkg::ECALL_S)): begin
+            return 32'h9;
+        end
+        signed'(32'(Trap_pkg::ECALL_M)): begin
+            return 32'hB;
+        end
+        default: begin
+            return 32'h2;
+        end
+        endcase
+        return 32'h2;
+    endfunction
+
+    function logic trap_to_supervisor (input logic[31:0] cause);
+        if (interrupt_valid_in) begin
+            return interrupt_to_supervisor_in;
+        end
+        return (priv_reg != unsigned'(64'(PRIV_M))) && ((((((medeleg_reg >>> cause)) & 64'h1))) != '0);
+    endfunction
+
     function logic[31:0] csr_write_value (input logic[31:0] old_value);
-        logic[31:0] mask; mask = state_in.rs1_val;
-        if (((state_in.csr_op == Csr_pkg::CSRRWI) || (state_in.csr_op == Csr_pkg::CSRRSI)) || (state_in.csr_op == Csr_pkg::CSRRCI)) begin
+        logic[31:0] mask;
+        mask = state_in.rs1_val;
+        if (((signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRWI))) || (signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRSI)))) || (signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRCI)))) begin
             mask=state_in.csr_imm;
         end
-        if ((state_in.csr_op == Csr_pkg::CSRRW) || (state_in.csr_op == Csr_pkg::CSRRWI)) begin
+        if ((signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRW))) || (signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRWI)))) begin
             return mask;
         end
-        if ((state_in.csr_op == Csr_pkg::CSRRS) || (state_in.csr_op == Csr_pkg::CSRRSI)) begin
+        if ((signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRS))) || (signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRSI)))) begin
             return old_value | mask;
         end
-        if ((state_in.csr_op == Csr_pkg::CSRRC) || (state_in.csr_op == Csr_pkg::CSRRCI)) begin
+        if ((signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRC))) || (signed'(32'(state_in.csr_op)) == signed'(32'(Csr_pkg::CSRRCI)))) begin
             return old_value & ~mask;
         end
         return old_value;
     endfunction
 
     function logic sync_trap ();
-        return state_in.valid && ((((((interrupt_valid_in || (state_in.sys_op == Sys_pkg::ECALL)) || (state_in.sys_op == Sys_pkg::EBREAK)) || (state_in.sys_op == Sys_pkg::TRAP)) || (state_in.trap_op != Trap_pkg::TNONE)) || state_causes_illegal_trap(state_in)));
+        return commit_new_comb && (((((interrupt_valid_in || (signed'(32'(state_in.sys_op)) == signed'(32'(Sys_pkg::ECALL)))) || (signed'(32'(state_in.sys_op)) == signed'(32'(Sys_pkg::EBREAK)))) || (signed'(32'(state_in.sys_op)) == signed'(32'(Sys_pkg::TRAP)))) || (signed'(32'(state_in.trap_op)) != signed'(32'(Trap_pkg::TNONE)))));
     endfunction
 
     function logic csr_writes ();
-        if (state_causes_illegal_trap(state_in)) begin
-            return 0;
-        end
-        return csr_state_writes(state_in);
+        return commit_new_comb && csr_state_writes(state_in);
     endfunction
 
-    task csr_write (
-        input logic[31:0] addr
-,       input logic[31:0] value
-    );
-    begin: csr_write
+    function logic[31:0] csr_write_select (input logic[31:0] addr);
         case (addr)
-        'h100: begin
-            mstatus_reg_tmp = unsigned'(32'(((mstatus_reg & ~SSTATUS_MASK)) | ((value & SSTATUS_MASK))));
-            sstatus_reg_tmp = unsigned'(32'(value & SSTATUS_MASK));
+        32'h100: begin
+            return 'h1 <<< 'h0;
         end
-        'h104: begin
-            sie_reg_tmp = unsigned'(32'(value));
+        32'h104: begin
+            return 'h1 <<< 'h1;
         end
-        'h105: begin
-            stvec_reg_tmp = unsigned'(32'(value));
+        32'h105: begin
+            return 'h1 <<< 'h2;
         end
-        'h106: begin
-            scounteren_reg_tmp = unsigned'(32'(value));
+        32'h106: begin
+            return 'h1 <<< 'h3;
         end
-        'h140: begin
-            sscratch_reg_tmp = unsigned'(32'(value));
+        32'h140: begin
+            return 'h1 <<< 'h4;
         end
-        'h141: begin
-            sepc_reg_tmp = unsigned'(32'(value & ~'h1));
+        32'h141: begin
+            return 'h1 <<< 'h5;
         end
-        'h142: begin
-            scause_reg_tmp = unsigned'(32'(value));
+        32'h142: begin
+            return 'h1 <<< 'h6;
         end
-        'h143: begin
-            stval_reg_tmp = unsigned'(32'(value));
+        32'h143: begin
+            return 'h1 <<< 'h7;
         end
-        'h144: begin
-            sip_reg_tmp = unsigned'(32'(value & XIP_SOFTWARE_WRITABLE_MASK));
+        32'h144: begin
+            return 'h1 <<< 'h8;
         end
-        'h180: begin
-            satp_reg_tmp = unsigned'(32'(value & 'h803FFFFF));
+        32'h180: begin
+            return 'h1 <<< 'h9;
         end
-        'h300: begin
-            mstatus_reg_tmp = unsigned'(32'(sanitize_mstatus(value)));
-            sstatus_reg_tmp = unsigned'(32'(value & SSTATUS_MASK));
+        32'h300: begin
+            return 'h1 <<< 'hA;
         end
-        'h302: begin
-            medeleg_reg_tmp = unsigned'(32'(value));
+        32'h302: begin
+            return 'h1 <<< 'hB;
         end
-        'h303: begin
-            mideleg_reg_tmp = unsigned'(32'(value));
+        32'h303: begin
+            return 'h1 <<< 'hC;
         end
-        'h304: begin
-            mie_reg_tmp = unsigned'(32'(value));
+        32'h304: begin
+            return 'h1 <<< 'hD;
         end
-        'h305: begin
-            mtvec_reg_tmp = unsigned'(32'(value));
+        32'h305: begin
+            return 'h1 <<< 'hE;
         end
-        'h306: begin
-            mcounteren_reg_tmp = unsigned'(32'(value));
+        32'h306: begin
+            return 'h1 <<< 'hF;
         end
-        'h320: begin
-            mcountinhibit_reg_tmp = unsigned'(32'(value));
+        32'h320: begin
+            return 'h1 <<< 'h10;
         end
-        'h340: begin
-            mscratch_reg_tmp = unsigned'(32'(value));
+        32'h340: begin
+            return 'h1 <<< 'h11;
         end
-        'h341: begin
-            mepc_reg_tmp = unsigned'(32'(value & ~'h1));
+        32'h341: begin
+            return 'h1 <<< 'h12;
         end
-        'h342: begin
-            mcause_reg_tmp = unsigned'(32'(value));
+        32'h342: begin
+            return 'h1 <<< 'h13;
         end
-        'h343: begin
-            mtval_reg_tmp = unsigned'(32'(value));
+        32'h343: begin
+            return 'h1 <<< 'h14;
         end
-        'h344: begin
-            mip_reg_tmp = unsigned'(32'(value & XIP_SOFTWARE_WRITABLE_MASK));
+        32'h344: begin
+            return 'h1 <<< 'h15;
         end
-        'h348: begin
-            mscratchcsw_reg_tmp = unsigned'(32'(value));
+        32'h348: begin
+            return 'h1 <<< 'h16;
         end
-        'h349: begin
-            mscratchcswl_reg_tmp = unsigned'(32'(value));
+        32'h349: begin
+            return 'h1 <<< 'h17;
         end
-        'hB00: begin
-            cycle_reg_tmp = unsigned'(64'(((unsigned'(64'(unsigned'(32'((unsigned'(64'(cycle_reg)) >>> 'h20))))) <<< 'h20)) | value));
+        32'hB00: begin
+            return 'h1 <<< 'h18;
         end
-        'hB80: begin
-            cycle_reg_tmp = unsigned'(64'(((unsigned'(64'(value)) <<< 'h20)) | unsigned'(32'(cycle_reg))));
+        32'hB80: begin
+            return 'h1 <<< 'h19;
         end
-        'hB02: begin
-            instret_reg_tmp = unsigned'(64'(((unsigned'(64'(unsigned'(32'((unsigned'(64'(instret_reg)) >>> 'h20))))) <<< 'h20)) | value));
+        32'hB02: begin
+            return 'h1 <<< 'h1A;
         end
-        'hB82: begin
-            instret_reg_tmp = unsigned'(64'(((unsigned'(64'(value)) <<< 'h20)) | unsigned'(32'(instret_reg))));
+        32'hB82: begin
+            return 'h1 <<< 'h1B;
         end
-        'h7B0: begin
-            dcsr_reg_tmp = unsigned'(32'(value));
+        32'h7B0: begin
+            return 'h1 <<< 'h1C;
         end
-        'h7B1: begin
-            dpc_reg_tmp = unsigned'(32'(value & ~'h1));
+        32'h7B1: begin
+            return 'h1 <<< 'h1D;
         end
-        'h7B2: begin
-            dscratch0_reg_tmp = unsigned'(32'(value));
+        32'h7B2: begin
+            return 'h1 <<< 'h1E;
         end
-        'h7B3: begin
-            dscratch1_reg_tmp = unsigned'(32'(value));
+        32'h7B3: begin
+            return 'h1 <<< 'h1F;
         end
         endcase
+        return 32'h0;
+    endfunction
+
+    task csr_write_selected (
+        input logic[31:0] select
+,       input logic[31:0] value
+    );
+    begin: csr_write_selected
+        if (((select & (('h1 <<< 'h0))) != '0)) begin
+            mstatus_reg_tmp = ((mstatus_reg & 64'(unsigned'(32'(~SSTATUS_MASK))))) | 64'(32'(((value & SSTATUS_MASK))));
+            sstatus_reg_tmp = 32'(value & SSTATUS_MASK);
+        end
+        if (((select & (('h1 <<< 'h1))) != '0)) begin
+            sie_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h2))) != '0)) begin
+            stvec_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h3))) != '0)) begin
+            scounteren_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h4))) != '0)) begin
+            sscratch_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h5))) != '0)) begin
+            sepc_reg_tmp = 32'(value & ~'h1);
+        end
+        if (((select & (('h1 <<< 'h6))) != '0)) begin
+            scause_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h7))) != '0)) begin
+            stval_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h8))) != '0)) begin
+            sip_reg_tmp = 32'(value & XIP_SOFTWARE_WRITABLE_MASK);
+        end
+        if (((select & (('h1 <<< 'h9))) != '0)) begin
+            satp_reg_tmp = 32'(value & 'h803FFFFF);
+        end
+        if (((select & (('h1 <<< 'hA))) != '0)) begin
+            mstatus_reg_tmp = sanitize_mstatus(value);
+            sstatus_reg_tmp = 32'(value & SSTATUS_MASK);
+        end
+        if (((select & (('h1 <<< 'hB))) != '0)) begin
+            medeleg_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'hC))) != '0)) begin
+            mideleg_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'hD))) != '0)) begin
+            mie_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'hE))) != '0)) begin
+            mtvec_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'hF))) != '0)) begin
+            mcounteren_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h10))) != '0)) begin
+            mcountinhibit_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h11))) != '0)) begin
+            mscratch_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h12))) != '0)) begin
+            mepc_reg_tmp = 32'(value & ~'h1);
+        end
+        if (((select & (('h1 <<< 'h13))) != '0)) begin
+            mcause_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h14))) != '0)) begin
+            mtval_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h15))) != '0)) begin
+            mip_reg_tmp = 32'(value & XIP_SOFTWARE_WRITABLE_MASK);
+        end
+        if (((select & (('h1 <<< 'h16))) != '0)) begin
+            mscratchcsw_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h17))) != '0)) begin
+            mscratchcswl_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h18))) != '0)) begin
+            cycle_reg_tmp = 64'(((64'(unsigned'(32'((unsigned'(64'(cycle_reg)) >>> 32'sh20)))) <<< 'h20)) | 64'(value));
+        end
+        if (((select & (('h1 <<< 'h19))) != '0)) begin
+            cycle_reg_tmp = 64'(((64'(value) <<< 'h20)) | 64'(unsigned'(32'(cycle_reg))));
+        end
+        if (((select & (('h1 <<< 'h1A))) != '0)) begin
+            instret_reg_tmp = 64'(((64'(unsigned'(32'((unsigned'(64'(instret_reg)) >>> 32'sh20)))) <<< 'h20)) | 64'(value));
+        end
+        if (((select & (('h1 <<< 'h1B))) != '0)) begin
+            instret_reg_tmp = 64'(((64'(value) <<< 'h20)) | 64'(unsigned'(32'(instret_reg))));
+        end
+        if (((select & (('h1 <<< 'h1C))) != '0)) begin
+            dcsr_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h1D))) != '0)) begin
+            dpc_reg_tmp = 32'(value & ~'h1);
+        end
+        if (((select & (('h1 <<< 'h1E))) != '0)) begin
+            dscratch0_reg_tmp = value;
+        end
+        if (((select & (('h1 <<< 'h1F))) != '0)) begin
+            dscratch1_reg_tmp = value;
+        end
     end
     endtask
+
+    always_comb begin : commit_read_data_comb_func  // commit_read_data_comb_func
+        commit_read_data_comb=csr_read(32'(state_in.csr_addr));
+    end
 
     task _work (input logic reset);
     begin: _work
@@ -609,67 +821,79 @@ module CSR (
         logic is_interrupt;
         logic to_s;
         logic trace_csr_events;
-        inhibit_cycle=mcountinhibit_reg & 'h1;
-        inhibit_instret=((mcountinhibit_reg >>> 'h2)) & 'h1;
+        inhibit_cycle=((mcountinhibit_reg & 64'h1) != '0);
+        inhibit_instret=((((mcountinhibit_reg >>> 32'sh2)) & 64'h1) != '0);
         trace_csr_events=0;
-        cycle_reg_tmp = unsigned'(64'((inhibit_cycle) ? (cycle_reg) : (unsigned'(64'(cycle_reg)) + 'h1)));
-        instret_reg_tmp = unsigned'(64'(((inhibit_instret || !state_in.valid)) ? (instret_reg) : (unsigned'(64'(instret_reg)) + 'h1)));
+        cycle_reg_tmp = unsigned'(64'((inhibit_cycle) ? (cycle_reg) : (unsigned'(64'(cycle_reg)) + 64'h1)));
+        instret_reg_tmp = unsigned'(64'(((inhibit_instret || !commit_new_comb)) ? (instret_reg) : (unsigned'(64'(instret_reg)) + 64'h1)));
+        csr_write_select_reg_tmp = 32'h0;
+        csr_write_value_reg_tmp = csr_write_value_reg;
+        if (csr_write_select_reg != 64'h0) begin
+            csr_write_selected(unsigned'(32'(csr_write_select_reg)), unsigned'(32'(csr_write_value_reg)));
+        end
         if (csr_writes()) begin
-            if (trace_csr_events && ((((state_in.csr_addr == 'h100) || (state_in.csr_addr == 'h141)) || (state_in.csr_addr == 'h180)))) begin
-                $write("trace-csr-write pc=%08x addr=%03x old=%08x new=%08x priv=%x\n", state_in.pc, unsigned'(32'(state_in.csr_addr)), read_data_comb, csr_write_value(read_data_comb), unsigned'(32'(priv_reg)));
+            if (trace_csr_events && (((((signed'(32'(state_in.csr_addr)) == 32'sh100) || (signed'(32'(state_in.csr_addr)) == 32'sh140)) || (signed'(32'(state_in.csr_addr)) == 32'sh141)) || (signed'(32'(state_in.csr_addr)) == 32'sh180)))) begin
+                $write("trace-csr-write pc=%08x addr=%03x old=%08x new=%08x priv=%x\n", state_in.pc, 32'(state_in.csr_addr), commit_read_data_comb, csr_write_value(commit_read_data_comb), unsigned'(32'(priv_reg)));
             end
-            csr_write(state_in.csr_addr, csr_write_value(read_data_comb));
+            csr_write_select_reg_tmp = csr_write_select(32'(state_in.csr_addr));
+            csr_write_value_reg_tmp = csr_write_value(commit_read_data_comb);
+        end
+        if (commit_new_comb && (signed'(32'(state_in.csr_op)) != signed'(32'(Csr_pkg::CNONE)))) begin
+            csr_read_data_reg_tmp = commit_read_data_comb;
         end
         if (sync_trap()) begin
-            cause=trap_cause_code();
+            cause=trap_cause_code(state_in);
             is_interrupt=0;
             is_interrupt=interrupt_valid_in;
-            tval=((!is_interrupt && (((((cause == 'h2) || (cause == 'hC)) || (cause == 'hD)) || (cause == 'hF))))) ? (state_in.imm) : ('h0);
+            tval=((!is_interrupt && (((((cause == 32'h2) || (cause == 32'hC)) || (cause == 32'hD)) || (cause == 32'hF))))) ? (state_in.imm) : (32'h0);
             to_s=trap_to_supervisor(cause);
             if (to_s) begin
                 if (trace_csr_events) begin
                     $write("trace-trap-to-s pc=%08x cause=%x tval=%08x priv=%x stvec=%08x mstatus=%08x\n", state_in.pc, cause, tval, unsigned'(32'(priv_reg)), unsigned'(32'(stvec_reg)), unsigned'(32'(mstatus_reg)));
                 end
-                sepc_reg_tmp = unsigned'(32'(state_in.pc & ~'h1));
+                sepc_reg_tmp = 32'(state_in.pc & ~'h1);
                 scause_reg_tmp = unsigned'(32'((is_interrupt) ? ((cause | 'h80000000)) : (cause)));
-                stval_reg_tmp = unsigned'(32'(tval));
-                mstatus_reg_tmp = unsigned'(32'((((mstatus_reg & ~(((MSTATUS_SPIE | MSTATUS_SIE) | MSTATUS_SPP)))) | ((((mstatus_reg & MSTATUS_SIE))) ? (MSTATUS_SPIE) : ('h0))) | ((((priv_reg == PRIV_S))) ? (MSTATUS_SPP) : ('h0))));
+                stval_reg_tmp = tval;
+                mstatus_reg_tmp = (((mstatus_reg & 64'(unsigned'(32'(~(((MSTATUS_SPIE | MSTATUS_SIE) | MSTATUS_SPP))))))) | 64'(unsigned'(32'(((((((mstatus_reg & unsigned'(64'(MSTATUS_SIE))))) != '0)) ? (MSTATUS_SPIE) : (32'h0)))))) | 64'(unsigned'(32'(((((priv_reg == unsigned'(64'(PRIV_S))))) ? (MSTATUS_SPP) : (32'h0)))));
                 priv_reg_tmp = PRIV_S;
             end
             else begin
-                mepc_reg_tmp = unsigned'(32'(state_in.pc & ~'h1));
+                mepc_reg_tmp = 32'(state_in.pc & ~'h1);
                 mcause_reg_tmp = unsigned'(32'((is_interrupt) ? ((cause | 'h80000000)) : (cause)));
-                mtval_reg_tmp = unsigned'(32'(tval));
-                mstatus_reg_tmp = unsigned'(32'((((mstatus_reg & ~(((MSTATUS_MPIE | MSTATUS_MIE) | MSTATUS_MPP_MASK)))) | ((((mstatus_reg & MSTATUS_MIE))) ? (MSTATUS_MPIE) : ('h0))) | ((unsigned'(32'(priv_reg)) <<< MSTATUS_MPP_SHIFT))));
+                mtval_reg_tmp = tval;
+                mstatus_reg_tmp = (((mstatus_reg & 64'(unsigned'(32'(~(((MSTATUS_MPIE | MSTATUS_MIE) | MSTATUS_MPP_MASK))))))) | 64'(unsigned'(32'(((((((mstatus_reg & unsigned'(64'(MSTATUS_MIE))))) != '0)) ? (MSTATUS_MPIE) : (32'h0)))))) | 64'(32'(((unsigned'(32'(priv_reg)) <<< MSTATUS_MPP_SHIFT))));
                 priv_reg_tmp = PRIV_M;
             end
         end
-        if (state_in.valid && (state_in.sys_op == Sys_pkg::MRET)) begin
+        if (commit_new_comb && (signed'(32'(state_in.sys_op)) == signed'(32'(Sys_pkg::MRET)))) begin
             logic[31:0] mpp;
             logic[31:0] mie_restore;
-            mpp=((mstatus_reg & MSTATUS_MPP_MASK)) >>> MSTATUS_MPP_SHIFT;
-            mie_restore=((mstatus_reg & MSTATUS_MPIE)) ? (MSTATUS_MIE) : ('h0);
+            mpp=((mstatus_reg & unsigned'(64'(MSTATUS_MPP_MASK)))) >>> unsigned'(32'(MSTATUS_MPP_SHIFT));
+            mie_restore=((((mstatus_reg & unsigned'(64'(MSTATUS_MPIE)))) != '0)) ? (MSTATUS_MIE) : (32'h0);
             priv_reg_tmp = mpp;
-            mstatus_reg_tmp = unsigned'(32'((((((mstatus_reg & ~MSTATUS_MIE)) | mie_restore) | MSTATUS_MPIE)) & ~MSTATUS_MPP_MASK));
+            mstatus_reg_tmp = (((((mstatus_reg & 64'(unsigned'(32'(~MSTATUS_MIE))))) | 64'(mie_restore)) | unsigned'(64'(MSTATUS_MPIE)))) & 64'(unsigned'(32'(~MSTATUS_MPP_MASK)));
         end
-        if (state_in.valid && (state_in.sys_op == Sys_pkg::SRET)) begin
+        if (commit_new_comb && (signed'(32'(state_in.sys_op)) == signed'(32'(Sys_pkg::SRET)))) begin
             logic[31:0] spp;
             logic[31:0] sie_restore;
-            spp=((mstatus_reg & MSTATUS_SPP)) ? (PRIV_S) : (PRIV_U);
-            sie_restore=((mstatus_reg & MSTATUS_SPIE)) ? (MSTATUS_SIE) : ('h0);
+            spp=((((mstatus_reg & unsigned'(64'(MSTATUS_SPP)))) != '0)) ? (PRIV_S) : (PRIV_U);
+            sie_restore=((((mstatus_reg & unsigned'(64'(MSTATUS_SPIE)))) != '0)) ? (MSTATUS_SIE) : (32'h0);
             if (trace_csr_events) begin
                 $write("trace-sret pc=%08x sepc=%08x mstatus=%08x next_priv=%x\n", state_in.pc, unsigned'(32'(sepc_reg)), unsigned'(32'(mstatus_reg)), spp);
             end
             priv_reg_tmp = spp;
-            mstatus_reg_tmp = unsigned'(32'((((((mstatus_reg & ~MSTATUS_SIE)) | sie_restore) | MSTATUS_SPIE)) & ~MSTATUS_SPP));
+            mstatus_reg_tmp = (((((mstatus_reg & 64'(unsigned'(32'(~MSTATUS_SIE))))) | 64'(sie_restore)) | unsigned'(64'(MSTATUS_SPIE)))) & 64'(unsigned'(32'(~MSTATUS_SPP)));
+        end
+        if (software_irq_set_in) begin
+            sip_reg_tmp = 32'(unsigned'(32'(sip_reg)) | IRQ_SSIP);
         end
         if (reset) begin
             mstatus_reg_tmp = '0;
             mtvec_reg_tmp = '0;
-            if (reset_priv_in == PRIV_S) begin
-                medeleg_reg_tmp = unsigned'(32'(((((((((((('h1 <<< 'h0)) | (('h1 <<< 'h1))) | (('h1 <<< 'h3))) | (('h1 <<< 'h4))) | (('h1 <<< 'h5))) | (('h1 <<< 'h6))) | (('h1 <<< 'h7))) | (('h1 <<< 'h8))) | (('h1 <<< 'hC))) | (('h1 <<< 'hD))) | (('h1 <<< 'hF))));
-                mideleg_reg_tmp = unsigned'(32'(((('h1 <<< 'h1)) | (('h1 <<< 'h5))) | (('h1 <<< 'h9))));
-                mcounteren_reg_tmp = unsigned'(32'('hFFFFFFFF));
+            if (reset_priv_in == unsigned'(64'(PRIV_S))) begin
+                medeleg_reg_tmp = 32'(((((((((((('h1 <<< 'h0)) | (('h1 <<< 'h1))) | (('h1 <<< 'h3))) | (('h1 <<< 'h4))) | (('h1 <<< 'h5))) | (('h1 <<< 'h6))) | (('h1 <<< 'h7))) | (('h1 <<< 'h8))) | (('h1 <<< 'hC))) | (('h1 <<< 'hD))) | (('h1 <<< 'hF)));
+                mideleg_reg_tmp = 32'(((('h1 <<< 'h1)) | (('h1 <<< 'h5))) | (('h1 <<< 'h9)));
+                mcounteren_reg_tmp = 'hFFFFFFFF;
             end
             else begin
                 medeleg_reg_tmp = '0;
@@ -701,6 +925,9 @@ module CSR (
             dscratch1_reg_tmp = '0;
             cycle_reg_tmp = '0;
             instret_reg_tmp = '0;
+            csr_write_select_reg_tmp = '0;
+            csr_write_value_reg_tmp = '0;
+            csr_read_data_reg_tmp = '0;
             priv_reg_tmp = reset_priv_in;
         end
     end
@@ -709,7 +936,12 @@ module CSR (
     generate  // _assign
     endgenerate
 
-    always @(posedge clk) begin
+    task _work_l2_clock (input logic reset);
+    begin: _work_l2_clock
+    end
+    endtask
+
+    always_ff @(posedge clk) begin
         mstatus_reg_tmp = mstatus_reg;
         mtvec_reg_tmp = mtvec_reg;
         medeleg_reg_tmp = medeleg_reg;
@@ -740,9 +972,12 @@ module CSR (
         dscratch1_reg_tmp = dscratch1_reg;
         cycle_reg_tmp = cycle_reg;
         instret_reg_tmp = instret_reg;
+        csr_write_select_reg_tmp = csr_write_select_reg;
+        csr_write_value_reg_tmp = csr_write_value_reg;
+        csr_read_data_reg_tmp = csr_read_data_reg;
         priv_reg_tmp = priv_reg;
 
-        _work(reset);
+            _work(reset);
 
         mstatus_reg <= mstatus_reg_tmp;
         mtvec_reg <= mtvec_reg_tmp;
@@ -774,10 +1009,23 @@ module CSR (
         dscratch1_reg <= dscratch1_reg_tmp;
         cycle_reg <= cycle_reg_tmp;
         instret_reg <= instret_reg_tmp;
+        csr_write_select_reg <= csr_write_select_reg_tmp;
+        csr_write_value_reg <= csr_write_value_reg_tmp;
+        csr_read_data_reg <= csr_read_data_reg_tmp;
         priv_reg <= priv_reg_tmp;
     end
 
-    assign read_data_out = read_data_comb;
+    always_ff @(posedge l2_clock) begin
+
+            _work_l2_clock(reset);
+
+    end
+
+    assign legality_out = legality_comb;
+
+    assign write_pending_out = write_pending_comb;
+
+    assign read_data_out = execute_read_data_comb;
 
     assign trap_vector_out = trap_vector_comb;
 
@@ -807,7 +1055,9 @@ module CSR (
 
     assign mideleg_out = mideleg_reg;
 
-    assign mip_sw_out = mip_reg;
+    assign medeleg_out = medeleg_reg;
+
+    assign mip_sw_out = software_pending_comb;
 
     assign satp_out = satp_reg;
 

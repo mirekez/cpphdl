@@ -1,26 +1,23 @@
 `default_nettype none
 
 import Predef_pkg::*;
-import Zicsr_pkg::*;
-import Rv32ia_pkg::*;
-import Rv32im_pkg::*;
-import Rv32ic_pkg::*;
-import Rv32i_pkg::*;
-import Mem_pkg::*;
-import Alu_pkg::*;
-import Wb_pkg::*;
-import Br_pkg::*;
-import Sys_pkg::*;
-import Trap_pkg::*;
-import Amo_pkg::*;
-import Csr_pkg::*;
-import State_pkg::*;
 import L1CachePerf_pkg::*;
 import TribePerf_pkg::*;
+import TribeCoreDebug_pkg::*;
+import TribeMmuDebug_pkg::*;
+import TribeCacheDebug_pkg::*;
+import TribeWritebackDebug_pkg::*;
+import TribeCsrDebug_pkg::*;
+import TribeRegsDebug_pkg::*;
+import TribeBranchDebug_pkg::*;
+import TribeDecodeDebug_pkg::*;
+import TribeIrqDebug_pkg::*;
+import TribeSbiDebug_pkg::*;
 
 
 module System (
     input wire clk
+,   input wire l2_clock
 ,   input wire reset
 ,   input wire debugen_in
 ,   input wire[31:0] reset_pc_in
@@ -43,74 +40,40 @@ module System (
 ,   input wire[8-1:0] sd_rsp_data_in
 ,   input wire sd_rsp_last_in
 ,   output wire sd_rsp_ready_out
-,   output TribePerf perf_out
+,   output wire TribePerf perf_out
 ,   output wire dmem_write_out
 ,   output wire[31:0] dmem_write_data_out
 ,   output wire[7:0] dmem_write_mask_out
 ,   output wire dmem_read_out
 ,   output wire[31:0] dmem_addr_out
 ,   output wire[31:0] imem_read_addr_out
-,   output wire debug_immu_ptw_read_out
-,   output wire[31:0] debug_immu_ptw_addr_out
-,   output wire debug_immu_busy_out
-,   output wire debug_immu_fault_out
-,   output wire[31:0] debug_immu_paddr_out
-,   output wire[31:0] debug_immu_last_addr_out
-,   output wire[31:0] debug_immu_last_pte_out
-,   output wire debug_icache_read_valid_out
-,   output wire[31:0] debug_icache_read_addr_out
-,   output wire debug_fetch_valid_out
-,   output wire debug_memory_wait_out
-,   output wire debug_wb_load_ready_out
-,   output wire debug_wb_mem_wait_out
-,   output wire debug_icache_read_in_out
-,   output wire debug_icache_stall_in_out
-,   output wire debug_dmmu_ptw_read_out
-,   output wire[31:0] debug_dmmu_ptw_addr_out
-,   output wire debug_dmmu_busy_out
-,   output wire debug_dmmu_fault_out
-,   output wire[31:0] debug_mmu_ptw_word_out
-,   output wire[31:0] debug_pc_out
-,   output wire[31:0] debug_satp_out
-,   output wire[31:0] debug_mstatus_out
-,   output wire[31:0] debug_mtvec_out
-,   output wire[31:0] debug_mepc_out
-,   output wire[31:0] debug_mcause_out
-,   output wire[31:0] debug_mtval_out
-,   output wire[31:0] debug_sepc_out
-,   output wire[31:0] debug_stvec_out
-,   output wire[31:0] debug_scause_out
-,   output wire[31:0] debug_stval_out
-,   output wire[2-1:0] debug_priv_out
-,   output wire[31:0] debug_ra_out
-,   output wire debug_regs_write_out
-,   output wire debug_regs_write_actual_out
-,   output wire[7:0] debug_regs_wr_id_out
-,   output wire[31:0] debug_regs_data_out
-,   output wire debug_branch_taken_now_out
-,   output wire[31:0] debug_branch_target_now_out
-,   output wire[31:0] debug_decode_instr_out
-,   output wire[31:0] debug_decode_pc_out
-,   output wire[7:0] debug_decode_br_out
-,   output wire[31:0] debug_decode_imm_out
+,   output wire TribeCoreDebug debug_core_out
+,   output wire TribeMmuDebug debug_mmu_out
+,   output wire TribeCacheDebug debug_cache_out
+,   output wire TribeWritebackDebug debug_wb_out
+,   output wire TribeCsrDebug debug_csr_out
+,   output wire TribeRegsDebug debug_regs_out
+,   output wire TribeBranchDebug debug_branch_out
+,   output wire TribeDecodeDebug debug_decode_out
 ,   output wire axi_out__awvalid_out[2]
 ,   input wire axi_out__awready_in[2]
-,   output wire[22-1:0] axi_out__awaddr_out[2]
+,   output wire[23-1:0] axi_out__awaddr_out[2]
 ,   output wire[4-1:0] axi_out__awid_out[2]
 ,   output wire axi_out__wvalid_out[2]
 ,   input wire axi_out__wready_in[2]
-,   output wire[64-1:0] axi_out__wdata_out[2]
+,   output wire[256-1:0] axi_out__wdata_out[2]
+,   output wire[unsigned'(64'(256))/64'h8-1:0] axi_out__wstrb_out[2]
 ,   output wire axi_out__wlast_out[2]
 ,   input wire axi_out__bvalid_in[2]
 ,   output wire axi_out__bready_out[2]
 ,   input wire[4-1:0] axi_out__bid_in[2]
 ,   output wire axi_out__arvalid_out[2]
 ,   input wire axi_out__arready_in[2]
-,   output wire[22-1:0] axi_out__araddr_out[2]
+,   output wire[23-1:0] axi_out__araddr_out[2]
 ,   output wire[4-1:0] axi_out__arid_out[2]
 ,   input wire axi_out__rvalid_in[2]
 ,   output wire axi_out__rready_out[2]
-,   input wire[64-1:0] axi_out__rdata_in[2]
+,   input wire[256-1:0] axi_out__rdata_in[2]
 ,   input wire axi_out__rlast_in[2]
 ,   input wire[4-1:0] axi_out__rid_in[2]
 );
@@ -120,178 +83,115 @@ module System (
     reg sd_dma_cache_invalidate_reg;
 
     // members
-      wire tribe__dmem_write_out;
-      wire[31:0] tribe__dmem_write_data_out;
-      wire[7:0] tribe__dmem_write_mask_out;
-      wire tribe__dmem_read_out;
-      wire[31:0] tribe__dmem_addr_out;
-      wire[31:0] tribe__imem_read_addr_out;
-      wire tribe__debug_immu_ptw_read_out;
-      wire[31:0] tribe__debug_immu_ptw_addr_out;
-      wire tribe__debug_immu_busy_out;
-      wire tribe__debug_immu_fault_out;
-      wire[31:0] tribe__debug_immu_paddr_out;
-      wire[31:0] tribe__debug_immu_last_addr_out;
-      wire[31:0] tribe__debug_immu_last_pte_out;
-      wire tribe__debug_icache_read_valid_out;
-      wire[31:0] tribe__debug_icache_read_addr_out;
-      wire tribe__debug_fetch_valid_out;
-      wire tribe__debug_memory_wait_out;
-      wire tribe__debug_wb_load_ready_out;
-      wire tribe__debug_wb_mem_wait_out;
-      wire tribe__debug_icache_read_in_out;
-      wire tribe__debug_icache_stall_in_out;
-      wire tribe__debug_dmmu_ptw_read_out;
-      wire[31:0] tribe__debug_dmmu_ptw_addr_out;
-      wire tribe__debug_dmmu_busy_out;
-      wire tribe__debug_dmmu_fault_out;
-      wire[31:0] tribe__debug_mmu_ptw_word_out;
-      wire[31:0] tribe__debug_pc_out;
-      wire[31:0] tribe__debug_satp_out;
-      wire[31:0] tribe__debug_mstatus_out;
-      wire[31:0] tribe__debug_mtvec_out;
-      wire[31:0] tribe__debug_mepc_out;
-      wire[31:0] tribe__debug_mcause_out;
-      wire[31:0] tribe__debug_mtval_out;
-      wire[31:0] tribe__debug_sepc_out;
-      wire[31:0] tribe__debug_stvec_out;
-      wire[31:0] tribe__debug_scause_out;
-      wire[31:0] tribe__debug_stval_out;
-      wire tribe__debug_irq_valid_out;
-      wire[31:0] tribe__debug_irq_cause_out;
-      wire tribe__debug_irq_to_supervisor_out;
-      wire[31:0] tribe__debug_irq_mip_out;
-      wire[31:0] tribe__debug_irq_mie_out;
-      wire[31:0] tribe__debug_irq_mideleg_out;
-      wire[2-1:0] tribe__debug_priv_out;
-      wire[31:0] tribe__debug_ra_out;
-      wire tribe__debug_regs_write_out;
-      wire tribe__debug_regs_write_actual_out;
-      wire[7:0] tribe__debug_regs_wr_id_out;
-      wire[31:0] tribe__debug_regs_data_out;
-      wire tribe__debug_branch_taken_now_out;
-      wire[31:0] tribe__debug_branch_target_now_out;
-      wire[31:0] tribe__debug_decode_instr_out;
-      wire[31:0] tribe__debug_decode_pc_out;
-      wire[7:0] tribe__debug_decode_br_out;
-      wire[31:0] tribe__debug_decode_imm_out;
-      wire tribe__sbi_set_timer_out;
-      wire[31:0] tribe__sbi_timer_lo_out;
-      wire[31:0] tribe__sbi_timer_hi_out;
-      wire[31:0] tribe__reset_pc_in;
-      wire[31:0] tribe__boot_hartid_in;
-      wire[31:0] tribe__boot_dtb_addr_in;
-      wire[2-1:0] tribe__boot_priv_in;
-      wire tribe__external_cache_invalidate_in;
-      wire[31:0] tribe__memory_base_in;
-      wire[31:0] tribe__memory_size_in;
-      wire[31:0] tribe__mem_region_size_in[4];
-      wire tribe__clint_msip_in;
-      wire tribe__clint_mtip_in;
-      wire tribe__external_irq_in;
-      wire tribe__axi_in__awvalid_in[4];
-      wire tribe__axi_in__awready_out[4];
-      wire[22-1:0] tribe__axi_in__awaddr_in[4];
-      wire[4-1:0] tribe__axi_in__awid_in[4];
-      wire tribe__axi_in__wvalid_in[4];
-      wire tribe__axi_in__wready_out[4];
-      wire[64-1:0] tribe__axi_in__wdata_in[4];
-      wire tribe__axi_in__wlast_in[4];
-      wire tribe__axi_in__bvalid_out[4];
-      wire tribe__axi_in__bready_in[4];
-      wire[4-1:0] tribe__axi_in__bid_out[4];
-      wire tribe__axi_in__arvalid_in[4];
-      wire tribe__axi_in__arready_out[4];
-      wire[22-1:0] tribe__axi_in__araddr_in[4];
-      wire[4-1:0] tribe__axi_in__arid_in[4];
-      wire tribe__axi_in__rvalid_out[4];
-      wire tribe__axi_in__rready_in[4];
-      wire[64-1:0] tribe__axi_in__rdata_out[4];
-      wire tribe__axi_in__rlast_out[4];
-      wire[4-1:0] tribe__axi_in__rid_out[4];
-      wire tribe__axi_out__awvalid_out[4];
-      wire tribe__axi_out__awready_in[4];
-      wire[22-1:0] tribe__axi_out__awaddr_out[4];
-      wire[4-1:0] tribe__axi_out__awid_out[4];
-      wire tribe__axi_out__wvalid_out[4];
-      wire tribe__axi_out__wready_in[4];
-      wire[64-1:0] tribe__axi_out__wdata_out[4];
-      wire tribe__axi_out__wlast_out[4];
-      wire tribe__axi_out__bvalid_in[4];
-      wire tribe__axi_out__bready_out[4];
-      wire[4-1:0] tribe__axi_out__bid_in[4];
-      wire tribe__axi_out__arvalid_out[4];
-      wire tribe__axi_out__arready_in[4];
-      wire[22-1:0] tribe__axi_out__araddr_out[4];
-      wire[4-1:0] tribe__axi_out__arid_out[4];
-      wire tribe__axi_out__rvalid_in[4];
-      wire tribe__axi_out__rready_out[4];
-      wire[64-1:0] tribe__axi_out__rdata_in[4];
-      wire tribe__axi_out__rlast_in[4];
-      wire[4-1:0] tribe__axi_out__rid_in[4];
-      TribePerf tribe__perf_out;
-      wire tribe__debugen_in;
-    Tribe      tribe (
+    wire tribe__external_cache_invalidate_ready_out;
+    wire tribe__dmem_write_out;
+    wire[31:0] tribe__dmem_write_data_out;
+    wire[7:0] tribe__dmem_write_mask_out;
+    wire tribe__dmem_read_out;
+    wire[31:0] tribe__dmem_addr_out;
+    wire[31:0] tribe__imem_read_addr_out;
+    wire TribeCoreDebug tribe__debug_core_out;
+    wire TribeMmuDebug tribe__debug_mmu_out;
+    wire TribeCacheDebug tribe__debug_cache_out;
+    wire TribeWritebackDebug tribe__debug_wb_out;
+    wire TribeCsrDebug tribe__debug_csr_out;
+    wire TribeIrqDebug tribe__debug_irq_out;
+    wire TribeRegsDebug tribe__debug_regs_out;
+    wire TribeBranchDebug tribe__debug_branch_out;
+    wire TribeDecodeDebug tribe__debug_decode_out;
+    wire tribe__sbi_set_timer_out;
+    wire[31:0] tribe__sbi_timer_lo_out;
+    wire[31:0] tribe__sbi_timer_hi_out;
+    wire TribeSbiDebug tribe__debug_sbi_out;
+    wire TribePerf tribe__perf_out;
+    wire[31:0] tribe__reset_pc_in;
+    wire[31:0] tribe__boot_hartid_in;
+    wire[31:0] tribe__boot_dtb_addr_in;
+    wire[2-1:0] tribe__boot_priv_in;
+    wire tribe__external_cache_invalidate_in;
+    wire[31:0] tribe__memory_base_in;
+    wire[31:0] tribe__memory_size_in;
+    wire[31:0] tribe__mem_region_size_in[4];
+    wire tribe__clint_msip_in;
+    wire tribe__clint_mtip_in;
+    wire[31:0] tribe__time_lo_in;
+    wire[31:0] tribe__time_hi_in;
+    wire tribe__external_irq_in;
+    wire tribe__axi_in__awvalid_in[4];
+    wire tribe__axi_in__awready_out[4];
+    wire[32-1:0] tribe__axi_in__awaddr_in[4];
+    wire[4-1:0] tribe__axi_in__awid_in[4];
+    wire tribe__axi_in__wvalid_in[4];
+    wire tribe__axi_in__wready_out[4];
+    wire[256-1:0] tribe__axi_in__wdata_in[4];
+    wire[unsigned'(64'(256))/64'h8-1:0] tribe__axi_in__wstrb_in[4];
+    wire tribe__axi_in__wlast_in[4];
+    wire tribe__axi_in__bvalid_out[4];
+    wire tribe__axi_in__bready_in[4];
+    wire[4-1:0] tribe__axi_in__bid_out[4];
+    wire tribe__axi_in__arvalid_in[4];
+    wire tribe__axi_in__arready_out[4];
+    wire[32-1:0] tribe__axi_in__araddr_in[4];
+    wire[4-1:0] tribe__axi_in__arid_in[4];
+    wire tribe__axi_in__rvalid_out[4];
+    wire tribe__axi_in__rready_in[4];
+    wire[256-1:0] tribe__axi_in__rdata_out[4];
+    wire tribe__axi_in__rlast_out[4];
+    wire[4-1:0] tribe__axi_in__rid_out[4];
+    wire tribe__axi_out__awvalid_out[4];
+    wire tribe__axi_out__awready_in[4];
+    wire[23-1:0] tribe__axi_out__awaddr_out[4];
+    wire[4-1:0] tribe__axi_out__awid_out[4];
+    wire tribe__axi_out__wvalid_out[4];
+    wire tribe__axi_out__wready_in[4];
+    wire[256-1:0] tribe__axi_out__wdata_out[4];
+    wire[unsigned'(64'(256))/64'h8-1:0] tribe__axi_out__wstrb_out[4];
+    wire tribe__axi_out__wlast_out[4];
+    wire tribe__axi_out__bvalid_in[4];
+    wire tribe__axi_out__bready_out[4];
+    wire[4-1:0] tribe__axi_out__bid_in[4];
+    wire tribe__axi_out__arvalid_out[4];
+    wire tribe__axi_out__arready_in[4];
+    wire[23-1:0] tribe__axi_out__araddr_out[4];
+    wire[4-1:0] tribe__axi_out__arid_out[4];
+    wire tribe__axi_out__rvalid_in[4];
+    wire tribe__axi_out__rready_out[4];
+    wire[256-1:0] tribe__axi_out__rdata_in[4];
+    wire tribe__axi_out__rlast_in[4];
+    wire[4-1:0] tribe__axi_out__rid_in[4];
+    wire tribe__dma_line_valid_in;
+    wire[32-1:0] tribe__dma_line_addr_in;
+    wire[256-1:0] tribe__dma_line_data_in;
+    wire[32-1:0] tribe__dma_line_keep_in;
+    wire tribe__dma_line_ready_out;
+    wire tribe__debugen_in;
+    TribeTest #(
+        1
+    ) tribe (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
+,       .external_cache_invalidate_ready_out(tribe__external_cache_invalidate_ready_out)
 ,       .dmem_write_out(tribe__dmem_write_out)
 ,       .dmem_write_data_out(tribe__dmem_write_data_out)
 ,       .dmem_write_mask_out(tribe__dmem_write_mask_out)
 ,       .dmem_read_out(tribe__dmem_read_out)
 ,       .dmem_addr_out(tribe__dmem_addr_out)
 ,       .imem_read_addr_out(tribe__imem_read_addr_out)
-,       .debug_immu_ptw_read_out(tribe__debug_immu_ptw_read_out)
-,       .debug_immu_ptw_addr_out(tribe__debug_immu_ptw_addr_out)
-,       .debug_immu_busy_out(tribe__debug_immu_busy_out)
-,       .debug_immu_fault_out(tribe__debug_immu_fault_out)
-,       .debug_immu_paddr_out(tribe__debug_immu_paddr_out)
-,       .debug_immu_last_addr_out(tribe__debug_immu_last_addr_out)
-,       .debug_immu_last_pte_out(tribe__debug_immu_last_pte_out)
-,       .debug_icache_read_valid_out(tribe__debug_icache_read_valid_out)
-,       .debug_icache_read_addr_out(tribe__debug_icache_read_addr_out)
-,       .debug_fetch_valid_out(tribe__debug_fetch_valid_out)
-,       .debug_memory_wait_out(tribe__debug_memory_wait_out)
-,       .debug_wb_load_ready_out(tribe__debug_wb_load_ready_out)
-,       .debug_wb_mem_wait_out(tribe__debug_wb_mem_wait_out)
-,       .debug_icache_read_in_out(tribe__debug_icache_read_in_out)
-,       .debug_icache_stall_in_out(tribe__debug_icache_stall_in_out)
-,       .debug_dmmu_ptw_read_out(tribe__debug_dmmu_ptw_read_out)
-,       .debug_dmmu_ptw_addr_out(tribe__debug_dmmu_ptw_addr_out)
-,       .debug_dmmu_busy_out(tribe__debug_dmmu_busy_out)
-,       .debug_dmmu_fault_out(tribe__debug_dmmu_fault_out)
-,       .debug_mmu_ptw_word_out(tribe__debug_mmu_ptw_word_out)
-,       .debug_pc_out(tribe__debug_pc_out)
-,       .debug_satp_out(tribe__debug_satp_out)
-,       .debug_mstatus_out(tribe__debug_mstatus_out)
-,       .debug_mtvec_out(tribe__debug_mtvec_out)
-,       .debug_mepc_out(tribe__debug_mepc_out)
-,       .debug_mcause_out(tribe__debug_mcause_out)
-,       .debug_mtval_out(tribe__debug_mtval_out)
-,       .debug_sepc_out(tribe__debug_sepc_out)
-,       .debug_stvec_out(tribe__debug_stvec_out)
-,       .debug_scause_out(tribe__debug_scause_out)
-,       .debug_stval_out(tribe__debug_stval_out)
-,       .debug_irq_valid_out(tribe__debug_irq_valid_out)
-,       .debug_irq_cause_out(tribe__debug_irq_cause_out)
-,       .debug_irq_to_supervisor_out(tribe__debug_irq_to_supervisor_out)
-,       .debug_irq_mip_out(tribe__debug_irq_mip_out)
-,       .debug_irq_mie_out(tribe__debug_irq_mie_out)
-,       .debug_irq_mideleg_out(tribe__debug_irq_mideleg_out)
-,       .debug_priv_out(tribe__debug_priv_out)
-,       .debug_ra_out(tribe__debug_ra_out)
-,       .debug_regs_write_out(tribe__debug_regs_write_out)
-,       .debug_regs_write_actual_out(tribe__debug_regs_write_actual_out)
-,       .debug_regs_wr_id_out(tribe__debug_regs_wr_id_out)
-,       .debug_regs_data_out(tribe__debug_regs_data_out)
-,       .debug_branch_taken_now_out(tribe__debug_branch_taken_now_out)
-,       .debug_branch_target_now_out(tribe__debug_branch_target_now_out)
-,       .debug_decode_instr_out(tribe__debug_decode_instr_out)
-,       .debug_decode_pc_out(tribe__debug_decode_pc_out)
-,       .debug_decode_br_out(tribe__debug_decode_br_out)
-,       .debug_decode_imm_out(tribe__debug_decode_imm_out)
+,       .debug_core_out(tribe__debug_core_out)
+,       .debug_mmu_out(tribe__debug_mmu_out)
+,       .debug_cache_out(tribe__debug_cache_out)
+,       .debug_wb_out(tribe__debug_wb_out)
+,       .debug_csr_out(tribe__debug_csr_out)
+,       .debug_irq_out(tribe__debug_irq_out)
+,       .debug_regs_out(tribe__debug_regs_out)
+,       .debug_branch_out(tribe__debug_branch_out)
+,       .debug_decode_out(tribe__debug_decode_out)
 ,       .sbi_set_timer_out(tribe__sbi_set_timer_out)
 ,       .sbi_timer_lo_out(tribe__sbi_timer_lo_out)
 ,       .sbi_timer_hi_out(tribe__sbi_timer_hi_out)
+,       .debug_sbi_out(tribe__debug_sbi_out)
+,       .perf_out(tribe__perf_out)
 ,       .reset_pc_in(tribe__reset_pc_in)
 ,       .boot_hartid_in(tribe__boot_hartid_in)
 ,       .boot_dtb_addr_in(tribe__boot_dtb_addr_in)
@@ -302,6 +202,8 @@ module System (
 ,       .mem_region_size_in(tribe__mem_region_size_in)
 ,       .clint_msip_in(tribe__clint_msip_in)
 ,       .clint_mtip_in(tribe__clint_mtip_in)
+,       .time_lo_in(tribe__time_lo_in)
+,       .time_hi_in(tribe__time_hi_in)
 ,       .external_irq_in(tribe__external_irq_in)
 ,       .axi_in__awvalid_in(tribe__axi_in__awvalid_in)
 ,       .axi_in__awready_out(tribe__axi_in__awready_out)
@@ -310,6 +212,7 @@ module System (
 ,       .axi_in__wvalid_in(tribe__axi_in__wvalid_in)
 ,       .axi_in__wready_out(tribe__axi_in__wready_out)
 ,       .axi_in__wdata_in(tribe__axi_in__wdata_in)
+,       .axi_in__wstrb_in(tribe__axi_in__wstrb_in)
 ,       .axi_in__wlast_in(tribe__axi_in__wlast_in)
 ,       .axi_in__bvalid_out(tribe__axi_in__bvalid_out)
 ,       .axi_in__bready_in(tribe__axi_in__bready_in)
@@ -330,6 +233,7 @@ module System (
 ,       .axi_out__wvalid_out(tribe__axi_out__wvalid_out)
 ,       .axi_out__wready_in(tribe__axi_out__wready_in)
 ,       .axi_out__wdata_out(tribe__axi_out__wdata_out)
+,       .axi_out__wstrb_out(tribe__axi_out__wstrb_out)
 ,       .axi_out__wlast_out(tribe__axi_out__wlast_out)
 ,       .axi_out__bvalid_in(tribe__axi_out__bvalid_in)
 ,       .axi_out__bready_out(tribe__axi_out__bready_out)
@@ -343,37 +247,43 @@ module System (
 ,       .axi_out__rdata_in(tribe__axi_out__rdata_in)
 ,       .axi_out__rlast_in(tribe__axi_out__rlast_in)
 ,       .axi_out__rid_in(tribe__axi_out__rid_in)
-,       .perf_out(tribe__perf_out)
+,       .dma_line_valid_in(tribe__dma_line_valid_in)
+,       .dma_line_addr_in(tribe__dma_line_addr_in)
+,       .dma_line_data_in(tribe__dma_line_data_in)
+,       .dma_line_keep_in(tribe__dma_line_keep_in)
+,       .dma_line_ready_out(tribe__dma_line_ready_out)
 ,       .debugen_in(tribe__debugen_in)
     );
-      wire mem2__axi_in__awvalid_in;
-      wire mem2__axi_in__awready_out;
-      wire[(22)-1:0] mem2__axi_in__awaddr_in;
-      wire[(4)-1:0] mem2__axi_in__awid_in;
-      wire mem2__axi_in__wvalid_in;
-      wire mem2__axi_in__wready_out;
-      wire[(64)-1:0] mem2__axi_in__wdata_in;
-      wire mem2__axi_in__wlast_in;
-      wire mem2__axi_in__bvalid_out;
-      wire mem2__axi_in__bready_in;
-      wire[(4)-1:0] mem2__axi_in__bid_out;
-      wire mem2__axi_in__arvalid_in;
-      wire mem2__axi_in__arready_out;
-      wire[(22)-1:0] mem2__axi_in__araddr_in;
-      wire[(4)-1:0] mem2__axi_in__arid_in;
-      wire mem2__axi_in__rvalid_out;
-      wire mem2__axi_in__rready_in;
-      wire[(64)-1:0] mem2__axi_in__rdata_out;
-      wire mem2__axi_in__rlast_out;
-      wire[(4)-1:0] mem2__axi_in__rid_out;
-      wire mem2__debugen_in;
+    wire mem2__axi_in__awvalid_in;
+    wire mem2__axi_in__awready_out;
+    wire[23-1:0] mem2__axi_in__awaddr_in;
+    wire[4-1:0] mem2__axi_in__awid_in;
+    wire mem2__axi_in__wvalid_in;
+    wire mem2__axi_in__wready_out;
+    wire[256-1:0] mem2__axi_in__wdata_in;
+    wire[unsigned'(64'(256))/64'h8-1:0] mem2__axi_in__wstrb_in;
+    wire mem2__axi_in__wlast_in;
+    wire mem2__axi_in__bvalid_out;
+    wire mem2__axi_in__bready_in;
+    wire[4-1:0] mem2__axi_in__bid_out;
+    wire mem2__axi_in__arvalid_in;
+    wire mem2__axi_in__arready_out;
+    wire[23-1:0] mem2__axi_in__araddr_in;
+    wire[4-1:0] mem2__axi_in__arid_in;
+    wire mem2__axi_in__rvalid_out;
+    wire mem2__axi_in__rready_in;
+    wire[256-1:0] mem2__axi_in__rdata_out;
+    wire mem2__axi_in__rlast_out;
+    wire[4-1:0] mem2__axi_in__rid_out;
+    wire mem2__debugen_in;
     Axi4Ram #(
-        22
+        23
 ,       4
-,       64
-,       14336
+,       256
+,       3584
     ) mem2 (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .axi_in__awvalid_in(mem2__axi_in__awvalid_in)
 ,       .axi_in__awready_out(mem2__axi_in__awready_out)
@@ -382,6 +292,7 @@ module System (
 ,       .axi_in__wvalid_in(mem2__axi_in__wvalid_in)
 ,       .axi_in__wready_out(mem2__axi_in__wready_out)
 ,       .axi_in__wdata_in(mem2__axi_in__wdata_in)
+,       .axi_in__wstrb_in(mem2__axi_in__wstrb_in)
 ,       .axi_in__wlast_in(mem2__axi_in__wlast_in)
 ,       .axi_in__bvalid_out(mem2__axi_in__bvalid_out)
 ,       .axi_in__bready_in(mem2__axi_in__bready_in)
@@ -397,55 +308,58 @@ module System (
 ,       .axi_in__rid_out(mem2__axi_in__rid_out)
 ,       .debugen_in(mem2__debugen_in)
     );
-      wire iospace__slave_in__awvalid_in;
-      wire iospace__slave_in__awready_out;
-      wire[(22)-1:0] iospace__slave_in__awaddr_in;
-      wire[(4)-1:0] iospace__slave_in__awid_in;
-      wire iospace__slave_in__wvalid_in;
-      wire iospace__slave_in__wready_out;
-      wire[(64)-1:0] iospace__slave_in__wdata_in;
-      wire iospace__slave_in__wlast_in;
-      wire iospace__slave_in__bvalid_out;
-      wire iospace__slave_in__bready_in;
-      wire[(4)-1:0] iospace__slave_in__bid_out;
-      wire iospace__slave_in__arvalid_in;
-      wire iospace__slave_in__arready_out;
-      wire[(22)-1:0] iospace__slave_in__araddr_in;
-      wire[(4)-1:0] iospace__slave_in__arid_in;
-      wire iospace__slave_in__rvalid_out;
-      wire iospace__slave_in__rready_in;
-      wire[(64)-1:0] iospace__slave_in__rdata_out;
-      wire iospace__slave_in__rlast_out;
-      wire[(4)-1:0] iospace__slave_in__rid_out;
-      wire iospace__masters_out__awvalid_out[(5)];
-      wire iospace__masters_out__awready_in[(5)];
-      wire[(22)-1:0] iospace__masters_out__awaddr_out[(5)];
-      wire[(4)-1:0] iospace__masters_out__awid_out[(5)];
-      wire iospace__masters_out__wvalid_out[(5)];
-      wire iospace__masters_out__wready_in[(5)];
-      wire[(64)-1:0] iospace__masters_out__wdata_out[(5)];
-      wire iospace__masters_out__wlast_out[(5)];
-      wire iospace__masters_out__bvalid_in[(5)];
-      wire iospace__masters_out__bready_out[(5)];
-      wire[(4)-1:0] iospace__masters_out__bid_in[(5)];
-      wire iospace__masters_out__arvalid_out[(5)];
-      wire iospace__masters_out__arready_in[(5)];
-      wire[(22)-1:0] iospace__masters_out__araddr_out[(5)];
-      wire[(4)-1:0] iospace__masters_out__arid_out[(5)];
-      wire iospace__masters_out__rvalid_in[(5)];
-      wire iospace__masters_out__rready_out[(5)];
-      wire[(64)-1:0] iospace__masters_out__rdata_in[(5)];
-      wire iospace__masters_out__rlast_in[(5)];
-      wire[(4)-1:0] iospace__masters_out__rid_in[(5)];
-      wire[31:0] iospace__region_base_in[(5)];
-      wire[31:0] iospace__region_size_in[(5)];
+    wire iospace__slave_in__awvalid_in;
+    wire iospace__slave_in__awready_out;
+    wire[23-1:0] iospace__slave_in__awaddr_in;
+    wire[4-1:0] iospace__slave_in__awid_in;
+    wire iospace__slave_in__wvalid_in;
+    wire iospace__slave_in__wready_out;
+    wire[256-1:0] iospace__slave_in__wdata_in;
+    wire[unsigned'(64'(256))/64'h8-1:0] iospace__slave_in__wstrb_in;
+    wire iospace__slave_in__wlast_in;
+    wire iospace__slave_in__bvalid_out;
+    wire iospace__slave_in__bready_in;
+    wire[4-1:0] iospace__slave_in__bid_out;
+    wire iospace__slave_in__arvalid_in;
+    wire iospace__slave_in__arready_out;
+    wire[23-1:0] iospace__slave_in__araddr_in;
+    wire[4-1:0] iospace__slave_in__arid_in;
+    wire iospace__slave_in__rvalid_out;
+    wire iospace__slave_in__rready_in;
+    wire[256-1:0] iospace__slave_in__rdata_out;
+    wire iospace__slave_in__rlast_out;
+    wire[4-1:0] iospace__slave_in__rid_out;
+    wire iospace__masters_out__awvalid_out[5];
+    wire iospace__masters_out__awready_in[5];
+    wire[23-1:0] iospace__masters_out__awaddr_out[5];
+    wire[4-1:0] iospace__masters_out__awid_out[5];
+    wire iospace__masters_out__wvalid_out[5];
+    wire iospace__masters_out__wready_in[5];
+    wire[256-1:0] iospace__masters_out__wdata_out[5];
+    wire[unsigned'(64'(256))/64'h8-1:0] iospace__masters_out__wstrb_out[5];
+    wire iospace__masters_out__wlast_out[5];
+    wire iospace__masters_out__bvalid_in[5];
+    wire iospace__masters_out__bready_out[5];
+    wire[4-1:0] iospace__masters_out__bid_in[5];
+    wire iospace__masters_out__arvalid_out[5];
+    wire iospace__masters_out__arready_in[5];
+    wire[23-1:0] iospace__masters_out__araddr_out[5];
+    wire[4-1:0] iospace__masters_out__arid_out[5];
+    wire iospace__masters_out__rvalid_in[5];
+    wire iospace__masters_out__rready_out[5];
+    wire[256-1:0] iospace__masters_out__rdata_in[5];
+    wire iospace__masters_out__rlast_in[5];
+    wire[4-1:0] iospace__masters_out__rid_in[5];
+    wire[31:0] iospace__region_base_in[5];
+    wire[31:0] iospace__region_size_in[5];
     Axi4RegionMux #(
         5
-,       22
+,       23
 ,       4
-,       64
+,       256
     ) iospace (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .slave_in__awvalid_in(iospace__slave_in__awvalid_in)
 ,       .slave_in__awready_out(iospace__slave_in__awready_out)
@@ -454,6 +368,7 @@ module System (
 ,       .slave_in__wvalid_in(iospace__slave_in__wvalid_in)
 ,       .slave_in__wready_out(iospace__slave_in__wready_out)
 ,       .slave_in__wdata_in(iospace__slave_in__wdata_in)
+,       .slave_in__wstrb_in(iospace__slave_in__wstrb_in)
 ,       .slave_in__wlast_in(iospace__slave_in__wlast_in)
 ,       .slave_in__bvalid_out(iospace__slave_in__bvalid_out)
 ,       .slave_in__bready_in(iospace__slave_in__bready_in)
@@ -474,6 +389,7 @@ module System (
 ,       .masters_out__wvalid_out(iospace__masters_out__wvalid_out)
 ,       .masters_out__wready_in(iospace__masters_out__wready_in)
 ,       .masters_out__wdata_out(iospace__masters_out__wdata_out)
+,       .masters_out__wstrb_out(iospace__masters_out__wstrb_out)
 ,       .masters_out__wlast_out(iospace__masters_out__wlast_out)
 ,       .masters_out__bvalid_in(iospace__masters_out__bvalid_in)
 ,       .masters_out__bready_out(iospace__masters_out__bready_out)
@@ -490,38 +406,40 @@ module System (
 ,       .region_base_in(iospace__region_base_in)
 ,       .region_size_in(iospace__region_size_in)
     );
-      wire uart__axi_in__awvalid_in;
-      wire uart__axi_in__awready_out;
-      wire[(22)-1:0] uart__axi_in__awaddr_in;
-      wire[(4)-1:0] uart__axi_in__awid_in;
-      wire uart__axi_in__wvalid_in;
-      wire uart__axi_in__wready_out;
-      wire[(64)-1:0] uart__axi_in__wdata_in;
-      wire uart__axi_in__wlast_in;
-      wire uart__axi_in__bvalid_out;
-      wire uart__axi_in__bready_in;
-      wire[(4)-1:0] uart__axi_in__bid_out;
-      wire uart__axi_in__arvalid_in;
-      wire uart__axi_in__arready_out;
-      wire[(22)-1:0] uart__axi_in__araddr_in;
-      wire[(4)-1:0] uart__axi_in__arid_in;
-      wire uart__axi_in__rvalid_out;
-      wire uart__axi_in__rready_in;
-      wire[(64)-1:0] uart__axi_in__rdata_out;
-      wire uart__axi_in__rlast_out;
-      wire[(4)-1:0] uart__axi_in__rid_out;
-      wire uart__uart_valid_out;
-      wire[7:0] uart__uart_data_out;
-      wire uart__uart_rx_valid_in;
-      wire[7:0] uart__uart_rx_data_in;
-      wire uart__uart_rx_ready_out;
-      wire uart__irq_out;
+    wire uart__axi_in__awvalid_in;
+    wire uart__axi_in__awready_out;
+    wire[23-1:0] uart__axi_in__awaddr_in;
+    wire[4-1:0] uart__axi_in__awid_in;
+    wire uart__axi_in__wvalid_in;
+    wire uart__axi_in__wready_out;
+    wire[256-1:0] uart__axi_in__wdata_in;
+    wire[unsigned'(64'(256))/64'h8-1:0] uart__axi_in__wstrb_in;
+    wire uart__axi_in__wlast_in;
+    wire uart__axi_in__bvalid_out;
+    wire uart__axi_in__bready_in;
+    wire[4-1:0] uart__axi_in__bid_out;
+    wire uart__axi_in__arvalid_in;
+    wire uart__axi_in__arready_out;
+    wire[23-1:0] uart__axi_in__araddr_in;
+    wire[4-1:0] uart__axi_in__arid_in;
+    wire uart__axi_in__rvalid_out;
+    wire uart__axi_in__rready_in;
+    wire[256-1:0] uart__axi_in__rdata_out;
+    wire uart__axi_in__rlast_out;
+    wire[4-1:0] uart__axi_in__rid_out;
+    wire uart__uart_valid_out;
+    wire[7:0] uart__uart_data_out;
+    wire uart__uart_rx_valid_in;
+    wire[7:0] uart__uart_rx_data_in;
+    wire uart__uart_rx_ready_out;
+    wire uart__irq_out;
     NS16550A #(
-        22
+        23
 ,       4
-,       64
+,       256
     ) uart (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .axi_in__awvalid_in(uart__axi_in__awvalid_in)
 ,       .axi_in__awready_out(uart__axi_in__awready_out)
@@ -530,6 +448,7 @@ module System (
 ,       .axi_in__wvalid_in(uart__axi_in__wvalid_in)
 ,       .axi_in__wready_out(uart__axi_in__wready_out)
 ,       .axi_in__wdata_in(uart__axi_in__wdata_in)
+,       .axi_in__wstrb_in(uart__axi_in__wstrb_in)
 ,       .axi_in__wlast_in(uart__axi_in__wlast_in)
 ,       .axi_in__bvalid_out(uart__axi_in__bvalid_out)
 ,       .axi_in__bready_in(uart__axi_in__bready_in)
@@ -550,37 +469,43 @@ module System (
 ,       .uart_rx_ready_out(uart__uart_rx_ready_out)
 ,       .irq_out(uart__irq_out)
     );
-      wire clint__axi_in__awvalid_in;
-      wire clint__axi_in__awready_out;
-      wire[(22)-1:0] clint__axi_in__awaddr_in;
-      wire[(4)-1:0] clint__axi_in__awid_in;
-      wire clint__axi_in__wvalid_in;
-      wire clint__axi_in__wready_out;
-      wire[(64)-1:0] clint__axi_in__wdata_in;
-      wire clint__axi_in__wlast_in;
-      wire clint__axi_in__bvalid_out;
-      wire clint__axi_in__bready_in;
-      wire[(4)-1:0] clint__axi_in__bid_out;
-      wire clint__axi_in__arvalid_in;
-      wire clint__axi_in__arready_out;
-      wire[(22)-1:0] clint__axi_in__araddr_in;
-      wire[(4)-1:0] clint__axi_in__arid_in;
-      wire clint__axi_in__rvalid_out;
-      wire clint__axi_in__rready_in;
-      wire[(64)-1:0] clint__axi_in__rdata_out;
-      wire clint__axi_in__rlast_out;
-      wire[(4)-1:0] clint__axi_in__rid_out;
-      wire clint__set_mtimecmp_in;
-      wire[31:0] clint__set_mtimecmp_lo_in;
-      wire[31:0] clint__set_mtimecmp_hi_in;
-      wire clint__msip_out;
-      wire clint__mtip_out;
+    wire clint__axi_in__awvalid_in;
+    wire clint__axi_in__awready_out;
+    wire[23-1:0] clint__axi_in__awaddr_in;
+    wire[4-1:0] clint__axi_in__awid_in;
+    wire clint__axi_in__wvalid_in;
+    wire clint__axi_in__wready_out;
+    wire[256-1:0] clint__axi_in__wdata_in;
+    wire[unsigned'(64'(256))/64'h8-1:0] clint__axi_in__wstrb_in;
+    wire clint__axi_in__wlast_in;
+    wire clint__axi_in__bvalid_out;
+    wire clint__axi_in__bready_in;
+    wire[4-1:0] clint__axi_in__bid_out;
+    wire clint__axi_in__arvalid_in;
+    wire clint__axi_in__arready_out;
+    wire[23-1:0] clint__axi_in__araddr_in;
+    wire[4-1:0] clint__axi_in__arid_in;
+    wire clint__axi_in__rvalid_out;
+    wire clint__axi_in__rready_in;
+    wire[256-1:0] clint__axi_in__rdata_out;
+    wire clint__axi_in__rlast_out;
+    wire[4-1:0] clint__axi_in__rid_out;
+    wire clint__set_mtimecmp_in;
+    wire[31:0] clint__set_mtimecmp_lo_in;
+    wire[31:0] clint__set_mtimecmp_hi_in;
+    wire clint__msip_out;
+    wire clint__mtip_out;
+    wire[31:0] clint__debug_mtime_lo_out;
+    wire[31:0] clint__debug_mtime_hi_out;
+    wire[31:0] clint__debug_mtimecmp_lo_out;
+    wire[31:0] clint__debug_mtimecmp_hi_out;
     CLINT #(
-        22
+        23
 ,       4
-,       64
+,       256
     ) clint (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .axi_in__awvalid_in(clint__axi_in__awvalid_in)
 ,       .axi_in__awready_out(clint__axi_in__awready_out)
@@ -589,6 +514,7 @@ module System (
 ,       .axi_in__wvalid_in(clint__axi_in__wvalid_in)
 ,       .axi_in__wready_out(clint__axi_in__wready_out)
 ,       .axi_in__wdata_in(clint__axi_in__wdata_in)
+,       .axi_in__wstrb_in(clint__axi_in__wstrb_in)
 ,       .axi_in__wlast_in(clint__axi_in__wlast_in)
 ,       .axi_in__bvalid_out(clint__axi_in__bvalid_out)
 ,       .axi_in__bready_in(clint__axi_in__bready_in)
@@ -607,36 +533,42 @@ module System (
 ,       .set_mtimecmp_hi_in(clint__set_mtimecmp_hi_in)
 ,       .msip_out(clint__msip_out)
 ,       .mtip_out(clint__mtip_out)
+,       .debug_mtime_lo_out(clint__debug_mtime_lo_out)
+,       .debug_mtime_hi_out(clint__debug_mtime_hi_out)
+,       .debug_mtimecmp_lo_out(clint__debug_mtimecmp_lo_out)
+,       .debug_mtimecmp_hi_out(clint__debug_mtimecmp_hi_out)
     );
-      wire plic__axi_in__awvalid_in;
-      wire plic__axi_in__awready_out;
-      wire[(22)-1:0] plic__axi_in__awaddr_in;
-      wire[(4)-1:0] plic__axi_in__awid_in;
-      wire plic__axi_in__wvalid_in;
-      wire plic__axi_in__wready_out;
-      wire[(64)-1:0] plic__axi_in__wdata_in;
-      wire plic__axi_in__wlast_in;
-      wire plic__axi_in__bvalid_out;
-      wire plic__axi_in__bready_in;
-      wire[(4)-1:0] plic__axi_in__bid_out;
-      wire plic__axi_in__arvalid_in;
-      wire plic__axi_in__arready_out;
-      wire[(22)-1:0] plic__axi_in__araddr_in;
-      wire[(4)-1:0] plic__axi_in__arid_in;
-      wire plic__axi_in__rvalid_out;
-      wire plic__axi_in__rready_in;
-      wire[(64)-1:0] plic__axi_in__rdata_out;
-      wire plic__axi_in__rlast_out;
-      wire[(4)-1:0] plic__axi_in__rid_out;
-      wire plic__source_irq_in[(32)];
-      wire plic__external_irq_out;
+    wire plic__axi_in__awvalid_in;
+    wire plic__axi_in__awready_out;
+    wire[23-1:0] plic__axi_in__awaddr_in;
+    wire[4-1:0] plic__axi_in__awid_in;
+    wire plic__axi_in__wvalid_in;
+    wire plic__axi_in__wready_out;
+    wire[256-1:0] plic__axi_in__wdata_in;
+    wire[unsigned'(64'(256))/64'h8-1:0] plic__axi_in__wstrb_in;
+    wire plic__axi_in__wlast_in;
+    wire plic__axi_in__bvalid_out;
+    wire plic__axi_in__bready_in;
+    wire[4-1:0] plic__axi_in__bid_out;
+    wire plic__axi_in__arvalid_in;
+    wire plic__axi_in__arready_out;
+    wire[23-1:0] plic__axi_in__araddr_in;
+    wire[4-1:0] plic__axi_in__arid_in;
+    wire plic__axi_in__rvalid_out;
+    wire plic__axi_in__rready_in;
+    wire[256-1:0] plic__axi_in__rdata_out;
+    wire plic__axi_in__rlast_out;
+    wire[4-1:0] plic__axi_in__rid_out;
+    wire plic__source_irq_in[32];
+    wire plic__external_irq_out;
     PLIC #(
-        22
+        23
 ,       4
-,       64
+,       256
 ,       32
     ) plic (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .axi_in__awvalid_in(plic__axi_in__awvalid_in)
 ,       .axi_in__awready_out(plic__axi_in__awready_out)
@@ -645,6 +577,7 @@ module System (
 ,       .axi_in__wvalid_in(plic__axi_in__wvalid_in)
 ,       .axi_in__wready_out(plic__axi_in__wready_out)
 ,       .axi_in__wdata_in(plic__axi_in__wdata_in)
+,       .axi_in__wstrb_in(plic__axi_in__wstrb_in)
 ,       .axi_in__wlast_in(plic__axi_in__wlast_in)
 ,       .axi_in__bvalid_out(plic__axi_in__bvalid_out)
 ,       .axi_in__bready_in(plic__axi_in__bready_in)
@@ -661,53 +594,56 @@ module System (
 ,       .source_irq_in(plic__source_irq_in)
 ,       .external_irq_out(plic__external_irq_out)
     );
-      wire accelerator__axi_in__awvalid_in;
-      wire accelerator__axi_in__awready_out;
-      wire[(22)-1:0] accelerator__axi_in__awaddr_in;
-      wire[(4)-1:0] accelerator__axi_in__awid_in;
-      wire accelerator__axi_in__wvalid_in;
-      wire accelerator__axi_in__wready_out;
-      wire[(64)-1:0] accelerator__axi_in__wdata_in;
-      wire accelerator__axi_in__wlast_in;
-      wire accelerator__axi_in__bvalid_out;
-      wire accelerator__axi_in__bready_in;
-      wire[(4)-1:0] accelerator__axi_in__bid_out;
-      wire accelerator__axi_in__arvalid_in;
-      wire accelerator__axi_in__arready_out;
-      wire[(22)-1:0] accelerator__axi_in__araddr_in;
-      wire[(4)-1:0] accelerator__axi_in__arid_in;
-      wire accelerator__axi_in__rvalid_out;
-      wire accelerator__axi_in__rready_in;
-      wire[(64)-1:0] accelerator__axi_in__rdata_out;
-      wire accelerator__axi_in__rlast_out;
-      wire[(4)-1:0] accelerator__axi_in__rid_out;
-      wire accelerator__dma_out__awvalid_out;
-      wire accelerator__dma_out__awready_in;
-      wire[(22)-1:0] accelerator__dma_out__awaddr_out;
-      wire[(4)-1:0] accelerator__dma_out__awid_out;
-      wire accelerator__dma_out__wvalid_out;
-      wire accelerator__dma_out__wready_in;
-      wire[(64)-1:0] accelerator__dma_out__wdata_out;
-      wire accelerator__dma_out__wlast_out;
-      wire accelerator__dma_out__bvalid_in;
-      wire accelerator__dma_out__bready_out;
-      wire[(4)-1:0] accelerator__dma_out__bid_in;
-      wire accelerator__dma_out__arvalid_out;
-      wire accelerator__dma_out__arready_in;
-      wire[(22)-1:0] accelerator__dma_out__araddr_out;
-      wire[(4)-1:0] accelerator__dma_out__arid_out;
-      wire accelerator__dma_out__rvalid_in;
-      wire accelerator__dma_out__rready_out;
-      wire[(64)-1:0] accelerator__dma_out__rdata_in;
-      wire accelerator__dma_out__rlast_in;
-      wire[(4)-1:0] accelerator__dma_out__rid_in;
+    wire accelerator__axi_in__awvalid_in;
+    wire accelerator__axi_in__awready_out;
+    wire[23-1:0] accelerator__axi_in__awaddr_in;
+    wire[4-1:0] accelerator__axi_in__awid_in;
+    wire accelerator__axi_in__wvalid_in;
+    wire accelerator__axi_in__wready_out;
+    wire[256-1:0] accelerator__axi_in__wdata_in;
+    wire[unsigned'(64'(256))/64'h8-1:0] accelerator__axi_in__wstrb_in;
+    wire accelerator__axi_in__wlast_in;
+    wire accelerator__axi_in__bvalid_out;
+    wire accelerator__axi_in__bready_in;
+    wire[4-1:0] accelerator__axi_in__bid_out;
+    wire accelerator__axi_in__arvalid_in;
+    wire accelerator__axi_in__arready_out;
+    wire[23-1:0] accelerator__axi_in__araddr_in;
+    wire[4-1:0] accelerator__axi_in__arid_in;
+    wire accelerator__axi_in__rvalid_out;
+    wire accelerator__axi_in__rready_in;
+    wire[256-1:0] accelerator__axi_in__rdata_out;
+    wire accelerator__axi_in__rlast_out;
+    wire[4-1:0] accelerator__axi_in__rid_out;
+    wire accelerator__dma_out__awvalid_out;
+    wire accelerator__dma_out__awready_in;
+    wire[23-1:0] accelerator__dma_out__awaddr_out;
+    wire[4-1:0] accelerator__dma_out__awid_out;
+    wire accelerator__dma_out__wvalid_out;
+    wire accelerator__dma_out__wready_in;
+    wire[256-1:0] accelerator__dma_out__wdata_out;
+    wire[unsigned'(64'(256))/64'h8-1:0] accelerator__dma_out__wstrb_out;
+    wire accelerator__dma_out__wlast_out;
+    wire accelerator__dma_out__bvalid_in;
+    wire accelerator__dma_out__bready_out;
+    wire[4-1:0] accelerator__dma_out__bid_in;
+    wire accelerator__dma_out__arvalid_out;
+    wire accelerator__dma_out__arready_in;
+    wire[23-1:0] accelerator__dma_out__araddr_out;
+    wire[4-1:0] accelerator__dma_out__arid_out;
+    wire accelerator__dma_out__rvalid_in;
+    wire accelerator__dma_out__rready_out;
+    wire[256-1:0] accelerator__dma_out__rdata_in;
+    wire accelerator__dma_out__rlast_in;
+    wire[4-1:0] accelerator__dma_out__rid_in;
     Accelerator #(
-        22
+        23
 ,       4
-,       64
+,       256
 ,       256
     ) accelerator (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .axi_in__awvalid_in(accelerator__axi_in__awvalid_in)
 ,       .axi_in__awready_out(accelerator__axi_in__awready_out)
@@ -716,6 +652,7 @@ module System (
 ,       .axi_in__wvalid_in(accelerator__axi_in__wvalid_in)
 ,       .axi_in__wready_out(accelerator__axi_in__wready_out)
 ,       .axi_in__wdata_in(accelerator__axi_in__wdata_in)
+,       .axi_in__wstrb_in(accelerator__axi_in__wstrb_in)
 ,       .axi_in__wlast_in(accelerator__axi_in__wlast_in)
 ,       .axi_in__bvalid_out(accelerator__axi_in__bvalid_out)
 ,       .axi_in__bready_in(accelerator__axi_in__bready_in)
@@ -736,6 +673,7 @@ module System (
 ,       .dma_out__wvalid_out(accelerator__dma_out__wvalid_out)
 ,       .dma_out__wready_in(accelerator__dma_out__wready_in)
 ,       .dma_out__wdata_out(accelerator__dma_out__wdata_out)
+,       .dma_out__wstrb_out(accelerator__dma_out__wstrb_out)
 ,       .dma_out__wlast_out(accelerator__dma_out__wlast_out)
 ,       .dma_out__bvalid_in(accelerator__dma_out__bvalid_in)
 ,       .dma_out__bready_out(accelerator__dma_out__bready_out)
@@ -750,67 +688,70 @@ module System (
 ,       .dma_out__rlast_in(accelerator__dma_out__rlast_in)
 ,       .dma_out__rid_in(accelerator__dma_out__rid_in)
     );
-      wire sdcard__axi_in__awvalid_in;
-      wire sdcard__axi_in__awready_out;
-      wire[(22)-1:0] sdcard__axi_in__awaddr_in;
-      wire[(4)-1:0] sdcard__axi_in__awid_in;
-      wire sdcard__axi_in__wvalid_in;
-      wire sdcard__axi_in__wready_out;
-      wire[(64)-1:0] sdcard__axi_in__wdata_in;
-      wire sdcard__axi_in__wlast_in;
-      wire sdcard__axi_in__bvalid_out;
-      wire sdcard__axi_in__bready_in;
-      wire[(4)-1:0] sdcard__axi_in__bid_out;
-      wire sdcard__axi_in__arvalid_in;
-      wire sdcard__axi_in__arready_out;
-      wire[(22)-1:0] sdcard__axi_in__araddr_in;
-      wire[(4)-1:0] sdcard__axi_in__arid_in;
-      wire sdcard__axi_in__rvalid_out;
-      wire sdcard__axi_in__rready_in;
-      wire[(64)-1:0] sdcard__axi_in__rdata_out;
-      wire sdcard__axi_in__rlast_out;
-      wire[(4)-1:0] sdcard__axi_in__rid_out;
-      wire sdcard__dma_out__awvalid_out;
-      wire sdcard__dma_out__awready_in;
-      wire[(22)-1:0] sdcard__dma_out__awaddr_out;
-      wire[(4)-1:0] sdcard__dma_out__awid_out;
-      wire sdcard__dma_out__wvalid_out;
-      wire sdcard__dma_out__wready_in;
-      wire[(64)-1:0] sdcard__dma_out__wdata_out;
-      wire sdcard__dma_out__wlast_out;
-      wire sdcard__dma_out__bvalid_in;
-      wire sdcard__dma_out__bready_out;
-      wire[(4)-1:0] sdcard__dma_out__bid_in;
-      wire sdcard__dma_out__arvalid_out;
-      wire sdcard__dma_out__arready_in;
-      wire[(22)-1:0] sdcard__dma_out__araddr_out;
-      wire[(4)-1:0] sdcard__dma_out__arid_out;
-      wire sdcard__dma_out__rvalid_in;
-      wire sdcard__dma_out__rready_out;
-      wire[(64)-1:0] sdcard__dma_out__rdata_in;
-      wire sdcard__dma_out__rlast_in;
-      wire[(4)-1:0] sdcard__dma_out__rid_in;
-      wire sdcard__sd_cmd_valid_out;
-      wire[8-1:0] sdcard__sd_cmd_data_out;
-      wire sdcard__sd_cmd_last_out;
-      wire sdcard__sd_cmd_ready_in;
-      wire sdcard__sd_rsp_valid_in;
-      wire[8-1:0] sdcard__sd_rsp_data_in;
-      wire sdcard__sd_rsp_last_in;
-      wire sdcard__sd_rsp_ready_out;
-      wire sdcard__irq_out;
-      wire sdcard__dma_write_complete_out;
-      wire[31:0] sdcard__debug_status_out;
-      wire[31:0] sdcard__debug_state_out;
-      wire[31:0] sdcard__debug_count_out;
-      wire[31:0] sdcard__debug_len_out;
+    wire sdcard__axi_in__awvalid_in;
+    wire sdcard__axi_in__awready_out;
+    wire[23-1:0] sdcard__axi_in__awaddr_in;
+    wire[4-1:0] sdcard__axi_in__awid_in;
+    wire sdcard__axi_in__wvalid_in;
+    wire sdcard__axi_in__wready_out;
+    wire[256-1:0] sdcard__axi_in__wdata_in;
+    wire[unsigned'(64'(256))/64'h8-1:0] sdcard__axi_in__wstrb_in;
+    wire sdcard__axi_in__wlast_in;
+    wire sdcard__axi_in__bvalid_out;
+    wire sdcard__axi_in__bready_in;
+    wire[4-1:0] sdcard__axi_in__bid_out;
+    wire sdcard__axi_in__arvalid_in;
+    wire sdcard__axi_in__arready_out;
+    wire[23-1:0] sdcard__axi_in__araddr_in;
+    wire[4-1:0] sdcard__axi_in__arid_in;
+    wire sdcard__axi_in__rvalid_out;
+    wire sdcard__axi_in__rready_in;
+    wire[256-1:0] sdcard__axi_in__rdata_out;
+    wire sdcard__axi_in__rlast_out;
+    wire[4-1:0] sdcard__axi_in__rid_out;
+    wire sdcard__dma_out__awvalid_out;
+    wire sdcard__dma_out__awready_in;
+    wire[23-1:0] sdcard__dma_out__awaddr_out;
+    wire[4-1:0] sdcard__dma_out__awid_out;
+    wire sdcard__dma_out__wvalid_out;
+    wire sdcard__dma_out__wready_in;
+    wire[256-1:0] sdcard__dma_out__wdata_out;
+    wire[unsigned'(64'(256))/64'h8-1:0] sdcard__dma_out__wstrb_out;
+    wire sdcard__dma_out__wlast_out;
+    wire sdcard__dma_out__bvalid_in;
+    wire sdcard__dma_out__bready_out;
+    wire[4-1:0] sdcard__dma_out__bid_in;
+    wire sdcard__dma_out__arvalid_out;
+    wire sdcard__dma_out__arready_in;
+    wire[23-1:0] sdcard__dma_out__araddr_out;
+    wire[4-1:0] sdcard__dma_out__arid_out;
+    wire sdcard__dma_out__rvalid_in;
+    wire sdcard__dma_out__rready_out;
+    wire[256-1:0] sdcard__dma_out__rdata_in;
+    wire sdcard__dma_out__rlast_in;
+    wire[4-1:0] sdcard__dma_out__rid_in;
+    wire sdcard__sd_cmd_valid_out;
+    wire[8-1:0] sdcard__sd_cmd_data_out;
+    wire sdcard__sd_cmd_last_out;
+    wire sdcard__sd_cmd_ready_in;
+    wire sdcard__sd_rsp_valid_in;
+    wire[8-1:0] sdcard__sd_rsp_data_in;
+    wire sdcard__sd_rsp_last_in;
+    wire sdcard__sd_rsp_ready_out;
+    wire sdcard__irq_out;
+    wire sdcard__dma_write_complete_out;
+    wire[31:0] sdcard__debug_status_out;
+    wire[31:0] sdcard__debug_state_out;
+    wire[31:0] sdcard__debug_count_out;
+    wire[31:0] sdcard__debug_len_out;
     SDController #(
-        22
+        23
 ,       4
-,       64
+,       256
 ,       32
     ) sdcard (
         .clk(clk)
+,       .l2_clock(l2_clock)
 ,       .reset(reset)
 ,       .axi_in__awvalid_in(sdcard__axi_in__awvalid_in)
 ,       .axi_in__awready_out(sdcard__axi_in__awready_out)
@@ -819,6 +760,7 @@ module System (
 ,       .axi_in__wvalid_in(sdcard__axi_in__wvalid_in)
 ,       .axi_in__wready_out(sdcard__axi_in__wready_out)
 ,       .axi_in__wdata_in(sdcard__axi_in__wdata_in)
+,       .axi_in__wstrb_in(sdcard__axi_in__wstrb_in)
 ,       .axi_in__wlast_in(sdcard__axi_in__wlast_in)
 ,       .axi_in__bvalid_out(sdcard__axi_in__bvalid_out)
 ,       .axi_in__bready_in(sdcard__axi_in__bready_in)
@@ -839,6 +781,7 @@ module System (
 ,       .dma_out__wvalid_out(sdcard__dma_out__wvalid_out)
 ,       .dma_out__wready_in(sdcard__dma_out__wready_in)
 ,       .dma_out__wdata_out(sdcard__dma_out__wdata_out)
+,       .dma_out__wstrb_out(sdcard__dma_out__wstrb_out)
 ,       .dma_out__wlast_out(sdcard__dma_out__wlast_out)
 ,       .dma_out__bvalid_in(sdcard__dma_out__bvalid_in)
 ,       .dma_out__bready_out(sdcard__dma_out__bready_out)
@@ -879,53 +822,63 @@ module System (
         assign tribe__boot_hartid_in = boot_hartid_in;
         assign tribe__boot_dtb_addr_in = boot_dtb_addr_in;
         assign tribe__boot_priv_in = boot_priv_in;
-        assign tribe__external_cache_invalidate_in = sd_dma_cache_invalidate_reg;
+        assign tribe__external_cache_invalidate_in = ((((((sd_dma_cache_invalidate_reg) != '0) && !debug_core_out.memory_wait) && !tribe__dmem_read_out) && !tribe__dmem_write_out) != '0);
         assign tribe__memory_base_in = memory_base_in;
         assign tribe__memory_size_in = memory_size_in;
-        for (gi='h0;gi < 'h4;gi=gi+1) begin
+        assign tribe__dma_line_valid_in = ((0) != '0);
+        assign tribe__dma_line_addr_in = 32'(64'h0);
+        assign tribe__dma_line_data_in = (unsigned'(64'(64'h20))*64'h8)'('h0);
+        assign tribe__dma_line_keep_in = (unsigned'(64'(64'h20)))'('h0);
+        for (gi=64'h0;gi < 64'h4;gi=gi+1) begin
             assign tribe__mem_region_size_in[gi] = mem_region_size_in[gi];
-            assign tribe__axi_in__awvalid_in[gi] = 0;
-            assign tribe__axi_in__awaddr_in[gi] = unsigned'(22'(unsigned'(22'('h0))));
-            assign tribe__axi_in__awid_in[gi] = unsigned'(4'(unsigned'(4'('h0))));
-            assign tribe__axi_in__wvalid_in[gi] = 0;
-            assign tribe__axi_in__wdata_in[gi] = 'h0;
-            assign tribe__axi_in__wlast_in[gi] = 0;
-            assign tribe__axi_in__bready_in[gi] = 0;
-            assign tribe__axi_in__arvalid_in[gi] = 0;
-            assign tribe__axi_in__araddr_in[gi] = unsigned'(22'(unsigned'(22'('h0))));
-            assign tribe__axi_in__arid_in[gi] = unsigned'(4'(unsigned'(4'('h0))));
-            assign tribe__axi_in__rready_in[gi] = 0;
+            assign tribe__axi_in__awvalid_in[gi] = ((0) != '0);
+            assign tribe__axi_in__awaddr_in[gi] = 32'(64'h0);
+            assign tribe__axi_in__awid_in[gi] = 4'(64'h0);
+            assign tribe__axi_in__wvalid_in[gi] = ((0) != '0);
+            assign tribe__axi_in__wdata_in[gi] = (unsigned'(64'(64'h100)))'('h0);
+            assign tribe__axi_in__wstrb_in[gi] = (unsigned'(64'(64'h100))/64'h8)'('h0);
+            assign tribe__axi_in__wlast_in[gi] = ((0) != '0);
+            assign tribe__axi_in__bready_in[gi] = ((0) != '0);
+            assign tribe__axi_in__arvalid_in[gi] = ((0) != '0);
+            assign tribe__axi_in__araddr_in[gi] = 32'(64'h0);
+            assign tribe__axi_in__arid_in[gi] = 4'(64'h0);
+            assign tribe__axi_in__rready_in[gi] = ((0) != '0);
         end
-        assign tribe__axi_in__awvalid_in['h0] = accelerator__dma_out__awvalid_out;
-        assign tribe__axi_in__awaddr_in['h0] = unsigned'(22'(unsigned'(22'(unsigned'(32'(accelerator__dma_out__awaddr_out))))));
-        assign tribe__axi_in__awid_in['h0] = unsigned'(4'(unsigned'(4'(unsigned'(32'(accelerator__dma_out__awid_out))))));
-        assign tribe__axi_in__wvalid_in['h0] = accelerator__dma_out__wvalid_out;
-        assign tribe__axi_in__wdata_in['h0] = accelerator__dma_out__wdata_out;
-        assign tribe__axi_in__wlast_in['h0] = accelerator__dma_out__wlast_out;
-        assign tribe__axi_in__bready_in['h0] = accelerator__dma_out__bready_out;
-        assign tribe__axi_in__arvalid_in['h0] = accelerator__dma_out__arvalid_out;
-        assign tribe__axi_in__araddr_in['h0] = unsigned'(22'(unsigned'(22'(unsigned'(32'(accelerator__dma_out__araddr_out))))));
-        assign tribe__axi_in__arid_in['h0] = unsigned'(4'(unsigned'(4'(unsigned'(32'(accelerator__dma_out__arid_out))))));
-        assign tribe__axi_in__rready_in['h0] = accelerator__dma_out__rready_out;
-        assign tribe__axi_in__awvalid_in['h1] = sdcard__dma_out__awvalid_out;
-        assign tribe__axi_in__awaddr_in['h1] = unsigned'(22'(unsigned'(22'(unsigned'(32'(sdcard__dma_out__awaddr_out))))));
-        assign tribe__axi_in__awid_in['h1] = unsigned'(4'(unsigned'(4'(unsigned'(32'(sdcard__dma_out__awid_out))))));
-        assign tribe__axi_in__wvalid_in['h1] = sdcard__dma_out__wvalid_out;
-        assign tribe__axi_in__wdata_in['h1] = sdcard__dma_out__wdata_out;
-        assign tribe__axi_in__wlast_in['h1] = sdcard__dma_out__wlast_out;
-        assign tribe__axi_in__bready_in['h1] = sdcard__dma_out__bready_out;
-        assign tribe__axi_in__arvalid_in['h1] = sdcard__dma_out__arvalid_out;
-        assign tribe__axi_in__araddr_in['h1] = unsigned'(22'(unsigned'(22'(unsigned'(32'(sdcard__dma_out__araddr_out))))));
-        assign tribe__axi_in__arid_in['h1] = unsigned'(4'(unsigned'(4'(unsigned'(32'(sdcard__dma_out__arid_out))))));
-        assign tribe__axi_in__rready_in['h1] = sdcard__dma_out__rready_out;
+        assign tribe__axi_in__awvalid_in['h0] = ((accelerator__dma_out__awvalid_out) != '0);
+        assign tribe__axi_in__awaddr_in['h0] = 32'(unsigned'(64'(accelerator__dma_out__awaddr_out)));
+        assign tribe__axi_in__awid_in['h0] = 4'(unsigned'(64'(accelerator__dma_out__awid_out)));
+        assign tribe__axi_in__wvalid_in['h0] = ((accelerator__dma_out__wvalid_out) != '0);
+        assign tribe__axi_in__wdata_in['h0] = unsigned'(256'(accelerator__dma_out__wdata_out));
+        assign tribe__axi_in__wstrb_in['h0] = unsigned'(32'(accelerator__dma_out__wstrb_out));
+        assign tribe__axi_in__wlast_in['h0] = ((accelerator__dma_out__wlast_out) != '0);
+        assign tribe__axi_in__bready_in['h0] = ((accelerator__dma_out__bready_out) != '0);
+        assign tribe__axi_in__arvalid_in['h0] = ((accelerator__dma_out__arvalid_out) != '0);
+        assign tribe__axi_in__araddr_in['h0] = 32'(unsigned'(64'(accelerator__dma_out__araddr_out)));
+        assign tribe__axi_in__arid_in['h0] = 4'(unsigned'(64'(accelerator__dma_out__arid_out)));
+        assign tribe__axi_in__rready_in['h0] = ((accelerator__dma_out__rready_out) != '0);
+        assign tribe__axi_in__awvalid_in['h1] = ((sdcard__dma_out__awvalid_out) != '0);
+        assign tribe__axi_in__awaddr_in['h1] = 32'(unsigned'(64'(sdcard__dma_out__awaddr_out)));
+        assign tribe__axi_in__awid_in['h1] = 4'(unsigned'(64'(sdcard__dma_out__awid_out)));
+        assign tribe__axi_in__wvalid_in['h1] = ((sdcard__dma_out__wvalid_out) != '0);
+        assign tribe__axi_in__wdata_in['h1] = unsigned'(256'(sdcard__dma_out__wdata_out));
+        assign tribe__axi_in__wstrb_in['h1] = unsigned'(32'(sdcard__dma_out__wstrb_out));
+        assign tribe__axi_in__wlast_in['h1] = ((sdcard__dma_out__wlast_out) != '0);
+        assign tribe__axi_in__bready_in['h1] = ((sdcard__dma_out__bready_out) != '0);
+        assign tribe__axi_in__arvalid_in['h1] = ((sdcard__dma_out__arvalid_out) != '0);
+        assign tribe__axi_in__araddr_in['h1] = 32'(unsigned'(64'(sdcard__dma_out__araddr_out)));
+        assign tribe__axi_in__arid_in['h1] = 4'(unsigned'(64'(sdcard__dma_out__arid_out)));
+        assign tribe__axi_in__rready_in['h1] = ((sdcard__dma_out__rready_out) != '0);
         assign tribe__clint_msip_in = clint__msip_out;
         assign tribe__clint_mtip_in = clint__mtip_out;
+        assign tribe__time_lo_in = clint__debug_mtime_lo_out;
+        assign tribe__time_hi_in = clint__debug_mtime_hi_out;
         assign tribe__external_irq_in = plic__external_irq_out;
         assign axi_out__awvalid_out['h0] = tribe__axi_out__awvalid_out['h0];
         assign axi_out__awaddr_out['h0] = tribe__axi_out__awaddr_out['h0];
         assign axi_out__awid_out['h0] = tribe__axi_out__awid_out['h0];
         assign axi_out__wvalid_out['h0] = tribe__axi_out__wvalid_out['h0];
         assign axi_out__wdata_out['h0] = tribe__axi_out__wdata_out['h0];
+        assign axi_out__wstrb_out['h0] = tribe__axi_out__wstrb_out['h0];
         assign axi_out__wlast_out['h0] = tribe__axi_out__wlast_out['h0];
         assign axi_out__bready_out['h0] = tribe__axi_out__bready_out['h0];
         assign axi_out__arvalid_out['h0] = tribe__axi_out__arvalid_out['h0];
@@ -937,6 +890,7 @@ module System (
         assign axi_out__awid_out['h1] = tribe__axi_out__awid_out['h1];
         assign axi_out__wvalid_out['h1] = tribe__axi_out__wvalid_out['h1];
         assign axi_out__wdata_out['h1] = tribe__axi_out__wdata_out['h1];
+        assign axi_out__wstrb_out['h1] = tribe__axi_out__wstrb_out['h1];
         assign axi_out__wlast_out['h1] = tribe__axi_out__wlast_out['h1];
         assign axi_out__bready_out['h1] = tribe__axi_out__bready_out['h1];
         assign axi_out__arvalid_out['h1] = tribe__axi_out__arvalid_out['h1];
@@ -948,6 +902,7 @@ module System (
         assign mem2__axi_in__awid_in = tribe__axi_out__awid_out['h2];
         assign mem2__axi_in__wvalid_in = tribe__axi_out__wvalid_out['h2];
         assign mem2__axi_in__wdata_in = tribe__axi_out__wdata_out['h2];
+        assign mem2__axi_in__wstrb_in = tribe__axi_out__wstrb_out['h2];
         assign mem2__axi_in__wlast_in = tribe__axi_out__wlast_out['h2];
         assign mem2__axi_in__bready_in = tribe__axi_out__bready_out['h2];
         assign mem2__axi_in__arvalid_in = tribe__axi_out__arvalid_out['h2];
@@ -959,30 +914,31 @@ module System (
         assign iospace__slave_in__awid_in = tribe__axi_out__awid_out['h3];
         assign iospace__slave_in__wvalid_in = tribe__axi_out__wvalid_out['h3];
         assign iospace__slave_in__wdata_in = tribe__axi_out__wdata_out['h3];
+        assign iospace__slave_in__wstrb_in = tribe__axi_out__wstrb_out['h3];
         assign iospace__slave_in__wlast_in = tribe__axi_out__wlast_out['h3];
         assign iospace__slave_in__bready_in = tribe__axi_out__bready_out['h3];
         assign iospace__slave_in__arvalid_in = tribe__axi_out__arvalid_out['h3];
         assign iospace__slave_in__araddr_in = tribe__axi_out__araddr_out['h3];
         assign iospace__slave_in__arid_in = tribe__axi_out__arid_out['h3];
         assign iospace__slave_in__rready_in = tribe__axi_out__rready_out['h3];
-        assign accelerator__dma_out__awready_in = tribe__axi_in__awready_out['h0];
-        assign accelerator__dma_out__wready_in = tribe__axi_in__wready_out['h0];
-        assign accelerator__dma_out__bvalid_in = tribe__axi_in__bvalid_out['h0];
-        assign accelerator__dma_out__bid_in = tribe__axi_in__bid_out['h0];
-        assign accelerator__dma_out__arready_in = tribe__axi_in__arready_out['h0];
-        assign accelerator__dma_out__rvalid_in = tribe__axi_in__rvalid_out['h0];
-        assign accelerator__dma_out__rdata_in = tribe__axi_in__rdata_out['h0];
-        assign accelerator__dma_out__rlast_in = tribe__axi_in__rlast_out['h0];
-        assign accelerator__dma_out__rid_in = tribe__axi_in__rid_out['h0];
-        assign sdcard__dma_out__awready_in = tribe__axi_in__awready_out['h1];
-        assign sdcard__dma_out__wready_in = tribe__axi_in__wready_out['h1];
-        assign sdcard__dma_out__bvalid_in = tribe__axi_in__bvalid_out['h1];
-        assign sdcard__dma_out__bid_in = tribe__axi_in__bid_out['h1];
-        assign sdcard__dma_out__arready_in = tribe__axi_in__arready_out['h1];
-        assign sdcard__dma_out__rvalid_in = tribe__axi_in__rvalid_out['h1];
-        assign sdcard__dma_out__rdata_in = tribe__axi_in__rdata_out['h1];
-        assign sdcard__dma_out__rlast_in = tribe__axi_in__rlast_out['h1];
-        assign sdcard__dma_out__rid_in = tribe__axi_in__rid_out['h1];
+        assign accelerator__dma_out__awready_in = ((tribe__axi_in__awready_out['h0]) != '0);
+        assign accelerator__dma_out__wready_in = ((tribe__axi_in__wready_out['h0]) != '0);
+        assign accelerator__dma_out__bvalid_in = ((tribe__axi_in__bvalid_out['h0]) != '0);
+        assign accelerator__dma_out__bid_in = 4'(unsigned'(64'(tribe__axi_in__bid_out['h0])));
+        assign accelerator__dma_out__arready_in = ((tribe__axi_in__arready_out['h0]) != '0);
+        assign accelerator__dma_out__rvalid_in = ((tribe__axi_in__rvalid_out['h0]) != '0);
+        assign accelerator__dma_out__rdata_in = unsigned'(256'(tribe__axi_in__rdata_out['h0]));
+        assign accelerator__dma_out__rlast_in = ((tribe__axi_in__rlast_out['h0]) != '0);
+        assign accelerator__dma_out__rid_in = 4'(unsigned'(64'(tribe__axi_in__rid_out['h0])));
+        assign sdcard__dma_out__awready_in = ((tribe__axi_in__awready_out['h1]) != '0);
+        assign sdcard__dma_out__wready_in = ((tribe__axi_in__wready_out['h1]) != '0);
+        assign sdcard__dma_out__bvalid_in = ((tribe__axi_in__bvalid_out['h1]) != '0);
+        assign sdcard__dma_out__bid_in = 4'(unsigned'(64'(tribe__axi_in__bid_out['h1])));
+        assign sdcard__dma_out__arready_in = ((tribe__axi_in__arready_out['h1]) != '0);
+        assign sdcard__dma_out__rvalid_in = ((tribe__axi_in__rvalid_out['h1]) != '0);
+        assign sdcard__dma_out__rdata_in = unsigned'(256'(tribe__axi_in__rdata_out['h1]));
+        assign sdcard__dma_out__rlast_in = ((tribe__axi_in__rlast_out['h1]) != '0);
+        assign sdcard__dma_out__rid_in = 4'(unsigned'(64'(tribe__axi_in__rid_out['h1])));
         assign mem2__debugen_in=debugen_in;
         assign tribe__axi_out__awready_in['h2] = mem2__axi_in__awready_out;
         assign tribe__axi_out__wready_in['h2] = mem2__axi_in__wready_out;
@@ -993,21 +949,22 @@ module System (
         assign tribe__axi_out__rdata_in['h2] = mem2__axi_in__rdata_out;
         assign tribe__axi_out__rlast_in['h2] = mem2__axi_in__rlast_out;
         assign tribe__axi_out__rid_in['h2] = mem2__axi_in__rid_out;
-        assign iospace__region_base_in['h0] = unsigned'(32'('h0));
-        assign iospace__region_size_in['h0] = unsigned'(32'('h100));
-        assign iospace__region_base_in['h1] = unsigned'(32'('h100));
-        assign iospace__region_size_in['h1] = unsigned'(32'('hC000));
-        assign iospace__region_base_in['h2] = unsigned'(32'('hC100));
-        assign iospace__region_size_in['h2] = unsigned'(32'('h1000));
-        assign iospace__region_base_in['h3] = unsigned'(32'('hD100));
-        assign iospace__region_size_in['h3] = unsigned'(32'('h100));
-        assign iospace__region_base_in['h4] = unsigned'(32'('h10000));
-        assign iospace__region_size_in['h4] = unsigned'(32'('h210000));
+        assign iospace__region_base_in['h0] = 32'h0;
+        assign iospace__region_size_in['h0] = 32'h100;
+        assign iospace__region_base_in['h1] = 32'h100;
+        assign iospace__region_size_in['h1] = 32'hC000;
+        assign iospace__region_base_in['h2] = 32'hC100;
+        assign iospace__region_size_in['h2] = 32'h1000;
+        assign iospace__region_base_in['h3] = 32'hD100;
+        assign iospace__region_size_in['h3] = 32'h100;
+        assign iospace__region_base_in['h4] = 32'h10000;
+        assign iospace__region_size_in['h4] = 32'h210000;
         assign uart__axi_in__awvalid_in = iospace__masters_out__awvalid_out['h0];
         assign uart__axi_in__awaddr_in = iospace__masters_out__awaddr_out['h0];
         assign uart__axi_in__awid_in = iospace__masters_out__awid_out['h0];
         assign uart__axi_in__wvalid_in = iospace__masters_out__wvalid_out['h0];
         assign uart__axi_in__wdata_in = iospace__masters_out__wdata_out['h0];
+        assign uart__axi_in__wstrb_in = iospace__masters_out__wstrb_out['h0];
         assign uart__axi_in__wlast_in = iospace__masters_out__wlast_out['h0];
         assign uart__axi_in__bready_in = iospace__masters_out__bready_out['h0];
         assign uart__axi_in__arvalid_in = iospace__masters_out__arvalid_out['h0];
@@ -1019,6 +976,7 @@ module System (
         assign clint__axi_in__awid_in = iospace__masters_out__awid_out['h1];
         assign clint__axi_in__wvalid_in = iospace__masters_out__wvalid_out['h1];
         assign clint__axi_in__wdata_in = iospace__masters_out__wdata_out['h1];
+        assign clint__axi_in__wstrb_in = iospace__masters_out__wstrb_out['h1];
         assign clint__axi_in__wlast_in = iospace__masters_out__wlast_out['h1];
         assign clint__axi_in__bready_in = iospace__masters_out__bready_out['h1];
         assign clint__axi_in__arvalid_in = iospace__masters_out__arvalid_out['h1];
@@ -1030,6 +988,7 @@ module System (
         assign accelerator__axi_in__awid_in = iospace__masters_out__awid_out['h2];
         assign accelerator__axi_in__wvalid_in = iospace__masters_out__wvalid_out['h2];
         assign accelerator__axi_in__wdata_in = iospace__masters_out__wdata_out['h2];
+        assign accelerator__axi_in__wstrb_in = iospace__masters_out__wstrb_out['h2];
         assign accelerator__axi_in__wlast_in = iospace__masters_out__wlast_out['h2];
         assign accelerator__axi_in__bready_in = iospace__masters_out__bready_out['h2];
         assign accelerator__axi_in__arvalid_in = iospace__masters_out__arvalid_out['h2];
@@ -1041,6 +1000,7 @@ module System (
         assign sdcard__axi_in__awid_in = iospace__masters_out__awid_out['h3];
         assign sdcard__axi_in__wvalid_in = iospace__masters_out__wvalid_out['h3];
         assign sdcard__axi_in__wdata_in = iospace__masters_out__wdata_out['h3];
+        assign sdcard__axi_in__wstrb_in = iospace__masters_out__wstrb_out['h3];
         assign sdcard__axi_in__wlast_in = iospace__masters_out__wlast_out['h3];
         assign sdcard__axi_in__bready_in = iospace__masters_out__bready_out['h3];
         assign sdcard__axi_in__arvalid_in = iospace__masters_out__arvalid_out['h3];
@@ -1052,13 +1012,14 @@ module System (
         assign plic__axi_in__awid_in = iospace__masters_out__awid_out['h4];
         assign plic__axi_in__wvalid_in = iospace__masters_out__wvalid_out['h4];
         assign plic__axi_in__wdata_in = iospace__masters_out__wdata_out['h4];
+        assign plic__axi_in__wstrb_in = iospace__masters_out__wstrb_out['h4];
         assign plic__axi_in__wlast_in = iospace__masters_out__wlast_out['h4];
         assign plic__axi_in__bready_in = iospace__masters_out__bready_out['h4];
         assign plic__axi_in__arvalid_in = iospace__masters_out__arvalid_out['h4];
         assign plic__axi_in__araddr_in = iospace__masters_out__araddr_out['h4];
         assign plic__axi_in__arid_in = iospace__masters_out__arid_out['h4];
         assign plic__axi_in__rready_in = iospace__masters_out__rready_out['h4];
-        assign uart__uart_rx_valid_in = uart_rx_valid_in;
+        assign uart__uart_rx_valid_in = ((uart_rx_valid_in) != '0);
         assign uart__uart_rx_data_in = uart_rx_data_in;
         assign sdcard__sd_cmd_ready_in = sd_cmd_ready_in;
         assign sdcard__sd_rsp_valid_in = sd_rsp_valid_in;
@@ -1067,8 +1028,8 @@ module System (
         assign clint__set_mtimecmp_in = tribe__sbi_set_timer_out;
         assign clint__set_mtimecmp_lo_in = tribe__sbi_timer_lo_out;
         assign clint__set_mtimecmp_hi_in = tribe__sbi_timer_hi_out;
-        for (gi='h0;gi < 'h20;gi=gi+1) begin
-            assign plic__source_irq_in[gi] = 0;
+        for (gi=64'h0;gi < 64'h20;gi=gi+1) begin
+            assign plic__source_irq_in[gi] = ((0) != '0);
         end
         assign plic__source_irq_in['h1] = uart__irq_out;
         assign plic__source_irq_in['h2] = sdcard__irq_out;
@@ -1117,24 +1078,24 @@ module System (
         assign iospace__masters_out__rdata_in['h4] = plic__axi_in__rdata_out;
         assign iospace__masters_out__rlast_in['h4] = plic__axi_in__rlast_out;
         assign iospace__masters_out__rid_in['h4] = plic__axi_in__rid_out;
-        assign tribe__axi_out__awready_in['h0] = axi_out__awready_in['h0];
-        assign tribe__axi_out__wready_in['h0] = axi_out__wready_in['h0];
-        assign tribe__axi_out__bvalid_in['h0] = axi_out__bvalid_in['h0];
-        assign tribe__axi_out__bid_in['h0] = unsigned'(4'(axi_out__bid_in['h0]));
-        assign tribe__axi_out__arready_in['h0] = axi_out__arready_in['h0];
-        assign tribe__axi_out__rvalid_in['h0] = axi_out__rvalid_in['h0];
+        assign tribe__axi_out__awready_in['h0] = ((axi_out__awready_in['h0]) != '0);
+        assign tribe__axi_out__wready_in['h0] = ((axi_out__wready_in['h0]) != '0);
+        assign tribe__axi_out__bvalid_in['h0] = ((axi_out__bvalid_in['h0]) != '0);
+        assign tribe__axi_out__bid_in['h0] = axi_out__bid_in['h0];
+        assign tribe__axi_out__arready_in['h0] = ((axi_out__arready_in['h0]) != '0);
+        assign tribe__axi_out__rvalid_in['h0] = ((axi_out__rvalid_in['h0]) != '0);
         assign tribe__axi_out__rdata_in['h0] = axi_out__rdata_in['h0];
-        assign tribe__axi_out__rlast_in['h0] = axi_out__rlast_in['h0];
-        assign tribe__axi_out__rid_in['h0] = unsigned'(4'(axi_out__rid_in['h0]));
-        assign tribe__axi_out__awready_in['h1] = axi_out__awready_in['h1];
-        assign tribe__axi_out__wready_in['h1] = axi_out__wready_in['h1];
-        assign tribe__axi_out__bvalid_in['h1] = axi_out__bvalid_in['h1];
-        assign tribe__axi_out__bid_in['h1] = unsigned'(4'(axi_out__bid_in['h1]));
-        assign tribe__axi_out__arready_in['h1] = axi_out__arready_in['h1];
-        assign tribe__axi_out__rvalid_in['h1] = axi_out__rvalid_in['h1];
+        assign tribe__axi_out__rlast_in['h0] = ((axi_out__rlast_in['h0]) != '0);
+        assign tribe__axi_out__rid_in['h0] = axi_out__rid_in['h0];
+        assign tribe__axi_out__awready_in['h1] = ((axi_out__awready_in['h1]) != '0);
+        assign tribe__axi_out__wready_in['h1] = ((axi_out__wready_in['h1]) != '0);
+        assign tribe__axi_out__bvalid_in['h1] = ((axi_out__bvalid_in['h1]) != '0);
+        assign tribe__axi_out__bid_in['h1] = axi_out__bid_in['h1];
+        assign tribe__axi_out__arready_in['h1] = ((axi_out__arready_in['h1]) != '0);
+        assign tribe__axi_out__rvalid_in['h1] = ((axi_out__rvalid_in['h1]) != '0);
         assign tribe__axi_out__rdata_in['h1] = axi_out__rdata_in['h1];
-        assign tribe__axi_out__rlast_in['h1] = axi_out__rlast_in['h1];
-        assign tribe__axi_out__rid_in['h1] = unsigned'(4'(axi_out__rid_in['h1]));
+        assign tribe__axi_out__rlast_in['h1] = ((axi_out__rlast_in['h1]) != '0);
+        assign tribe__axi_out__rid_in['h1] = axi_out__rid_in['h1];
         assign tribe__axi_out__awready_in['h3] = iospace__slave_in__awready_out;
         assign tribe__axi_out__wready_in['h3] = iospace__slave_in__wready_out;
         assign tribe__axi_out__bvalid_in['h3] = iospace__slave_in__bvalid_out;
@@ -1148,7 +1109,20 @@ module System (
 
     task _work (input logic reset);
     begin: _work
-        sd_dma_cache_invalidate_reg_tmp = unsigned'(1'(sdcard__dma_write_complete_out));
+        logic sd_dma_cache_invalidate_ready;
+        sd_dma_cache_invalidate_ready=1;
+        sd_dma_cache_invalidate_ready=(!debug_core_out.memory_wait && !tribe__dmem_read_out) && !tribe__dmem_write_out;
+        if (sdcard__dma_write_complete_out) begin
+            sd_dma_cache_invalidate_reg_tmp = 1;
+        end
+        else begin
+            if (((sd_dma_cache_invalidate_reg) != '0) && sd_dma_cache_invalidate_ready) begin
+                sd_dma_cache_invalidate_reg_tmp = 0;
+            end
+            else begin
+                sd_dma_cache_invalidate_reg_tmp = sd_dma_cache_invalidate_reg;
+            end
+        end
         if (reset) begin
             sd_dma_cache_invalidate_reg_tmp = '0;
         end
@@ -1160,16 +1134,29 @@ module System (
     end
     endtask
 
-    always @(posedge clk) begin
+    task _work_l2_clock (input logic reset);
+    begin: _work_l2_clock
+    end
+    endtask
+
+    always_ff @(posedge clk) begin
         sd_dma_cache_invalidate_reg_tmp = sd_dma_cache_invalidate_reg;
 
-        _work(reset);
+            _work(reset);
 
         sd_dma_cache_invalidate_reg <= sd_dma_cache_invalidate_reg_tmp;
     end
 
-    always @(negedge clk) begin
-        _work_neg(reset);
+    always_ff @(negedge clk) begin
+
+            _work_neg(reset);
+
+    end
+
+    always_ff @(posedge l2_clock) begin
+
+            _work_l2_clock(reset);
+
     end
 
     assign uart_rx_ready_out = uart__uart_rx_ready_out;
@@ -1200,91 +1187,21 @@ module System (
 
     assign imem_read_addr_out = tribe__imem_read_addr_out;
 
-    assign debug_immu_ptw_read_out = tribe__debug_immu_ptw_read_out;
+    assign debug_core_out = tribe__debug_core_out;
 
-    assign debug_immu_ptw_addr_out = tribe__debug_immu_ptw_addr_out;
+    assign debug_mmu_out = tribe__debug_mmu_out;
 
-    assign debug_immu_busy_out = tribe__debug_immu_busy_out;
+    assign debug_cache_out = tribe__debug_cache_out;
 
-    assign debug_immu_fault_out = tribe__debug_immu_fault_out;
+    assign debug_wb_out = tribe__debug_wb_out;
 
-    assign debug_immu_paddr_out = tribe__debug_immu_paddr_out;
+    assign debug_csr_out = tribe__debug_csr_out;
 
-    assign debug_immu_last_addr_out = tribe__debug_immu_last_addr_out;
+    assign debug_regs_out = tribe__debug_regs_out;
 
-    assign debug_immu_last_pte_out = tribe__debug_immu_last_pte_out;
+    assign debug_branch_out = tribe__debug_branch_out;
 
-    assign debug_icache_read_valid_out = tribe__debug_icache_read_valid_out;
-
-    assign debug_icache_read_addr_out = tribe__debug_icache_read_addr_out;
-
-    assign debug_fetch_valid_out = tribe__debug_fetch_valid_out;
-
-    assign debug_memory_wait_out = tribe__debug_memory_wait_out;
-
-    assign debug_wb_load_ready_out = tribe__debug_wb_load_ready_out;
-
-    assign debug_wb_mem_wait_out = tribe__debug_wb_mem_wait_out;
-
-    assign debug_icache_read_in_out = tribe__debug_icache_read_in_out;
-
-    assign debug_icache_stall_in_out = tribe__debug_icache_stall_in_out;
-
-    assign debug_dmmu_ptw_read_out = tribe__debug_dmmu_ptw_read_out;
-
-    assign debug_dmmu_ptw_addr_out = tribe__debug_dmmu_ptw_addr_out;
-
-    assign debug_dmmu_busy_out = tribe__debug_dmmu_busy_out;
-
-    assign debug_dmmu_fault_out = tribe__debug_dmmu_fault_out;
-
-    assign debug_mmu_ptw_word_out = tribe__debug_mmu_ptw_word_out;
-
-    assign debug_pc_out = tribe__debug_pc_out;
-
-    assign debug_satp_out = tribe__debug_satp_out;
-
-    assign debug_mstatus_out = tribe__debug_mstatus_out;
-
-    assign debug_mtvec_out = tribe__debug_mtvec_out;
-
-    assign debug_mepc_out = tribe__debug_mepc_out;
-
-    assign debug_mcause_out = tribe__debug_mcause_out;
-
-    assign debug_mtval_out = tribe__debug_mtval_out;
-
-    assign debug_sepc_out = tribe__debug_sepc_out;
-
-    assign debug_stvec_out = tribe__debug_stvec_out;
-
-    assign debug_scause_out = tribe__debug_scause_out;
-
-    assign debug_stval_out = tribe__debug_stval_out;
-
-    assign debug_priv_out = tribe__debug_priv_out;
-
-    assign debug_ra_out = tribe__debug_ra_out;
-
-    assign debug_regs_write_out = tribe__debug_regs_write_out;
-
-    assign debug_regs_write_actual_out = tribe__debug_regs_write_actual_out;
-
-    assign debug_regs_wr_id_out = tribe__debug_regs_wr_id_out;
-
-    assign debug_regs_data_out = tribe__debug_regs_data_out;
-
-    assign debug_branch_taken_now_out = tribe__debug_branch_taken_now_out;
-
-    assign debug_branch_target_now_out = tribe__debug_branch_target_now_out;
-
-    assign debug_decode_instr_out = tribe__debug_decode_instr_out;
-
-    assign debug_decode_pc_out = tribe__debug_decode_pc_out;
-
-    assign debug_decode_br_out = tribe__debug_decode_br_out;
-
-    assign debug_decode_imm_out = tribe__debug_decode_imm_out;
+    assign debug_decode_out = tribe__debug_decode_out;
 
 
 endmodule

@@ -1,6 +1,6 @@
 package Sys_pkg;
 
-typedef enum {
+typedef enum logic[32-1:0] {
     SNONE,
     ECALL,
     EBREAK,
@@ -9,7 +9,8 @@ typedef enum {
     WFI,
     FENCEI,
     SFENCE_VMA,
-    TRAP
+    TRAP,
+    FENCE
 } Sys;
 
 

@@ -37,13 +37,9 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 
     // regs and combs
     DecodeFetchint_int_0_0_State state_comb;
-;
     logic[7:0] rs1_out_comb;
-;
     logic[7:0] rs2_out_comb;
-;
     logic stall_comb;
-;
     DecodeFetchint_int_0_0_State[LENGTH - ID-1:0] PipelineStage___state_reg;
 
     // members
@@ -58,28 +54,28 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,       input logic[31:0] bits
     );
         logic signed[31:0] m;
-        m = 'h1 <<< ((bits - 'h1));
-        return ((val ^ m)) - m;
+        m = signed'(32'('h1 <<< ((bits - 32'h1))));
+        return signed'(32'(((val ^ unsigned'(32'(m)))) - unsigned'(32'(m))));
     endfunction
 
     function logic signed[31:0] Instr___imm_I (input Instr _this);
-        return Instr___sext(_this, _this.i.imm11_0, 'hC);
+        return Instr___sext(_this, _this.i.imm11_0, 32'hC);
     endfunction
 
     function logic signed[31:0] Instr___imm_S (input Instr _this);
-        return Instr___sext(_this, _this.s.imm4_0 | ((_this.s.imm11_5 <<< 'h5)), 'hC);
+        return Instr___sext(_this, unsigned'(32'(signed'(32'(_this.s.imm4_0)) | ((signed'(32'(_this.s.imm11_5)) <<< 'h5)))), 32'hC);
     endfunction
 
     function logic signed[31:0] Instr___imm_B (input Instr _this);
-        return Instr___sext(_this, ((((_this.b.imm4_1 <<< 'h1)) | ((_this.b.imm11 <<< 'hB))) | ((_this.b.imm10_5 <<< 'h5))) | ((_this.b.imm12 <<< 'hC)), 'hD);
+        return Instr___sext(_this, unsigned'(32'(((((signed'(32'(_this.b.imm4_1)) <<< 'h1)) | ((signed'(32'(_this.b.imm11)) <<< 'hB))) | ((signed'(32'(_this.b.imm10_5)) <<< 'h5))) | ((signed'(32'(_this.b.imm12)) <<< 'hC)))), 32'hD);
     endfunction
 
     function logic signed[31:0] Instr___imm_J (input Instr _this);
-        return Instr___sext(_this, ((((_this.j.imm10_1 <<< 'h1)) | ((_this.j.imm11 <<< 'hB))) | ((_this.j.imm19_12 <<< 'hC))) | ((_this.j.imm20 <<< 'h14)), 'h15);
+        return Instr___sext(_this, unsigned'(32'(((((signed'(32'(_this.j.imm10_1)) <<< 'h1)) | ((signed'(32'(_this.j.imm11)) <<< 'hB))) | ((signed'(32'(_this.j.imm19_12)) <<< 'hC))) | ((signed'(32'(_this.j.imm20)) <<< 'h14)))), 32'h15);
     endfunction
 
     function logic signed[31:0] Instr___imm_U (input Instr _this);
-        return signed'(32'(_this.u.imm31_12 <<< 'hC));
+        return signed'(32'(signed'(32'(_this.u.imm31_12)) <<< 'hC));
     endfunction
 
     task Instr___decode (
@@ -88,7 +84,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     );
     begin: Instr___decode
         state_out = 0;
-        if (_this.r.opcode == 'h3) begin
+        if (signed'(32'(_this.r.opcode)) == 32'sh3) begin
             state_out.rd=_this.i.rd;
             state_out.imm=Instr___imm_I(_this);
             state_out.mem_op=Mem_pkg::LOAD;
@@ -98,7 +94,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
             state_out.rs1=_this.i.rs1;
         end
         else begin
-            if (_this.r.opcode == 'h23) begin
+            if (signed'(32'(_this.r.opcode)) == 32'sh23) begin
                 state_out.imm=Instr___imm_S(_this);
                 state_out.mem_op=Mem_pkg::STORE;
                 state_out.alu_op=Alu_pkg::ADD;
@@ -107,11 +103,11 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                 state_out.rs2=_this.s.rs2;
             end
             else begin
-                if (_this.r.opcode == 'h13) begin
+                if (signed'(32'(_this.r.opcode)) == 32'sh13) begin
                     state_out.rd=_this.i.rd;
                     state_out.imm=Instr___imm_I(_this);
                     state_out.wb_op=Wb_pkg::ALU;
-                    case (_this.i.funct3)
+                    case (signed'(32'(_this.i.funct3)))
                     'h0: begin
                         state_out.alu_op=Alu_pkg::ADD;
                     end
@@ -134,22 +130,22 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                         state_out.alu_op=Alu_pkg::SLL;
                     end
                     'h5: begin
-                        state_out.alu_op=(((_this.i.imm11_0 >>> 'hA)) & 'h1) ? (Alu_pkg::SRA) : (Alu_pkg::SRL);
+                        state_out.alu_op=(((((signed'(32'(_this.i.imm11_0)) >>> 32'shA)) & 'h1) != '0)) ? (Alu_pkg::SRA) : (Alu_pkg::SRL);
                     end
                     endcase
                     state_out.funct3=_this.i.funct3;
                     state_out.rs1=_this.i.rs1;
                 end
                 else begin
-                    if (_this.r.opcode == 'h33) begin
+                    if (signed'(32'(_this.r.opcode)) == 32'sh33) begin
                         state_out.rd=_this.r.rd;
                         state_out.wb_op=Wb_pkg::ALU;
-                        case (_this.r.funct3)
+                        case (signed'(32'(_this.r.funct3)))
                         'h0: begin
-                            state_out.alu_op=((_this.r.funct7 == 'h20)) ? (Alu_pkg::SUB) : ((((_this.r.funct7 == 'h1)) ? (Alu_pkg::MUL) : (Alu_pkg::ADD)));
+                            state_out.alu_op=((signed'(32'(_this.r.funct7)) == 32'sh20)) ? (Alu_pkg::SUB) : ((((signed'(32'(_this.r.funct7)) == 32'sh1)) ? (Alu_pkg::MUL) : (Alu_pkg::ADD)));
                         end
                         'h7: begin
-                            state_out.alu_op=((_this.r.funct7 == 'h1)) ? (Alu_pkg::REM) : (Alu_pkg::AND);
+                            state_out.alu_op=((signed'(32'(_this.r.funct7)) == 32'sh1)) ? (Alu_pkg::REM) : (Alu_pkg::AND);
                         end
                         'h6: begin
                             state_out.alu_op=Alu_pkg::OR;
@@ -161,13 +157,13 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                             state_out.alu_op=Alu_pkg::SLL;
                         end
                         'h5: begin
-                            state_out.alu_op=((_this.r.funct7 == 'h20)) ? (Alu_pkg::SRA) : ((((_this.r.funct7 == 'h1)) ? (Alu_pkg::DIV) : (Alu_pkg::SRL)));
+                            state_out.alu_op=((signed'(32'(_this.r.funct7)) == 32'sh20)) ? (Alu_pkg::SRA) : ((((signed'(32'(_this.r.funct7)) == 32'sh1)) ? (Alu_pkg::DIV) : (Alu_pkg::SRL)));
                         end
                         'h2: begin
                             state_out.alu_op=Alu_pkg::SLT;
                         end
                         'h3: begin
-                            state_out.alu_op=((_this.r.funct7 == 'h1)) ? (Alu_pkg::MULH) : (Alu_pkg::SLTU);
+                            state_out.alu_op=((signed'(32'(_this.r.funct7)) == 32'sh1)) ? (Alu_pkg::MULH) : (Alu_pkg::SLTU);
                         end
                         endcase
                         state_out.funct3=_this.r.funct3;
@@ -175,10 +171,10 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                         state_out.rs2=_this.r.rs2;
                     end
                     else begin
-                        if (_this.r.opcode == 'h63) begin
+                        if (signed'(32'(_this.r.opcode)) == 32'sh63) begin
                             state_out.imm=Instr___imm_B(_this);
                             state_out.br_op=Br_pkg::BNONE;
-                            case (_this.b.funct3)
+                            case (signed'(32'(_this.b.funct3)))
                             'h0: begin
                                 state_out.br_op=Br_pkg::BEQ;
                                 state_out.alu_op=Alu_pkg::SLTU;
@@ -209,14 +205,14 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                             state_out.rs2=_this.b.rs2;
                         end
                         else begin
-                            if (_this.r.opcode == 'h6F) begin
+                            if (signed'(32'(_this.r.opcode)) == 32'sh6F) begin
                                 state_out.rd=_this.j.rd;
                                 state_out.imm=Instr___imm_J(_this);
                                 state_out.br_op=Br_pkg::JAL;
                                 state_out.wb_op=Wb_pkg::PC4;
                             end
                             else begin
-                                if (_this.r.opcode == 'h67) begin
+                                if (signed'(32'(_this.r.opcode)) == 32'sh67) begin
                                     state_out.rd=_this.i.rd;
                                     state_out.imm=Instr___imm_I(_this);
                                     state_out.br_op=Br_pkg::JALR;
@@ -224,14 +220,14 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                                     state_out.rs1=_this.i.rs1;
                                 end
                                 else begin
-                                    if (_this.r.opcode == 'h37) begin
+                                    if (signed'(32'(_this.r.opcode)) == 32'sh37) begin
                                         state_out.rd=_this.u.rd;
                                         state_out.imm=Instr___imm_U(_this);
                                         state_out.alu_op=Alu_pkg::PASS;
                                         state_out.wb_op=Wb_pkg::ALU;
                                     end
                                     else begin
-                                        if (_this.r.opcode == 'h17) begin
+                                        if (signed'(32'(_this.r.opcode)) == 32'sh17) begin
                                             state_out.rd=_this.u.rd;
                                             state_out.imm=Instr___imm_U(_this);
                                             state_out.alu_op=Alu_pkg::ADD;
@@ -253,14 +249,14 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 ,       input logic signed[31:0] hi
 ,       input logic signed[31:0] lo
     );
-        return ((_this.raw >>> lo)) & (((('h1 <<< (((hi - lo) + 'h1)))) - 'h1));
+        return ((_this.raw >>> lo)) & (((('h1 <<< (((hi - lo) + 'h1)))) - 32'h1));
     endfunction
 
     function logic[31:0] Instr___bit (
         input Instr _this
 ,       input logic signed[31:0] lo
     );
-        return ((_this.raw >>> lo)) & 'h1;
+        return ((_this.raw >>> lo)) & 32'h1;
     endfunction
 
     task Instr___decode16 (
@@ -270,28 +266,28 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     begin: Instr___decode16
         logic signed[31:0] imm_tmp;
         state_out = 0;
-        state_out.funct3='h2;
-        if (_this.c.opcode == 'h0) begin
-            if (_this.c.funct3 == 'h0) begin
-                state_out.rd=_this.c.rd_p + 'h8;
-                state_out.rs1='h2;
+        state_out.funct3=8'h2;
+        if (signed'(32'(_this.c.opcode)) == 32'sh0) begin
+            if (signed'(32'(_this.c.funct3)) == 32'sh0) begin
+                state_out.rd=signed'(32'(_this.c.rd_p)) + 'h8;
+                state_out.rs1=8'h2;
                 state_out.imm=(((Instr___bits(_this, 'hA, 'h7) <<< 'h6)) | ((Instr___bits(_this, 'hC, 'hB) <<< 'h4))) | ((Instr___bits(_this, 'h6, 'h5) <<< 'h2));
                 state_out.alu_op=Alu_pkg::ADD;
                 state_out.wb_op=Wb_pkg::ALU;
             end
             else begin
-                if (_this.c.funct3 == 'h2) begin
-                    state_out.rd=_this.c.rd_p + 'h8;
-                    state_out.rs1=_this.c.rs1_p + 'h8;
+                if (signed'(32'(_this.c.funct3)) == 32'sh2) begin
+                    state_out.rd=signed'(32'(_this.c.rd_p)) + 'h8;
+                    state_out.rs1=signed'(32'(_this.c.rs1_p)) + 'h8;
                     state_out.imm=(((Instr___bit(_this, 'h5) <<< 'h6)) | ((Instr___bits(_this, 'hC, 'hA) <<< 'h3))) | ((Instr___bit(_this, 'h6) <<< 'h2));
                     state_out.alu_op=Alu_pkg::ADD;
                     state_out.mem_op=Mem_pkg::LOAD;
                     state_out.wb_op=Wb_pkg::MEM;
                 end
                 else begin
-                    if (_this.c.funct3 == 'h6) begin
-                        state_out.rs1=_this.c.rs1_p + 'h8;
-                        state_out.rs2=_this.c.rd_p + 'h8;
+                    if (signed'(32'(_this.c.funct3)) == 32'sh6) begin
+                        state_out.rs1=signed'(32'(_this.c.rs1_p)) + 'h8;
+                        state_out.rs2=signed'(32'(_this.c.rd_p)) + 'h8;
                         state_out.imm=(((Instr___bit(_this, 'h5) <<< 'h6)) | ((Instr___bits(_this, 'hC, 'hA) <<< 'h3))) | ((Instr___bit(_this, 'h6) <<< 'h2));
                         state_out.alu_op=Alu_pkg::ADD;
                         state_out.mem_op=Mem_pkg::STORE;
@@ -300,75 +296,75 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
             end
         end
         else begin
-            if (_this.c.opcode == 'h1) begin
-                if (_this.c.funct3 == 'h0) begin
+            if (signed'(32'(_this.c.opcode)) == 32'sh1) begin
+                if (signed'(32'(_this.c.funct3)) == 32'sh0) begin
                     state_out.rd=_this.q1.rs1;
                     state_out.rs1=_this.q1.rs1;
                     imm_tmp=((Instr___bit(_this, 'hC) <<< 'h5)) | Instr___bits(_this, 'h6, 'h2);
-                    imm_tmp=((imm_tmp <<< 'h1A)) >>> 'h1A;
+                    imm_tmp=signed'(32'(((imm_tmp <<< 'h1A)))) >>> 32'sh1A;
                     state_out.imm=imm_tmp;
                     state_out.alu_op=Alu_pkg::ADD;
                     state_out.wb_op=Wb_pkg::ALU;
                 end
                 else begin
-                    if (_this.c.funct3 == 'h1) begin
-                        state_out.rd='h1;
+                    if (signed'(32'(_this.c.funct3)) == 32'sh1) begin
+                        state_out.rd=8'h1;
                         state_out.wb_op=Wb_pkg::PC2;
                         state_out.br_op=Br_pkg::JAL;
-                        state_out.imm=((((((((_this.c.b12 <<< 'hB)) | ((Instr___bit(_this, 'h8) <<< 'hA))) | ((Instr___bits(_this, 'hA, 'h9) <<< 'h8))) | ((Instr___bit(_this, 'h6) <<< 'h7))) | ((Instr___bit(_this, 'h7) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bit(_this, 'hB) <<< 'h4))) | ((Instr___bits(_this, 'h5, 'h3) <<< 'h1));
+                        state_out.imm=((((((unsigned'(32'(((signed'(32'(_this.c.b12)) <<< 'hB)))) | ((Instr___bit(_this, 'h8) <<< 'hA))) | ((Instr___bits(_this, 'hA, 'h9) <<< 'h8))) | ((Instr___bit(_this, 'h6) <<< 'h7))) | ((Instr___bit(_this, 'h7) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bit(_this, 'hB) <<< 'h4))) | ((Instr___bits(_this, 'h5, 'h3) <<< 'h1));
                     end
                     else begin
-                        if (_this.c.funct3 == 'h2) begin
+                        if (signed'(32'(_this.c.funct3)) == 32'sh2) begin
                             state_out.rd=_this.q1.rs1;
                             imm_tmp=((Instr___bit(_this, 'hC) <<< 'h5)) | Instr___bits(_this, 'h6, 'h2);
-                            imm_tmp=((imm_tmp <<< 'h1A)) >>> 'h1A;
+                            imm_tmp=signed'(32'(((imm_tmp <<< 'h1A)))) >>> 32'sh1A;
                             state_out.imm=imm_tmp;
                             state_out.alu_op=Alu_pkg::PASS;
                             state_out.wb_op=Wb_pkg::ALU;
                         end
                         else begin
-                            if (_this.c.funct3 == 'h3) begin
-                                state_out.rd='h2;
-                                state_out.rs1='h2;
+                            if (signed'(32'(_this.c.funct3)) == 32'sh3) begin
+                                state_out.rd=8'h2;
+                                state_out.rs1=8'h2;
                                 imm_tmp=((((((Instr___bit(_this, 'hC) <<< 'h9)) | ((Instr___bit(_this, 'h4) <<< 'h8))) | ((Instr___bit(_this, 'h3) <<< 'h7))) | ((Instr___bit(_this, 'h5) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bit(_this, 'h6) <<< 'h4));
-                                imm_tmp=((imm_tmp <<< 'h16)) >>> 'h16;
+                                imm_tmp=signed'(32'(((imm_tmp <<< 'h16)))) >>> 32'sh16;
                                 state_out.imm=imm_tmp;
                                 state_out.alu_op=Alu_pkg::ADD;
                                 state_out.wb_op=Wb_pkg::ALU;
                             end
                             else begin
-                                if (_this.c.funct3 == 'h4) begin
-                                    if (_this.c.bits11_10 == 'h0) begin
-                                        state_out.rd=_this.c.rs1_p + 'h8;
-                                        state_out.rs1=_this.c.rs1_p + 'h8;
+                                if (signed'(32'(_this.c.funct3)) == 32'sh4) begin
+                                    if (signed'(32'(_this.c.bits11_10)) == 32'sh0) begin
+                                        state_out.rd=signed'(32'(_this.c.rs1_p)) + 'h8;
+                                        state_out.rs1=signed'(32'(_this.c.rs1_p)) + 'h8;
                                         state_out.imm=Instr___bits(_this, 'h6, 'h2);
                                         state_out.alu_op=Alu_pkg::SRL;
                                         state_out.wb_op=Wb_pkg::ALU;
                                     end
                                     else begin
-                                        if (_this.c.bits11_10 == 'h1) begin
-                                            state_out.rd=_this.c.rs1_p + 'h8;
-                                            state_out.rs1=_this.c.rs1_p + 'h8;
+                                        if (signed'(32'(_this.c.bits11_10)) == 32'sh1) begin
+                                            state_out.rd=signed'(32'(_this.c.rs1_p)) + 'h8;
+                                            state_out.rs1=signed'(32'(_this.c.rs1_p)) + 'h8;
                                             state_out.imm=Instr___bits(_this, 'h6, 'h2);
                                             state_out.alu_op=Alu_pkg::SRA;
                                             state_out.wb_op=Wb_pkg::ALU;
                                         end
                                         else begin
-                                            if (_this.c.bits11_10 == 'h2) begin
-                                                state_out.rd=_this.c.rs1_p + 'h8;
-                                                state_out.rs1=_this.c.rs1_p + 'h8;
+                                            if (signed'(32'(_this.c.bits11_10)) == 32'sh2) begin
+                                                state_out.rd=signed'(32'(_this.c.rs1_p)) + 'h8;
+                                                state_out.rs1=signed'(32'(_this.c.rs1_p)) + 'h8;
                                                 imm_tmp=((Instr___bit(_this, 'hC) <<< 'h5)) | Instr___bits(_this, 'h6, 'h2);
-                                                imm_tmp=((imm_tmp <<< 'h1A)) >>> 'h1A;
+                                                imm_tmp=signed'(32'(((imm_tmp <<< 'h1A)))) >>> 32'sh1A;
                                                 state_out.imm=imm_tmp;
                                                 state_out.alu_op=Alu_pkg::AND;
                                                 state_out.wb_op=Wb_pkg::ALU;
                                             end
                                             else begin
-                                                if ((_this.c.bits11_10 == 'h3) && (_this.c.b12 == 'h0)) begin
+                                                if ((signed'(32'(_this.c.bits11_10)) == 32'sh3) && (signed'(32'(_this.c.b12)) == 32'sh0)) begin
                                                     state_out.rd=_this.q2.rs1;
                                                     state_out.rs1=_this.q2.rs1;
                                                     state_out.rs2=_this.q2.rs2;
-                                                    state_out.alu_op=(_this.c.bits6_5 == 'h0) ? (Alu_pkg::SUB) : (((_this.c.bits6_5 == 'h1) ? (Alu_pkg::XOR) : (((_this.c.bits6_5 == 'h2) ? (Alu_pkg::OR) : (Alu_pkg::AND)))));
+                                                    state_out.alu_op=(signed'(32'(_this.c.bits6_5)) == 32'sh0) ? (Alu_pkg::SUB) : (((signed'(32'(_this.c.bits6_5)) == 32'sh1) ? (Alu_pkg::XOR) : (((signed'(32'(_this.c.bits6_5)) == 32'sh2) ? (Alu_pkg::OR) : (Alu_pkg::AND)))));
                                                     state_out.wb_op=Wb_pkg::ALU;
                                                 end
                                             end
@@ -376,29 +372,29 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                                     end
                                 end
                                 else begin
-                                    if (_this.c.funct3 == 'h5) begin
-                                        state_out.rd='h0;
+                                    if (signed'(32'(_this.c.funct3)) == 32'sh5) begin
+                                        state_out.rd=8'h0;
                                         state_out.br_op=Br_pkg::JAL;
-                                        state_out.imm=((((((((_this.c.b12 <<< 'hB)) | ((Instr___bit(_this, 'h8) <<< 'hA))) | ((Instr___bits(_this, 'hA, 'h9) <<< 'h8))) | ((Instr___bit(_this, 'h6) <<< 'h7))) | ((Instr___bit(_this, 'h7) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bit(_this, 'hB) <<< 'h4))) | ((Instr___bits(_this, 'h5, 'h3) <<< 'h1));
+                                        state_out.imm=((((((unsigned'(32'(((signed'(32'(_this.c.b12)) <<< 'hB)))) | ((Instr___bit(_this, 'h8) <<< 'hA))) | ((Instr___bits(_this, 'hA, 'h9) <<< 'h8))) | ((Instr___bit(_this, 'h6) <<< 'h7))) | ((Instr___bit(_this, 'h7) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bit(_this, 'hB) <<< 'h4))) | ((Instr___bits(_this, 'h5, 'h3) <<< 'h1));
                                     end
                                     else begin
-                                        if (_this.c.funct3 == 'h6) begin
-                                            state_out.rs1=_this.c.rs1_p + 'h8;
+                                        if (signed'(32'(_this.c.funct3)) == 32'sh6) begin
+                                            state_out.rs1=signed'(32'(_this.c.rs1_p)) + 'h8;
                                             state_out.br_op=Br_pkg::BEQZ;
                                             state_out.alu_op=Alu_pkg::SLTU;
-                                            state_out.imm=(((((_this.c.b12 <<< 'h8)) | ((Instr___bits(_this, 'h6, 'h5) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bits(_this, 'hB, 'hA) <<< 'h3))) | ((Instr___bits(_this, 'h4, 'h3) <<< 'h1));
-                                            if (_this.c.b12) begin
-                                                state_out.imm|=~'h1FF;
+                                            state_out.imm=(((unsigned'(32'(((signed'(32'(_this.c.b12)) <<< 'h8)))) | ((Instr___bits(_this, 'h6, 'h5) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bits(_this, 'hB, 'hA) <<< 'h3))) | ((Instr___bits(_this, 'h4, 'h3) <<< 'h1));
+                                            if (((_this.c.b12) != '0)) begin
+                                                state_out.imm|=32'(~'h1FF);
                                             end
                                         end
                                         else begin
-                                            if (_this.c.funct3 == 'h7) begin
-                                                state_out.rs1=_this.c.rs1_p + 'h8;
+                                            if (signed'(32'(_this.c.funct3)) == 32'sh7) begin
+                                                state_out.rs1=signed'(32'(_this.c.rs1_p)) + 'h8;
                                                 state_out.br_op=Br_pkg::BNEZ;
                                                 state_out.alu_op=Alu_pkg::SLTU;
-                                                state_out.imm=(((((_this.c.b12 <<< 'h8)) | ((Instr___bits(_this, 'h6, 'h5) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bits(_this, 'hB, 'hA) <<< 'h3))) | ((Instr___bits(_this, 'h4, 'h3) <<< 'h1));
-                                                if (_this.c.b12) begin
-                                                    state_out.imm|=~'h1FF;
+                                                state_out.imm=(((unsigned'(32'(((signed'(32'(_this.c.b12)) <<< 'h8)))) | ((Instr___bits(_this, 'h6, 'h5) <<< 'h6))) | ((Instr___bit(_this, 'h2) <<< 'h5))) | ((Instr___bits(_this, 'hB, 'hA) <<< 'h3))) | ((Instr___bits(_this, 'h4, 'h3) <<< 'h1));
+                                                if (((_this.c.b12) != '0)) begin
+                                                    state_out.imm|=32'(~'h1FF);
                                                 end
                                             end
                                         end
@@ -410,42 +406,42 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                 end
             end
             else begin
-                if (_this.c.opcode == 'h2) begin
-                    if (_this.c.funct3 == 'h0) begin
+                if (signed'(32'(_this.c.opcode)) == 32'sh2) begin
+                    if (signed'(32'(_this.c.funct3)) == 32'sh0) begin
                         state_out.rd=_this.q2.rs1;
                         state_out.rs1=_this.q2.rs1;
-                        state_out.imm=((_this.c.b12 <<< 'h5)) | Instr___bits(_this, 'h6, 'h2);
+                        state_out.imm=unsigned'(32'(((signed'(32'(_this.c.b12)) <<< 'h5)))) | Instr___bits(_this, 'h6, 'h2);
                         state_out.alu_op=Alu_pkg::SLL;
                         state_out.wb_op=Wb_pkg::ALU;
                     end
                     else begin
-                        if (_this.c.funct3 == 'h2) begin
+                        if (signed'(32'(_this.c.funct3)) == 32'sh2) begin
                             state_out.rd=_this.q2.rs1;
-                            state_out.rs1='h2;
-                            state_out.imm=(((_this.c.b12 <<< 'h5)) | ((Instr___bits(_this, 'h6, 'h4) <<< 'h2))) | ((Instr___bits(_this, 'h3, 'h2) <<< 'h6));
+                            state_out.rs1=8'h2;
+                            state_out.imm=(unsigned'(32'(((signed'(32'(_this.c.b12)) <<< 'h5)))) | ((Instr___bits(_this, 'h6, 'h4) <<< 'h2))) | ((Instr___bits(_this, 'h3, 'h2) <<< 'h6));
                             state_out.alu_op=Alu_pkg::ADD;
                             state_out.mem_op=Mem_pkg::LOAD;
                             state_out.wb_op=Wb_pkg::MEM;
                         end
                         else begin
-                            if (_this.c.funct3 == 'h4) begin
-                                if (_this.q2.rs2 != 'h0) begin
+                            if (signed'(32'(_this.c.funct3)) == 32'sh4) begin
+                                if (signed'(32'(_this.q2.rs2)) != 32'sh0) begin
                                     state_out.rd=_this.q2.rs1;
                                     state_out.rs1=_this.q2.rs1;
                                     state_out.rs2=_this.q2.rs2;
-                                    state_out.alu_op=(_this.c.b12 == 'h0) ? (Alu_pkg::PASS) : (Alu_pkg::ADD);
+                                    state_out.alu_op=(signed'(32'(_this.c.b12)) == 32'sh0) ? (Alu_pkg::PASS) : (Alu_pkg::ADD);
                                     state_out.wb_op=Wb_pkg::ALU;
                                 end
                                 else begin
-                                    if ((_this.q2.rs2 == 'h0) && (_this.c.b12 == 'h0)) begin
+                                    if ((signed'(32'(_this.q2.rs2)) == 32'sh0) && (signed'(32'(_this.c.b12)) == 32'sh0)) begin
                                         state_out.rs1=_this.q2.rs1;
                                         state_out.br_op=Br_pkg::JR;
                                         state_out.wb_op=Wb_pkg::PC2;
                                     end
                                     else begin
-                                        if ((_this.q2.rs2 == 'h0) && (_this.c.b12 == 'h1)) begin
+                                        if ((signed'(32'(_this.q2.rs2)) == 32'sh0) && (signed'(32'(_this.c.b12)) == 32'sh1)) begin
                                             state_out.rs1=_this.q2.rs2;
-                                            state_out.rd='h1;
+                                            state_out.rd=8'h1;
                                             state_out.br_op=Br_pkg::JALR;
                                             state_out.wb_op=Wb_pkg::PC2;
                                         end
@@ -453,8 +449,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
                                 end
                             end
                             else begin
-                                if (_this.c.funct3 == 'h6) begin
-                                    state_out.rs1='h2;
+                                if (signed'(32'(_this.c.funct3)) == 32'sh6) begin
+                                    state_out.rs1=8'h2;
                                     state_out.rs2=_this.q2.rs2;
                                     state_out.imm=((Instr___bits(_this, 'h8, 'h7) <<< 'h6)) | ((Instr___bits(_this, 'hC, 'h9) <<< 'h2));
                                     state_out.mem_op=Mem_pkg::STORE;
@@ -471,10 +467,10 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 
     always_comb begin : state_comb_func  // state_comb_func
         Instr instr;
-        instr = '{instr_in};
-        if (((instr.raw & 'h3)) == 'h3) begin
+        instr = instr_in;
+        if (((instr.raw & 32'h3)) == 32'h3) begin
             Instr___decode(instr, state_comb);
-            if (instr.r.opcode == 'h17) begin
+            if (signed'(32'(instr.r.opcode)) == 32'sh17) begin
                 state_comb.rs1_val=pc_in;
             end
         end
@@ -495,61 +491,61 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
 
     always_comb begin : stall_comb_func  // stall_comb_func
         stall_comb=0;
-        if ((PipelineStage___state_reg['h0].valid && (PipelineStage___state_reg['h0].wb_op == Wb_pkg::MEM)) && (PipelineStage___state_reg['h0].rd != 'h0)) begin
-            if (PipelineStage___state_reg['h0].rd == state_comb.rs1) begin
+        if ((((PipelineStage___state_reg[64'h0].valid) != '0) && (signed'(32'(PipelineStage___state_reg[64'h0].wb_op)) == signed'(32'(Wb_pkg::MEM)))) && (signed'(32'(PipelineStage___state_reg[64'h0].rd)) != 32'sh0)) begin
+            if (signed'(32'(PipelineStage___state_reg[64'h0].rd)) == signed'(32'(state_comb.rs1))) begin
                 stall_comb=1;
             end
-            if (PipelineStage___state_reg['h0].rd == state_comb.rs2) begin
+            if (signed'(32'(PipelineStage___state_reg[64'h0].rd)) == signed'(32'(state_comb.rs2))) begin
                 stall_comb=1;
             end
         end
-        if ((PipelineStage___state_reg['h0].valid && (PipelineStage___state_reg['h0].br_op != Br_pkg::BNONE))) begin
+        if ((((PipelineStage___state_reg[64'h0].valid) != '0) && (signed'(32'(PipelineStage___state_reg[64'h0].br_op)) != signed'(32'(Br_pkg::BNONE))))) begin
             stall_comb=1;
         end
     end
 
     task do_decode_fetch ();
     begin: do_decode_fetch
-        if (state_comb.rs1) begin
+        if (((state_comb.rs1) != '0)) begin
             state_comb.rs1_val=regs_data0_in;
         end
-        if (state_comb.rs2) begin
+        if (((state_comb.rs2) != '0)) begin
             state_comb.rs2_val=regs_data1_in;
         end
-        if ((PipelineStage___state_reg['h1].valid && (PipelineStage___state_reg['h1].wb_op == Wb_pkg::ALU)) && (PipelineStage___state_reg['h1].rd != 'h0)) begin
-            if (PipelineStage___state_reg['h1].rd == state_comb.rs1) begin
-                state_comb.rs1_val=state_in[ID + 'h1].alu_result;
+        if ((((PipelineStage___state_reg[64'h1].valid) != '0) && (signed'(32'(PipelineStage___state_reg[64'h1].wb_op)) == signed'(32'(Wb_pkg::ALU)))) && (signed'(32'(PipelineStage___state_reg[64'h1].rd)) != 32'sh0)) begin
+            if (signed'(32'(PipelineStage___state_reg[64'h1].rd)) == signed'(32'(state_comb.rs1))) begin
+                state_comb.rs1_val=state_in[ID + 64'h1].alu_result;
             end
-            if (PipelineStage___state_reg['h1].rd == state_comb.rs2) begin
-                state_comb.rs2_val=state_in[ID + 'h1].alu_result;
+            if (signed'(32'(PipelineStage___state_reg[64'h1].rd)) == signed'(32'(state_comb.rs2))) begin
+                state_comb.rs2_val=state_in[ID + 64'h1].alu_result;
             end
         end
-        if ((PipelineStage___state_reg['h0].valid && (PipelineStage___state_reg['h0].wb_op == Wb_pkg::ALU)) && (PipelineStage___state_reg['h0].rd != 'h0)) begin
-            if (PipelineStage___state_reg['h0].rd == state_comb.rs1) begin
+        if ((((PipelineStage___state_reg[64'h0].valid) != '0) && (signed'(32'(PipelineStage___state_reg[64'h0].wb_op)) == signed'(32'(Wb_pkg::ALU)))) && (signed'(32'(PipelineStage___state_reg[64'h0].rd)) != 32'sh0)) begin
+            if (signed'(32'(PipelineStage___state_reg[64'h0].rd)) == signed'(32'(state_comb.rs1))) begin
                 state_comb.rs1_val=alu_result_in;
             end
-            if (PipelineStage___state_reg['h0].rd == state_comb.rs2) begin
+            if (signed'(32'(PipelineStage___state_reg[64'h0].rd)) == signed'(32'(state_comb.rs2))) begin
                 state_comb.rs2_val=alu_result_in;
             end
         end
-        if ((PipelineStage___state_reg['h1].valid && (PipelineStage___state_reg['h1].wb_op == Wb_pkg::MEM)) && (PipelineStage___state_reg['h1].rd != 'h0)) begin
-            if (PipelineStage___state_reg['h1].rd == state_comb.rs1) begin
+        if ((((PipelineStage___state_reg[64'h1].valid) != '0) && (signed'(32'(PipelineStage___state_reg[64'h1].wb_op)) == signed'(32'(Wb_pkg::MEM)))) && (signed'(32'(PipelineStage___state_reg[64'h1].rd)) != 32'sh0)) begin
+            if (signed'(32'(PipelineStage___state_reg[64'h1].rd)) == signed'(32'(state_comb.rs1))) begin
                 state_comb.rs1_val=mem_data_in;
             end
-            if (PipelineStage___state_reg['h1].rd == state_comb.rs2) begin
+            if (signed'(32'(PipelineStage___state_reg[64'h1].rd)) == signed'(32'(state_comb.rs2))) begin
                 state_comb.rs2_val=mem_data_in;
             end
         end
-        PipelineStage___state_reg_tmp['h0] = state_comb;
-        PipelineStage___state_reg_tmp['h0].valid=instr_valid_in && !stall_comb;
+        PipelineStage___state_reg_tmp[64'h0] = state_comb;
+        PipelineStage___state_reg_tmp[64'h0].valid=instr_valid_in && !stall_comb;
     end
     endtask
 
     task PipelineStage____work (input logic reset);
     begin: PipelineStage____work
         logic[63:0] i;
-        for (i='h1;i < (LENGTH - ID);i=i+1) begin
-            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 'h1];
+        for (i=64'h1;i < (LENGTH - ID);i=i+1) begin
+            PipelineStage___state_reg_tmp[i] = PipelineStage___state_reg[i - 64'h1];
         end
     end
     endtask
@@ -557,8 +553,8 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     task _work (input logic reset);
     begin: _work
         if (reset) begin
-            PipelineStage___state_reg_tmp['h0].valid='h0;
-            PipelineStage___state_reg_tmp['h1].valid='h0;
+            PipelineStage___state_reg_tmp[64'h0].valid=8'h0;
+            PipelineStage___state_reg_tmp[64'h1].valid=8'h0;
         end
         PipelineStage____work(reset);
         do_decode_fetch();
@@ -571,7 +567,7 @@ module DecodeFetchDecodeFetchint_int_0_0_State_MakeBigStateDecodeFetchint_int_0_
     always @(posedge clk) begin
         PipelineStage___state_reg_tmp = PipelineStage___state_reg;
 
-        _work(reset);
+            _work(reset);
 
         PipelineStage___state_reg <= PipelineStage___state_reg_tmp;
     end

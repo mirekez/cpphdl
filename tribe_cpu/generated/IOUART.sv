@@ -4,12 +4,13 @@ import Predef_pkg::*;
 
 
 module IOUART #(
-    parameter ADDR_WIDTH
-,   parameter ID_WIDTH
-,   parameter DATA_WIDTH
+    parameter ADDR_WIDTH = 'h20
+,   parameter ID_WIDTH = 'h4
+,   parameter DATA_WIDTH = 'h100
  )
  (
     input wire clk
+,   input wire l2_clock
 ,   input wire reset
 ,   input wire axi_in__awvalid_in
 ,   output wire axi_in__awready_out
@@ -18,6 +19,7 @@ module IOUART #(
 ,   input wire axi_in__wvalid_in
 ,   output wire axi_in__wready_out
 ,   input wire[DATA_WIDTH-1:0] axi_in__wdata_in
+,   input wire[unsigned'(64'(DATA_WIDTH))/64'h8-1:0] axi_in__wstrb_in
 ,   input wire axi_in__wlast_in
 ,   output wire axi_in__bvalid_out
 ,   input wire axi_in__bready_in
@@ -49,7 +51,6 @@ module IOUART #(
     reg uart_valid_reg;
     reg[8-1:0] uart_data_reg;
     logic[DATA_WIDTH-1:0] read_data_comb;
-;
 
     // members
 
@@ -66,46 +67,45 @@ module IOUART #(
 
 
     always_comb begin : read_data_comb_func  // read_data_comb_func
-        read_data_comb = 'h0;
-        if (unsigned'(32'(read_addr_reg)) == REG_STATUS) begin
-            read_data_comb['h0 +:32] = 'h1;
+        read_data_comb='h0;
+        if (unsigned'(32'(read_addr_reg)) == unsigned'(32'(REG_STATUS))) begin
+            read_data_comb['h0 +:32]='h1;
         end
-        disable read_data_comb_func;
     end
 
     generate  // _assign
-        assign axi_in__awready_out = !write_addr_valid_reg && !write_resp_valid_reg;
-        assign axi_in__wready_out = write_addr_valid_reg && !write_resp_valid_reg;
-        assign axi_in__bvalid_out = write_resp_valid_reg;
-        assign axi_in__bid_out = write_id_reg;
-        assign axi_in__arready_out = !read_valid_reg;
-        assign axi_in__rvalid_out = read_valid_reg;
-        assign axi_in__rdata_out = read_data_comb;
-        assign axi_in__rlast_out = read_valid_reg;
-        assign axi_in__rid_out = read_id_reg;
+        assign axi_in__awready_out=!((write_addr_valid_reg) != '0) && !((write_resp_valid_reg) != '0);
+        assign axi_in__wready_out=((write_addr_valid_reg) != '0) && !((write_resp_valid_reg) != '0);
+        assign axi_in__bvalid_out=write_resp_valid_reg;
+        assign axi_in__bid_out=write_id_reg;
+        assign axi_in__arready_out=!((read_valid_reg) != '0);
+        assign axi_in__rvalid_out=read_valid_reg;
+        assign axi_in__rdata_out=read_data_comb;
+        assign axi_in__rlast_out=read_valid_reg;
+        assign axi_in__rid_out=read_id_reg;
     endgenerate
 
     task _work (input logic reset);
     begin: _work
         uart_valid_reg_tmp = 0;
         if (axi_in__arvalid_in && axi_in__arready_out) begin
-            read_addr_reg_tmp = axi_in__araddr_in;
-            read_id_reg_tmp = axi_in__arid_in;
+            read_addr_reg_tmp=axi_in__araddr_in;
+            read_id_reg_tmp=axi_in__arid_in;
             read_valid_reg_tmp = 1;
         end
         if (read_valid_reg && axi_in__rready_in) begin
             read_valid_reg_tmp = 0;
         end
         if (axi_in__awvalid_in && axi_in__awready_out) begin
-            write_addr_reg_tmp = axi_in__awaddr_in;
-            write_id_reg_tmp = axi_in__awid_in;
+            write_addr_reg_tmp=axi_in__awaddr_in;
+            write_id_reg_tmp=axi_in__awid_in;
             write_addr_valid_reg_tmp = 1;
         end
         if (axi_in__wvalid_in && axi_in__wready_out) begin
             write_addr_valid_reg_tmp = 0;
             write_resp_valid_reg_tmp = 1;
-            if (unsigned'(32'(write_addr_reg)) == REG_TXDATA) begin
-                uart_data_reg_tmp = unsigned'(8'(unsigned'(32'(axi_in__wdata_in['h0 +:8]))));
+            if (unsigned'(32'(write_addr_reg)) == unsigned'(32'(REG_TXDATA))) begin
+                uart_data_reg_tmp = unsigned'(32'(axi_in__wdata_in['h0 +:8]));
                 uart_valid_reg_tmp = 1;
             end
         end
@@ -126,7 +126,12 @@ module IOUART #(
     end
     endtask
 
-    always @(posedge clk) begin
+    task _work_l2_clock (input logic reset);
+    begin: _work_l2_clock
+    end
+    endtask
+
+    always_ff @(posedge clk) begin
         read_addr_reg_tmp = read_addr_reg;
         read_id_reg_tmp = read_id_reg;
         read_valid_reg_tmp = read_valid_reg;
@@ -137,7 +142,7 @@ module IOUART #(
         uart_valid_reg_tmp = uart_valid_reg;
         uart_data_reg_tmp = uart_data_reg;
 
-        _work(reset);
+            _work(reset);
 
         read_addr_reg <= read_addr_reg_tmp;
         read_id_reg <= read_id_reg_tmp;
@@ -148,6 +153,12 @@ module IOUART #(
         write_resp_valid_reg <= write_resp_valid_reg_tmp;
         uart_valid_reg <= uart_valid_reg_tmp;
         uart_data_reg <= uart_data_reg_tmp;
+    end
+
+    always_ff @(posedge l2_clock) begin
+
+            _work_l2_clock(reset);
+
     end
 
     assign uart_valid_out = uart_valid_reg;

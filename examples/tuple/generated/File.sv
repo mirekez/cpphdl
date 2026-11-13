@@ -24,48 +24,42 @@ module File #(
     typedef logic[31:0] DTYPE;
 
     // regs and combs
-    reg[MEM_WIDTH/'h20-1:0][32-1:0] buffer[MEM_DEPTH];
+    reg[unsigned'(64'(MEM_WIDTH))/64'h20-1:0][32-1:0] buffer[MEM_DEPTH];
     logic[31:0] data0_out_comb;
-;
     logic[31:0] data1_out_comb;
-;
 
     // members
 
     // tmp variables
 
 
-    task _work (input logic reset);
-    begin: _work
-        logic[7:0] i;
-        if (debugen_in) begin
-            $write("%m: r(%d) port0: @%x(%d)%x, port1: @%x(%d)%x @%x(%d)%x\n", reset, write_addr_in, signed'(32'(write_in)), write_data_in, read_addr0_in, signed'(32'(read_in)), read_data0_out, read_addr1_in, signed'(32'(read_in)), read_data1_out);
-        end
-        if (write_in) begin
-            buffer[write_addr_in] <= write_data_in;
-        end
-        if (reset) begin
-            for (i='h0;i < MEM_DEPTH;i=i+1) begin
-                buffer[i] <= 'h0;
-            end
-        end
+    always_comb begin : data0_out_comb_func  // data0_out_comb_func
+        data0_out_comb=buffer[unsigned'(64'(read_addr0_in))];
     end
-    endtask
+
+    always_comb begin : data1_out_comb_func  // data1_out_comb_func
+        data1_out_comb=buffer[unsigned'(64'(read_addr1_in))];
+    end
 
     generate  // _assign
     endgenerate
 
-    always_comb begin : data0_out_comb_func  // data0_out_comb_func
-        data0_out_comb=buffer[read_addr0_in];
-    end
-
-    always_comb begin : data1_out_comb_func  // data1_out_comb_func
-        data1_out_comb=buffer[read_addr1_in];
-    end
-
     always @(posedge clk) begin
 
-        _work(reset);
+        begin : _work
+            logic[7:0] i;
+            if (debugen_in) begin
+                $write("%m: r(%d) port0: @%x(%d)%x, port1: @%x(%d)%x @%x(%d)%x\n", reset, write_addr_in, signed'(32'(write_in)), write_data_in, read_addr0_in, signed'(32'(read_in)), read_data0_out, read_addr1_in, signed'(32'(read_in)), read_data1_out);
+            end
+            if (write_in) begin
+                buffer[unsigned'(64'(write_addr_in))] <= unsigned'(64'(write_data_in));
+            end
+            if (reset) begin
+                for (i=8'h0;64'(i) < MEM_DEPTH;i=i+1) begin
+                    buffer[64'(i)] <= 64'h0;
+                end
+            end
+        end
 
     end
 

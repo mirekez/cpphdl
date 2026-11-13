@@ -22,7 +22,6 @@ module DynamicCombRepeatRoot (
     logic[3-1:0] second_lazy;
     logic[31:0] lazy_evaluations;
     logic[3-1:0] lazy_comb;
-;
     logic[3-1:0] advancing_comb;
 
     // members
@@ -39,9 +38,9 @@ module DynamicCombRepeatRoot (
 
 
     always_comb begin : advancing_comb_func  // advancing_comb_func
-        advancing_comb['h2] = advancing_comb['h1];
-        advancing_comb['h1] = advancing_comb['h0];
-        advancing_comb['h0] = 'h1;
+        advancing_comb[64'h2] = advancing_comb[64'h1];
+        advancing_comb[64'h1] = advancing_comb[64'h0];
+        advancing_comb[64'h0] = 64'h1;
     end
 
     always_comb begin : lazy_comb_func  // lazy_comb_func
@@ -51,8 +50,8 @@ module DynamicCombRepeatRoot (
 
     generate  // _assign
         if (1) begin
-            assign leaf___input = advancing_comb['h2];
-            assign lazy_leaf___input = lazy_comb['h2];
+            assign leaf___input = advancing_comb[64'h2];
+            assign lazy_leaf___input = lazy_comb[64'h2];
         end
     endgenerate
 
@@ -73,7 +72,7 @@ module DynamicCombRepeatRoot (
 
     always @(posedge clk) begin
 
-        _work(reset);
+            _work(reset);
 
     end
 

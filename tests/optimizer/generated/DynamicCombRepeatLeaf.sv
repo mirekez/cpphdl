@@ -25,7 +25,7 @@ module DynamicCombRepeatLeaf (
 
     always @(posedge clk) begin
 
-        _work(reset);
+            _work(reset);
 
     end
 

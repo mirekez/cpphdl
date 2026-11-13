@@ -1,6 +1,6 @@
 package Amo_pkg;
 
-typedef enum {
+typedef enum logic[32-1:0] {
     AMONONE,
     LR_W,
     SC_W,
