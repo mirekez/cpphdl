@@ -6616,7 +6616,7 @@ endmodule
 )sv";
 
     auto h = convertModule(argv0, "comb_used_by_sequential_work", sv, "");
-    expectContains(h, "logic<1> w_comb;");
+    expectContains(h, "logic<1> w_comb{};");
     expectContains(h, "logic<1>& w_comb_func()");
     expectContains(h, "if (w_comb_func())");
     expectNotContains(h, "_LAZY_COMB(w_comb");
@@ -9378,7 +9378,7 @@ endmodule
     auto h = convertModule(argv0, "indexed_struct_projection", sv, "");
     expectContains(h, ">) req_i_in__field_aw_id;");
     expectContains(h, "req_i_in__field_aw_id()");
-    expectContains(h, "array<2,std::remove_cvref_t<decltype(std::declval<req_t>().aw.id)>> req_aw_id_comb;");
+    expectContains(h, "array<2,std::remove_cvref_t<decltype(std::declval<req_t>().aw.id)>> req_aw_id_comb{};");
     expectContains(h, "req_aw_id_comb[(unsigned)(uint64_t)((uint64_t)(i))] = source_i_in__field_aw_id()[");
     expectContains(h, "child_i.req_i_in__field_aw_id = _ASSIGN(");
     expectContains(h, "req_aw_id_comb_func()[");
