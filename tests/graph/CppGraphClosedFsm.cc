@@ -12,7 +12,8 @@ using Model = ClosedFsm;
 long _system_clock = 0;
 #endif
 int main() {
-    Model model;
+    // The closed-state proof assumes value-initialized state before reset.
+    Model model{};
 #if !defined(USE_VERILATOR) && !defined(USE_NATIVE)
     cpphdl::logic<1> reset_n = 1, advance = 0;
     model.rst_n_in = _ASSIGN(reset_n); model.advance_in = _ASSIGN(advance);
