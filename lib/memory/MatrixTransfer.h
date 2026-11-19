@@ -40,21 +40,38 @@ class MatrixTransfer : public cpphdl::Module {
 
   private:
     SynchronousRam<1, 32> bank[32];
-    cpphdl::reg<cpphdl::u<2>> state; // idle, load, store, response
+    cpphdl::reg<cpphdl::u<3>> state; // idle, load, store, response; 4..7 validate
     cpphdl::reg<cpphdl::u32> source, destination, rows, columns, sr, sc, dr, dc, error;
+    // Row-tile anchors above, current tile anchors and current fast-axis line.
+    // Advance affine addresses incrementally instead of multiplying cursors
+    // and strides on the memory-request / RAM-write combinational path.
+    cpphdl::reg<cpphdl::u32> source_tile, destination_tile, current_address, line_address;
+    cpphdl::reg<cpphdl::u64> check_sr,check_sc,check_dr,check_dc;
+    cpphdl::reg<cpphdl::u64> source_row_end,source_column_end,destination_row_end,destination_column_end;
+    cpphdl::reg<cpphdl::u64> source_end,destination_end;
     cpphdl::reg<cpphdl::u1> half, load_rows, store_rows;
-    cpphdl::reg<cpphdl::u32> tile_row, tile_col, tile_rows, tile_cols;
-    cpphdl::reg<cpphdl::u32> cursor_row, cursor_col, head, tail, pending;
+    cpphdl::reg<cpphdl::u32> tile_row, tile_col;
+    // A tile is at most 32x32. Keep its terminal cursor value (32), but do
+    // not build 32-bit subtract/compare/increment feedback for local indices.
+    cpphdl::reg<cpphdl::u<6>> tile_rows, tile_cols, cursor_row, cursor_col, head, tail;
+    cpphdl::reg<cpphdl::u<7>> pending; // 0..64 outstanding read credits
     cpphdl::reg<cpphdl::u1> requests_done, store_valid, read_held;
     cpphdl::reg<cpphdl::array<64, cpphdl::u32>> metadata;
+    // Separate input conversion and read-credit FIFO selection from bank
+    // steering. Memory responses can still arrive every clock; drain this
+    // stage before reading the transpose buffer for output.
+    cpphdl::reg<cpphdl::u1> return_valid;
+    cpphdl::reg<cpphdl::u32> return_meta;
+    cpphdl::reg<cpphdl::array<32, cpphdl::u32>> return_data;
     cpphdl::reg<cpphdl::u32> store_meta, store_address;
     cpphdl::reg<cpphdl::logic<64>> store_mask;
     uint32_t address_comb = 0, count_comb = 0, meta_comb = 0;
     uint32_t response_meta_comb = 0;
     bool banks_comb = false, fetch_comb = false, return_comb = false;
     cpphdl::array<32, cpphdl::u1> write_enable_comb{}, read_enable_comb{};
-    cpphdl::array<32, cpphdl::u32> write_address_comb{}, read_address_comb{}, write_data_comb{},
-        read_data_comb{};
+    cpphdl::array<32, cpphdl::u32> write_address_comb{}, read_address_comb{}, write_data_comb{};
+    cpphdl::array<32, cpphdl::u32> convert_comb{};
+    cpphdl::array<6, cpphdl::array<32, cpphdl::u32>> write_rotation_comb{}, read_rotation_comb{};
     Beat data_comb{};
     uint32_t minimum(uint32_t a, uint32_t b) { return a < b ? a : b; }
     uint32_t &address_comb_func() {
@@ -64,12 +81,10 @@ class MatrixTransfer : public cpphdl::Module {
         col_stride = state == 1 ? uint32_t(sc) : uint32_t(dc);
         row_fast = state == 1 ? bool(load_rows) : bool(store_rows);
         element = state == 1 && bool(half) ? 2 : 4;
-        address_comb = (state == 1 ? uint32_t(source) : uint32_t(destination)) +
-                       (uint32_t(tile_row) + uint32_t(cursor_row)) * row_stride +
-                       (uint32_t(tile_col) + uint32_t(cursor_col)) * col_stride;
+        address_comb = uint32_t(current_address);
         available = (64 - (address_comb & 63)) / element;
-        fast_left = row_fast ? uint32_t(tile_rows) - uint32_t(cursor_row)
-                             : uint32_t(tile_cols) - uint32_t(cursor_col);
+        fast_left = (row_fast ? uint32_t(tile_rows) - uint32_t(cursor_row)
+                             : uint32_t(tile_cols) - uint32_t(cursor_col)) & 63;
         fast_stride = row_fast ? row_stride : col_stride;
         count_comb = minimum(fast_left, fast_stride == element ? available : 1);
         meta_comb = uint32_t(cursor_row) | (uint32_t(cursor_col) << 5) | (count_comb << 10) |
@@ -77,10 +92,9 @@ class MatrixTransfer : public cpphdl::Module {
         return address_comb;
     }
     bool &banks_comb_func() {
-        uint32_t ignored, meta, r, c, count, offset, index, raw;
+        uint32_t ignored, meta, r, count, offset, lane, raw, rotation;
         r = 0;
-        c = 0;
-        index = 0;
+        lane = 0;
         raw = 0;
         ignored = address_comb_func();
         banks_comb = true;
@@ -94,55 +108,80 @@ class MatrixTransfer : public cpphdl::Module {
         write_address_comb = 0;
         read_address_comb = 0;
         write_data_comb = 0;
-        meta = response_meta_comb;
+        meta = uint32_t(return_meta);
         count = (meta >> 10) & 63;
         offset = (meta >> 16) & 63;
-        for (uint32_t lane = 0; lane < 32; ++lane)
-            if (return_comb && error == 0 && !m_readdataerror_in() && lane < count) {
+        // Register the expanded elements before the five bank-rotation mux
+        // layers. A raw-data register leaves conversion and steering together
+        // on the RAM-write path, which misses the board's 4 ns clock target.
+        for (uint32_t index = 0; index < 32; ++index) {
+            raw = (uint32_t(m_readdata_in()[index / 2]) >> ((index & 1) * 16)) & 65535;
+            convert_comb[index] = bool(half)
+                ? uint32_t(math::FpFormatConversion::convert(uint16_t(raw), 16, 5, 32, 8, true, true))
+                : uint32_t(m_readdata_in()[index & 15]);
+            write_rotation_comb[0][index] = uint32_t(return_data[index]);
+        }
+        rotation = ((offset >> (bool(half) ? 1 : 2)) - (meta & 31) - ((meta >> 5) & 31)) & 31;
+        for (uint32_t stage = 0; stage < 5; ++stage)
+            for (uint32_t index = 0; index < 32; ++index)
+                write_rotation_comb[stage + 1][index] = (rotation & (1u << stage))
+                    ? write_rotation_comb[stage][(index + (1u << stage)) & 31]
+                    : write_rotation_comb[stage][index];
+        // A burst visits consecutive banks, regardless of its orientation.
+        // Invert that rotation per physical bank instead of scattering 32
+        // independently converted values through dynamic array writes.
+        for (uint32_t index = 0; index < 32; ++index) {
+            lane = (index - (meta & 31) - ((meta >> 5) & 31)) & 31;
+            if (bool(return_valid) && error == 0 && lane < count) {
                 r = (meta & 31) + (bool(load_rows) ? lane : 0);
-                c = ((meta >> 5) & 31) + (bool(load_rows) ? 0 : lane);
-                index = (r + c) & 31;
-                raw = uint32_t(m_readdata_in()[(offset + lane * (bool(half) ? 2 : 4)) / 4]);
-                if (bool(half))
-                    raw = (raw >> (((offset / 2 + lane) & 1) * 16)) & 65535;
                 write_enable_comb[index] = true;
-                write_address_comb[index] = r;
-                write_data_comb[index] = bool(half) ? uint32_t(math::FpFormatConversion::convert(uint16_t(raw), 16, 5, 32, 8, true, true)) : raw;
+                write_address_comb[index] = r & 31;
+                write_data_comb[index] = write_rotation_comb[5][index];
             }
-        for (uint32_t lane = 0; lane < 16; ++lane)
+        }
+        for (uint32_t index = 0; index < 32; ++index) {
+            lane = (index - uint32_t(cursor_row) - uint32_t(cursor_col)) & 31;
             if (fetch_comb && lane < count_comb) {
                 r = uint32_t(cursor_row) + (bool(store_rows) ? lane : 0);
-                c = uint32_t(cursor_col) + (bool(store_rows) ? 0 : lane);
-                index = (r + c) & 31;
                 read_enable_comb[index] = true;
-                read_address_comb[index] = r;
+                read_address_comb[index] = r & 31;
             }
+        }
         return banks_comb;
     }
     Beat &data_comb_func() {
-        uint32_t r, c, index, meta, count, offset;
-        r = 0;
-        c = 0;
-        index = 0;
+        uint32_t lane, meta, count, offset, rotation;
+        lane = 0;
         for (uint32_t i = 0; i < 32; ++i)
-            read_data_comb[i] = uint32_t(bank[i].data_out()[0]);
+            read_rotation_comb[0][i] = uint32_t(bank[i].data_out()[0]);
         data_comb = 0;
         meta = uint32_t(store_meta);
         count = (meta >> 10) & 63;
         offset = (meta >> 16) & 63;
-        for (uint32_t lane = 0; lane < 16; ++lane)
-            if (lane < count) {
-                r = (meta & 31) + (bool(store_rows) ? lane : 0);
-                c = ((meta >> 5) & 31) + (bool(store_rows) ? 0 : lane);
-                index = (r + c) & 31;
-                data_comb[offset / 4 + lane] = read_data_comb[index];
+        rotation = ((meta & 31) + ((meta >> 5) & 31) - offset / 4) & 31;
+        for (uint32_t stage = 0; stage < 5; ++stage)
+            for (uint32_t index = 0; index < 32; ++index)
+                read_rotation_comb[stage + 1][index] = (rotation & (1u << stage))
+                    ? read_rotation_comb[stage][(index + (1u << stage)) & 31]
+                    : read_rotation_comb[stage][index];
+        for (uint32_t output = 0; output < 16; ++output) {
+            lane = output - offset / 4;
+            if (output >= offset / 4 && lane < count) {
+                data_comb[output] = read_rotation_comb[5][output];
             }
+        }
         return data_comb;
     }
     void advance_cursor(bool row_fast, uint32_t count) {
-        uint32_t next;
-        next = (row_fast ? uint32_t(cursor_row) : uint32_t(cursor_col)) + count;
+        uint32_t next, row_stride, col_stride, fast_stride, element;
+        row_stride = state == 1 ? uint32_t(sr) : uint32_t(dr);
+        col_stride = state == 1 ? uint32_t(sc) : uint32_t(dc);
+        fast_stride = row_fast ? row_stride : col_stride;
+        element = state == 1 && bool(half) ? 2 : 4;
+        next = ((row_fast ? uint32_t(cursor_row) : uint32_t(cursor_col)) + count) & 63;
         if (next == (row_fast ? uint32_t(tile_rows) : uint32_t(tile_cols))) {
+            current_address._next = uint32_t(line_address) + (row_fast ? col_stride : row_stride);
+            line_address._next = uint32_t(line_address) + (row_fast ? col_stride : row_stride);
             if (row_fast) {
                 cursor_row._next = 0;
                 cursor_col._next = uint32_t(cursor_col) + 1;
@@ -154,6 +193,10 @@ class MatrixTransfer : public cpphdl::Module {
                 (row_fast ? uint32_t(tile_cols) : uint32_t(tile_rows)))
                 requests_done._next = true;
         } else {
+            // A non-contiguous view issues one element per request. A burst
+            // can contain several elements only when its stride is 2 or 4.
+            current_address._next = uint32_t(current_address) +
+                (fast_stride == element ? (count << (element == 2 ? 1 : 2)) : fast_stride);
             if (row_fast)
                 cursor_row._next = next;
             else
@@ -196,6 +239,13 @@ class MatrixTransfer : public cpphdl::Module {
             state.clr();
             source.clr();
             destination.clr();
+            source_tile.clr();
+            destination_tile.clr();
+            current_address.clr();
+            line_address.clr();
+            check_sr.clr();check_sc.clr();check_dr.clr();check_dc.clr();
+            source_row_end.clr();source_column_end.clr();destination_row_end.clr();destination_column_end.clr();
+            source_end.clr();destination_end.clr();
             rows.clr();
             columns.clr();
             sr.clr();
@@ -219,14 +269,26 @@ class MatrixTransfer : public cpphdl::Module {
             store_valid.clr();
             read_held.clr();
             metadata.clr();
+            return_valid.clr();
+            return_meta.clr();
+            return_data.clr();
             store_meta.clr();
             store_address.clr();
             store_mask.clr();
         } else {
+            return_valid._next = response && error == 0 && !m_readdataerror_in();
+            if (response) {
+                return_meta._next = response_meta_comb;
+                return_data._next = convert_comb;
+            }
             read_held._next = m_read_out() && m_waitrequest_in();
             if (state == 0 && command_valid_in()) {
                 source._next = source_in();
                 destination._next = destination_in();
+                source_tile._next = source_in();
+                destination_tile._next = destination_in();
+                current_address._next = source_in();
+                line_address._next = source_in();
                 rows._next = rows_in();
                 columns._next = columns_in();
                 sr._next = source_row_stride_in();
@@ -249,21 +311,41 @@ class MatrixTransfer : public cpphdl::Module {
                 requests_done._next = false;
                 store_valid._next = false;
                 error._next = 0;
-                src_end = uint64_t(source_in()) + uint64_t(rows_in() - 1) * source_row_stride_in() +
-                          uint64_t(columns_in() - 1) * source_column_stride_in() + element;
-                dst_end = uint64_t(destination_in()) +
-                          uint64_t(rows_in() - 1) * destination_row_stride_in() +
-                          uint64_t(columns_in() - 1) * destination_column_stride_in() + 4;
-                if (!rows_in() || !columns_in() || rows_in() > 131072 || columns_in() > 131072 ||
-                    ((source_in() | source_row_stride_in() | source_column_stride_in()) &
+                state._next = 4;
+            }
+            // Split address validation before enabling memory. Valid extents
+            // are at most 131072, so their minus-one products need 17 bits;
+            // the full captured counts below still reject invalid commands.
+            if (state == 4) {
+                check_sr._next=uint64_t((uint32_t(rows)-1)&131071)*uint32_t(sr);
+                check_sc._next=uint64_t((uint32_t(columns)-1)&131071)*uint32_t(sc);
+                check_dr._next=uint64_t((uint32_t(rows)-1)&131071)*uint32_t(dr);
+                check_dc._next=uint64_t((uint32_t(columns)-1)&131071)*uint32_t(dc);
+                state._next=5;
+            }
+            if (state == 5) {
+                source_row_end._next=uint64_t(check_sr)+uint32_t(source);
+                source_column_end._next=uint64_t(check_sc)+(bool(half)?2:4);
+                destination_row_end._next=uint64_t(check_dr)+uint32_t(destination);
+                destination_column_end._next=uint64_t(check_dc)+4;
+                state._next=6;
+            }
+            if (state == 6) {
+                source_end._next=uint64_t(source_row_end)+uint64_t(source_column_end);
+                destination_end._next=uint64_t(destination_row_end)+uint64_t(destination_column_end);
+                state._next=7;
+            }
+            if (state == 7) {
+                src_end=uint64_t(source_end);dst_end=uint64_t(destination_end);
+                element=bool(half)?2:4;
+                if (rows == 0 || columns == 0 || rows > 131072 || columns > 131072 ||
+                    ((uint32_t(source) | uint32_t(sr) | uint32_t(sc)) &
                      (element - 1)) ||
-                    ((destination_in() | destination_row_stride_in() |
-                      destination_column_stride_in()) &
+                    ((uint32_t(destination) | uint32_t(dr) | uint32_t(dc)) &
                      3) ||
-                    !source_row_stride_in() || !source_column_stride_in() ||
-                    !destination_row_stride_in() || !destination_column_stride_in() ||
+                    sr == 0 || sc == 0 || dr == 0 || dc == 0 ||
                     src_end > 0x100000000ull || dst_end > 0x100000000ull ||
-                    (uint64_t(source_in()) < dst_end && uint64_t(destination_in()) < src_end)) {
+                    (uint64_t(uint32_t(source)) < dst_end && uint64_t(uint32_t(destination)) < src_end)) {
                     error._next = 1;
                     state._next = 3;
                 } else
@@ -282,8 +364,13 @@ class MatrixTransfer : public cpphdl::Module {
                     if (m_readdataerror_in())
                         error._next = 2;
                 }
-                if ((bool(requests_done) || error != 0) && outstanding == 0 && !m_read_out()) {
+                // The final response writes the banks on the following edge.
+                // Enter store only on that edge, so no read-first collision
+                // can expose the previous tile's last returned elements.
+                if ((bool(requests_done) || error != 0) && outstanding == 0 && !m_read_out() && !response) {
                     state._next = (error != 0 || (response && m_readdataerror_in())) ? 3 : 2;
+                    current_address._next = uint32_t(destination_tile);
+                    line_address._next = uint32_t(destination_tile);
                     cursor_row._next = 0;
                     cursor_col._next = 0;
                     requests_done._next = false;
@@ -307,10 +394,20 @@ class MatrixTransfer : public cpphdl::Module {
                     cursor_col._next = 0;
                     requests_done._next = false;
                     if (uint32_t(tile_col) + 32 < columns) {
+                        source_tile._next = uint32_t(source_tile) + (uint32_t(sc) << 5);
+                        destination_tile._next = uint32_t(destination_tile) + (uint32_t(dc) << 5);
+                        current_address._next = uint32_t(source_tile) + (uint32_t(sc) << 5);
+                        line_address._next = uint32_t(source_tile) + (uint32_t(sc) << 5);
                         tile_col._next = uint32_t(tile_col) + 32;
                         tile_cols._next = minimum(uint32_t(columns) - uint32_t(tile_col) - 32, 32);
                         state._next = 1;
                     } else if (uint32_t(tile_row) + 32 < rows) {
+                        source._next = uint32_t(source) + (uint32_t(sr) << 5);
+                        destination._next = uint32_t(destination) + (uint32_t(dr) << 5);
+                        source_tile._next = uint32_t(source) + (uint32_t(sr) << 5);
+                        destination_tile._next = uint32_t(destination) + (uint32_t(dr) << 5);
+                        current_address._next = uint32_t(source) + (uint32_t(sr) << 5);
+                        line_address._next = uint32_t(source) + (uint32_t(sr) << 5);
                         tile_row._next = uint32_t(tile_row) + 32;
                         tile_rows._next = minimum(uint32_t(rows) - uint32_t(tile_row) - 32, 32);
                         tile_col._next = 0;
@@ -330,6 +427,13 @@ class MatrixTransfer : public cpphdl::Module {
         state.strobe();
         source.strobe();
         destination.strobe();
+        source_tile.strobe();
+        destination_tile.strobe();
+        current_address.strobe();
+        line_address.strobe();
+        check_sr.strobe();check_sc.strobe();check_dr.strobe();check_dc.strobe();
+        source_row_end.strobe();source_column_end.strobe();destination_row_end.strobe();destination_column_end.strobe();
+        source_end.strobe();destination_end.strobe();
         rows.strobe();
         columns.strobe();
         sr.strobe();
@@ -353,6 +457,9 @@ class MatrixTransfer : public cpphdl::Module {
         store_valid.strobe();
         read_held.strobe();
         metadata.strobe();
+        return_valid.strobe();
+        return_meta.strobe();
+        return_data.strobe();
         store_meta.strobe();
         store_address.strobe();
         store_mask.strobe();

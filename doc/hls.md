@@ -74,34 +74,106 @@ interface, while local pointers address local storage. The optional third
 argument defaults to false, preserving existing register-backed/direct local
 storage and the default local arena implementation. Large aggregate zero
 initialization uses a counted RAM-port loop instead of an unrolled FSM;
-startup latency grows with capacity. Both memory resources currently use a
-sequential access schedule.
+startup latency grows with capacity. Local memory accesses remain sequential;
+external memory defaults to a sequential schedule, with optional read pairing
+described below.
 
 The wrapper has the same command/response contract as `ClockedDelayer`.
 Pointer indexing, dereferencing, pointer arithmetic, aliases and helper arguments
 of type `cpphdl::hls::external_ptr<T>` retain external address-space identity.
 Local pointers still address local HLS storage. Do not cast external pointers
-to ordinary pointers. Supported elements are integer types of 1, 2, 4 or 8 bytes,
-including signed and const-qualified types. Addresses are 32-bit **byte** addresses;
+to ordinary pointers. Supported accesses are power-of-two integer values and
+padding-free wire aggregates that fit the configured data width. Existing signed
+and const-qualified integer accesses remain supported. Addresses are 32-bit **byte** addresses;
 each access must be naturally aligned and the caller must keep address arithmetic
 within that address space. No allocation or model-file loading is implied.
+
+The optional fourth template argument selects a 64, 128, 256 or 512-bit external
+data port; it defaults to 64. Typed C++ value transfers express packet accesses:
+
+```cpp
+struct Beat { uint32_t lane[16]; };
+struct CopyBeat {
+    uint64_t command(uint32_t source, uint32_t destination, uint32_t unused) {
+        auto input = cpphdl::hls::external_memory<const Beat>(source);
+        auto output = cpphdl::hls::external_memory<Beat>(destination);
+        Beat value = cpphdl::hls::load_external(input);
+        cpphdl::hls::store_external(output, value);
+        return value.lane[15];
+    }
+};
+cpphdl::hls::ClockedMemory<CopyBeat,32,false,512> copier;
+```
+
+`load_external` and `store_external` use a native object copy and lower to the
+same scheduled typed accesses as scalar pointer expressions. They avoid Clang's
+restriction on implicit aggregate constructors/assignment across address spaces;
+`Beat value = *input` and `*output = value` are rejected by Clang.
+Whole packets require alignment to their size (64 bytes in this example).
+Accessing an individual member instead issues an access of that member's size;
+the member address retains the external address space. Aggregate elements must
+be unsigned integer wire values or nested fixed arrays/aggregates without
+pointers, padding, bases, bit fields or custom copy operations. Wider transfers
+do not change the default one-outstanding-request schedule.
+Constant indices into small, nonescaping local packet arrays retain their known
+subobject locations in the delayed scheduler, avoiding a spill into byte storage
+just to access a fixed lane. Dynamic indices continue to use the memory schedule.
 
 A load suspends the generated method until its response is accepted. A store
 also suspends until acknowledgement, before subsequent reads or writes execute.
 The scheduler captures command arguments, saves values needed after the wait,
 and resumes the dependent statements only after completion. Loops and helper
-calls can contain accesses. There is one outstanding request per wrapper, no
-speculation, no bursts, and no implicit cache. `ClockedPipeline` rejects these
+calls can contain accesses. By default there is one outstanding request per wrapper,
+no speculation, no bursts, and no implicit cache. `ClockedPipeline` rejects these
 pointer accesses rather than treating a delayed load as combinational logic.
+
+The optional fifth argument, `MAX_READS`, can be 1 (the default) or 2:
+
+```cpp
+struct ReadPair {
+    uint64_t command(uint32_t a, uint32_t b, uint32_t unused) {
+        uint64_t x = *cpphdl::hls::external_memory<const uint64_t>(a);
+        uint64_t y = *cpphdl::hls::external_memory<const uint64_t>(b);
+        return x + y;
+    }
+};
+cpphdl::hls::ClockedMemory<ReadPair,32,false,64,2> reader;
+```
+
+Selecting 2 asserts that reads have no side effects (ordinary memory, **not
+MMIO**) and that the controller returns responses in request-acceptance order.
+The caller must exclude concurrent external writes to the accessed locations
+while the command executes.
+HLS may pair independent, nonvolatile reads within one straight-line source
+block. It retains separate results, issues the requests in source order and
+waits for both responses before continuing. A later read may reach the bus even
+if the earlier read eventually fails. Accepted requests are drained before a
+fault is reported, and later stores do not execute after a failed read. An
+earlier bus error takes precedence over a later alignment fault. Request and
+response backpressure do not change this ordering.
+
+Dependent addresses, branches, memory writes and observable effects prevent
+grouping. Volatile/atomic accesses remain unsupported by the source frontend.
+Local address calculations move only when data and
+anti-dependencies permit it. The current implementation groups at most two
+reads and does not pipeline loop iterations or overlap stores. Retiming still
+applies to the complete scheduled transition; requests advance on committed
+transitions, so this is not a promise of one request per physical FPGA clock.
+Reset must cancel/discard all outstanding responses at the controller as
+described below, including both reads of a pair.
 
 Connect `loader.memory_out` to a controller through `assignIf`. Its
 `ExternalMemoryIf` interface has these controller-side members:
 
 - `valid_in`, `ready_out`: request handshake.
 - `write_in`, `addr_in`, `size_in`, `data_in`: operation, byte address,
-  byte count (1/2/4/8), and 64-bit write data.
+  byte count (powers of two from 1 through `DATA_BITS/8`), and write data.
 - `valid_out`, `ready_in`: completion handshake for **both reads and writes**.
-- `data_out`, `error_out`: 64-bit read data and completion error.
+- `data_out`, `error_out`: read data and completion error.
+
+`ExternalMemoryIf<ADDRESS_BITS,DATA_BITS>` carries `DATA_BITS` payload bits in
+each direction. Its default 64-bit payload retains the `uint64_t` C++ port type;
+wider payloads use `logic<DATA_BITS>`.
 
 Data occupies the low `size` bytes, little-endian, regardless of address lane.
 The requester holds the complete request stable until accepted. A controller
@@ -118,6 +190,14 @@ controller, cancelling outstanding requests and discarding old responses: the
 channel has no transaction ID to distinguish a late pre-reset completion.
 The controller is responsible for range/access checks; the pointer does not
 carry a hardware allocation bound. There is no built-in timeout.
+
+For a retimed `ClockedMemory` transition, the external adapter samples inputs
+when `retiming_ready_out` is asserted, holds them through the transition and
+counts bus handshakes only on `retiming_commit_out`. These signals can both be
+asserted on the same edge when the transition interval is one clock. That edge
+is the complete transition; inserting a separate admission edge would execute
+two transitions with the same inputs. The ready/commit adapter is required when
+connecting this retimed controller to an ordinary cycle-based memory bus.
 
 For native functional tests, map a host buffer before running the wrapper:
 
@@ -253,9 +333,173 @@ minimum. The scheduler adds delay stages when the initial STAGES is smaller than
 that minimum. A native C++ ClockedPipeline reference still uses its explicit
 STAGES, so select an adequate STAGES when comparing its cycle timing.
 
-This contract currently supports stateless command classes and the default
-rising clock. It applies at a ClockedPipeline boundary, not to arbitrary inlined
-helper calls. The replacement body is assumed to implement the selected latency;
+The same separate class can be called from ordinary C++ methods:
+
+```cpp
+struct Algorithm {
+    uint64_t command(uint32_t a, uint32_t tag, uint32_t b) const {
+        auto value = Methods{}.command(a, tag, b);
+        return value + 9;
+    }
+};
+```
+
+Nested replacement calls require an empty, stateless class with a non-static
+`const command` entry, three arguments of the same wire-value type, and a
+wire-value result. Unsigned integers and padding-free trivial aggregates use
+the same packing as `ClockedPipeline`. Stateful and recursive atomic commands
+are rejected. Unannotated helpers continue to inline normally. The annotated
+class is one atomic boundary; its internal helpers are its C++ reference, not
+independently linked replacements.
+
+OpenMP SIMD lanes may call scalar `const command` entries on empty annotated
+classes, including through a scalar helper. Their bodies still undergo the
+transitive purity check: annotations do not permit mutable global access,
+escaping aliases, stateful objects, or impure helper calls. Only trivial,
+zero-argument construction of such an empty class is admitted in a lane.
+
+Inside `ClockedPipeline`, each call site gets its own scheduled atomic pipeline.
+The scheduler aligns subsequent arithmetic, branch predicates, faults and tags
+with its selected latency. Stateless callees evaluate bubbles and inactive
+branches; caller predicates guard their observable effects. Once the caller can
+stall, all child valid pipelines have filled, and the parent advance signal
+freezes them together. Use the enclosing pipeline's reported latency when
+checking cycle timing, rather than assuming the source STAGES is unchanged.
+Ordinary generated RTL reports `STAGES` and the actual `LATENCY` in its
+`pipelined_logic` comment; synthesis reports the enclosing and atomic latencies
+in `timing.json`.
+
+Inside the default sequential `ClockedMemory`, the source scheduler generates issue/wait continuations.
+The child accepts one request, holds its result until consumed, and resets with
+the caller. `fit_pipeline_retiming` schedules the FSM transition and each child
+separately. Internal handshakes occur only at FSM commit and only for ready/valid
+values sampled by that transition. A response arriving during a long transition
+therefore cannot be consumed before the caller observes it. The reported FSM
+initiation interval measures transitions, not complete method invocations;
+external memory response waits remain variable. This does not add overlapping
+external-memory requests or concurrent load/compute/store actors.
+
+#### Source calls and streaming external memory
+
+An ordinary free/static value function, or a const method on an empty class,
+whose body contains an OpenMP value loop can be outlined into a generated
+pipeline. Each source call site owns its instance; OpenMP supplies the lane
+count. The helper does not need a replacement annotation or an application RTL
+wrapper. Its parameter types may differ, including signed arithmetic values
+and padding-free value aggregates. Scalar annotated MAC calls inside it retain
+their own replacement boundaries. `SourceCallChecks.py` checks native and
+generated behavior, signed argument packing, lane counts and independent calls.
+
+`ClockedMemory<Methods, 32, false, DATA_BITS, DEPTH, true>` selects streaming
+external-memory lowering. Its public command remains
+`uint64_t command(uint32_t, uint32_t, uint32_t)`. `DEPTH` is a power of two from
+2 through 256. Ordinary nonvolatile external accesses of up to 64 bits, including
+FP32 operands read and written through `float*`, may have
+conditional predicates and addresses computed from previous replies. The
+compiler partitions the acyclic source dataflow at those accesses and retimes each
+calculation region separately. Live values cross memory waits in synchronous
+context RAM; values computed before a read are carried forward, including
+source-call results, instead of duplicating their engines.
+
+An ordered external port arbitrates between access sites. Each accepted request
+reserves response storage at its destination stage, so a stalled continuation
+does not block replies required to release it. Skipped reads advance their
+contexts without sending a memory request. A failed access returns fault 5 for
+that invocation and suppresses its later effects. Requests and results remain
+stable while stalled. Reset cancels pending work and requires the external
+memory endpoint to discard the corresponding outstanding replies as well.
+
+Read sites within one invocation currently advance in source order; different
+invocations overlap between sites. A single read can sustain one request per
+clock. Multiple read sites share the physical port's one-request-per-clock
+capacity, and a full shared queue can incur a refill bubble. This is not a
+claim that a multi-read command completes every clock. `SourceReadChecks.py`
+checks native, raw RTL and retimed RTL with dependent/conditional reads,
+per-site errors, long stalls and reset with work outstanding.
+
+Ordinary stores carry their address, size and data through the request pipeline.
+Every store requires an ordered completion response; function return waits for
+it. In the absence of an alias proof, a dependency token orders successive
+invocations' memory regions through their last acknowledgement. Calculations
+before and after that region remain pipelined. This conservative policy limits
+write-bearing calls to one active memory region; it does not provide overlapping
+loads and stores from different calls. A later fault does not roll back earlier
+acknowledged stores. `SourceWriteChecks.py` covers cross-call aliases, partial
+stores, conditional stores, delayed visibility, fault prefixes and FP32 updates.
+
+Ordinary `for`, `while` and `do` loops in this streaming-memory policy reuse
+their arithmetic through generated backedge regions, including when a trip
+count is constant. OpenMP still requests parallel lanes. Carried scalars cross
+explicit pipeline boundaries; shared joins get their own region so a source
+helper after a branch remains one physical instance. Every generated boundary
+participates in liveness analysis, including boundaries introduced at joins.
+Each region reads only its live input fields. With one outer invocation active,
+mutually exclusive regions share the allocated register for each carried C++
+scalar. Completed nonterminal transfers update only changed fields required by
+successors; unchanged values require neither writeback nor alignment copies.
+A self-loop consumes old values before the edge and installs new values at the
+edge. Stalls and terminal/fault responses hold storage. Command acceptance
+initializes every field the entry can read, including after reset cancellation.
+This allocation must be disabled or extended before overlapping region tokens.
+Under the current one-invocation loop policy, a static access cannot be visited
+again before its region returns. Its context and reply each need one payload
+register rather than a deep RAM queue. Shared arbitration-owner queues retain
+the configured request window because distinct sites may still be outstanding.
+For the same proof, calculation stages capture each input on command acceptance
+and each intermediate when its invocation token reaches the producer stage.
+Later alignment stages may reuse that held value. The first register remains
+a timing boundary; bubbles cannot overwrite it. Ordinary nested C++ calls
+inherit the one-invocation proof and receive a valid token at their scheduled
+argument stage. This permits storage reuse inside those calls too. Overlapping
+pipelines still shift values for every token; persistent feedback registers
+and atomic hard-block internals retain their own storage and protocols.
+The current loop network admits one outer invocation until return. Arithmetic
+regions are retimed independently, but a dependent iteration waits for its
+feedback value; the regions' II=1 metadata is not a claim of one complete loop
+iteration or invocation per clock. `SourceLoopChecks.py` compares fixed/runtime
+FP32 dot products, nested loops, break/continue, while/do and shared helpers
+against native code and an independent memory oracle. A further case mutates
+all three by-value command parameters across loop backedges, independently of
+the immutable argument ports.
+Pure leaf callees expose provably constant result bits to their callers. In
+particular, a MAC's zero fault result does not create a dependency between
+independent OpenMP lanes. The four-lane regression checks both arithmetic and
+schedule depth so that correct but serialized lanes cannot pass unnoticed.
+Saved calculation graphs are compacted to reachable operations and callees
+before they are retained for retiming.
+
+Selecting `BLOCK_RAM=true` adds an independent local-memory channel for ordinary
+local pointers and arrays. Compiler-assigned storage uses synchronous byte banks;
+local reads and writes resume their source continuations through the same queue
+machinery as external accesses. RAM is an atomic inferred hard block, not logic
+that HLS can split internally. The compiler places a registered request before
+bank address calculation and a registered synchronous read at each byte bank.
+A registered reply buffer separates request capacity from downstream readiness.
+With no stalls, request capture, RAM access, and reply publication take three
+clock edges; the interface can still accept one request each clock. A write
+acknowledgement follows the write edge. Backpressure holds the request and reply
+payloads, and reset discards queued transactions without clearing the RAM.
+Large aggregate zero-initialization uses a counted clear
+loop. Local pointers must designate live C++ objects; there is no synthesized
+runtime bounds-check exception. External failures still suppress later effects.
+`SourceLoopChecks.py` also covers a cleared/gathered local array, partial stores,
+and a dot product with local and external operands.
+
+The current local arena is shared by the generated loop regions, with one outer
+invocation active until return. Trivially copyable local aggregates transfer in
+beats of at most eight bytes; pointer fields retain their host-layout offsets
+while their values use the HLS address width. Tests include a twelve-byte value
+and a record containing a pointer. Parallel memory banking from OpenMP, complete
+matrix-kernel validation, and full Llama hardware validation remain incomplete.
+
+Constexpr floating-point scalars preserve their exact stored representation;
+direct reads need no RAM, while addressed scalars and aggregate members use the
+constant-object storage path. `hls/math/Float.h` supplies FP32 comparison
+overrides for all six ordered/equality operators, including NaNs, signed zero,
+infinities and subnormals. These are ordinary retimable integer calculations,
+not additional hard-block replacements.
+
+This contract supports the default rising clock. The replacement body is assumed to implement the selected latency;
 the timing estimate describes the synthesized reference, not a physical timing
 proof for an independently supplied DSP macro. Its internal resource usage is
 not counted in the surrounding generic-gate report.
@@ -283,6 +527,19 @@ The latter uses `real a, b, c; c = a * b;` and a separate real addition, convert
 and rounding to FP32 at each registered stage. It preserves the HLS FTZ,
 canonical-NaN, signed-zero and underflow-rounding contract. Both implementations
 use the same original Verilog latency and handshake wrappers.
+When the selected latency is at least three clocks, the wrapper uses one cycle
+to register operands before the arithmetic core. At four clocks it selects
+`FpAdd`'s internal normalization/rounding register; at five clocks it also captures
+the arithmetic output before the trailing delay RAM. At six clocks it also
+registers the raw multiplier product before FP32 normalization and rounding,
+with exponent/class/sign metadata and the addend delayed by the same cycle.
+At seven clocks it also registers aligned FpAdd operands and their metadata
+before the existing significand sum.
+These cycles are deducted
+from that delay. Two-clock instances retain the original core contract. Array masks,
+initial values and tags follow the same core latency. This input boundary is
+intended to separate context-RAM reads and delay-RAM writes from arithmetic; physical timing
+still requires a placed design measurement.
 
 For this replacement, use `hdlcpp --native-graph --preserve-synthesis` on the
 linked Verilog. The converted C++ retains `#ifdef SYNTHESIS` and `#else`, each
@@ -1541,6 +1798,13 @@ Here `--top` names a C++ module class or a root object variable; `--module`
 sets the output Verilog module name. Ordinary RTL without wrappers continues to
 use the native RTL graph lowering; it does not acquire HLS scheduling.
 
+For FPGA synthesis, `--operations-only` emits `operations.v`, timing metadata,
+and the retimed graph without generic `gates.v`/`gates.json` export. The operation
+RTL retains synchronous RAMs for technology inference. Generic gate export
+expands those memories into individual registers and can dominate compiler
+time and memory on large designs; it remains the default for gate-level tests.
+Both modes emit identical operation RTL and select the same timing schedule.
+
 The HLS scheduler operates on C++ ASTs. `synth/ScheduledGraph.cpp` consumes its
 scheduled blocks before SV function sharing and emits graph operations,
 registers and memory ports directly. `synth/Mapping.cpp` maps the retimed graph
@@ -1816,6 +2080,11 @@ iterations scatter in row-major order. This version does not issue concurrent
 DRAM requests. Every operand of an iteration is captured before its outputs
 can be stored.
 
+After the command handshake, five validation clocks separate extent products,
+address sums and alias checks. The controller uses captured descriptors during
+these stages and issues no memory or math requests until validation succeeds.
+Reset cancels validation as well as active execution.
+
 Both the CPU helper `map_descriptor_valid(descriptor)` and the hardware
 admission logic reject empty dimensions, 32-bit address/domain overflow,
 misalignment, overlapping output elements, and unproved cross-iteration
@@ -1930,6 +2199,11 @@ outstanding**: later gathers overlap earlier arithmetic, and completed output
 iterations scatter in row-major order. This version does not issue concurrent
 DRAM requests. Every operand of an iteration is captured before its outputs
 can be stored.
+
+After the command handshake, five validation clocks separate extent products,
+address sums and alias checks. The controller uses captured descriptors during
+these stages and issues no memory or math requests until validation succeeds.
+Reset cancels validation as well as active execution.
 
 Both the CPU helper `map_descriptor_valid(descriptor)` and the hardware
 admission logic reject empty dimensions, 32-bit address/domain overflow,

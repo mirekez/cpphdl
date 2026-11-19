@@ -1,7 +1,7 @@
 `default_nettype none
 
 import Predef_pkg::*;
-import FpFormatConversion_pkg::*;
+import cpphdl_examples_math_FpFormatConversion_pkg::*;
 
 
 module cpphdl_examples_MatrixTransfer (
@@ -35,7 +35,7 @@ module cpphdl_examples_MatrixTransfer (
     typedef logic[16-1:0][32-1:0] Beat;
 
     // regs and combs
-    reg[2-1:0] state;
+    reg[3-1:0] state;
     reg[32-1:0] source;
     reg[32-1:0] destination;
     reg[32-1:0] rows;
@@ -45,22 +45,39 @@ module cpphdl_examples_MatrixTransfer (
     reg[32-1:0] dr;
     reg[32-1:0] dc;
     reg[32-1:0] error;
+    reg[32-1:0] source_tile;
+    reg[32-1:0] destination_tile;
+    reg[32-1:0] current_address;
+    reg[32-1:0] line_address;
+    reg[64-1:0] check_sr;
+    reg[64-1:0] check_sc;
+    reg[64-1:0] check_dr;
+    reg[64-1:0] check_dc;
+    reg[64-1:0] source_row_end;
+    reg[64-1:0] source_column_end;
+    reg[64-1:0] destination_row_end;
+    reg[64-1:0] destination_column_end;
+    reg[64-1:0] source_end;
+    reg[64-1:0] destination_end;
     reg half;
     reg load_rows;
     reg store_rows;
     reg[32-1:0] tile_row;
     reg[32-1:0] tile_col;
-    reg[32-1:0] tile_rows;
-    reg[32-1:0] tile_cols;
-    reg[32-1:0] cursor_row;
-    reg[32-1:0] cursor_col;
-    reg[32-1:0] head;
-    reg[32-1:0] tail;
-    reg[32-1:0] pending;
+    reg[6-1:0] tile_rows;
+    reg[6-1:0] tile_cols;
+    reg[6-1:0] cursor_row;
+    reg[6-1:0] cursor_col;
+    reg[6-1:0] head;
+    reg[6-1:0] tail;
+    reg[7-1:0] pending;
     reg requests_done;
     reg store_valid;
     reg read_held;
     reg[64-1:0][32-1:0] metadata;
+    reg return_valid;
+    reg[32-1:0] return_meta;
+    reg[32-1:0][32-1:0] return_data;
     reg[32-1:0] store_meta;
     reg[32-1:0] store_address;
     reg[64-1:0] store_mask;
@@ -76,7 +93,9 @@ module cpphdl_examples_MatrixTransfer (
     logic[32-1:0][32-1:0] write_address_comb;
     logic[32-1:0][32-1:0] read_address_comb;
     logic[32-1:0][32-1:0] write_data_comb;
-    logic[32-1:0][32-1:0] read_data_comb;
+    logic[32-1:0][32-1:0] convert_comb;
+    logic[6-1:0][32-1:0][32-1:0] write_rotation_comb;
+    logic[6-1:0][32-1:0][32-1:0] read_rotation_comb;
     logic[16-1:0][32-1:0] data_comb;
 
     // members
@@ -106,7 +125,7 @@ module cpphdl_examples_MatrixTransfer (
     endgenerate
 
     // tmp variables
-    logic[2-1:0] state_tmp;
+    logic[3-1:0] state_tmp;
     logic[32-1:0] source_tmp;
     logic[32-1:0] destination_tmp;
     logic[32-1:0] rows_tmp;
@@ -116,22 +135,39 @@ module cpphdl_examples_MatrixTransfer (
     logic[32-1:0] dr_tmp;
     logic[32-1:0] dc_tmp;
     logic[32-1:0] error_tmp;
+    logic[32-1:0] source_tile_tmp;
+    logic[32-1:0] destination_tile_tmp;
+    logic[32-1:0] current_address_tmp;
+    logic[32-1:0] line_address_tmp;
+    logic[64-1:0] check_sr_tmp;
+    logic[64-1:0] check_sc_tmp;
+    logic[64-1:0] check_dr_tmp;
+    logic[64-1:0] check_dc_tmp;
+    logic[64-1:0] source_row_end_tmp;
+    logic[64-1:0] source_column_end_tmp;
+    logic[64-1:0] destination_row_end_tmp;
+    logic[64-1:0] destination_column_end_tmp;
+    logic[64-1:0] source_end_tmp;
+    logic[64-1:0] destination_end_tmp;
     logic half_tmp;
     logic load_rows_tmp;
     logic store_rows_tmp;
     logic[32-1:0] tile_row_tmp;
     logic[32-1:0] tile_col_tmp;
-    logic[32-1:0] tile_rows_tmp;
-    logic[32-1:0] tile_cols_tmp;
-    logic[32-1:0] cursor_row_tmp;
-    logic[32-1:0] cursor_col_tmp;
-    logic[32-1:0] head_tmp;
-    logic[32-1:0] tail_tmp;
-    logic[32-1:0] pending_tmp;
+    logic[6-1:0] tile_rows_tmp;
+    logic[6-1:0] tile_cols_tmp;
+    logic[6-1:0] cursor_row_tmp;
+    logic[6-1:0] cursor_col_tmp;
+    logic[6-1:0] head_tmp;
+    logic[6-1:0] tail_tmp;
+    logic[7-1:0] pending_tmp;
     logic requests_done_tmp;
     logic store_valid_tmp;
     logic read_held_tmp;
     logic[64-1:0][32-1:0] metadata_tmp;
+    logic return_valid_tmp;
+    logic[32-1:0] return_meta_tmp;
+    logic[32-1:0][32-1:0] return_data_tmp;
     logic[32-1:0] store_meta_tmp;
     logic[32-1:0] store_address_tmp;
     logic[64-1:0] store_mask_tmp;
@@ -156,15 +192,15 @@ module cpphdl_examples_MatrixTransfer (
         col_stride=(state == 64'h1) ? (unsigned'(32'(sc))) : (unsigned'(32'(dc)));
         row_fast=(state == 64'h1) ? (((load_rows) != '0)) : (((store_rows) != '0));
         element=((state == 64'h1) && ((half) != '0)) ? ('h2) : ('h4);
-        address_comb=((((state == 64'h1)) ? (unsigned'(32'(source))) : (unsigned'(32'(destination)))) + (((unsigned'(32'(tile_row)) + unsigned'(32'(cursor_row))))*row_stride)) + (((unsigned'(32'(tile_col)) + unsigned'(32'(cursor_col))))*col_stride);
+        address_comb=current_address;
         available=((32'h40 - ((address_comb & 32'h3F))))/element;
-        fast_left=(row_fast) ? (unsigned'(32'(tile_rows)) - unsigned'(32'(cursor_row))) : (unsigned'(32'(tile_cols)) - unsigned'(32'(cursor_col)));
+        fast_left=((row_fast) ? ((unsigned'(32'(tile_rows)) - unsigned'(32'(cursor_row)))) : ((unsigned'(32'(tile_cols)) - unsigned'(32'(cursor_col))))) & 32'h3F;
         fast_stride=(row_fast) ? (row_stride) : (col_stride);
         count_comb=minimum(fast_left, (fast_stride == element) ? (available) : (32'h1));
         meta_comb=((unsigned'(32'(cursor_row)) | ((unsigned'(32'(cursor_col)) <<< 'h5))) | ((count_comb <<< 'hA))) | ((((address_comb & 32'h3F)) <<< 'h10));
     end
 
-    function logic[63:0] FpFormatConversion___convert (
+    function logic[63:0] cpphdl_examples_math_FpFormatConversion___convert (
         input logic[63:0] value
 ,       input logic[31:0] width
 ,       input logic[31:0] exp_width
@@ -192,6 +228,30 @@ module cpphdl_examples_MatrixTransfer (
         logic[31:0] normalize;
         logic signed[31:0] output_exponent;
         logic signed[31:0] shift;
+        logic[31:0] half_sign;
+        logic[31:0] half_exp;
+        logic[31:0] half_mant;
+        logic[31:0] half_subnormal;
+        if ((((width == 32'h10) && (exp_width == 32'h5)) && (out_width == 32'h20)) && (out_exp_width == 32'h8)) begin
+            half_sign=((32'(value) & 'h8000)) <<< 'h10;
+            half_exp=((32'(value) >>> 32'shA)) & 32'h1F;
+            half_mant=32'(value) & 32'h3FF;
+            if (half_exp == 32'h1F) begin
+                return 64'(32'((half_sign | 'h7F800000) | ((preserve_nan_payload) ? ((half_mant <<< 'hD)) : (32'((half_mant != 32'h0))))));
+            end
+            if (half_exp != 32'h0) begin
+                return 64'(32'((half_sign | ((((half_exp + 32'h70)) <<< 'h17))) | ((half_mant <<< 'hD))));
+            end
+            half_subnormal=32'h0;
+            if (preserve_subnormals) begin
+                for (logic[31:0] _bit = 32'h0;_bit < 32'hA;_bit=_bit+1) begin
+                    if (((half_mant >>> _bit)) == 32'h1) begin
+                        half_subnormal|=(((('h67 + _bit)) <<< 'h17)) | ((((half_mant & (((('h1 <<< _bit)) - 32'h1)))) <<< ((32'h17 - _bit))));
+                    end
+                end
+            end
+            return 64'(32'(half_sign | half_subnormal));
+        end
         mant_width=(width - exp_width) - 32'h1;
         out_mant_width=(out_width - out_exp_width) - 32'h1;
         exp_max=((64'h1 <<< exp_width)) - 64'h1;
@@ -283,14 +343,13 @@ module cpphdl_examples_MatrixTransfer (
         logic[31:0] ignored;
         logic[31:0] meta;
         logic[31:0] r;
-        logic[31:0] c;
         logic[31:0] count;
         logic[31:0] offset;
-        logic[31:0] index;
+        logic[31:0] lane;
         logic[31:0] raw;
+        logic[31:0] rotation;
         r=32'h0;
-        c=32'h0;
-        index=32'h0;
+        lane=32'h0;
         raw=32'h0;
         ignored=address_comb;
         banks_comb=1;
@@ -302,57 +361,63 @@ module cpphdl_examples_MatrixTransfer (
         write_address_comb = 'h0;
         read_address_comb = 'h0;
         write_data_comb = 'h0;
-        meta=response_meta_comb;
+        meta=return_meta;
         count=((meta >>> 32'shA)) & 32'h3F;
         offset=((meta >>> 32'sh10)) & 32'h3F;
-        for (logic[31:0] lane = 32'h0;lane < 32'h20;lane=lane+1) begin
-            if (((return_comb && (error == 64'h0)) && !m_readdataerror_in) && (lane < count)) begin
-                r=((meta & 32'h1F)) + ((((load_rows) != '0)) ? (lane) : (32'h0));
-                c=((((meta >>> 32'sh5)) & 32'h1F)) + ((((load_rows) != '0)) ? (32'h0) : (lane));
-                index=((r + c)) & 32'h1F;
-                raw=m_readdata_in[64'(32'(((offset + (lane*unsigned'(32'(((((half) != '0)) ? ('h2) : ('h4)))))))/32'h4))];
-                if (((half) != '0)) begin
-                    raw=((raw >>> (((((((offset/32'h2) + lane)) & 32'h1))*32'h10)))) & 32'hFFFF;
-                end
-                write_enable_comb[64'(index)] = 1;
-                write_address_comb[64'(index)] = r;
-                write_data_comb[64'(index)] = unsigned'(32'((((half) != '0)) ? (unsigned'(32'(FpFormatConversion___convert(64'(16'(raw)), 32'h10, 32'h5, 32'h20, 32'h8, 1, 1)))) : (raw)));
+        for (logic[31:0] index = 32'h0;index < 32'h20;index=index+1) begin
+            raw=((unsigned'(32'(m_readdata_in[64'(32'((index/32'h2)))])) >>> ((((index & 32'h1))*32'h10)))) & 32'hFFFF;
+            convert_comb[64'(index)] = unsigned'(32'((((half) != '0)) ? (unsigned'(32'(cpphdl_examples_math_FpFormatConversion___convert(64'(16'(raw)), 32'h10, 32'h5, 32'h20, 32'h8, 1, 1)))) : (unsigned'(32'(m_readdata_in[64'(32'(index & 32'hF))])))));
+            write_rotation_comb[64'h0][64'(index)] = return_data[64'(index)];
+        end
+        rotation=(((((offset >>> signed'(32'(((((half) != '0)) ? ('h1) : ('h2)))))) - ((meta & 32'h1F))) - ((((meta >>> 32'sh5)) & 32'h1F)))) & 32'h1F;
+        for (logic[31:0] stage = 32'h0;stage < 32'h5;stage=stage+1) begin
+            for (logic[31:0] index = 32'h0;index < 32'h20;index=index+1) begin
+                write_rotation_comb[64'(32'(stage + 32'h1))][64'(index)] = ((((rotation & (('h1 <<< stage)))) != '0)) ? (write_rotation_comb[64'(stage)][64'(32'(((index + (('h1 <<< stage)))) & 32'h1F))]) : (write_rotation_comb[64'(stage)][64'(index)]);
             end
         end
-        for (logic[31:0] lane = 32'h0;lane < 32'h10;lane=lane+1) begin
+        for (logic[31:0] index = 32'h0;index < 32'h20;index=index+1) begin
+            lane=(((index - ((meta & 32'h1F))) - ((((meta >>> 32'sh5)) & 32'h1F)))) & 32'h1F;
+            if ((((return_valid) != '0) && (error == 64'h0)) && (lane < count)) begin
+                r=((meta & 32'h1F)) + ((((load_rows) != '0)) ? (lane) : (32'h0));
+                write_enable_comb[64'(index)] = 1;
+                write_address_comb[64'(index)] = 32'(r & 32'h1F);
+                write_data_comb[64'(index)] = write_rotation_comb[64'h5][64'(index)];
+            end
+        end
+        for (logic[31:0] index = 32'h0;index < 32'h20;index=index+1) begin
+            lane=(((index - unsigned'(32'(cursor_row))) - unsigned'(32'(cursor_col)))) & 32'h1F;
             if (fetch_comb && (lane < count_comb)) begin
                 r=unsigned'(32'(cursor_row)) + ((((store_rows) != '0)) ? (lane) : (32'h0));
-                c=unsigned'(32'(cursor_col)) + ((((store_rows) != '0)) ? (32'h0) : (lane));
-                index=((r + c)) & 32'h1F;
                 read_enable_comb[64'(index)] = 1;
-                read_address_comb[64'(index)] = r;
+                read_address_comb[64'(index)] = 32'(r & 32'h1F);
             end
         end
     end
 
     always_comb begin : data_comb_func  // data_comb_func
-        logic[31:0] r;
-        logic[31:0] c;
-        logic[31:0] index;
+        logic[31:0] lane;
         logic[31:0] meta;
         logic[31:0] count;
         logic[31:0] offset;
-        r=32'h0;
-        c=32'h0;
-        index=32'h0;
+        logic[31:0] rotation;
+        lane=32'h0;
         for (logic[31:0] i = 32'h0;i < 32'h20;i=i+1) begin
-            read_data_comb[64'(i)] = bank__data_out[i][64'h0];
+            read_rotation_comb[64'h0][64'(i)] = bank__data_out[i][64'h0];
         end
         data_comb = 'h0;
         meta=store_meta;
         count=((meta >>> 32'shA)) & 32'h3F;
         offset=((meta >>> 32'sh10)) & 32'h3F;
-        for (logic[31:0] lane = 32'h0;lane < 32'h10;lane=lane+1) begin
-            if (lane < count) begin
-                r=((meta & 32'h1F)) + ((((store_rows) != '0)) ? (lane) : (32'h0));
-                c=((((meta >>> 32'sh5)) & 32'h1F)) + ((((store_rows) != '0)) ? (32'h0) : (lane));
-                index=((r + c)) & 32'h1F;
-                data_comb[64'(32'((offset/32'h4) + lane))] = read_data_comb[64'(index)];
+        rotation=(((((meta & 32'h1F)) + ((((meta >>> 32'sh5)) & 32'h1F))) - (offset/32'h4))) & 32'h1F;
+        for (logic[31:0] stage = 32'h0;stage < 32'h5;stage=stage+1) begin
+            for (logic[31:0] index = 32'h0;index < 32'h20;index=index+1) begin
+                read_rotation_comb[64'(32'(stage + 32'h1))][64'(index)] = ((((rotation & (('h1 <<< stage)))) != '0)) ? (read_rotation_comb[64'(stage)][64'(32'(((index + (('h1 <<< stage)))) & 32'h1F))]) : (read_rotation_comb[64'(stage)][64'(index)]);
+            end
+        end
+        for (logic[31:0] _output = 32'h0;_output < 32'h10;_output=_output+1) begin
+            lane=_output - (offset/32'h4);
+            if (_output>=(offset/32'h4) && (lane < count)) begin
+                data_comb[64'(_output)] = read_rotation_comb[64'h5][64'(_output)];
             end
         end
     end
@@ -363,14 +428,24 @@ module cpphdl_examples_MatrixTransfer (
     );
     begin: advance_cursor
         logic[31:0] next;
-        next=((row_fast) ? (unsigned'(32'(cursor_row))) : (unsigned'(32'(cursor_col)))) + count;
+        logic[31:0] row_stride;
+        logic[31:0] col_stride;
+        logic[31:0] fast_stride;
+        logic[31:0] element;
+        row_stride=(state == 64'h1) ? (unsigned'(32'(sr))) : (unsigned'(32'(dr)));
+        col_stride=(state == 64'h1) ? (unsigned'(32'(sc))) : (unsigned'(32'(dc)));
+        fast_stride=(row_fast) ? (row_stride) : (col_stride);
+        element=((state == 64'h1) && ((half) != '0)) ? ('h2) : ('h4);
+        next=((((row_fast) ? (unsigned'(32'(cursor_row))) : (unsigned'(32'(cursor_col)))) + count)) & 32'h3F;
         if (next == ((row_fast) ? (unsigned'(32'(tile_rows))) : (unsigned'(32'(tile_cols))))) begin
+            current_address_tmp = 32'(unsigned'(32'(line_address)) + ((row_fast) ? (col_stride) : (row_stride)));
+            line_address_tmp = 32'(unsigned'(32'(line_address)) + ((row_fast) ? (col_stride) : (row_stride)));
             if (row_fast) begin
-                cursor_row_tmp = 32'h0;
+                cursor_row_tmp = 64'h0;
                 cursor_col_tmp = 32'(unsigned'(32'(cursor_col)) + 32'h1);
             end
             else begin
-                cursor_col_tmp = 32'h0;
+                cursor_col_tmp = 64'h0;
                 cursor_row_tmp = 32'(unsigned'(32'(cursor_row)) + 32'h1);
             end
             if (((row_fast) ? ((unsigned'(32'(cursor_col)) + 32'h1)) : ((unsigned'(32'(cursor_row)) + 32'h1))) == ((row_fast) ? (unsigned'(32'(tile_cols))) : (unsigned'(32'(tile_rows))))) begin
@@ -378,6 +453,7 @@ module cpphdl_examples_MatrixTransfer (
             end
         end
         else begin
+            current_address_tmp = 32'(unsigned'(32'(current_address)) + (((fast_stride == element)) ? (((count <<< (((element == 32'h2)) ? ('h1) : ('h2))))) : (fast_stride)));
             if (row_fast) begin
                 cursor_row_tmp = next;
             end
@@ -428,6 +504,20 @@ module cpphdl_examples_MatrixTransfer (
             state_tmp = '0;
             source_tmp = '0;
             destination_tmp = '0;
+            source_tile_tmp = '0;
+            destination_tile_tmp = '0;
+            current_address_tmp = '0;
+            line_address_tmp = '0;
+            check_sr_tmp = '0;
+            check_sc_tmp = '0;
+            check_dr_tmp = '0;
+            check_dc_tmp = '0;
+            source_row_end_tmp = '0;
+            source_column_end_tmp = '0;
+            destination_row_end_tmp = '0;
+            destination_column_end_tmp = '0;
+            source_end_tmp = '0;
+            destination_end_tmp = '0;
             rows_tmp = '0;
             columns_tmp = '0;
             sr_tmp = '0;
@@ -451,15 +541,27 @@ module cpphdl_examples_MatrixTransfer (
             store_valid_tmp = '0;
             read_held_tmp = '0;
             metadata_tmp = '0;
+            return_valid_tmp = '0;
+            return_meta_tmp = '0;
+            return_data_tmp = '0;
             store_meta_tmp = '0;
             store_address_tmp = '0;
             store_mask_tmp = '0;
         end
         else begin
+            return_valid_tmp = (response && (error == 64'h0)) && !m_readdataerror_in;
+            if (response) begin
+                return_meta_tmp = response_meta_comb;
+                return_data_tmp = convert_comb;
+            end
             read_held_tmp = m_read_out && m_waitrequest_in;
             if ((state == 64'h0) && command_valid_in) begin
                 source_tmp = source_in;
                 destination_tmp = destination_in;
+                source_tile_tmp = source_in;
+                destination_tile_tmp = destination_in;
+                current_address_tmp = source_in;
+                line_address_tmp = source_in;
                 rows_tmp = rows_in;
                 columns_tmp = columns_in;
                 sr_tmp = source_row_stride_in;
@@ -474,17 +576,40 @@ module cpphdl_examples_MatrixTransfer (
                 tile_col_tmp = 32'h0;
                 tile_rows_tmp = minimum(rows_in, 32'h20);
                 tile_cols_tmp = minimum(columns_in, 32'h20);
-                cursor_row_tmp = 32'h0;
-                cursor_col_tmp = 32'h0;
-                head_tmp = 32'h0;
-                tail_tmp = 32'h0;
-                pending_tmp = 32'h0;
+                cursor_row_tmp = 64'h0;
+                cursor_col_tmp = 64'h0;
+                head_tmp = 64'h0;
+                tail_tmp = 64'h0;
+                pending_tmp = 64'h0;
                 requests_done_tmp = 0;
                 store_valid_tmp = 0;
                 error_tmp = 32'h0;
-                src_end=((unsigned'(64'(source_in)) + (128'(64'(32'((rows_in - 32'h1))))*128'(unsigned'(64'(source_row_stride_in))))) + (128'(64'(32'((columns_in - 32'h1))))*128'(unsigned'(64'(source_column_stride_in))))) + 64'(element);
-                dst_end=((unsigned'(64'(destination_in)) + (128'(64'(32'((rows_in - 32'h1))))*128'(unsigned'(64'(destination_row_stride_in))))) + (128'(64'(32'((columns_in - 32'h1))))*128'(unsigned'(64'(destination_column_stride_in))))) + 64'h4;
-                if ((((((((((((!((rows_in) != '0) || !((columns_in) != '0)) || (rows_in > 32'h20000)) || (columns_in > 32'h20000)) || (((((((source_in | source_row_stride_in) | source_column_stride_in)) & ((element - 32'h1))))) != '0)) || (((((((destination_in | destination_row_stride_in) | destination_column_stride_in)) & 32'h3))) != '0)) || !((source_row_stride_in) != '0)) || !((source_column_stride_in) != '0)) || !((destination_row_stride_in) != '0)) || !((destination_column_stride_in) != '0)) || (64'(src_end) > 64'h100000000)) || (64'(dst_end) > 64'h100000000)) || (((unsigned'(64'(source_in)) < dst_end) && (unsigned'(64'(destination_in)) < src_end)))) begin
+                state_tmp = 64'h4;
+            end
+            if (state == 64'h4) begin
+                check_sr_tmp = 64'(128'(64'(32'((((unsigned'(32'(rows)) - 32'h1)) & 32'h1FFFF))))*128'(64'(unsigned'(32'(sr)))));
+                check_sc_tmp = 64'(128'(64'(32'((((unsigned'(32'(columns)) - 32'h1)) & 32'h1FFFF))))*128'(64'(unsigned'(32'(sc)))));
+                check_dr_tmp = 64'(128'(64'(32'((((unsigned'(32'(rows)) - 32'h1)) & 32'h1FFFF))))*128'(64'(unsigned'(32'(dr)))));
+                check_dc_tmp = 64'(128'(64'(32'((((unsigned'(32'(columns)) - 32'h1)) & 32'h1FFFF))))*128'(64'(unsigned'(32'(dc)))));
+                state_tmp = 64'h5;
+            end
+            if (state == 64'h5) begin
+                source_row_end_tmp = 64'(unsigned'(64'(check_sr)) + 64'(unsigned'(32'(source))));
+                source_column_end_tmp = 64'(unsigned'(64'(check_sc)) + unsigned'(64'(signed'(32'(((((half) != '0)) ? ('h2) : ('h4)))))));
+                destination_row_end_tmp = 64'(unsigned'(64'(check_dr)) + 64'(unsigned'(32'(destination))));
+                destination_column_end_tmp = 64'(unsigned'(64'(check_dc)) + 64'h4);
+                state_tmp = 64'h6;
+            end
+            if (state == 64'h6) begin
+                source_end_tmp = unsigned'(64'(unsigned'(64'(source_row_end)) + unsigned'(64'(source_column_end))));
+                destination_end_tmp = unsigned'(64'(unsigned'(64'(destination_row_end)) + unsigned'(64'(destination_column_end))));
+                state_tmp = 64'h7;
+            end
+            if (state == 64'h7) begin
+                src_end=source_end;
+                dst_end=destination_end;
+                element=(((half) != '0)) ? ('h2) : ('h4);
+                if (((((((((((((rows == 64'h0) || (columns == 64'h0)) || (rows > 64'h20000)) || (columns > 64'h20000)) || (((((((unsigned'(32'(source)) | unsigned'(32'(sr))) | unsigned'(32'(sc)))) & ((element - 32'h1))))) != '0)) || (((((((unsigned'(32'(destination)) | unsigned'(32'(dr))) | unsigned'(32'(dc)))) & 32'h3))) != '0)) || (sr == 64'h0)) || (sc == 64'h0)) || (dr == 64'h0)) || (dc == 64'h0)) || (64'(src_end) > 64'h100000000)) || (64'(dst_end) > 64'h100000000)) || (((64'(unsigned'(32'(source))) < dst_end) && (64'(unsigned'(32'(destination))) < src_end)))) begin
                     error_tmp = 32'h1;
                     state_tmp = 64'h3;
                 end
@@ -506,10 +631,12 @@ module cpphdl_examples_MatrixTransfer (
                         error_tmp = 32'h2;
                     end
                 end
-                if ((((((requests_done) != '0) || (error != 64'h0))) && (outstanding == 32'h0)) && !m_read_out) begin
+                if (((((((requests_done) != '0) || (error != 64'h0))) && (outstanding == 32'h0)) && !m_read_out) && !response) begin
                     state_tmp = signed'(32'((((error != 64'h0) || ((response && m_readdataerror_in)))) ? ('h3) : ('h2)));
-                    cursor_row_tmp = 32'h0;
-                    cursor_col_tmp = 32'h0;
+                    current_address_tmp = destination_tile;
+                    line_address_tmp = destination_tile;
+                    cursor_row_tmp = 64'h0;
+                    cursor_col_tmp = 64'h0;
                     requests_done_tmp = 0;
                 end
             end
@@ -526,16 +653,26 @@ module cpphdl_examples_MatrixTransfer (
                     advance_cursor(((store_rows) != '0), count_comb);
                 end
                 if (((requests_done) != '0) && ((!((store_valid) != '0) || !m_waitrequest_in))) begin
-                    cursor_row_tmp = 32'h0;
-                    cursor_col_tmp = 32'h0;
+                    cursor_row_tmp = 64'h0;
+                    cursor_col_tmp = 64'h0;
                     requests_done_tmp = 0;
                     if (64'(32'((unsigned'(32'(tile_col)) + 32'h20))) < columns) begin
+                        source_tile_tmp = 32'(unsigned'(32'(source_tile)) + ((unsigned'(32'(sc)) <<< 'h5)));
+                        destination_tile_tmp = 32'(unsigned'(32'(destination_tile)) + ((unsigned'(32'(dc)) <<< 'h5)));
+                        current_address_tmp = 32'(unsigned'(32'(source_tile)) + ((unsigned'(32'(sc)) <<< 'h5)));
+                        line_address_tmp = 32'(unsigned'(32'(source_tile)) + ((unsigned'(32'(sc)) <<< 'h5)));
                         tile_col_tmp = 32'(unsigned'(32'(tile_col)) + 32'h20);
                         tile_cols_tmp = minimum((unsigned'(32'(columns)) - unsigned'(32'(tile_col))) - 32'h20, 32'h20);
                         state_tmp = 64'h1;
                     end
                     else begin
                         if (64'(32'((unsigned'(32'(tile_row)) + 32'h20))) < rows) begin
+                            source_tmp = 32'(unsigned'(32'(source)) + ((unsigned'(32'(sr)) <<< 'h5)));
+                            destination_tmp = 32'(unsigned'(32'(destination)) + ((unsigned'(32'(dr)) <<< 'h5)));
+                            source_tile_tmp = 32'(unsigned'(32'(source)) + ((unsigned'(32'(sr)) <<< 'h5)));
+                            destination_tile_tmp = 32'(unsigned'(32'(destination)) + ((unsigned'(32'(dr)) <<< 'h5)));
+                            current_address_tmp = 32'(unsigned'(32'(source)) + ((unsigned'(32'(sr)) <<< 'h5)));
+                            line_address_tmp = 32'(unsigned'(32'(source)) + ((unsigned'(32'(sr)) <<< 'h5)));
                             tile_row_tmp = 32'(unsigned'(32'(tile_row)) + 32'h20);
                             tile_rows_tmp = minimum((unsigned'(32'(rows)) - unsigned'(32'(tile_row))) - 32'h20, 32'h20);
                             tile_col_tmp = 32'h0;
@@ -566,6 +703,20 @@ module cpphdl_examples_MatrixTransfer (
         dr_tmp = dr;
         dc_tmp = dc;
         error_tmp = error;
+        source_tile_tmp = source_tile;
+        destination_tile_tmp = destination_tile;
+        current_address_tmp = current_address;
+        line_address_tmp = line_address;
+        check_sr_tmp = check_sr;
+        check_sc_tmp = check_sc;
+        check_dr_tmp = check_dr;
+        check_dc_tmp = check_dc;
+        source_row_end_tmp = source_row_end;
+        source_column_end_tmp = source_column_end;
+        destination_row_end_tmp = destination_row_end;
+        destination_column_end_tmp = destination_column_end;
+        source_end_tmp = source_end;
+        destination_end_tmp = destination_end;
         half_tmp = half;
         load_rows_tmp = load_rows;
         store_rows_tmp = store_rows;
@@ -582,6 +733,9 @@ module cpphdl_examples_MatrixTransfer (
         store_valid_tmp = store_valid;
         read_held_tmp = read_held;
         metadata_tmp = metadata;
+        return_valid_tmp = return_valid;
+        return_meta_tmp = return_meta;
+        return_data_tmp = return_data;
         store_meta_tmp = store_meta;
         store_address_tmp = store_address;
         store_mask_tmp = store_mask;
@@ -598,6 +752,20 @@ module cpphdl_examples_MatrixTransfer (
         dr <= dr_tmp;
         dc <= dc_tmp;
         error <= error_tmp;
+        source_tile <= source_tile_tmp;
+        destination_tile <= destination_tile_tmp;
+        current_address <= current_address_tmp;
+        line_address <= line_address_tmp;
+        check_sr <= check_sr_tmp;
+        check_sc <= check_sc_tmp;
+        check_dr <= check_dr_tmp;
+        check_dc <= check_dc_tmp;
+        source_row_end <= source_row_end_tmp;
+        source_column_end <= source_column_end_tmp;
+        destination_row_end <= destination_row_end_tmp;
+        destination_column_end <= destination_column_end_tmp;
+        source_end <= source_end_tmp;
+        destination_end <= destination_end_tmp;
         half <= half_tmp;
         load_rows <= load_rows_tmp;
         store_rows <= store_rows_tmp;
@@ -614,6 +782,9 @@ module cpphdl_examples_MatrixTransfer (
         store_valid <= store_valid_tmp;
         read_held <= read_held_tmp;
         metadata <= metadata_tmp;
+        return_valid <= return_valid_tmp;
+        return_meta <= return_meta_tmp;
+        return_data <= return_data_tmp;
         store_meta <= store_meta_tmp;
         store_address <= store_address_tmp;
         store_mask <= store_mask_tmp;

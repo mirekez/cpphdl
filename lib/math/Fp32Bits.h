@@ -37,7 +37,7 @@ struct Fp32BitsMethods {
     // following lib/math/FpAdd.h. FP16 conversion is exact, including
     // subnormals. Pure integer operations allow HLS to synthesize actual FP32 logic.
     static uint32_t fp16_to_fp32(uint32_t raw) {
-        uint32_t sign, exp, mant, shift;
+        uint32_t sign, exp, mant, subnormal;
         sign = (raw & 0x8000u) << 16;
         exp = (raw >> 10) & 31;
         mant = raw & 1023;
@@ -45,10 +45,17 @@ struct Fp32BitsMethods {
             return sign | 0x7f800000u | (mant << 13);
         if (exp != 0)
             return sign | ((exp + 112) << 23) | (mant << 13);
-        if (!mant)
-            return sign;
-        shift = leading_zeros(mant) - 21;
-        return sign | ((113 - shift) << 23) | ((mant << (shift + 13)) & 0x7fffffu);
+        // Ten mutually exclusive leading-bit cases. Every shift is constant:
+        // using a general 32-bit CLZ and variable barrel shift here creates
+        // long control/data pipelines in HLS for a ten-bit significand.
+        // A zero mantissa selects no case and preserves signed zero.
+        subnormal = 0;
+        for (unsigned bit = 0; bit < 10; ++bit) {
+            if ((mant >> bit) == 1)
+                subnormal |= ((103u + bit) << 23) |
+                    ((mant & ((1u << bit) - 1)) << (23 - bit));
+        }
+        return sign | subnormal;
     }
     static uint64_t shift_jam(uint64_t x, uint32_t shift) {
         if (shift == 0)

@@ -30,6 +30,7 @@ module MaskedSynchronousRamExample (
     cpphdl_examples_MaskedSynchronousRam #(
         3
 ,       17
+,       0
     ) ram (
         .clk(clk)
 ,       .reset(reset)

@@ -44,8 +44,8 @@ int main() try {
         check("multiply", a, b, fp32_multiply(a, b), flush(toBits(x * y)));
         if (i < 10000) {
             check("divide", a, b, fp32_divide(a, b), flush(toBits(x / y)));
-            check("sqrt", a, 0, fp32_sqrt(a), flush(toBits(std::sqrt(x))));
         }
+        check("sqrt", a, 0, fp32_sqrt(a), flush(toBits(std::sqrt(x))));
         check("int32", a, 0, fp32_from_int(int32_t(a)), toBits(float(int32_t(a))));
         check("uint32", a, 0, unsigned_to_float_bits(a), toBits(float(a)));
         check("transport", a, 0, encode(decode(a)), a);

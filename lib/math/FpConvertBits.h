@@ -17,6 +17,28 @@ struct FpFormatConversion {
         uint64_t output_sign, payload;
         unsigned input_exponent, normalize;
         int output_exponent, shift;
+        uint32_t half_sign, half_exp, half_mant, half_subnormal;
+
+        // Widening FP16 is exact: no rounding, variable-width normalization
+        // or 64-bit barrel shifter is needed. Constant leading-bit cases
+        // keep parallel memory converters small and preserve both options.
+        if (width == 16 && exp_width == 5 && out_width == 32 && out_exp_width == 8) {
+            half_sign = (uint32_t(value) & 0x8000u) << 16;
+            half_exp = (uint32_t(value) >> 10) & 31;
+            half_mant = uint32_t(value) & 1023;
+            if (half_exp == 31)
+                return half_sign | 0x7f800000u |
+                    (preserve_nan_payload ? half_mant << 13 : uint32_t(half_mant != 0));
+            if (half_exp != 0)
+                return half_sign | ((half_exp + 112) << 23) | (half_mant << 13);
+            half_subnormal = 0;
+            if (preserve_subnormals)
+                for (unsigned bit = 0; bit < 10; ++bit)
+                    if ((half_mant >> bit) == 1)
+                        half_subnormal |= ((103u + bit) << 23) |
+                            ((half_mant & ((1u << bit) - 1)) << (23 - bit));
+            return half_sign | half_subnormal;
+        }
 
         mant_width = width - exp_width - 1;
         out_mant_width = out_width - out_exp_width - 1;

@@ -1,6 +1,7 @@
 #include "OpenMP.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/Attr.h"
 #include <functional>
 #include <set>
 #include <map>
@@ -77,6 +78,17 @@ OpenMPLoop loopPlan(ASTContext& ctx, const ForStmt* loop) {
     return result;
 }
 void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResolver& resolver, const StaticIntegers& inherited) {
+    auto atomicRecord = [](const CXXRecordDecl* record) {
+        if (!record || !record->isEmpty()) return false;
+        for (const auto* attr : record->specific_attrs<AnnotateAttr>())
+            if (attr->getAnnotation().starts_with("CPPHDL_REPLACEMENT_MODULE=")) return true;
+        return false;
+    };
+    auto trivialAtomicConstruction = [&](const Stmt* statement) {
+        auto* construction = dyn_cast<CXXConstructExpr>(statement);
+        return construction && construction->getNumArgs() == 0 &&
+            construction->getConstructor()->isTrivial() && atomicRecord(construction->getConstructor()->getParent());
+    };
     std::set<const ValueDecl*> local, independent;
     for (auto* var : plan.privates) independent.insert(var);
     for (auto* var : plan.firstprivates) independent.insert(var);
@@ -102,8 +114,9 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     pureCall = [&](const CallExpr* call) {
         auto* fn = resolver ? resolver(call) : call->getDirectCallee();
         if (!fn) unsupported("pure helpers require a direct call with a visible body");
-        if (auto* method = dyn_cast<CXXMethodDecl>(fn); method && !method->isStatic())
-            unsupported("pure helpers must be free or static value functions");
+        if (auto* method = dyn_cast<CXXMethodDecl>(fn); method && !method->isStatic() &&
+            !(method->isConst() && method->getNameAsString() == "command" && atomicRecord(method->getParent())))
+            unsupported("pure helpers must be free/static value functions or const commands of stateless annotated classes");
         auto scalar = [](QualType type) { return !type.isVolatileQualified() &&
             (type->isIntegerType() || type->isRealFloatingType()); };
         if (!scalar(fn->getReturnType())) unsupported("pure helpers require an arithmetic value result");
@@ -134,7 +147,7 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
             if (auto* call = dyn_cast<CallExpr>(stmt)) pureCall(call);
             if (auto* loop = dyn_cast<ForStmt>(stmt)) (void)loopPlan(ctx, loop);
             if (isa<WhileStmt>(stmt) || isa<DoStmt>(stmt) || isa<GotoStmt>(stmt) ||
-                isa<CXXConstructExpr>(stmt) || isa<CXXNewExpr>(stmt) || isa<CXXDeleteExpr>(stmt) ||
+                (isa<CXXConstructExpr>(stmt) && !trivialAtomicConstruction(stmt)) || isa<CXXNewExpr>(stmt) || isa<CXXDeleteExpr>(stmt) ||
                 isa<CXXThrowExpr>(stmt) || isa<BreakStmt>(stmt) || isa<ContinueStmt>(stmt) ||
                 isa<OMPExecutableDirective>(stmt)) unsupported("pure helpers require bounded arithmetic control flow");
             if (auto* ref = dyn_cast<DeclRefExpr>(stmt)) if (auto* var = dyn_cast<VarDecl>(ref->getDecl()))
@@ -158,7 +171,7 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
         if (!stmt) return;
         if (auto* call = dyn_cast<CallExpr>(stmt)) pureCall(call);
         if (auto* loop = dyn_cast<ForStmt>(stmt)) (void)loopPlan(ctx, loop);
-        if (isa<CXXConstructExpr>(stmt) || isa<ReturnStmt>(stmt) || isa<GotoStmt>(stmt) ||
+        if ((isa<CXXConstructExpr>(stmt) && !trivialAtomicConstruction(stmt)) || isa<ReturnStmt>(stmt) || isa<GotoStmt>(stmt) ||
             isa<WhileStmt>(stmt) || isa<DoStmt>(stmt) || isa<BreakStmt>(stmt) ||
             isa<ContinueStmt>(stmt) || isa<OMPExecutableDirective>(stmt))
             unsupported("lane bodies require bounded arithmetic/branches and pure scalar helpers");

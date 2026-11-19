@@ -9,15 +9,16 @@ namespace cpphdl_examples {
 // RAM contents/data registers are intentionally not reset. Native C++ uses the
 // same deferred-write/read-before-commit semantics. The small replacement keeps
 // physical RAM ports recognizable even when the parent has many dynamic banks.
-template <unsigned WORDS, unsigned DEPTH>
+template <unsigned WORDS, unsigned DEPTH, bool BLOCK = false>
 class [[clang::annotate(R"(CPPHDL_REPLACEMENT=
-module cpphdl_examples_SynchronousRam #(parameter WORDS=1,parameter DEPTH=64)(
+module cpphdl_examples_SynchronousRam #(parameter WORDS=1,parameter DEPTH=64,parameter BLOCK=0)(
  input wire clk,reset,input wire read_in,write_in,
  input wire [31:0] read_address_in,write_address_in,
  input wire [WORDS*32-1:0] data_in,output reg [WORDS*32-1:0] data_out
 );
- // Shallow banks otherwise waste an M20K for as few as four words.
- generate if(DEPTH<=64) begin: shallow
+ // Small banks default to MLAB; wide or heavily banked caches can explicitly
+ // use M20K to keep their storage and output registers out of logic fabric.
+ generate if(DEPTH<=64 && !BLOCK) begin: shallow
    (* ramstyle="MLAB", ram_style="distributed" *) reg [WORDS*32-1:0] words[0:DEPTH-1];
    always @(posedge clk) begin
      if(!reset) begin
@@ -73,6 +74,8 @@ endmodule
 class SynchronousRamExample : public cpphdl::Module {
     cpphdl_examples::SynchronousRam<1, 64> narrow;
     cpphdl_examples::SynchronousRam<3, 64> wide;
+    cpphdl_examples::SynchronousRam<1, 64, true> block_narrow;
+    cpphdl_examples::SynchronousRam<3, 64, true> block_wide;
 
   public:
     using Data = cpphdl::array<3, cpphdl::u32>;
@@ -80,6 +83,8 @@ class SynchronousRamExample : public cpphdl::Module {
     _PORT(uint32_t) write_address_in, read_address_in;
     _PORT(Data) write_data_in, data_out;
     _PORT(uint32_t) narrow_out;
+    _PORT(Data) block_data_out;
+    _PORT(uint32_t) block_narrow_out;
     void _assign() {
         narrow.write_in = _ASSIGN(write_in());
         wide.write_in = _ASSIGN(write_in());
@@ -91,18 +96,36 @@ class SynchronousRamExample : public cpphdl::Module {
         wide.read_address_in = _ASSIGN(read_address_in());
         narrow.data_in = _ASSIGN(cpphdl::array<1, cpphdl::u32>{write_data_in()[0]});
         wide.data_in = _ASSIGN(write_data_in());
+        block_narrow.write_in = _ASSIGN(write_in());
+        block_wide.write_in = _ASSIGN(write_in());
+        block_narrow.read_in = _ASSIGN(read_in());
+        block_wide.read_in = _ASSIGN(read_in());
+        block_narrow.write_address_in = _ASSIGN(write_address_in());
+        block_wide.write_address_in = _ASSIGN(write_address_in());
+        block_narrow.read_address_in = _ASSIGN(read_address_in());
+        block_wide.read_address_in = _ASSIGN(read_address_in());
+        block_narrow.data_in = _ASSIGN(cpphdl::array<1, cpphdl::u32>{write_data_in()[0]});
+        block_wide.data_in = _ASSIGN(write_data_in());
         data_out = _ASSIGN(wide.data_out());
         narrow_out = _ASSIGN(uint32_t(narrow.data_out()[0]));
+        block_data_out = _ASSIGN(block_wide.data_out());
+        block_narrow_out = _ASSIGN(uint32_t(block_narrow.data_out()[0]));
         narrow._assign();
         wide._assign();
+        block_narrow._assign();
+        block_wide._assign();
     }
     void _work(bool reset) {
         narrow._work(reset);
         wide._work(reset);
+        block_narrow._work(reset);
+        block_wide._work(reset);
     }
     void _strobe() {
         narrow._strobe();
         wide._strobe();
+        block_narrow._strobe();
+        block_wide._strobe();
     }
 };
 #pragma pop_macro("MAINFILE")
@@ -166,8 +189,14 @@ int main_from_header(int, char**) {
     };
     auto output = [&](unsigned lane) -> uint32_t {
 #ifdef VERILATOR
+        if (dut.block_data_out[lane] != dut.data_out[lane] ||
+            dut.block_narrow_out != dut.narrow_out)
+            throw std::runtime_error("BLOCK RAM behavior differs from default RAM");
         return dut.data_out[lane];
 #else
+        if (dut.block_data_out()[lane] != dut.data_out()[lane] ||
+            dut.block_narrow_out() != dut.narrow_out())
+            throw std::runtime_error("BLOCK RAM behavior differs from default RAM");
         return dut.data_out()[lane];
 #endif
     };

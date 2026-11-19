@@ -30,19 +30,23 @@ inline uint32_t fp32_sqrt(uint32_t a) {
     if (!exponent) return a&0x80000000u;
     if (a&0x80000000u) return 0x7fc00000u;
     if (exponent==255) return mantissa?0x7fc00000u:0x7f800000u;
-    int32_t unbiased=int32_t(exponent)-127;
     uint64_t significand=mantissa|0x800000u;
-    if (unbiased%2!=0) { significand<<=1; --unbiased; }
-    uint64_t radicand=significand<<25, remainder=0, root=0;
-    for (unsigned i=0;i<32;++i) {
-        remainder=(remainder<<2)|(radicand>>62); radicand<<=2;
+    if (!(exponent&1)) significand<<=1;
+    // The normalized radicand has at most 50 bits. The first seven pairs
+    // of the old 64-bit restoring loop were always zero. Skip them, and
+    // keep root/remainder arithmetic narrow: root needs 25 bits, the saved
+    // remainder 26 and the shifted trial remainder at most 28.
+    uint64_t radicand=significand<<25;
+    uint32_t remainder=0, root=0;
+    for (unsigned i=0;i<25;++i) {
+        remainder=(remainder<<2)|uint32_t((radicand>>48)&3); radicand<<=2;
         root<<=1;
-        uint64_t trial=(root<<1)|1;
+        uint32_t trial=(root<<1)|1;
         if (remainder>=trial) { remainder-=trial; root|=1; }
     }
-    uint64_t rounded=root>>1;
+    uint32_t rounded=root>>1;
     if ((root&1)&&(remainder||(rounded&1))) ++rounded;
-    int32_t result_exponent=unbiased/2+127;
+    uint32_t result_exponent=(exponent+127)>>1;
     if (rounded>=0x1000000u) { rounded>>=1; ++result_exponent; }
     return (uint32_t(result_exponent)<<23)|(uint32_t(rounded)&0x7fffffu);
 }
@@ -67,13 +71,6 @@ inline int32_t fp32_small_int(uint32_t a) {
     int32_t exponent=int32_t((a>>23)&255)-127;
     uint32_t magnitude=exponent<0?0:((a&0x7fffffu)|0x800000u)>>(23-uint32_t(exponent<0?0:exponent));
     return (a&0x80000000u)?-int32_t(magnitude):int32_t(magnitude);
-}
-inline bool fp32_less(uint32_t a,uint32_t b) {
-    if (((a>>23)&255)==255&&(a&0x7fffff)) return false;
-    if (((b>>23)&255)==255&&(b&0x7fffff)) return false;
-    if (!(a&0x7fffffff)&&!(b&0x7fffffff)) return false;
-    if ((a^b)&0x80000000u) return (a&0x80000000u)!=0;
-    return (a&0x80000000u)?a>b:a<b;
 }
 // Range-reduced degree-seven Taylor approximation. Error is explicitly
 // tested against expf; this is not advertised as correctly rounded exp.

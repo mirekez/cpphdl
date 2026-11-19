@@ -6,6 +6,10 @@
 #ifndef PIPELINE_LATENCY
 #define PIPELINE_LATENCY PIPELINE_STAGES
 #endif
+#ifndef PIPELINE_REFERENCE
+#define PIPELINE_REFERENCE(CANDIDATE,OPERATION,INDEX,VALUE) \
+    (CANDIDATE).command((OPERATION),(INDEX),(VALUE))
+#endif
 
 #ifndef PIPELINE_CUSTOM_METHODS
 struct PipelineMethods {
@@ -97,6 +101,7 @@ int main() {
         auto result = [&] { return dut.result_out(); };
         auto fault = [&] { return dut.fault_out(); };
 #endif
+        ready = false;
         tick(true);
         auto cycle = [&](bool reset = false) {
             drive(reset);
@@ -116,7 +121,7 @@ int main() {
             if (reset) { occupied.fill(false); expected.fill(0); reference = PipelineMethods{}; }
             else if (advance) {
                 auto candidate = reference;
-                uint64_t answer = valid ? candidate.command(operation,index,value) : 0;
+                uint64_t answer = valid ? PIPELINE_REFERENCE(candidate,operation,index,value) : 0;
                 if constexpr (PIPELINE_LATENCY == 1) { if (valid) reference = candidate; }
                 else if (occupied[PIPELINE_LATENCY-2]) reference = updates[PIPELINE_LATENCY-2];
                 for (unsigned i = PIPELINE_LATENCY-1; i; --i) {
@@ -129,6 +134,22 @@ int main() {
             tick(reset);
             return advance;
         };
+        // Fill while the consumer is stalled from reset. Bubbles during
+        // warmup and a reset after the first held result exercise the common
+        // advance signal used by nested registered primitives.
+        bool preludeMayChange = true;
+        for (unsigned i = 0; i < PIPELINE_LATENCY + 9; ++i) {
+            if (preludeMayChange) {
+                valid = i % 4 != 1;
+                operation = i & 3; index = i + 41; value = i * 0x10203u;
+            }
+            preludeMayChange = cycle();
+        }
+        if (!outputValid()) throw std::runtime_error("early stalled pipeline never filled");
+        cycle(true);
+        valid = false; ready = true; cycle();
+        if (outputValid()) throw std::runtime_error("reset leaked a held early response");
+        const unsigned preludeAccepted = accepted, preludeDelivered = delivered;
         // No testbench waiting: a distinct input on EVERY edge.
         valid = true;
         for (unsigned i = 0; i < 1024; ++i) {
@@ -137,7 +158,8 @@ int main() {
         }
         valid = false;
         for (unsigned i = 0; i <= PIPELINE_LATENCY; ++i) cycle();
-        if (accepted != 1024 || delivered != accepted) throw std::runtime_error("pipeline drain mismatch");
+        if (accepted - preludeAccepted != 1024 || delivered - preludeDelivered != 1024)
+            throw std::runtime_error("pipeline drain mismatch");
 
         std::mt19937 random(0x3157);
         bool mayChange = true;

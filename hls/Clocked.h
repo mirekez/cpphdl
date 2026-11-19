@@ -55,15 +55,20 @@ public:
     void _strobe() { pending_reg.strobe(); result_reg.strobe(); }
 };
 
-template<class T, unsigned ADDRESS_BITS = 32, bool BLOCK_RAM = false>
+template<class T, unsigned ADDRESS_BITS = 32, bool BLOCK_RAM = false, unsigned DATA_BITS = 64,
+         unsigned MAX_READS = 1, bool STREAMING = false>
 class
 #ifdef __clang__
 [[clang::annotate("CPPHDL_HLS_CLOCKED"), clang::annotate("CPPHDL_HLS_EXTERNAL_MEMORY")]]
 #endif
 ClockedMemory : public cpphdl::Module {
     static_assert(ADDRESS_BITS == 32, "external memory requires 32-bit byte addresses");
+    static_assert(STREAMING ? MAX_READS>=2 && MAX_READS<=256 && (MAX_READS&(MAX_READS-1))==0 :
+                  MAX_READS == 1 || MAX_READS == 2,
+                  "sequential read window is 1 or 2; streaming context depth is a power of two in 2..256");
 public:
-    ExternalMemoryIf<ADDRESS_BITS> memory_out;
+    ExternalMemoryIf<ADDRESS_BITS, DATA_BITS> memory_out;
+    using MemoryData = typename ExternalMemoryIf<ADDRESS_BITS, DATA_BITS>::Data;
     _PORT(bool) command_valid_in;
     _PORT(uint32_t) operation_in;
     _PORT(uint32_t) index_in;
@@ -78,14 +83,17 @@ private:
     cpphdl::reg<cpphdl::u1> pending_reg;
     cpphdl::reg<cpphdl::u64> result_reg;
 public:
-    // Native transaction reference. The AST scheduler replaces this lifecycle
-    // with a stalled memory FSM in RTL; native memory comes from the binding.
+    // Native transaction reference; native memory comes from the binding.
+    // STREAMING selects generated request/context/continuation pipelines.
+    // Source accesses may be conditional or depend on earlier replies. Stores
+    // preserve alias ordering; ordinary loops use generated backedge regions.
+    // BLOCK_RAM selects a compiler-generated synchronous local-memory channel.
     void _assign() {
         memory_out.valid_in = _ASSIGN(false);
         memory_out.write_in = _ASSIGN(false);
         memory_out.addr_in = _ASSIGN(0);
         memory_out.size_in = _ASSIGN(uint8_t(0));
-        memory_out.data_in = _ASSIGN(uint64_t(0));
+        memory_out.data_in = _ASSIGN(MemoryData(0));
         memory_out.ready_in = _ASSIGN(false);
         command_ready_out = _ASSIGN(!pending_reg);
         response_valid_out = _ASSIGN(bool(pending_reg));

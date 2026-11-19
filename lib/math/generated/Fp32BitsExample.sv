@@ -209,7 +209,7 @@ module Fp32BitsExample (
         logic[31:0] sign;
         logic[31:0] exp;
         logic[31:0] mant;
-        logic[31:0] shift;
+        logic[31:0] subnormal;
         sign=((raw & 'h8000)) <<< 'h10;
         exp=((raw >>> 32'shA)) & 32'h1F;
         mant=raw & 32'h3FF;
@@ -219,11 +219,13 @@ module Fp32BitsExample (
         if (exp != 32'h0) begin
             return (sign | ((((exp + 32'h70)) <<< 'h17))) | ((mant <<< 'hD));
         end
-        if (!((mant) != '0)) begin
-            return sign;
+        subnormal=32'h0;
+        for (logic[31:0] _bit = 32'h0;_bit < 32'hA;_bit=_bit+1) begin
+            if (((mant >>> _bit)) == 32'h1) begin
+                subnormal|=(((('h67 + _bit)) <<< 'h17)) | ((((mant & (((('h1 <<< _bit)) - 32'h1)))) <<< ((32'h17 - _bit))));
+            end
         end
-        shift=cpphdl_examples_math_Fp32BitsMethods___leading_zeros(mant) - 32'h15;
-        return (sign | ((((32'h71 - shift)) <<< 'h17))) | ((((mant <<< ((shift + 32'hD)))) & 'h7FFFFF));
+        return sign | subnormal;
     endfunction
 
     always_comb begin : half_comb_func  // half_comb_func

@@ -61,7 +61,7 @@ public:
     _PORT(uint32_t) profile_complete_out;
 
 private:
-    cpphdl::reg<cpphdl::u<3>> phase;
+    cpphdl::reg<cpphdl::u<4>> phase;
     cpphdl::reg<cpphdl::u32> rows, columns, total, read_count, write_count, operation, parameter,
         error;
     cpphdl::reg<ReadWords> read_cursor, read_row_base, read_row_stride, read_column_stride,
@@ -78,6 +78,15 @@ private:
     cpphdl::reg<cpphdl::u32> math_slot, math_index, math_inflight, memory_slot, memory_lane,
         memory_address, memory_data;
     cpphdl::reg<cpphdl::u8> memory_size;
+    // Validate captured descriptors before issuing any memory or math work.
+    // Separate products, span sums, end sums and comparisons; doing these
+    // together chained parent address preparation through two multipliers.
+    using Extents = cpphdl::array<Reads + Writes, cpphdl::u64>;
+    cpphdl::reg<Extents> row_extent, column_extent, row_span, end_base, stream_end;
+    cpphdl::reg<cpphdl::u64> total_wide;
+    cpphdl::reg<cpphdl::u1> shape_valid;
+    cpphdl::reg<cpphdl::array<Reads + Writes, cpphdl::u1>> stream_ok;
+    cpphdl::reg<cpphdl::array<Writes * (Reads + Writes), cpphdl::u1>> alias_ok;
     Input input_comb{};
     Input &input_func()
     {
@@ -89,37 +98,38 @@ private:
         input_comb.index = uint32_t(math_index);
         return input_comb;
     }
-    uint64_t end_address(uint32_t base, uint32_t row_stride, uint32_t column_stride, uint32_t size)
-    {
-        return uint64_t(base) + uint64_t(rows_in() - 1) * row_stride +
-               uint64_t(columns_in() - 1) * column_stride + size;
-    }
+    uint32_t check_base(uint32_t index) { return index < Reads ? uint32_t(read_row_base[index]) : uint32_t(write_row_base[index - Reads]); }
+    uint32_t check_row_stride(uint32_t index) { return index < Reads ? uint32_t(read_row_stride[index]) : uint32_t(write_row_stride[index - Reads]); }
+    uint32_t check_column_stride(uint32_t index) { return index < Reads ? uint32_t(read_column_stride[index]) : uint32_t(write_column_stride[index - Reads]); }
+    uint32_t check_size(uint32_t index) { return index < Reads ? uint32_t(read_size[index]) : uint32_t(write_size[index - Reads]); }
     bool size_valid(uint32_t size)
     {
         return size == 1 || size == 2 || size == 4;
     }
-    bool stream_valid(uint32_t base, uint32_t row_stride, uint32_t column_stride, uint32_t size,
-                      bool write)
+    bool stream_valid(uint32_t index, bool write)
     {
-        uint64_t row_span;
-        row_span = uint64_t(columns_in() - 1) * column_stride + size;
+        uint32_t base, row_stride, column_stride, size;
+        base=check_base(index);row_stride=check_row_stride(index);
+        column_stride=check_column_stride(index);size=check_size(index);
         return size_valid(size) && ((base | row_stride | column_stride) & (size - 1)) == 0 &&
-               end_address(base, row_stride, column_stride, size) <= 0x100000000ull &&
-               (!write || ((columns_in() == 1 || column_stride >= size) &&
-                           (rows_in() == 1 || uint64_t(row_stride) >= row_span)));
+               uint64_t(stream_end[index]) <= 0x100000000ull &&
+               (!write || ((columns == 1 || column_stride >= size) &&
+                           (rows == 1 || uint64_t(row_stride) >= uint64_t(row_span[index]))));
     }
     // Sufficient affine nonalias proof. Besides separated byte spans, accept
     // disjoint intervals within the same row period (e.g. a split vector).
     // Unproved aliasing is rejected rather than assuming pointer separation.
-    bool disjoint(uint32_t a, uint32_t ar, uint32_t ac, uint32_t az, uint32_t b, uint32_t br,
-                  uint32_t bc, uint32_t bz)
+    bool disjoint(uint32_t first, uint32_t second)
     {
+        uint32_t a, ar, b, br;
         uint64_t ae, be, aspan, bspan, delta;
         bool periodic;
-        ae = end_address(a, ar, ac, az);
-        be = end_address(b, br, bc, bz);
-        aspan = uint64_t(columns_in() - 1) * ac + az;
-        bspan = uint64_t(columns_in() - 1) * bc + bz;
+        a=check_base(first);ar=check_row_stride(first);
+        b=check_base(second);br=check_row_stride(second);
+        ae = uint64_t(stream_end[first]);
+        be = uint64_t(stream_end[second]);
+        aspan = uint64_t(row_span[first]);
+        bspan = uint64_t(row_span[second]);
         delta = a <= b ? uint64_t(b) - a : uint64_t(a) - b;
         periodic = ar != 0 && ar == br && aspan <= ar && bspan <= ar &&
                    (a <= b ? (delta >= aspan && delta + bspan <= ar)
@@ -128,43 +138,65 @@ private:
     }
     bool command_valid()
     {
-        bool valid, same;
-        valid = rows_in() != 0 && columns_in() != 0 &&
-                uint64_t(rows_in()) * columns_in() <= 0xffffffffull && read_count_in() <= Reads &&
-                write_count_in() != 0 && write_count_in() <= Writes;
+        bool valid;
+        valid = bool(shape_valid);
         for (uint32_t r = 0; r < Reads; ++r)
-            if (r < read_count_in())
-                valid = valid && stream_valid(read_base_in()[r], read_row_stride_in()[r],
-                                              read_column_stride_in()[r], read_size_in()[r], false);
+            if (r < read_count)
+                valid = valid && bool(stream_ok[r]);
         for (uint32_t w = 0; w < Writes; ++w)
-            if (w < write_count_in())
+            if (w < write_count)
             {
-                valid =
-                    valid && stream_valid(write_base_in()[w], write_row_stride_in()[w],
-                                          write_column_stride_in()[w], write_size_in()[w], true);
+                valid = valid && bool(stream_ok[Reads+w]);
                 for (uint32_t v = 0; v < Writes; ++v)
-                    if (v < w && v < write_count_in())
-                        valid = valid && disjoint(write_base_in()[w], write_row_stride_in()[w],
-                                                  write_column_stride_in()[w], write_size_in()[w],
-                                                  write_base_in()[v], write_row_stride_in()[v],
-                                                  write_column_stride_in()[v], write_size_in()[v]);
+                    if (v < w && v < write_count)
+                        valid = valid && bool(alias_ok[w*(Reads+Writes)+Reads+v]);
                 for (uint32_t r = 0; r < Reads; ++r)
-                    if (r < read_count_in())
-                    {
-                        same = read_base_in()[r] == write_base_in()[w] &&
-                               read_size_in()[r] == write_size_in()[w] &&
-                               (rows_in() == 1 ||
-                                read_row_stride_in()[r] == write_row_stride_in()[w]) &&
-                               (columns_in() == 1 ||
-                                read_column_stride_in()[r] == write_column_stride_in()[w]);
-                        valid = valid &&
-                                (same || disjoint(read_base_in()[r], read_row_stride_in()[r],
-                                                  read_column_stride_in()[r], read_size_in()[r],
-                                                  write_base_in()[w], write_row_stride_in()[w],
-                                                  write_column_stride_in()[w], write_size_in()[w]));
-                    }
+                    if (r < read_count)
+                        valid = valid && bool(alias_ok[w*(Reads+Writes)+r]);
             }
         return valid;
+    }
+    void validate_stage()
+    {
+        bool same;
+        if (phase == 5) {
+            total_wide._next=uint64_t(uint32_t(rows))*uint32_t(columns);
+            for (uint32_t i=0;i<Reads+Writes;++i) {
+                row_extent._next[i]=uint64_t(uint32_t(rows)-1)*check_row_stride(i);
+                column_extent._next[i]=uint64_t(uint32_t(columns)-1)*check_column_stride(i);
+            }
+            phase._next=6;
+        } else if (phase == 6) {
+            total._next=uint32_t(total_wide);
+            shape_valid._next=rows!=0 && columns!=0 && uint64_t(total_wide)<=0xffffffffull &&
+                read_count<=Reads && write_count!=0 && write_count<=Writes;
+            for (uint32_t i=0;i<Reads+Writes;++i) {
+                row_span._next[i]=uint64_t(column_extent[i])+check_size(i);
+                end_base._next[i]=uint64_t(row_extent[i])+check_base(i);
+            }
+            phase._next=7;
+        } else if (phase == 7) {
+            for (uint32_t i=0;i<Reads+Writes;++i)
+                stream_end._next[i]=uint64_t(end_base[i])+uint64_t(row_span[i]);
+            phase._next=8;
+        } else if (phase == 8) {
+            for (uint32_t i=0;i<Reads+Writes;++i)
+                stream_ok._next[i]=stream_valid(i,i>=Reads);
+            for (uint32_t w=0;w<Writes;++w) {
+                for (uint32_t r=0;r<Reads;++r) {
+                    same=read_row_base[r]==write_row_base[w] && read_size[r]==write_size[w] &&
+                        (rows==1 || read_row_stride[r]==write_row_stride[w]) &&
+                        (columns==1 || read_column_stride[r]==write_column_stride[w]);
+                    alias_ok._next[w*(Reads+Writes)+r]=same || disjoint(r,Reads+w);
+                }
+                for (uint32_t v=0;v<Writes;++v)
+                    alias_ok._next[w*(Reads+Writes)+Reads+v]=disjoint(Reads+w,Reads+v);
+            }
+            phase._next=9;
+        } else if (phase == 9) {
+            phase._next=command_valid()?1:4;
+            if (!command_valid()) error._next=1;
+        }
     }
     bool fault_now()
     {
@@ -276,16 +308,19 @@ public:
             memory_address.clr();
             memory_data.clr();
             memory_size.clr();
+            row_extent.clr();column_extent.clr();row_span.clr();end_base.clr();stream_end.clr();
+            total_wide.clr();shape_valid.clr();stream_ok.clr();alias_ok.clr();
         }
         else
         {
             finish_gather = false;
             finish_scatter = false;
+            validate_stage();
             if (command_valid_in() && command_ready_out())
             {
                 rows._next = rows_in();
                 columns._next = columns_in();
-                total._next = uint32_t(uint64_t(rows_in()) * columns_in());
+                total._next = 0;
                 read_count._next = read_count_in();
                 write_count._next = write_count_in();
                 operation._next = operation_in();
@@ -316,9 +351,7 @@ public:
                 scatter_lane._next = 0;
                 slot_state._next = 0;
                 error._next = 0;
-                phase._next = command_valid() ? 1 : 4;
-                if (!command_valid())
-                    error._next = 1;
+                phase._next = 5;
             }
             accept = bool(math_request) && math_ready_in();
             complete = math_inflight != 0 && math_valid_in();
@@ -528,6 +561,8 @@ public:
         memory_address.strobe();
         memory_data.strobe();
         memory_size.strobe();
+        row_extent.strobe();column_extent.strobe();row_span.strobe();end_base.strobe();stream_end.strobe();
+        total_wide.strobe();shape_valid.strobe();stream_ok.strobe();alias_ok.strobe();
     }
 };
 

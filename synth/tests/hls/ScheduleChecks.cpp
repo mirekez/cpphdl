@@ -6,6 +6,56 @@
 #include <set>
 using namespace cpphdl::graph;
 using namespace cpphdl::synth;
+static void dominatedPrivateTemporary() {
+    ScheduledDesign d;
+    d.symbols["temp"]={32,"private arithmetic",true};
+    d.blocks.resize(5);d.resetEntry=0;d.commandEntry=1;
+    d.blocks[1].condition="operation_in & 1";d.blocks[1].yes=2;d.blocks[1].no=3;
+    d.blocks[2].statements={"temp = value_in + 1;"};d.blocks[2].yes=4;
+    d.blocks[3].statements={"result = value_in + 5;"};
+    d.blocks[4].statements={"result = temp * 3;"};
+    Graph g;g.clockContract=ClockContract::RisingEdgeStep;
+    auto ports=exportCombinationalCommand(g,d,"dominated_temp");g.optimize();
+    unsigned muxes=0, directArithmetic=0;
+    for(const auto& node:g.nodes) {
+        muxes+=node.op=="mux";
+        if(node.op=="mul" && !node.left.empty()) {
+            const auto source=Graph::owner(node.left[0]);
+            directArithmetic+=g.nodes[source].op=="add";
+        }
+    }
+    // Two muxes choose the visible result. A third mux on temp would put
+    // branch activation in series with its add/multiply data path.
+    if(muxes!=2 || directArithmetic!=1)
+        throw std::runtime_error("dominated private temporary regained an activation mux");
+    for(auto& node:g.nodes)if(node.op=="wire")node.op="input";
+    for(const auto& [name,bits]:ports)
+        g.ports.push_back({name,bits,name=="reset"||name=="command_valid_in"||name=="response_ready_in"||
+            name=="operation_in"||name=="index_in"||name=="value_in"});
+    for(auto graph:{g,mapGates(g)})for(unsigned op=0;op<2;++op)for(unsigned value=0;value<16;++value) {
+        Evaluate sim(graph);sim.input("operation_in",op);sim.input("value_in",value);sim.eval();
+        if(sim.output("result_out")!=(op?(value+1)*3:value+5))
+            throw std::runtime_error("dominated temporary changed command result");
+    }
+    // A read earlier in the defining block disqualifies the same symbol.
+    // Its activation mux must remain, including in a graph that also uses
+    // the value after the definition.
+    d.blocks[2].statements={"result = temp; temp = value_in + 1;"};
+    d.blocks[4].statements={"result = result + temp * 3;"};
+    Graph prior;prior.clockContract=ClockContract::RisingEdgeStep;
+    auto priorPorts=exportCombinationalCommand(prior,d,"read_before_write");prior.optimize();
+    const auto priorMuxes=std::count_if(prior.nodes.begin(),prior.nodes.end(),[](const auto& node){return node.op=="mux";});
+    if(priorMuxes!=3) throw std::runtime_error("read-before-write temporary lost its activation mux");
+    for(auto& node:prior.nodes)if(node.op=="wire")node.op="input";
+    for(const auto& [name,bits]:priorPorts)
+        prior.ports.push_back({name,bits,name=="reset"||name=="command_valid_in"||name=="response_ready_in"||
+            name=="operation_in"||name=="index_in"||name=="value_in"});
+    for(auto graph:{prior,mapGates(prior)})for(unsigned op=0;op<2;++op)for(unsigned value=0;value<16;++value) {
+        Evaluate sim(graph);sim.input("operation_in",op);sim.input("value_in",value);sim.eval();
+        if(sim.output("result_out")!=(op?(value+1)*3:value+5))
+            throw std::runtime_error("read-before-write changed command result");
+    }
+}
 static void commandJoins() {
     for (unsigned test = 0; test < 5; ++test) for(unsigned mode=0;mode<3;++mode) {
         ScheduledDesign d;
@@ -218,6 +268,7 @@ static void bankChecks() {
 int main() {
     try {
         bankChecks();
+        dominatedPrivateTemporary();
         commandJoins();
         suspendedJoin();
         sameTargetSuspension();

@@ -617,6 +617,113 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
     if (!graph.replacements.empty()) throw std::runtime_error("retiming must precede pipeline replacement linking");
     if (!std::isfinite(rule.period) || rule.period <= 0) throw std::runtime_error("retiming period must be positive");
     if (rule.mode != "keep_behaviour_retiming" && rule.mode != "fit_pipeline_retiming") throw std::runtime_error("unknown retiming mode: " + rule.mode);
+    // A memory method and its atomic callees are separate clocked actors.
+    // Retime the source-generated FSM transition with explicit handshake
+    // boundaries, then schedule each atomic body and reconnect those ports.
+    // Including a callee's pipeline registers in the FSM feedback island
+    // would slow its clock and invalidate the selected replacement latency.
+    std::set<std::string> memoryAtomics;
+    for (const auto& a : graph.attributes) if (a.name == "atomic_memory_parent" && inside(a.value,rule.scope))
+        memoryAtomics.insert(a.scope);
+    if (!memoryAtomics.empty()) {
+        if (rule.mode != "fit_pipeline_retiming") throw std::runtime_error("nested memory atomics require fit_pipeline_retiming");
+        Graph core=graph; core.optimize();
+        const double before=estimateTiming(core,model,rule.scope).worst;
+        struct Child { StreamPipeline pipeline; std::vector<ScopeAttribute> attributes; std::string prefix; };
+        std::vector<Child> children;
+        std::set<Value> owned;
+        size_t oldBits=0;
+        for (const auto& p : core.pipelines) {
+            if (!memoryAtomics.count(p.scope)) {
+                bool nested=false;
+                for (const auto& parent:memoryAtomics) nested |= inside(p.scope,parent);
+                if (nested) continue; // rebuilt from its owning source-call graph
+                throw std::runtime_error("memory call retiming requires a standalone scheduled method");
+            }
+            Child child{p,{},"atomic_boundary_"+std::to_string(children.size())+"_"};
+            for (const auto& a : core.attributes) if (a.scope==p.scope && a.name!="atomic_memory_parent") child.attributes.push_back(a);
+            for (auto q : p.registers) { owned.insert(q); owned.insert(core.resolved(q)); oldBits+=q.size(); }
+            // Replace child outputs with independent inputs to the FSM. The
+            // recursive retimer snapshots these along with other inputs.
+            for (const auto& name : {"command_ready_out","response_valid_out","result_out","fault_out"}) {
+                auto previous=core.resolved(p.pins.at(name));
+                auto input=core.wire(previous.size(),child.prefix+name,"input");
+                core.ports.push_back({child.prefix+name,input,true});
+                for (size_t i=0;i<previous.size();++i) if (previous[i]>1) core.connect({previous[i]},{input[i]});
+            }
+            auto port=[&](const std::string& name)->Value {
+                for (const auto& p : core.ports) if (p.name==child.prefix+name) return p.bits;
+                throw std::runtime_error("missing atomic boundary input");
+            };
+            for (const auto& name : {"reset","operation_in","index_in","value_in","command_valid_in","response_ready_in"}) {
+                auto bits=core.resolved(p.pins.at(name));
+                // A result can arrive during a multi-cycle FSM transition.
+                // Consume only the result that was visible at its admission;
+                // never acknowledge a newer, unsampled response at commit.
+                if (std::string(name)=="command_valid_in") bits=core.binary("and",bits,port("command_ready_out"),1);
+                if (std::string(name)=="response_ready_in") bits=core.binary("and",bits,port("response_valid_out"),1);
+                core.ports.push_back({child.prefix+name,bits,false});
+            }
+            children.push_back(std::move(child));
+        }
+        core.states.erase(std::remove_if(core.states.begin(),core.states.end(),[&](const State& s){return owned.count(s.bits) || owned.count(core.resolved(s.bits));}),core.states.end());
+        core.pipelines.clear();
+        core.attributes.erase(std::remove_if(core.attributes.begin(),core.attributes.end(),[&](const ScopeAttribute& a){for (const auto& parent:memoryAtomics) if (inside(a.scope,parent)) return true; return false;}),core.attributes.end());
+        auto report=retime(core,rule,model);
+        auto pin=[&](const std::string& name)->Value {
+            for (const auto& p : core.ports) if (p.name==name) return p.bits;
+            throw std::runtime_error("missing retimed atomic boundary: "+name);
+        };
+        Value commit{1};
+        for (const auto& p : core.ports) if (p.name=="retiming_commit_out") commit=p.bits;
+        const auto reset=pin("reset");
+        size_t newBits=0;
+        for (auto& child : children) {
+            auto p=child.pipeline;
+            p.generation=0; p.registers.clear();
+            unsigned minimum=1;
+            for (const auto& a : child.attributes) if (a.name=="pipeline_replacement_min_latency") minimum=std::stoul(a.value);
+            p.latency=minimum;
+            for (const auto& name : {"reset","operation_in","index_in","value_in","command_valid_in","response_ready_in"}) {
+                auto bits=pin(child.prefix+name);
+                if (std::string(name)=="command_valid_in" || std::string(name)=="response_ready_in")
+                    bits=core.binary("and",bits,commit,1);
+                if (std::string(name)=="reset") bits=core.binary("or",bits,reset,1);
+                p.pins[name]=bits;
+            }
+            Graph logic; logic.load(p.logic.c_str());
+            std::set<size_t> expand;
+            for (auto n : logic.dependencyOrder()) {
+                const auto& op=logic.nodes[n].op;
+                if (op!="input" && op!="state" && op!="atomic_call" && op!="pipeline_call" && op!="blackbox" &&
+                    op!="and" && op!="or" && op!="xor" && op!="mux") expand.insert(n);
+            }
+            if (!expand.empty()) logic=expandGates(std::move(logic),expand);
+            auto boundary=estimateTiming(core,model);
+            std::map<std::string,double> arrivals;
+            for (const auto& name : {"operation_in","index_in","value_in"})
+                for (auto bit : core.resolved(p.pins.at(name))) if (bit>1)
+                    arrivals[name]=std::max(arrivals[name],boundary.arrival.at(Graph::owner(bit)));
+            buildStreamPipeline(core,p,logic,[&](const Node& node){return cellDelay(logic,node,model);},
+                rule.period-model.setup-3*model.mux,model.clockToQ,arrivals);
+            for (const auto& name : {"command_ready_out","response_valid_out","result_out","fault_out"})
+                core.connect(pin(child.prefix+name),p.pins.at(name));
+            for (const auto& q : p.registers) newBits+=q.size();
+            core.attributes.insert(core.attributes.end(),child.attributes.begin(),child.attributes.end());
+            core.attributes.push_back({p.scope,"atomic_memory_scheduled","1"});
+            core.pipelines.push_back(std::move(p));
+        }
+        core.ports.erase(std::remove_if(core.ports.begin(),core.ports.end(),[&](const Port& p){
+            for (const auto& child : children) if (p.name.find(child.prefix)==0) return true;
+            return false;
+        }),core.ports.end());
+        report.before=before;
+        report.insertedBits+=newBits>oldBits?newBits-oldBits:0;
+        report.after=estimateTiming(core,model,rule.scope).worst;
+        report.met=report.after<=rule.period+1e-9;
+        if (!report.met) throw std::runtime_error("nested atomic memory boundary exceeds target period: "+std::to_string(report.after));
+        graph=std::move(core); return report;
+    }
     Graph g = graph; g.validateClocks(); g.optimize();
     if (g.clockContract == ClockContract::ExplicitEvents) throw std::runtime_error("retiming requires a synchronous clock contract");
     bool found = false;
@@ -631,6 +738,7 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
         if (!metadata) throw std::runtime_error("streaming retiming requires transition metadata; regenerate this graph");
     }
     for (const auto& p : g.pipelines) {
+        if (nestedAtomic(g,p.scope)) continue;
         if (!inside(p.scope,rule.scope) && inside(rule.scope,p.scope))
             throw std::runtime_error("retiming cannot split a streaming region scope: " + p.scope);
         streaming |= inside(p.scope,rule.scope);
@@ -644,11 +752,17 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
         const double budget = rule.period-model.setup-3*model.mux;
         if (budget <= model.clockToQ)
             throw std::runtime_error("streaming target period is below register/control overhead");
-        for (auto& p : g.pipelines) if (inside(p.scope,rule.scope)) {
-            if (estimateTiming(g,model,p.scope).worst <= rule.period + 1e-9) continue;
+        std::vector<std::string> pipelineScopes;
+        for (const auto& p : g.pipelines) if (!nestedAtomic(g,p.scope) && inside(p.scope,rule.scope)) pipelineScopes.push_back(p.scope);
+        for (const auto& pipelineScope : pipelineScopes) {
+            auto p=*std::find_if(g.pipelines.begin(),g.pipelines.end(),[&](const StreamPipeline& item){return item.scope==pipelineScope;});
+            // Initial/final checks prepare and validate the complete design.
+            // Between local rewrites, query only this region's endpoint cones
+            // and boundary inputs, following the current output aliases.
+            const auto boundaryTiming = estimateScopedTiming(g,model,p.scope,p.pins);
+            if (boundaryTiming.worst <= rule.period + 1e-9) continue;
             // The region may be fed by combinational logic in its parent.
             // Its first stage has only the remaining timing budget available.
-            const auto boundaryTiming = estimateTiming(g,model);
             std::map<std::string,double> inputArrival;
             for (const auto& [name,bits] : p.pins) for (auto bit : g.resolved(bits)) if (bit > 1)
                 inputArrival[name] = std::max(inputArrival[name],boundaryTiming.arrival.at(Graph::owner(bit)));
@@ -676,7 +790,7 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
                 // Place boundaries on the same gate network that will be
                 // emitted. Word-level adder/multiplier estimates need not
                 // match the ripple implementation used by the generic mapper.
-                if (cell.op != "input" && cell.op != "state" && cell.op != "blackbox" &&
+                if (cell.op != "input" && cell.op != "state" && cell.op != "blackbox" && cell.op != "atomic_call" && cell.op != "pipeline_call" &&
                     cell.op != "and" && cell.op != "or" && cell.op != "xor" && cell.op != "mux")
                     expand.insert(n);
             }
@@ -700,6 +814,7 @@ RetimingReport retime(Graph& graph, const RetimingRule& rule, const DelayModel& 
             size_t newBits = 0; for (const auto& bits : p.registers) newBits += bits.size();
             report.insertedBits += newBits > oldBits ? newBits-oldBits : 0;
             report.addedLatency = std::max(report.addedLatency,p.latency-oldLatency);
+            *std::find_if(g.pipelines.begin(),g.pipelines.end(),[&](const StreamPipeline& item){return item.scope==pipelineScope;})=std::move(p);
         }
         auto timing = estimateTiming(g,model,rule.scope);
         report.after = timing.worst; report.met = report.after <= rule.period + 1e-9;

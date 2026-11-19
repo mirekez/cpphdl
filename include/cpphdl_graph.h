@@ -226,8 +226,15 @@ public:
         std::vector<Bit> path;
         auto cursor = bit;
         while (aliases.count(cursor)) {
-            if (std::find(path.begin(), path.end(), cursor) != path.end())
-                throw std::runtime_error("cyclic wire alias");
+            if (std::find(path.begin(), path.end(), cursor) != path.end()) {
+                std::ostringstream detail; detail << "cyclic wire alias";
+                for (auto entry : path) {
+                    detail << " -> " << entry;
+                    if (entry > 1 && owner(entry) < nodes.size())
+                        detail << '(' << nodes[owner(entry)].op << ':' << nodes[owner(entry)].name << ')';
+                }
+                throw std::runtime_error(detail.str());
+            }
             path.push_back(cursor);
             cursor = aliases.at(cursor);
         }
@@ -527,7 +534,30 @@ public:
             return;
         }
         if (node.hostEffect() || node.validation() || node.op.compare(0, 3, "fp_") == 0 ||
-            node.op == "memory_read" || node.op == "blackbox") return;
+            node.op == "memory_read" || node.op == "external_load" || node.op == "external_store" || node.op == "external_fault" || node.op == "local_load" || node.op == "local_store" || node.op == "local_fault" || node.op == "blackbox" || node.op == "atomic_call" || node.op == "pipeline_call") return;
+        // Boolean predicates are often widened to C++ int before comparison
+        // with zero. Identical lanes contribute no information; when only one
+        // lane differs against a constant, equality is just wiring/inversion.
+        // Canonicalize before retiming so these conversions do not accumulate
+        // fictitious comparator delays along short-circuit control paths.
+        if (node.op == "eq" && node.width == 1 && node.left.size() == node.right.size()) {
+            unsigned differences = 0;
+            Bit variable = 0, expected = 0;
+            for (size_t i = 0; i < node.left.size(); ++i) {
+                auto a = node.left[i], b = node.right[i];
+                if (a == b) continue;
+                if (a < 2 && b < 2) { redirect(0,0); return; }
+                ++differences;
+                if (a < 2) { variable = b; expected = a; }
+                else if (b < 2) { variable = a; expected = b; }
+                else differences += 2; // A two-variable comparison stays intact.
+            }
+            if (!differences) { redirect(0,1); return; }
+            if (differences == 1) {
+                if (expected) { redirect(0,variable); return; }
+                node.op = "xor"; node.left = {variable}; node.right = {1};
+            }
+        }
         if (node.op == "mux" || node.op == "and" || node.op == "or" || node.op == "xor") {
             for (unsigned offset = 0; offset < node.width; ++offset) {
                 auto left = node.left[offset], right = node.right[offset];
@@ -547,6 +577,18 @@ public:
                     if (left == right) redirect(offset, 0);
                     else if (!left) redirect(offset, right);
                     else if (!right) redirect(offset, left);
+                    else if (left == 1 || right == 1) {
+                        auto bit = left == 1 ? right : left;
+                        if (bit > 1 && owner(bit) < nodes.size()) {
+                            const auto& source = nodes[owner(bit)];
+                            if (source.op == "xor") {
+                                auto a = resolve(source.left[lane(bit)]);
+                                auto b = resolve(source.right[lane(bit)]);
+                                if (a == 1) redirect(offset,b);
+                                else if (b == 1) redirect(offset,a);
+                            }
+                        }
+                    }
                 }
             }
         } else if (node.op == "any" || node.op == "all" || node.op == "parity") {
@@ -602,14 +644,18 @@ public:
             node.left = resolved(node.left); node.right = resolved(node.right); node.select = resolved(node.select);
             std::ostringstream key;
             key << node.scope << ':' << node.op << ':' << node.width;
-            if (node.op == "blackbox") key << ':' << node.name;
+            if (node.op == "blackbox" || node.op == "atomic_call" || node.op == "pipeline_call" || node.op == "external_load" || node.op == "external_store" || node.op == "external_fault" || node.op == "local_load" || node.op == "local_store" || node.op == "local_fault") key << ':' << node.name;
             for (auto* value : {&node.left, &node.right, &node.select}) {
                 key << '/'; for (auto bit : *value) key << bit << ',';
             }
             auto [entry, fresh] = shared.emplace(key.str(), index);
             if (!fresh) for (unsigned offset = 0; offset < node.width; ++offset) {
                 auto bit = (index + 1) * 64 + 2 + offset;
-                if (!aliases.count(bit)) aliases[bit] = (entry->second + 1) * 64 + 2 + offset;
+                // Folding through forward-connected hierarchy wires can
+                // already alias the earlier producer to this very node.
+                // Share its resolved value, never form the reverse alias.
+                auto source = resolve((entry->second + 1) * 64 + 2 + offset);
+                if (bit != source && !aliases.count(bit)) aliases[bit] = source;
             }
         }
     }
@@ -920,7 +966,10 @@ public:
             std::string tag; input >> tag;
             if (tag != "streams_v1") throw std::runtime_error("invalid graph stream metadata");
             input >> count;
-            if (count > 1024) throw std::runtime_error("too many streaming regions");
+            // Long source functions legitimately contain thousands of memory
+            // continuations. As with nodes and attributes, parse records one
+            // at a time: do not allocate from the unverified count. A missing
+            // or malformed record fails through the stream's exception mask.
             for (size_t i = 0; i < count; ++i) {
                 StreamPipeline p;
                 input >> std::quoted(p.scope) >> std::quoted(p.logic) >> p.stages >> p.latency >> p.generation;
@@ -1110,7 +1159,7 @@ public:
     }
 
     // Shared live dependency ordering, including bitwise-cycle refinement.
-    std::vector<size_t> dependencyOrder() {
+    std::vector<size_t> dependencyOrder(bool includePipelineMetadata = false) {
         std::vector<size_t> order;
         // Word-level dependencies can include discarded sibling bits of a
         // partially written bus. Refine bitwise producers for those false
@@ -1220,6 +1269,15 @@ public:
             for (const auto& port : ports) if (!port.input) for (auto bit : port.bits) visit(bit);
             for (const auto& r : replacements) for (const auto& [name,bits] : r.pins)
                 for (auto bit : bits) visit(bit);
+            // Mapping must remap even unused call arguments and boundary
+            // registers retained as scheduling metadata. They are not roots
+            // of the executable circuit and must not keep dead hardware live.
+            if (includePipelineMetadata) for (const auto& pipeline : pipelines) {
+                for (const auto& [name,bits] : pipeline.pins)
+                    for (auto bit : bits) visit(bit);
+                for (const auto& bits : pipeline.registers)
+                    for (auto bit : bits) visit(bit);
+            }
             for (const auto& access : memoryAccesses) if (!access.transaction) {
                 for (auto bit : access.address) visit(bit);
                 for (auto bit : access.enabled) visit(bit);

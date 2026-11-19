@@ -7,6 +7,7 @@
 #include "MemoryEffects.h"
 #include "OpenMP.h"
 #include "../synth/ScheduledGraph.h"
+#include "../synth/Verilog.h"
 #include "../Module.h"
 #include "../Field.h"
 #include "../Method.h"
@@ -25,6 +26,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
+
+std::string cpphdlHlsReplacement(const clang::CXXRecordDecl*, const clang::ASTContext&);
+std::string cpphdlHlsAnnotationValue(const clang::CXXRecordDecl*, const clang::ASTContext&, const std::string&);
 
 namespace cpphdl::hls {
 namespace {
@@ -99,8 +103,13 @@ class DelayedScheduler {
     bool sharedMemory = false;
     bool blockRam = false;
     bool pipelineMode = false;
+    const FunctionDecl* entryFunction = nullptr;
+    bool preserveAtomicCalls = true;
+    std::map<std::string, synth::AtomicMethod> atomics;
     StaticIntegers elaboratedIndices;
     bool externalMemory = false;
+    unsigned externalDataBits = 64;
+    unsigned externalReadWindow = 1;
     unsigned portBytes = 1;
     int current = 0;
     std::ostringstream symbols;
@@ -116,8 +125,12 @@ class DelayedScheduler {
         bool conditional = false;
     };
     std::map<std::string, SourceObject> objects;
+    std::map<std::string, std::string> addressExposures;
     struct ObjectLocation { std::string object; int64_t offset; };
     std::map<std::string, ObjectLocation> locations;
+    // Array decay preserves a known subobject and its extent even when the
+    // C++ expression subsequently has pointer type (e.g. a local auto alias).
+    std::map<std::string, const ConstantArrayType*> decayedArrays;
     struct ArraySelection { std::string index; std::vector<std::string> elements; };
     std::map<std::string, ArraySelection> arraySelections;
     std::string arraySelection(ArraySelection selection) {
@@ -189,21 +202,24 @@ class DelayedScheduler {
         if (type->isBooleanType()) return 1;
         return bytes(type) * 8;
     }
-    bool wireValue(QualType type) {
+    bool wireValue(QualType type, bool arithmetic = false) {
+        if (arithmetic && !type.isVolatileQualified() &&
+            (type->isIntegerType() || type->isRealFloatingType()))
+            return bits(type) <= 128;
         if (type.isVolatileQualified()) return false;
         if (type->isUnsignedIntegerType() && !type->isBooleanType()) {
             auto width = bits(type);
             return width == 8 || width == 16 || width == 32 || width == 64 || width == 128;
         }
         if (auto* array = ctx.getAsConstantArrayType(type))
-            return array->getSize().getLimitedValue() != 0 && wireValue(array->getElementType());
+            return array->getSize().getLimitedValue() != 0 && wireValue(array->getElementType(), arithmetic);
         auto* record = type->getAsCXXRecordDecl();
         if (!record || !record->hasDefinition() || record->isUnion() || !record->isAggregate() ||
             !record->isStandardLayout() || !type.isTriviallyCopyableType(ctx) || !record->bases().empty()) return false;
         const auto& layout = ctx.getASTRecordLayout(record);
         uint64_t end = 0;
         for (auto* field : record->fields()) {
-            if (field->isBitField() || !wireValue(field->getType()) ||
+            if (field->isBitField() || !wireValue(field->getType(), arithmetic) ||
                 layout.getFieldOffset(field->getFieldIndex()) != end) return false;
             end += ctx.getTypeSize(field->getType());
         }
@@ -270,7 +286,10 @@ class DelayedScheduler {
             auto found = objects.find(text.substr(begin, i - begin));
             if (arraySelections.count(text.substr(begin, i - begin)))
                 reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule");
-            if (found != objects.end()) found->second.memory = true;
+            if (found != objects.end()) {
+                found->second.memory = true;
+                addressExposures.try_emplace(found->first, text);
+            }
         }
     }
     std::string resolveAccesses(const std::string& text, std::set<std::string>& uses, std::set<std::string>& definitions,
@@ -286,19 +305,62 @@ class DelayedScheduler {
             auto index = std::stoul(text.substr(begin + 12, end - begin - 12));
             if (elidedAccesses.count(index)) { cursor = end + 1; continue; }
             const auto& item = accesses.at(index);
+            if (externalReadWindow > 1 && item.type.isVolatileQualified())
+                prefix.push_back("@external_group_barrier@");
             auto location = directLocation(item);
             auto object = location ? objects.find(location->object) : objects.end();
             auto address = resolveAccesses(item.address, uses, definitions, prefix);
             auto data = resolveAccesses(item.data, uses, definitions, prefix);
-            if (item.type.getAddressSpace() == static_cast<LangAS>(static_cast<unsigned>(LangAS::FirstTargetAddressSpace) + 1)) {
+            const bool external=item.type.getAddressSpace() == static_cast<LangAS>(static_cast<unsigned>(LangAS::FirstTargetAddressSpace) + 1);
+            const bool localRam=pipelineMode && blockRam && (!location || object->second.memory);
+            if (external || localRam) {
                 if (!externalMemory) reject(nullptr, "external pointer access requires ClockedMemory (not ClockedPipeline)");
-                if (!item.type->isIntegerType() || bytes(item.type) > 8)
-                    reject(nullptr, "external memory access requires integer elements up to 64 bits");
+                auto count = bytes(item.type);
+                if (external && (!count || count > externalDataBits/8 || (count & (count-1)) ||
+                    (!item.type->isIntegerType() && !wireValue(item.type.getLocalUnqualifiedType(),pipelineMode)))
+                    )
+                    reject(nullptr, "external memory access requires a power-of-two supported scalar or padding-free wire aggregate fitting DATA_BITS");
+                if (pipelineMode) {
+                    if(item.type.isVolatileQualified() || (external && bits(item.type)>64))
+                        reject(nullptr,"streaming memory currently supports nonvolatile accesses of up to 64 bits");
+                    if(!external && (!count || !item.type.isTriviallyCopyableType(ctx) || bits(item.type)>1048576))
+                        reject(nullptr,"local memory transfer requires a bounded trivially copyable value: "+item.type.getAsString());
+                    const std::string domain=external?"external":"local";
+                    std::vector<std::string> loaded;
+                    for(unsigned offset=0;offset<count;offset+=8) {
+                        auto id=std::to_string(tempCount++);
+                        auto saved="scratch."+domain+"_value_"+id;
+                        // Pointer values use the HLS address width, while their
+                        // containing object retains the host's pointer layout.
+                        const auto width=std::min(64u,bits(item.type)-8*offset);
+                        blockSymbols[saved]={item.write?1u:width,domain+"_value",true};
+                        auto partAddress=offset?"("+address+" + "+std::to_string(offset)+")":address;
+                        auto partData=offset?"("+castTo(item.type,data)+" >> "+std::to_string(8*offset)+")":castTo(item.type,data);
+                        prefix.push_back(saved+" = hls_"+domain+"_"+(item.write?"write_":"read_")+std::to_string(width)+"("+
+                            addressCast(partAddress)+","+std::to_string(std::min(8u,count-offset))+","+
+                            (item.write?partData+",":"")+id+");");
+                        prefix.push_back("if (fault == 0) fault = hls_"+domain+"_memory_fault("+id+");");
+                        loaded.push_back(saved);
+                    }
+                    if(!item.write) {
+                        if(loaded.size()==1)result+=loaded.front();
+                        else {
+                            result+="(";
+                            for(size_t i=0;i<loaded.size();++i)
+                                result+=(i?" | ":"")+std::string("(")+std::to_string(bits(item.type))+"'("+
+                                    loaded[i]+") << "+std::to_string(64*i)+")";
+                            result+=")";
+                        }
+                    }
+                    cursor=end+1;continue;
+                }
                 effects.clock();
+                if (externalReadWindow > 1 && !item.write && !item.type.isVolatileQualified())
+                    prefix.push_back("@external_read_groupable@");
                 prefix.push_back("external_address = " + addressCast(address) + ";");
                 prefix.push_back("external_size = " + std::to_string(bytes(item.type)) + ";");
                 if (item.write) {
-                    prefix.push_back("external_write_data = 64'(" + castTo(item.type, data) + ");");
+                    prefix.push_back("external_write_data = " + std::to_string(externalDataBits) + "'(" + castTo(item.type, data) + ");");
                     prefix.push_back("external_write = 1;");
                 } else prefix.push_back("external_read = 1;");
                 prefix.push_back("@external_clock@");
@@ -434,6 +496,91 @@ class DelayedScheduler {
         }
         return result;
     }
+    // Pair only typed reads in one straight-line region. Moving a later address
+    // calculation before the first response requires both data and anti-dependency
+    // checks. Memory, volatile accesses, state mutations and control effects stop
+    // the search; this is deliberately not speculative traversal of branches.
+    void groupExternalReads() {
+        if (externalReadWindow < 2) return;
+        const std::string marker = "@external_read_groupable@";
+        auto references = [&](const std::string& text, std::set<std::string>& reads) {
+            for (size_t i=0; i<text.size();) {
+                if (std::isdigit(static_cast<unsigned char>(text[i])) || text[i]=='\'') {
+                    do { ++i; } while (i<text.size() && (std::isalnum(static_cast<unsigned char>(text[i])) || text[i]=='_' || text[i]=='\''));
+                } else if (std::isalpha(static_cast<unsigned char>(text[i])) || text[i]=='_' || text[i]=='$') {
+                    const size_t begin=i++;
+                    while (i<text.size() && (std::isalnum(static_cast<unsigned char>(text[i])) || text[i]=='_' || text[i]=='.' || text[i]=='$')) ++i;
+                    auto token=text.substr(begin,i-begin);
+                    if (token=="$signed" || token=="$unsigned") continue;
+                    if (!blockSymbols.count(token) && token!="external_read_data") return false;
+                    reads.insert(token);
+                } else ++i;
+            }
+            return true;
+        };
+        auto intersects = [](const auto& a,const auto& b) {
+            for (const auto& x:a) if (b.count(x)) return true;
+            return false;
+        };
+        auto assignment = [&](const std::string& s,std::string& target,std::set<std::string>& reads) {
+            auto equal=s.find(" = ");
+            if (equal==std::string::npos || s.empty() || s.back()!=';' || s.find(';')!=s.size()-1) return false;
+            target=s.substr(0,equal);
+            auto found=blockSymbols.find(target);
+            if (found==blockSymbols.end() || !found->second.writable || clockedValues.count(target) ||
+                (target.find("scratch.")!=0 && target.find("values.")!=0)) return false;
+            return references(s.substr(equal+3),reads);
+        };
+        for (auto& block:blocks) {
+            auto& source=block.statements;
+            std::vector<std::string> output;
+            for (size_t i=0; i<source.size();) {
+                if (source[i]!=marker) { output.push_back(source[i++]); continue; }
+                // Marker, address, size, read-enable, suspension, captured value.
+                if (i+5>=source.size() || source[i+3]!="external_read = 1;" || source[i+4]!="@external_clock@")
+                    reject(nullptr,"malformed external read group");
+                std::vector<std::string> before,after;
+                std::set<std::string> delayed{"external_read_data"}, delayedReads;
+                size_t j=i+5;
+                for (; j<source.size() && source[j]!=marker; ++j) {
+                    std::string target; std::set<std::string> reads;
+                    if (!assignment(source[j],target,reads)) break;
+                    if (delayed.count(target) || delayedReads.count(target) || intersects(reads,delayed)) {
+                        delayed.insert(target); delayedReads.insert(reads.begin(),reads.end());
+                        after.push_back(source[j]);
+                    } else before.push_back(source[j]);
+                }
+                bool pair=j+5<source.size() && source[j]==marker && source[j+3]=="external_read = 1;" && source[j+4]=="@external_clock@";
+                if (pair) {
+                    std::set<std::string> reads;
+                    for (size_t field=1;field<=2;++field) {
+                        auto equal=source[j+field].find(" = ");
+                        pair &= equal!=std::string::npos && references(source[j+field].substr(equal+3),reads);
+                    }
+                    pair &= !intersects(reads,delayed);
+                }
+                if (!pair) { ++i; continue; } // Strip the marker; retain the original access order.
+                output.insert(output.end(),source.begin()+i+1,source.begin()+i+4);
+                output.insert(output.end(),before.begin(),before.end());
+                for (size_t field=1;field<=2;++field) {
+                    auto statement=source[j+field];
+                    statement.insert(statement.find(" = "),"_1");
+                    output.push_back(std::move(statement));
+                }
+                output.push_back("external_pair = 1;");
+                output.push_back("@external_clock@");
+                output.insert(output.end(),after.begin(),after.end());
+                auto captured=source[j+5];
+                auto data=captured.find("external_read_data");
+                if (data==std::string::npos) reject(nullptr,"missing external read capture");
+                captured.insert(data+std::string("external_read_data").size(),"_1");
+                output.push_back(std::move(captured));
+                i=j+6;
+            }
+            output.erase(std::remove(output.begin(),output.end(),"@external_group_barrier@"),output.end());
+            source=std::move(output);
+        }
+    }
     void lowerSourceValues(int resetEntry, int commandEntry) {
         // Known object/subobject accesses stay direct. Only escaping addresses
         // or accesses without a statically known target require byte storage.
@@ -458,8 +605,9 @@ class DelayedScheduler {
                 blockSymbols[address] = {addressWidth, object.label + "_addr", false};
             } else blockSymbols["values." + object.name] = {bits(object.type), object.label, true};
         }
-        if (!objects.at(persistentObject).memory)
-            clockedValues.insert("values." + objects.at(persistentObject).name);
+        if (auto persistent = objects.find(persistentObject);
+            persistent != objects.end() && !persistent->second.memory)
+            clockedValues.insert("values." + persistent->second.name);
         // Optimize a memory-writing helper independently of its callers, so
         // caller-specific aliases/samples do not multiply outlined bodies or
         // add different cached-load outputs at each call site. This is an
@@ -544,6 +692,7 @@ class DelayedScheduler {
             b.statements = std::move(statements);
             outgoing[i] = effects.state;
         }
+        groupExternalReads();
         bool changed;
         do {
             changed = false;
@@ -582,15 +731,18 @@ class DelayedScheduler {
             auto live = liveAcrossClocks(blocks, blockSymbols);
             clockedValues.insert(live.begin(), live.end());
         }
-        // Pure, cycle-local values need no fault-enable mux. Keep guards on
-        // effects and values retained across clocks; memory helpers also check
-        // bounds and preserve the first fault internally.
+        // Pure values need no fault-enable mux in a streaming memory call:
+        // a fault terminates its token, so no successor observes its scalar
+        // context. Treating carried locals as persistent controller state
+        // falsely keeps their old values live through every later region.
+        // Sequential/stateful schedules retain their original fault guards;
+        // memory effects themselves still suppress requests after a fault.
         for (auto& b : blocks) for (auto& s : b.statements) {
             auto equal = s.find(" = ");
             auto target = s.substr(0, equal);
             auto symbol = blockSymbols.find(target);
             bool local = equal != std::string::npos && symbol != blockSymbols.end() &&
-                symbol->second.writable && !clockedValues.count(target);
+                symbol->second.writable && ((pipelineMode && externalMemory) || !clockedValues.count(target));
             if (!local) s = "if (fault == 0) begin " + s + " end";
         }
     }
@@ -749,6 +901,8 @@ class DelayedScheduler {
         }
         Value result{offsetAddress(base.text, offset, found->second), field->getType(), true,
             scope + "__" + identifier(field->getNameAsString())};
+        if (base.type.getAddressSpace() != LangAS::Default)
+            result.type = ctx.getAddrSpaceQualType(result.type,base.type.getAddressSpace());
         symbolLabels[result.name] = identifier(field->getNameAsString());
         if (result.type->isReferenceType()) {
             result.type = ctx.getPointerType(result.type->getPointeeType());
@@ -786,20 +940,25 @@ class DelayedScheduler {
         if (actual) fn = const_cast<FunctionDecl*>(actual);
         return body;
     }
-    bool pointerParameterReadOnly(const FunctionDecl* function, const Stmt* body, const ParmVarDecl* parameter) {
+    bool pointerBindingReadOnly(const Stmt* body, const ValueDecl* variable) {
         bool readOnly = true;
         std::function<void(const Stmt*, const Stmt*)> visit = [&](const Stmt* stmt, const Stmt* parent) {
             if (!stmt) return;
-            if (auto* ref = dyn_cast<DeclRefExpr>(stmt); ref && ref->getDecl() == parameter) {
+            if (auto* ref = dyn_cast<DeclRefExpr>(stmt); ref && ref->getDecl() == variable) {
                 auto* cast = dyn_cast_or_null<ImplicitCastExpr>(parent);
                 if (!cast || cast->getCastKind() != CK_LValueToRValue) readOnly = false;
             }
             for (auto* child : stmt->children()) visit(child, stmt);
         };
         visit(body, nullptr);
-        if (auto* constructor = dyn_cast<CXXConstructorDecl>(function))
-            for (auto* init : constructor->inits()) visit(init->getInit(), nullptr);
         return readOnly;
+    }
+    bool pointerParameterReadOnly(const FunctionDecl* function, const Stmt* body, const ParmVarDecl* parameter) {
+        if (!pointerBindingReadOnly(body, parameter)) return false;
+        if (auto* constructor = dyn_cast<CXXConstructorDecl>(function))
+            for (auto* init : constructor->inits())
+                if (!pointerBindingReadOnly(init->getInit(), parameter)) return false;
+        return true;
     }
 
     Value floatingOperation(const std::string& operation, QualType resultType, const std::vector<Value>& args) {
@@ -935,10 +1094,150 @@ class DelayedScheduler {
         return result;
     }
 
+    Value pipelineCall(const synth::AtomicMethod& spec, const std::vector<Value>& incoming, QualType resultType, const std::string& source = {}) {
+        auto id = (spec.module.empty() ? "hls_call_" + source + "_" : "hls_atomic_") + std::to_string(atomics.size());
+        atomics[id] = spec;
+        const auto& child = spec;
+        const bool sourceCall = spec.module.empty();
+        if (!sourceCall && incoming.size() != 3) reject(nullptr,"atomic command requires three value arguments");
+        auto args = incoming;
+        // Ordinary functions retain their own typed signature. Pack arguments
+        // at this compiler boundary instead of imposing the public command
+        // wrapper's three equal-width slots on C++ helper methods.
+        auto ports = [&](const std::vector<Value>& values) {
+            std::vector<std::string> inputs(3,"0");
+            unsigned offset=0;
+            for (unsigned i=0;i<values.size();++i) {
+                auto value=std::to_string(child.argumentBits)+"'($unsigned("+
+                    std::to_string(bits(values[i].type))+"'("+read(values[i])+")))";
+                if (sourceCall) {
+                    inputs[0]="("+inputs[0]+" | ("+value+" << "+std::to_string(offset)+"))";
+                    offset+=bits(values[i].type);
+                } else inputs[i]=value;
+            }
+            return inputs;
+        };
+        if (pipelineMode) {
+            std::string call = id + "(";
+            const auto inputs=ports(args);
+            for (unsigned i=0;i<3;++i) call += (i ? "," : "") + inputs[i];
+            auto value = temporary(child.resultBits+32,call+")","atomic_result");
+            emit("if (fault == 0) fault = " + value + "[" + std::to_string(child.resultBits) + " +: 32];");
+            return {value+"[0 +: "+std::to_string(child.resultBits)+"]",resultType};
+        }
+        // The source scheduler generates issue/wait continuations.
+        // The parent algorithm remains an ordinary C++ call.
+        std::vector<Value> saved;
+        for (const auto& arg:args) { auto v=slot(arg.type,"call_argument"); store(v,arg); saved.push_back(v); }
+        int issue=block(), sent=block(), wait=block(), retry=block(), done=block();
+        jump(issue); current=issue;
+        const auto inputs=ports(saved);
+        for (unsigned i=0;i<3;++i) emit(id+"_"+std::vector<std::string>{"operation_in","index_in","value_in"}[i]+" = "+inputs[i]+";");
+        emit(id+"_command_valid_in = 1;");
+        branch(id+"_command_ready_out",sent,retry);
+        current=retry; jump(issue,true);
+        current=sent; jump(wait,true);
+        current=wait; emit(id+"_response_ready_in = 1;");
+        int pending=block(); branch(id+"_response_valid_out",done,pending);
+        current=pending; jump(wait,true);
+        current=done; emit("if (fault == 0) fault = "+id+"_fault_out;");
+        Value result=slot(resultType,"atomic_result");
+        store(result,{id+"_result_out",resultType});
+        return result;
+    }
+
     Value invoke(FunctionDecl* fn, const std::vector<Value>& args, std::string self = "", Value constructed = {}) {
         std::string name = fn->getQualifiedNameAsString();
+        if (auto* member = dyn_cast<CXXMethodDecl>(fn); preserveAtomicCalls && member && member->getNameAsString() == "command" &&
+            (fn->getCanonicalDecl() != entryFunction || calling[fn->getCanonicalDecl()])) {
+            std::string module;
+            unsigned minimum = 1;
+            auto* record = member->getParent();
+            for (const auto* attr : record->specific_attrs<AnnotateAttr>()) {
+                auto text = attr->getAnnotation().str();
+                const std::string prefix = "CPPHDL_REPLACEMENT_MODULE=", latency = "CPPHDL_REPLACEMENT_MIN_LATENCY=";
+                if (text.find(prefix) == 0) {
+                    if (!module.empty()) reject(nullptr,"duplicate atomic replacement module");
+                    module = ::cpphdlHlsAnnotationValue(record,ctx,text.substr(prefix.size()));
+                }
+                if (text.find(latency) == 0) {
+                    size_t used = 0; auto value = text.substr(latency.size());
+                    minimum = std::stoul(value,&used);
+                    if (used != value.size() || !minimum || minimum > 64) reject(nullptr,"invalid atomic replacement minimum latency");
+                }
+            }
+            if (!module.empty()) {
+                if (!record->isEmpty() || member->isStatic() || !member->isConst() || member->isVariadic())
+                    reject(nullptr,"nested replacement requires a stateless class with a const command method");
+                if (calling[fn->getCanonicalDecl()]) reject(nullptr,"recursive atomic replacement call");
+                if ((!std::isalpha(module[0]) && module[0] != '_') ||
+                    std::any_of(module.begin(),module.end(),[](unsigned char c){return !std::isalnum(c) && c != '_';}))
+                    reject(nullptr,"invalid atomic replacement module name");
+                auto child = lowerAtomicSource(ctx,sema,member);
+                graph::Graph logic;
+                auto pins = synth::exportCombinationalCommand(logic,child,"atomic_method");
+                for (auto& node : logic.nodes) if (node.op == "wire") node.op = "input";
+                for (const auto& [pin,bits] : pins) if (pin == "result_out" || pin == "fault_out" ||
+                    pin == "operation_in" || pin == "index_in" || pin == "value_in")
+                    logic.ports.push_back({pin,bits,pin.find("_in") != std::string::npos});
+                if (!logic.states.empty()) reject(nullptr,"atomic replacement cannot mutate persistent state");
+                for (auto& node : logic.nodes) node.scope = "atomic_method.hls_stage_0";
+                synth::compactPipelineLogic(logic);
+                std::ostringstream serialized; logic.save(serialized);
+                auto body = ::cpphdlHlsReplacement(record,ctx);
+                if (body.empty()) reject(nullptr,"atomic replacement requires a Verilog body");
+                auto result=pipelineCall({module,body,serialized.str(),minimum,child.argumentBits,child.resultBits},args,fn->getReturnType());
+                if (constructed.location) { store(constructed,result); return constructed; }
+                return result;
+            }
+        }
+        if (preserveAtomicCalls && fn->getCanonicalDecl() != entryFunction && !calling[fn->getCanonicalDecl()] &&
+            !fn->isVariadic() && fn->getNumParams() > 0 &&
+            wireValue(fn->getReturnType(),true) &&
+            std::all_of(fn->param_begin(),fn->param_end(),[&](const ParmVarDecl* p){return wireValue(p->getType(),true);})) {
+            auto* member=dyn_cast<CXXMethodDecl>(fn);
+            bool valueObject=!member || member->isStatic() || (member->isConst() && member->getParent()->isEmpty());
+            std::function<bool(const Stmt*)> parallel=[&](const Stmt* body) {
+                if (!body) return false;
+                if (isa<OMPExecutableDirective>(body)) return true;
+                if (isa<LambdaExpr>(body)) return false;
+                for (auto* part:body->children()) if (parallel(part)) return true;
+                return false;
+            };
+            if (valueObject && parallel(definition(fn))) {
+                auto child=lowerValueFunctionSource(ctx,sema,fn);
+                graph::Graph logic;
+                auto pins=synth::exportCombinationalCommand(logic,child,"source_call");
+                for (auto& node:logic.nodes) if (node.op=="wire") node.op="input";
+                for (const auto& [pin,bits]:pins) if (pin=="result_out" || pin=="fault_out" ||
+                    pin=="operation_in" || pin=="index_in" || pin=="value_in")
+                    logic.ports.push_back({pin,bits,pin.find("_in")!=std::string::npos});
+                if (!logic.states.empty()) reject(fn->getBody(),"parallel value call cannot mutate persistent state");
+                for (auto& node:logic.nodes) node.scope="source_call.hls_stage_0";
+                synth::compactPipelineLogic(logic); std::ostringstream serialized; logic.save(serialized);
+                auto result=pipelineCall({"","",serialized.str(),1,child.argumentBits,child.resultBits},args,fn->getReturnType(),qualifiedIdentifier(fn));
+                if (constructed.location) { store(constructed,result); return constructed; }
+                return result;
+            }
+        }
         std::vector<std::string> annotations;
         for (const auto* attr : fn->specific_attrs<AnnotateAttr>()) annotations.push_back(attr->getAnnotation().str());
+        const bool externalLoad = std::find(annotations.begin(), annotations.end(), "CPPHDL_EXTERNAL_LOAD") != annotations.end();
+        const bool externalStore = std::find(annotations.begin(), annotations.end(), "CPPHDL_EXTERNAL_STORE") != annotations.end();
+        if (externalLoad || externalStore) {
+            if (!externalMemory) reject(nullptr, "external value transfer requires ClockedMemory");
+            if (args.size() != (externalStore ? 2u : 1u) || !args[0].type->isPointerType() ||
+                args[0].type->getPointeeType().getAddressSpace() != static_cast<LangAS>(static_cast<unsigned>(LangAS::FirstTargetAddressSpace) + 1))
+                reject(nullptr, "invalid external value transfer signature");
+            Value target{read(args[0]), args[0].type->getPointeeType(), true};
+            if (externalStore) {
+                store(target, args[1]);
+                return {"0", ctx.VoidTy};
+            }
+            Value result{read(target), fn->getReturnType()};
+            if (constructed.location) { store(constructed, result); return constructed; }
+            return result;
+        }
         if (std::find(annotations.begin(), annotations.end(), "CPPHDL_EXTERNAL_POINTER") != annotations.end()) {
             if (!externalMemory) reject(nullptr, "external pointer access requires ClockedMemory (not ClockedPipeline)");
             if (args.size() != 1 || !fn->getReturnType()->isPointerType() ||
@@ -1290,6 +1589,12 @@ class DelayedScheduler {
     }
 
     void initializeConstant(Value target, const APValue& value) {
+        if (value.isFloat()) {
+            llvm::SmallString<32> number;
+            value.getFloat().bitcastToAPInt().toString(number,16,false);
+            store(target, {std::to_string(bits(target.type))+"'h"+number.str().str(),target.type});
+            return;
+        }
         if (value.isInt()) {
             llvm::SmallString<32> number;
             static_cast<const llvm::APInt&>(value.getInt()).toString(number, 16, false);
@@ -1334,6 +1639,33 @@ class DelayedScheduler {
             llvm::SmallString<32> number;
             literal->getValue().bitcastToAPInt().toString(number, 16, false);
             return {std::to_string(bits(type)) + "'h" + number.str().str(), type};
+        }
+        // A constant integer-to-float cast needs no runtime conversion engine
+        // (e.g. Arithmetic<float>::zero() returns T(0)). Preserve the target
+        // format's rounded bits without folding runtime calls or FP operations
+        // that may have their own annotated arithmetic contract.
+        if (auto* cast=dyn_cast<CastExpr>(expr); cast && cast->getCastKind()==CK_IntegralToFloating &&
+            !expr->isValueDependent() && !runtimeCall(expr) && !expr->HasSideEffects(ctx)) {
+            E::EvalResult result;
+            if(expr->EvaluateAsRValue(result,ctx) && result.Val.isFloat()) {
+                llvm::SmallString<32> number;
+                result.Val.getFloat().bitcastToAPInt().toString(number,16,false);
+                return {std::to_string(bits(type))+"'h"+number.str().str(),type};
+            }
+        }
+        // Reading a constexpr FP scalar needs its exact stored bits, not a
+        // local RAM transaction. Keep lvalues/address-taking on the ordinary
+        // constant-object path, including arrays and aggregate members.
+        if (auto* cast=dyn_cast<CastExpr>(expr); cast && cast->getCastKind()==CK_LValueToRValue && type->isFloatingType()) {
+            if (auto* ref=dyn_cast<DeclRefExpr>(cast->getSubExpr()->IgnoreParens()))
+                if (auto* var=dyn_cast<VarDecl>(ref->getDecl()); var && var->isConstexpr()) {
+                    const auto* value=var->evaluateValue();
+                    if (value && value->isFloat()) {
+                        llvm::SmallString<32> number;
+                        value->getFloat().bitcastToAPInt().toString(number,16,false);
+                        return {std::to_string(bits(type))+"'h"+number.str().str(),type};
+                    }
+                }
         }
         if (!expr->isValueDependent() && !runtimeCall(expr) && !expr->HasSideEffects(ctx) && type->isIntegralOrEnumerationType()) {
             E::EvalResult result;
@@ -1419,7 +1751,10 @@ class DelayedScheduler {
             auto* field = dyn_cast<FieldDecl>(fieldExpr->getMemberDecl());
             if (!field) reject(expr, "non-field member value");
             Value base = expression(fieldExpr->getBase());
-            if (fieldExpr->isArrow()) base.text = read(base);
+            if (fieldExpr->isArrow()) {
+                base.text = read(base);
+                base.type = base.type->getPointeeType();
+            }
             return member(base, field);
         }
         if (auto* cast = dyn_cast<CastExpr>(expr)) {
@@ -1445,7 +1780,10 @@ class DelayedScheduler {
             case CK_LValueToRValue: return {read(sub), type};
             case CK_IntegralToFloating: case CK_FloatingToIntegral: case CK_FloatingCast: case CK_FloatingToBoolean:
                 return floatingOperation("cast", type, {sub});
-            case CK_ArrayToPointerDecay: return {sub.text, type};
+            case CK_ArrayToPointerDecay:
+                if (auto* array = ctx.getAsConstantArrayType(cast->getSubExpr()->getType()))
+                    decayedArrays[sub.text] = array;
+                return {sub.text, type};
             case CK_DerivedToBase: case CK_UncheckedDerivedToBase: case CK_BaseToDerived: {
                 bool downcast = cast->getCastKind() == CK_BaseToDerived;
                 QualType original = downcast ? type : cast->getSubExpr()->getType();
@@ -1474,17 +1812,32 @@ class DelayedScheduler {
         }
         if (auto* index = dyn_cast<ArraySubscriptExpr>(expr)) {
             Value base = capture(expression(index->getBase())), i = expression(index->getIdx());
-            if (pipelineMode && (locations.count(base.text) || arraySelections.count(base.text))) {
+            // A captured dynamic pointer is an lvalue holding an address, not
+            // the array it points to. Only a direct pointer value has known
+            // pointee provenance here (e.g. decay of a local fixed array).
+            if (!base.location && (locations.count(base.text) || arraySelections.count(base.text))) {
                 const auto* array = ctx.getAsConstantArrayType(index->getBase()->IgnoreParenImpCasts()->getType());
+                if (!array) {
+                    auto knownArray = decayedArrays.find(base.text);
+                    if (knownArray != decayedArrays.end() &&
+                        ctx.hasSameUnqualifiedType(knownArray->second->getElementType(), type))
+                        array = knownArray->second;
+                }
                 if (array && array->getSize().getLimitedValue() <= 64) {
                     auto known = staticInteger(ctx, index->getIdx(), elaboratedIndices);
                     if (known && *known >= 0 && uint64_t(*known) < array->getSize().getLimitedValue()) {
                         return {offsetAddress(base.text, uint64_t(*known) * bytes(type)), type, true};
                     }
-                    ArraySelection selection{read(i), {}};
-                    for (unsigned n = 0; n < array->getSize().getLimitedValue(); ++n)
-                        selection.elements.push_back(offsetAddress(base.text, n * bytes(type)));
-                    return {arraySelection(std::move(selection)), type, true};
+                    // A fixed field of a local packet is a known subobject in
+                    // either scheduler. Do not spill the whole packet to the
+                    // byte arena merely to read a constant array index. Dynamic
+                    // selection stays a memory access outside spatial pipelines.
+                    if (pipelineMode && !blockRam) {
+                        ArraySelection selection{read(i), {}};
+                        for (unsigned n = 0; n < array->getSize().getLimitedValue(); ++n)
+                            selection.elements.push_back(offsetAddress(base.text, n * bytes(type)));
+                        return {arraySelection(std::move(selection)), type, true};
+                    }
                 }
             }
             return {addressCast("(" + read(base) + " + " + addressCast(read(i)) + " * " + addressLiteral(bytes(type)) + ")"), type, true};
@@ -1731,12 +2084,34 @@ class DelayedScheduler {
         }
         if (auto* decls = dyn_cast<DeclStmt>(stmt)) {
             for (auto* d : decls->decls()) {
-                if (isa<StaticAssertDecl>(d) || isa<TypedefNameDecl>(d) || isa<CXXRecordDecl>(d)) continue;
+                if (isa<StaticAssertDecl>(d) || isa<TypedefNameDecl>(d) || isa<CXXRecordDecl>(d) ||
+                    isa<UsingDecl>(d) || isa<UsingShadowDecl>(d) || isa<UsingDirectiveDecl>(d)) continue;
                 auto* var = dyn_cast<VarDecl>(d);
                 if (!var || var->isStaticLocal()) reject(stmt, "nonautomatic local declaration");
                 if (var->getType()->isReferenceType()) {
                     if (!var->hasInit()) reject(stmt, "reference requires an initializer");
                     contexts.back().variables[var] = reference(expression(var->getInit()));
+                    continue;
+                }
+                // A local pointer whose binding never changes can name a
+                // known array subobject directly. Materializing its address
+                // in a register would falsely make the packet escape and
+                // force a memory schedule for otherwise pure pipeline code.
+                // Address-taking, rebinding and reference escapes are excluded
+                // by the use check; pointee accesses keep normal alias rules.
+                auto* function = dyn_cast<FunctionDecl>(var->getDeclContext());
+                auto* decay = var->hasInit() ? dyn_cast<ImplicitCastExpr>(var->getInit()->IgnoreParens()) : nullptr;
+                if (pipelineMode && var->getType()->isPointerType() && !var->getType().isVolatileQualified() &&
+                    decay && decay->getCastKind() == CK_ArrayToPointerDecay && function &&
+                    pointerBindingReadOnly(function->getBody(), var)) {
+                    Value initial = expression(var->getInit());
+                    if (!initial.location && locations.count(initial.text)) {
+                        contexts.back().variables[var] = {initial.text, var->getType()};
+                    } else {
+                        Value storage = slot(var->getType(), var->getNameAsString());
+                        contexts.back().variables[var] = storage;
+                        store(storage, initial);
+                    }
                     continue;
                 }
                 Value storage = var == contexts.back().nrvo ? contexts.back().result : slot(var->getType(), var->getNameAsString());
@@ -1795,7 +2170,10 @@ class DelayedScheduler {
             current = no; statement(conditional->getElse()); jump(done);
             current = done; return;
         }
-        if (pipelineMode) if (auto* loop = dyn_cast<ForStmt>(stmt)) {
+        // Memory pipelines retain ordinary loop backedges. OpenMP explicitly
+        // creates parallel lanes through parallelStatement; a plain loop must
+        // not replicate its arithmetic once per compile-time iteration.
+        if (pipelineMode && !externalMemory) if (auto* loop = dyn_cast<ForStmt>(stmt)) {
             OpenMPLoop plan;
             try { plan = planStaticLoop(ctx, loop); }
             catch (const std::runtime_error& error) { reject(loop, "ClockedPipeline cannot achieve II=1: " + std::string(error.what())); }
@@ -1846,19 +2224,25 @@ public:
     std::map<std::string, graph::Value> graphConstants;
     std::map<std::string, std::pair<synth::BlackBoxSpec,unsigned>> blackboxes;
     std::string generate(const CXXRecordDecl* wrapper, const std::string& name, graph::Graph* graph = nullptr,
-                         synth::ScheduledDesign* pipeline = nullptr) {
+                         synth::ScheduledDesign* pipeline = nullptr, CXXMethodDecl* atomic = nullptr, FunctionDecl* function = nullptr) {
         pipelineMode = pipeline != nullptr;
         if (pipelineMode) addressWidth = 32; // Virtual register addresses for large spatial arrays.
-        for (const auto* attr : wrapper->specific_attrs<AnnotateAttr>())
+        if (wrapper) for (const auto* attr : wrapper->specific_attrs<AnnotateAttr>())
             externalMemory |= attr->getAnnotation() == "CPPHDL_HLS_EXTERNAL_MEMORY";
-        if (auto* specialization = dyn_cast<ClassTemplateSpecializationDecl>(wrapper); specialization && !pipeline) {
+        if (auto* specialization = dyn_cast_or_null<ClassTemplateSpecializationDecl>(wrapper); specialization && (!pipeline || externalMemory)) {
             const auto& args = specialization->getTemplateArgs();
             if (externalMemory) {
                 addressWidth = args[1].getAsIntegral().getLimitedValue();
                 if (addressWidth != 32) reject(nullptr, "external memory currently requires 32-bit byte addresses");
                 // Local RAM and the external memory channel are independent.
                 if (args.size() > 2) blockRam = args[2].getAsIntegral().getBoolValue();
-                sharedMemory = blockRam;
+                if (args.size() > 3) externalDataBits = args[3].getAsIntegral().getLimitedValue();
+                if (externalDataBits < 64 || externalDataBits > 512 || (externalDataBits & (externalDataBits-1)))
+                    reject(nullptr,"external DATA_BITS must be 64, 128, 256 or 512");
+                if (args.size() > 4 && !pipeline) externalReadWindow = args[4].getAsIntegral().getLimitedValue();
+                if (externalReadWindow != 1 && externalReadWindow != 2)
+                    reject(nullptr,"external read window must be 1 or 2");
+                sharedMemory = blockRam && !pipelineMode;
             } else {
                 if (args.size() > 1) recursionLimit = args[1].getAsIntegral().getLimitedValue();
                 if (recursionLimit > 16) reject(nullptr, "MAX_RECURSION must be in 0..16");
@@ -1873,21 +2257,31 @@ public:
             }
         }
         const FieldDecl* object = nullptr;
-        for (auto* field : wrapper->fields()) if (field->getName() == "object") object = field;
-        if (!object) reject(nullptr, "clocked wrapper has no object");
-        Value state = slot(object->getType(), object->getNameAsString());
+        if (wrapper) for (auto* field : wrapper->fields()) if (field->getName() == "object") object = field;
+        if (!object && !atomic && !function) reject(nullptr, "clocked wrapper has no object");
+        Value state;
+        if (!function) state=slot(atomic ? ctx.getRecordType(atomic->getParent()) : object->getType(), "object");
+        else if (auto* method=dyn_cast<CXXMethodDecl>(function); method && !method->isStatic())
+            state=slot(ctx.getRecordType(method->getParent()), "object");
         persistentObject = state.text;
-        auto* record = object->getType()->getAsCXXRecordDecl();
-        CXXMethodDecl* command = nullptr;
-        for (auto* method : record->methods()) if (method->getNameAsString() == "command") {
+        auto* record = atomic ? atomic->getParent() : object ? object->getType()->getAsCXXRecordDecl() : nullptr;
+        if (atomic) preserveAtomicCalls = false;
+        if (pipeline && record) for (const auto* attr : record->specific_attrs<AnnotateAttr>())
+            if (attr->getAnnotation().starts_with("CPPHDL_REPLACEMENT_MODULE=")) preserveAtomicCalls = false;
+        FunctionDecl* command = function;
+        if (record) for (auto* method : record->methods()) if (method->getNameAsString() == "command") {
             if (command) reject(nullptr, "overloaded command entry"); command = method;
         }
-        if (!command || command->getNumParams() != 3 ||
-            (!pipeline && (!command->getReturnType()->isUnsignedIntegerType() || bits(command->getReturnType()) != 64)))
+        if (!command || (function ? command->getNumParams()==0 : command->getNumParams()!=3) ||
+            ((!pipeline || externalMemory) && (!command->getReturnType()->isUnsignedIntegerType() || bits(command->getReturnType()) != 64)))
             reject(nullptr, "clocked object requires uint64_t command(uint32_t, uint32_t, uint32_t)");
-        unsigned argumentBits = pipeline ? bits(command->getParamDecl(0)->getType()) : 32;
+        unsigned argumentBits = pipeline && !externalMemory ? bits(command->getParamDecl(0)->getType()) : 32;
+        if (function) {
+            argumentBits=0;
+            for (auto* param:command->parameters()) argumentBits+=bits(param->getType());
+        }
         unsigned commandResultBits = bits(command->getReturnType());
-        if (pipeline) {
+        if (pipeline && !atomic && !function && !externalMemory) {
             auto* specialization = cast<ClassTemplateSpecializationDecl>(wrapper);
             const auto& args = specialization->getTemplateArgs();
             if (args.size() != 4 || !ctx.hasSameType(args[2].getAsType(), command->getParamDecl(0)->getType()) ||
@@ -1896,26 +2290,39 @@ public:
             if (!wireValue(command->getParamDecl(0)->getType()) || !wireValue(command->getReturnType()))
                 reject(nullptr, "ClockedPipeline wire values require unsigned integers or padding-free trivial aggregate records/arrays");
         }
-        for (auto* param : command->parameters()) if (pipeline ?
+        if (atomic && (!wireValue(command->getParamDecl(0)->getType()) || !wireValue(command->getReturnType())))
+            reject(nullptr,"atomic command requires unsigned integer or padding-free aggregate wire values");
+        entryFunction = command->getCanonicalDecl();
+        for (auto* param : command->parameters()) if (!function && (pipeline && !externalMemory ?
                 !ctx.hasSameType(param->getType(), command->getParamDecl(0)->getType()) :
-                (!param->getType()->isUnsignedIntegerType() || bits(param->getType()) != argumentBits))
+                (!param->getType()->isUnsignedIntegerType() || bits(param->getType()) != argumentBits)))
             reject(nullptr, "clocked command arguments must have the same unsigned integer width as the wrapper");
         contexts.push_back({});
         int resetEntry = current;
-        if (!object->getInClassInitializer() && object->hasInClassInitializer()) {
+        if (object && !object->getInClassInitializer() && object->hasInClassInitializer()) {
             auto init = sema.BuildCXXDefaultInitExpr(object->getLocation(), const_cast<FieldDecl*>(object));
             if (init.isInvalid()) reject(nullptr, "cannot instantiate Clocked object initializer");
         }
-        if (!object->getInClassInitializer()) reject(nullptr, "Clocked object initializer is unavailable");
-        initialize(state, object->getInClassInitializer());
+        if (object) {
+            if (!object->getInClassInitializer()) reject(nullptr, "Clocked object initializer is unavailable");
+            initialize(state, object->getInClassInitializer());
+        }
         emit("booting = 0; phase = 0;");
         current = block(); int commandEntry = current;
-        auto argumentType = command->getParamDecl(0)->getType();
-        Value result = invoke(command, {{"operation_in", argumentType}, {"index_in", argumentType}, {"value_in", argumentType}}, state.text);
+        std::vector<Value> arguments;
+        const char* names[]={"operation_in","index_in","value_in"};
+        unsigned argumentOffset=0;
+        for (unsigned i=0;i<command->getNumParams();++i) {
+            auto type=command->getParamDecl(i)->getType();
+            auto input=function ? "operation_in["+std::to_string(argumentOffset)+" +: "+std::to_string(bits(type))+"]" : names[i];
+            arguments.push_back({input,type});
+            argumentOffset+=bits(type);
+        }
+        Value result = invoke(command, arguments, state.text);
         emit("result = " + read(result) + "; pending = 1; phase = 0;");
         contexts.pop_back();
         lowerSourceValues(resetEntry, commandEntry);
-        if (graph || pipeline) {
+        if (graph || pipeline || !atomics.empty() || externalReadWindow > 1) {
             compactBlocks(resetEntry, commandEntry);
             unsigned heapBase = (highWater + 15) & ~15u;
             unsigned memoryBytes = heapBase + (heap ? heapBytes : 0);
@@ -1926,16 +2333,44 @@ public:
             design.argumentBits = argumentBits;
             design.resultBits = commandResultBits;
             design.blackboxes = blackboxes;
-            design.externalMemory = externalMemory;
+            design.externalMemory = externalMemory && !pipeline;
+            design.externalDataBits = externalDataBits;
+            design.externalReadWindow = externalReadWindow;
+            design.atomics = atomics;
             if (pipeline) {
                 if (heap) reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule");
-                for (const auto& [address, item] : objects) if (item.memory)
-                    reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule: " + address);
-                for (const auto& b : blocks) if (b.suspend)
-                    reject(nullptr, "ClockedPipeline cannot achieve II=1 for loops or suspended calls; use ClockedDelayer");
-                if (record->isEmpty()) design.clocked.clear();
+                for (const auto& [address, item] : objects) if (item.memory && !blockRam)
+                    reject(nullptr, "ClockedPipeline memory/escaping pointers require a memory schedule: " + address +
+                        (addressExposures.count(address) ? " exposed by " + addressExposures.at(address) : ""));
+                bool loopRegions=false;
+                for (const auto& b : blocks) if (b.suspend) {
+                    if(!externalMemory)
+                        reject(nullptr, "ClockedPipeline cannot achieve II=1 for loops or suspended calls; use ClockedDelayer");
+                    loopRegions=true;
+                }
+                if(loopRegions && record && !record->isEmpty())
+                    reject(nullptr,"streaming loop regions require a stateless method class");
+                if ((!record || record->isEmpty()) && !loopRegions) design.clocked.clear();
                 *pipeline = std::move(design);
                 return {};
+            }
+            if (!graph) {
+                graph::Graph generated; generated.clockContract = graph::ClockContract::RisingEdgeStep;
+                auto pins = synth::exportScheduledGraph(generated,design,name);
+                for (auto& node : generated.nodes) if (node.op == "wire") node.op = "input";
+                for (const auto& [pin,bits] : pins) {
+                    bool input = pin == "reset" || pin == "command_valid_in" || pin == "response_ready_in" ||
+                        pin == "operation_in" || pin == "index_in" || pin == "value_in" ||
+                        pin == "memory_out.ready_out" || pin == "memory_out.valid_out" ||
+                        pin == "memory_out.data_out" || pin == "memory_out.error_out";
+                    auto external = pin;
+                    if (pin.find("memory_out.") == 0) {
+                        external = "memory_out__" + pin.substr(11);
+                        auto suffix=external.rfind('_'); external=external.substr(0,suffix)+(input?"_in":"_out");
+                    }
+                    generated.ports.push_back({external,bits,input});
+                }
+                return synth::verilogText(generated,name);
             }
             graphPorts = synth::exportScheduledGraph(*graph, design, name);
             return {};
@@ -2024,9 +2459,9 @@ public:
         if (externalMemory) out << R"SV(  , output wire memory_out__valid_out, memory_out__write_out
   , output wire [31:0] memory_out__addr_out
   , output wire [7:0] memory_out__size_out
-  , output wire [63:0] memory_out__data_out
+  , output wire [)SV" << externalDataBits-1 << R"SV(:0] memory_out__data_out
   , input wire memory_out__ready_in, memory_out__valid_in
-  , input wire [63:0] memory_out__data_in
+  , input wire [)SV" << externalDataBits-1 << R"SV(:0] memory_out__data_in
   , input wire memory_out__error_in
   , output wire memory_out__ready_out
 )SV";
@@ -2048,7 +2483,7 @@ public:
         if (externalMemory) {
             stateBits["external_address"] = addressWidth;
             stateBits["external_size"] = 8;
-            stateBits["external_write_data"] = stateBits["external_read_data"] = 64;
+            stateBits["external_write_data"] = stateBits["external_read_data"] = externalDataBits;
             stateBits["external_read"] = stateBits["external_write"] = 1;
         }
         // Shared-port methods return scalar state, never the whole arena.
@@ -2090,14 +2525,17 @@ public:
                     << (externalMemory ? "" : "command_valid_in && command_ready_out ? " + pin + " : ")
                     << "hls_accepted_" << pin << ";\n";
         }
-        if (externalMemory) out << R"SV(  logic [31:0] external_address, external_address_reg;
-  logic [63:0] external_write_data, external_data_reg, external_read_data;
+        if (externalMemory) {
+            out << "  logic [" << externalDataBits-1 << ":0] external_write_data, external_data_reg, external_read_data;\n";
+            out << "  wire external_bad_address = 1'b0";
+            for (unsigned bit=0;(1u<<bit)<externalDataBits/8;++bit)
+                out << " || (external_address_reg[" << bit << "] && external_size_reg > " << (1u<<bit) << ")";
+            out << ";\n";
+            out << R"SV(  logic [31:0] external_address, external_address_reg;
   logic [7:0] external_size, external_size_reg;
   logic external_read, external_write, external_write_reg, external_busy, external_sent;
   wire external_accept = memory_out__valid_out && memory_out__ready_in;
   wire external_complete = memory_out__ready_out && memory_out__valid_in;
-  wire external_bad_address = (external_address_reg[0] && external_size_reg > 1) ||
-    (external_address_reg[1] && external_size_reg > 2) || (external_address_reg[2] && external_size_reg > 4);
   assign memory_out__valid_out = external_busy && !external_sent && !external_bad_address && !reset;
   assign memory_out__write_out = external_write_reg;
   assign memory_out__addr_out = external_address_reg;
@@ -2105,6 +2543,7 @@ public:
   assign memory_out__data_out = external_data_reg;
   assign memory_out__ready_out = external_busy && (external_sent || external_accept) && !reset;
 )SV";
+        }
         if (blockRam) emitBlockRamDeclarations(out);
         // These are independent combinational source values, not an aggregate
         // data object. Avoid huge unused struct comparison operators in host RTL.
@@ -2318,5 +2757,25 @@ synth::ScheduledDesign lowerPipelineSource(clang::ASTContext& ctx, clang::Sema& 
     synth::ScheduledDesign design;
     DelayedScheduler(ctx, sema).generate(record, "", nullptr, &design);
     return design;
+}
+synth::ScheduledDesign lowerValueFunctionSource(clang::ASTContext& ctx, clang::Sema& sema, clang::FunctionDecl* function) {
+    static thread_local std::set<const clang::FunctionDecl*> active;
+    auto* key=function->getCanonicalDecl();
+    if (!active.insert(key).second) throw std::runtime_error("recursive parallel value call");
+    try {
+        synth::ScheduledDesign design;
+        DelayedScheduler(ctx,sema).generate(nullptr,"",nullptr,&design,nullptr,function);
+        active.erase(key); return design;
+    } catch (...) { active.erase(key); throw; }
+}
+synth::ScheduledDesign lowerAtomicSource(clang::ASTContext& ctx, clang::Sema& sema, clang::CXXMethodDecl* method) {
+    static thread_local std::set<const clang::FunctionDecl*> active;
+    auto* key = method->getCanonicalDecl();
+    if (!active.insert(key).second) throw std::runtime_error("recursive atomic replacement call");
+    try {
+        synth::ScheduledDesign design;
+        DelayedScheduler(ctx,sema).generate(nullptr,"",nullptr,&design,method);
+        active.erase(key); return design;
+    } catch (...) { active.erase(key); throw; }
 }
 }

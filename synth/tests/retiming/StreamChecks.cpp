@@ -72,8 +72,85 @@ static void simulate(Graph graph) {
         sim.tick();
     }
 }
+static Graph singleVisitStream(bool heldInputs, bool nested = false) {
+    Graph logic,top;top.clockContract=ClockContract::RisingEdgeStep;
+    auto input=logic.wire(8,"value","input");
+    logic.currentScope="single.hls_stage_0";
+    auto sum=logic.binary("add",input,constant(3,8),8);
+    logic.currentScope="single.hls_stage_6";
+    auto result=logic.binary("xor",sum,input,8);
+    if(nested) {
+        Graph child;child.currentScope="callee.hls_stage_0";
+        auto a=child.wire(8,"a","input"),b=child.wire(8,"b","input"),c=child.wire(8,"c","input");
+        auto early=child.binary("xor",a,constant(0x51,8),8);
+        auto value=child.binary("xor",child.binary("xor",early,b,8),constant(0x51,8),8);
+        child.ports={{"operation_in",a,true},{"index_in",b,true},{"value_in",c,true},
+            {"result_out",value,false},{"fault_out",constant(0,32),false}};
+        AtomicMethod method;method.argumentBits=8;method.resultBits=8;method.minimumLatency=8;
+        std::ostringstream saved;child.save(saved);method.logic=saved.str();
+        logic.attributes.push_back({"callee","atomic_method",method.serialize()});
+        Value args=sum;args.insert(args.end(),input.begin(),input.end());args.resize(24,0);
+        logic.currentScope="single.hls_stage_2";
+        result=logic.add("pipeline_call",8,args,constant(0,64),{},"callee");
+    }
+    logic.ports={{"value_in",input,true},{"result_out",result,false},{"fault_out",constant(0,32),false}};
+    if(heldInputs)logic.attributes.push_back({"single","hls_single_visit_inputs","1"});
+    StreamPipeline region;region.scope="single";region.stages=nested?20:8;
+    std::ostringstream saved;logic.save(saved);region.logic=saved.str();
+    for(auto [pin,width]:std::map<std::string,unsigned>{{"reset",1},{"value_in",8},
+            {"command_valid_in",1},{"response_ready_in",1}}) {
+        region.pins[pin]=top.wire(width,pin,"input");
+        top.ports.push_back({pin,region.pins.at(pin),true});
+    }
+    buildStreamPipeline(top,region,logic);
+    for(const std::string pin:{"result_out","fault_out","command_ready_out","response_valid_out"})
+        top.ports.push_back({pin,region.pins.at(pin),false});
+    top.pipelines.push_back(std::move(region));return top;
+}
+static void simulateSingleVisit(Graph graph) {
+    Evaluate sim(graph);bool pending=false;unsigned expected=0,completed=0,held=0,cancelled=0;
+    for(unsigned cycle=0;cycle<5000;++cycle) {
+        const bool reset=cycle==0 || cycle==97 || cycle==311;
+        const bool submit=!reset&&!pending&&cycle%3!=0;
+        const bool ready=cycle%59<43;
+        const unsigned input=(cycle*37+11)&255;
+        // The caller is free to change argument buses immediately after
+        // admission. Captured inputs must survive bubbles and held results.
+        sim.input("reset",reset);sim.input("value_in",input);
+        sim.input("command_valid_in",submit);sim.input("response_ready_in",ready);sim.eval();
+        if(reset) {cancelled+=pending;pending=false;}
+        else {
+            if(sim.output("response_valid_out")) {
+                require(pending,"single-visit unsolicited response");
+                require(!sim.output("fault_out") && sim.output("result_out")==expected,
+                        "single-visit input changed through bubbles/stalls");
+                if(ready){pending=false;++completed;}else ++held;
+            }
+            if(submit&&sim.output("command_ready_out")) {
+                require(!pending,"single-visit test overlapped commands");
+                pending=true;expected=((input+3)&255)^input;
+            }
+        }
+        sim.tick();
+    }
+    require(completed>100 && held>0 && cancelled>0,"single-visit test missed completion/stall/reset coverage");
+}
+static void checkSingleVisit(bool nested) {
+    auto ordinary=singleVisitStream(false,nested),held=singleVisitStream(true,nested);
+    auto bits=[](const Graph& graph){size_t n=0;for(const auto& s:graph.states)n+=s.bits.size();return n;};
+    require(bits(held)<bits(ordinary),"single-visit input alignment retained redundant registers");
+    if(nested)require(bits(held)*2<bits(ordinary),"nested single-visit call retained alignment copies");
+    simulateSingleVisit(ordinary);simulateSingleVisit(held);
+    auto fit=retime(held,{"fit_pipeline_retiming",0.75,""});
+    require(fit.met,"single-visit captured input failed retiming");simulateSingleVisit(held);
+    std::ostringstream saved;held.save(saved);Graph loaded;loaded.load(saved.str().c_str());
+    simulateSingleVisit(loaded);loaded=mapGates(std::move(loaded));
+    fit=retime(loaded,{"fit_pipeline_retiming",0.65,""});
+    require(fit.met,"mapped single-visit captured input failed retiming");simulateSingleVisit(loaded);
+}
 int main() {
     try {
+        checkSingleVisit(false);checkSingleVisit(true);
         Graph graph; graph.clockContract=ClockContract::RisingEdgeStep;
         addStream(graph,"left"); addStream(graph,"right");
         simulate(graph);
@@ -111,7 +188,11 @@ int main() {
         Graph parent; parent.clockContract=ClockContract::RisingEdgeStep;
         addStream(parent,"parent_input",true);
         auto parentFit=retime(parent,{"fit_pipeline_retiming",1.5,""});
-        require(parentFit.met && parentFit.addedLatency,"parent input delay was not budgeted");
+        // A shallower mapper may fit by redistributing the existing stages.
+        // Check the complete parent-fed path, rather than requiring extra
+        // latency even when the original number of stages is sufficient.
+        require(parentFit.met && parentFit.before>1.5 && parentFit.after<=1.5 &&
+                parent.pipelines.front().generation>1,"parent input delay was not budgeted");
         simulate(parent);
         auto mixed=original; mixed.clockContract=ClockContract::NamedEdges; mixed.clocks={{"a",100},{"b",50}};
         for (auto& state:mixed.states) state.clock=0;

@@ -21,6 +21,38 @@ def pipeline():
     return primitive()+delay+r'''
 `ifndef CPPHDL_FP32_MAC_PIPELINE
 `define CPPHDL_FP32_MAC_PIPELINE
+// Spend the first available extra cycle at the arithmetic input boundary.
+// A trailing delay cannot separate a context-RAM output from the multiplier.
+module CpphdlFp32MacBoundary #(parameter INPUT_STAGE=0, OUTPUT_STAGE=0, NORMALIZE_STAGE=0, PRODUCT_STAGE=0, ALIGN_STAGE=0)(
+    input wire clk,reset,en_in,
+    input wire [31:0] a_in,b_in,c_in,
+    output wire [31:0] result_out
+);
+    wire [95:0] operands;
+    generate if(INPUT_STAGE)begin: registered_input
+        (* preserve *) reg [95:0] captured;
+        always @(posedge clk)begin
+            if(reset)captured<=0;
+            else if(en_in)captured<={a_in,b_in,c_in};
+        end
+        assign operands=captured;
+    end else begin: direct_input
+        assign operands={a_in,b_in,c_in};
+    end endgenerate
+    wire [31:0] computed;
+    Fp32Mac #(.PIPELINE_ADD(NORMALIZE_STAGE),.PIPELINE_PRODUCT(PRODUCT_STAGE),.PIPELINE_ALIGN(ALIGN_STAGE)) mac(.clk(clk),.reset(reset),.en_in(en_in),
+        .a_in(operands[64+:32]),.b_in(operands[32+:32]),.c_in(operands[0+:32]),.result_out(computed));
+    generate if(OUTPUT_STAGE)begin: registered_output
+        (* preserve *) reg [31:0] captured;
+        always @(posedge clk)begin
+            if(reset)captured<=0;
+            else if(en_in)captured<=computed;
+        end
+        assign result_out=captured;
+    end else begin: direct_output
+        assign result_out=computed;
+    end endgenerate
+endmodule
 module Fp32MacPipeline #(parameter LATENCY=2)(
     input wire clk, reset, command_valid_in, response_ready_in,
     input wire [31:0] operation_in, index_in, value_in,
@@ -28,10 +60,12 @@ module Fp32MacPipeline #(parameter LATENCY=2)(
     output wire [31:0] result_out, fault_out
 );
     initial if (LATENCY < 2) $fatal(1, "FP32 MAC requires LATENCY >= 2");
+    localparam INPUT_STAGE=(LATENCY>2), NORMALIZE_STAGE=(LATENCY>3), OUTPUT_STAGE=(LATENCY>4), PRODUCT_STAGE=(LATENCY>5), ALIGN_STAGE=(LATENCY>6);
+    localparam CORE_LATENCY=2+INPUT_STAGE+NORMALIZE_STAGE+OUTPUT_STAGE+PRODUCT_STAGE+ALIGN_STAGE;
     reg [LATENCY-1:0] valid;
     wire advance = !valid[LATENCY-1] || response_ready_in;
     wire [31:0] computed;
-    Fp32Mac mac(.clk(clk),.reset(reset),.en_in(advance),
+    CpphdlFp32MacBoundary #(.INPUT_STAGE(INPUT_STAGE),.OUTPUT_STAGE(OUTPUT_STAGE),.NORMALIZE_STAGE(NORMALIZE_STAGE),.PRODUCT_STAGE(PRODUCT_STAGE),.ALIGN_STAGE(ALIGN_STAGE)) mac(.clk(clk),.reset(reset),.en_in(advance),
         .a_in(index_in),.b_in(value_in),.c_in(operation_in),.result_out(computed));
     assign command_ready_out=advance;
     assign response_valid_out=valid[LATENCY-1];
@@ -44,7 +78,7 @@ module Fp32MacPipeline #(parameter LATENCY=2)(
             for(i=1;i<LATENCY;i=i+1)valid[i]<=valid[i-1];
         end
     end
-    CpphdlMacEnabledDelay #(.WIDTH(32),.DEPTH(LATENCY-2)) delay_result(
+    CpphdlMacEnabledDelay #(.WIDTH(32),.DEPTH(LATENCY-CORE_LATENCY)) delay_result(
         .clk(clk),.reset(reset),.advance(advance),.data_in(computed),.data_out(result_out));
 endmodule
 `endif
@@ -62,17 +96,19 @@ module Fp32MacArray_{rows}_{cols} #(parameter LATENCY=2)(
     output wire [{(lanes+1)*32-1}:0] result_out,output wire [31:0] fault_out
 );
     initial if(LATENCY<2)$fatal(1,"FP32 MAC array requires LATENCY >= 2");
+    localparam INPUT_STAGE=(LATENCY>2), NORMALIZE_STAGE=(LATENCY>3), OUTPUT_STAGE=(LATENCY>4), PRODUCT_STAGE=(LATENCY>5), ALIGN_STAGE=(LATENCY>6);
+    localparam CORE_LATENCY=2+INPUT_STAGE+NORMALIZE_STAGE+OUTPUT_STAGE+PRODUCT_STAGE+ALIGN_STAGE;
     // Mask at the arithmetic boundary, not after LATENCY cycles. Only the
     // selected payload and its tag occupy the deep, shared RAM delay.
-    reg [31:0] tags[0:1];reg [{lanes-1}:0] masks[0:1];
-    reg [{lanes*32-1}:0] initials[0:1];
+    reg [31:0] tags[0:CORE_LATENCY-1];reg [{lanes-1}:0] masks[0:CORE_LATENCY-1];
+    reg [{lanes*32-1}:0] initials[0:CORE_LATENCY-1];
     reg [LATENCY-1:0] valid;
     wire advance=!valid[LATENCY-1] || response_ready_in;
     wire [{lanes-1}:0] mask_in;
     wire [{(lanes+1)*32-1}:0] selected;
     assign command_ready_out=advance;assign response_valid_out=valid[LATENCY-1];
-    assign selected[{lanes*32}+:32]=tags[1];assign fault_out=0;
-    CpphdlMacEnabledDelay #(.WIDTH({(lanes+1)*32}),.DEPTH(LATENCY-2)) delay_result(
+    assign selected[{lanes*32}+:32]=tags[CORE_LATENCY-1];assign fault_out=0;
+    CpphdlMacEnabledDelay #(.WIDTH({(lanes+1)*32}),.DEPTH(LATENCY-CORE_LATENCY)) delay_result(
         .clk(clk),.reset(reset),.advance(advance),.data_in(selected),.data_out(result_out));
     genvar row,col;
     generate for(row=0;row<{rows};row=row+1)begin: rows
@@ -81,11 +117,11 @@ module Fp32MacArray_{rows}_{cols} #(parameter LATENCY=2)(
             wire [31:0] computed;
             wire [31:0] a=operation_in[{(words-1)*32}+:32]==0 ?
                 operation_in[{(2*lanes+cols)*32}+row*32+:32] : operation_in[LANE*32+:32];
-            Fp32Mac mac(.clk(clk),.reset(reset),.en_in(advance),
+            CpphdlFp32MacBoundary #(.INPUT_STAGE(INPUT_STAGE),.OUTPUT_STAGE(OUTPUT_STAGE),.NORMALIZE_STAGE(NORMALIZE_STAGE),.PRODUCT_STAGE(PRODUCT_STAGE),.ALIGN_STAGE(ALIGN_STAGE)) mac(.clk(clk),.reset(reset),.en_in(advance),
                 .c_in(operation_in[{(lanes+cols)*32}+LANE*32+:32]),.a_in(a),
                 .b_in(operation_in[{lanes*32}+col*32+:32]),.result_out(computed));
             assign mask_in[LANE]=(row<operation_in[{(words-4)*32}+:32] && col<operation_in[{(words-3)*32}+:32]);
-            assign selected[LANE*32+:32]=masks[1][LANE] ? computed : initials[1][LANE*32+:32];
+            assign selected[LANE*32+:32]=masks[CORE_LATENCY-1][LANE] ? computed : initials[CORE_LATENCY-1][LANE*32+:32];
         end
     end endgenerate
     integer i;
@@ -96,7 +132,9 @@ module Fp32MacArray_{rows}_{cols} #(parameter LATENCY=2)(
             for(i=1;i<LATENCY;i=i+1)valid[i]<=valid[i-1];
             tags[0]<=operation_in[{(words-2)*32}+:32];masks[0]<=mask_in;
             initials[0]<=operation_in[{(lanes+cols)*32}+:{lanes*32}];
-            tags[1]<=tags[0];masks[1]<=masks[0];initials[1]<=initials[0];
+            for(i=1;i<CORE_LATENCY;i=i+1)begin
+                tags[i]<=tags[i-1];masks[i]<=masks[i-1];initials[i]<=initials[i-1];
+            end
         end
     end
 endmodule

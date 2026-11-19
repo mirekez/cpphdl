@@ -16,6 +16,12 @@ bool success = true;
 bool isPipeline(const CXXRecordDecl* record) {
     for (const auto* attr : record->specific_attrs<AnnotateAttr>())
         if (attr->getAnnotation() == "CPPHDL_HLS_PIPELINE") return true;
+    for (const auto* attr : record->specific_attrs<AnnotateAttr>())
+        if (attr->getAnnotation() == "CPPHDL_HLS_EXTERNAL_MEMORY")
+            if (auto* type=dyn_cast<ClassTemplateSpecializationDecl>(record)) {
+                const auto& args=type->getTemplateArgs();
+                return args.size()>5 && args[5].getAsIntegral().getBoolValue();
+            }
     return false;
 }
 void prepareClocked(clang::ASTContext& ctx, clang::Sema& sema) { context = &ctx; semantics = &sema; }
@@ -31,7 +37,12 @@ std::string clockedName(const clang::CXXRecordDecl* record, const std::string& b
         for (const auto* attr : record->specific_attrs<AnnotateAttr>())
             if (attr->getAnnotation() == "CPPHDL_HLS_EXTERNAL_MEMORY") {
                 name += "_A" + std::to_string(args[1].getAsIntegral().getLimitedValue());
+                if (args.size() > 3 && args[3].getAsIntegral().getLimitedValue() != 64)
+                    name += "_D" + std::to_string(args[3].getAsIntegral().getLimitedValue());
+                if (args.size() > 4 && args[4].getAsIntegral().getLimitedValue() != 1)
+                    name += "_R" + std::to_string(args[4].getAsIntegral().getLimitedValue());
                 if (args.size() > 2 && args[2].getAsIntegral().getBoolValue()) name += "_BRAM";
+                if (isPipeline(record)) name += "_Pipeline";
                 return name;
             }
         if (isPipeline(record) && args.size() > 1 && args[1].getKind() == TemplateArgument::Integral)

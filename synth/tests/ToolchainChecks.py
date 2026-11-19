@@ -57,7 +57,7 @@ class EmitterToolchainChecks(unittest.TestCase):
             self.assertEqual(synthesize.emitter_environment('/selected/c++', 30)['LD_LIBRARY_PATH'],
                              str(self.library.parent) + ':' + str(runtime.parent))
 
-    def run_synthesis(self, fail_emit=False):
+    def run_synthesis(self, fail_emit=False, operations_only=False, pipeline=False):
         source = self.root / 'design.cpp'
         tool = self.root / 'cpphdl'
         source.touch()
@@ -75,14 +75,20 @@ class EmitterToolchainChecks(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1)
                 (output / 'timing.json').write_text(json.dumps({
                     'keep_boxes': [], 'external_blackboxes': []}))
-                (output / 'gates.json').write_text(json.dumps({
-                    'modules': {'SynthTop': {'cells': {}}}}))
+                self.assertEqual(command[9:11], ['3', 'enable'] if pipeline else ['0', ''])
+                if operations_only:
+                    self.assertEqual(command[-1], 'operations-only')
+                else:
+                    (output / 'gates.json').write_text(json.dumps({
+                        'modules': {'SynthTop': {'cells': {}}}}))
             else:
                 self.assertIsNone(kwargs['env'])
             return subprocess.CompletedProcess(command, 0)
 
         argv = ['synthesize.py', '--cpphdl', str(tool), '--cxx', '/selected/c++',
                 '--top', 'Top', '--output', str(output), str(source)]
+        if operations_only: argv.insert(1, '--operations-only')
+        if pipeline: argv[1:1] = ['--pipeline-latency', '3', '--pipeline-enable', 'enable']
         stderr = io.StringIO()
         with patch.object(sys, 'argv', argv), \
                 patch.dict(os.environ, {'LD_LIBRARY_PATH': '/old/runtime'}), \
@@ -94,8 +100,20 @@ class EmitterToolchainChecks(unittest.TestCase):
         self.assertEqual(len(commands), 3)
         return result, stderr.getvalue(), json.loads((output / 'manifest.json').read_text())
 
+    def test_operations_only_does_not_require_generic_gate_report(self):
+        result, stderr, manifest = self.run_synthesis(operations_only=True)
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(manifest['status'], 'complete')
+        self.assertNotIn('cells', manifest)
+        self.assertFalse((self.root / 'generated' / 'gates.json').exists())
+
     def test_synthesis_uses_selected_runtime_only_for_emitter(self):
         result, stderr, manifest = self.run_synthesis()
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(manifest['status'], 'complete')
+
+    def test_fixed_latency_with_operations_only(self):
+        result, stderr, manifest = self.run_synthesis(operations_only=True, pipeline=True)
         self.assertEqual(result, 0, stderr)
         self.assertEqual(manifest['status'], 'complete')
 

@@ -145,7 +145,7 @@ BlockUses::BlockUses(const std::vector<ScheduledBlock>& blocks, const Symbols& s
     for (size_t i = 0; i < blocks.size(); ++i) update(i, blocks[i]);
 }
 
-std::set<std::string> liveAcrossClocks(const std::vector<ScheduledBlock>& blocks, const Symbols& symbols) {
+std::vector<std::set<std::string>> liveAtBlockEntries(const std::vector<ScheduledBlock>& blocks, const Symbols& symbols) {
     std::vector<std::set<std::string>> uses(blocks.size()), defs(blocks.size()), live(blocks.size());
     for (size_t n = 0; n < blocks.size(); ++n) {
         auto read = [&](const std::string& text) {
@@ -173,6 +173,11 @@ std::set<std::string> liveAcrossClocks(const std::vector<ScheduledBlock>& blocks
             if (next != live[n]) { live[n] = std::move(next); changed = true; }
         }
     } while (changed);
+    return live;
+}
+
+std::set<std::string> liveAcrossClocks(const std::vector<ScheduledBlock>& blocks, const Symbols& symbols) {
+    const auto live = liveAtBlockEntries(blocks, symbols);
     std::set<std::string> result;
     for (const auto& block : blocks) if (block.suspend && block.yes >= 0)
         for (const auto& name : live[block.yes]) if (symbols.at(name).writable) result.insert(name);

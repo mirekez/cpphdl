@@ -7,11 +7,14 @@
 #include <cstddef>
 #include <cstdint>
 
-// One-stage floating-point adder. Alignment is combinational before sum_clock,
-// the signed significand addition is registered, and normalization/rounding is
-// combinational after the register. Exponent-zero values are flushed to zero.
-// PIPELINED=false exposes the same arithmetic for synthesis-time retiming.
-template<size_t W=32, size_t EW=8, bool PIPELINED=true>
+// The default adder has one registered significand sum. PIPELINE_NORMALIZE adds
+// an enabled register between normalization and rounding. PIPELINE_ALIGN
+// registers aligned operands before the sum. Exponent-zero values are flushed
+// to zero in every mode.
+// PIPELINED=false exposes the complete combinational arithmetic, ignoring
+// the optional internal registers, for synthesis-time fixed-latency retiming.
+template<size_t W=32, size_t EW=8, bool PIPELINED=true,
+         bool PIPELINE_NORMALIZE=false, bool PIPELINE_ALIGN=false>
 class FpAdd : public cpphdl::Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;
@@ -36,13 +39,19 @@ private:
     cpphdl::reg<cpphdl::logic<W>> special_result_reg;
     cpphdl::reg<cpphdl::u1> special_reg;
 
-    cpphdl::logic<SUM_WIDTH> add_lhs_comb;
-    cpphdl::logic<SUM_WIDTH> add_rhs_comb;
+    cpphdl::reg<cpphdl::logic<SUM_WIDTH>> aligned_lhs_reg, aligned_rhs_reg;
+    cpphdl::reg<cpphdl::u<EW>> aligned_exponent_reg;
+    cpphdl::reg<cpphdl::logic<W>> aligned_special_result_reg;
+    cpphdl::reg<cpphdl::u1> aligned_special_reg;
+    cpphdl::logic<SUM_WIDTH> add_lhs_comb, add_rhs_comb;
+
+    cpphdl::logic<SUM_WIDTH> aligned_lhs_comb;
+    cpphdl::logic<SUM_WIDTH> aligned_rhs_comb;
     cpphdl::u<EW> exponent_comb;
     cpphdl::logic<W> special_result_comb;
     bool special_comb;
 
-    cpphdl::logic<SUM_WIDTH>& add_lhs_comb_func()
+    cpphdl::logic<SUM_WIDTH>& aligned_lhs_comb_func()
     {
         uint64_t raw_a;
         uint64_t raw_b;
@@ -72,7 +81,7 @@ private:
         shift_mask = 0;
         encoded = 0;
         shift = 0;
-        add_lhs_comb = 0;
+        aligned_lhs_comb = 0;
 
         if (!special) {
             significand_a = ((uint64_t(1) << MANT_WIDTH) | mantissa_a) << 3;
@@ -93,12 +102,12 @@ private:
             }
             encoded = sign_a
                 ? ((uint64_t(0) - aligned_a) & SUM_MASK) : aligned_a;
-            add_lhs_comb = encoded.bits(SUM_WIDTH - 1, 0);
+            aligned_lhs_comb = encoded.bits(SUM_WIDTH - 1, 0);
         }
-        return add_lhs_comb;
+        return aligned_lhs_comb;
     }
 
-    cpphdl::logic<SUM_WIDTH>& add_rhs_comb_func()
+    cpphdl::logic<SUM_WIDTH>& aligned_rhs_comb_func()
     {
         uint64_t raw_a;
         uint64_t raw_b;
@@ -128,7 +137,7 @@ private:
         shift_mask = 0;
         encoded = 0;
         shift = 0;
-        add_rhs_comb = 0;
+        aligned_rhs_comb = 0;
 
         if (!special) {
             significand_b = ((uint64_t(1) << MANT_WIDTH) | mantissa_b) << 3;
@@ -149,8 +158,21 @@ private:
             }
             encoded = sign_b
                 ? ((uint64_t(0) - aligned_b) & SUM_MASK) : aligned_b;
-            add_rhs_comb = encoded.bits(SUM_WIDTH - 1, 0);
+            aligned_rhs_comb = encoded.bits(SUM_WIDTH - 1, 0);
         }
+        return aligned_rhs_comb;
+    }
+
+    cpphdl::logic<SUM_WIDTH>& add_lhs_comb_func()
+    {
+        if (PIPELINED && PIPELINE_ALIGN) add_lhs_comb = aligned_lhs_reg;
+        else add_lhs_comb = aligned_lhs_comb_func();
+        return add_lhs_comb;
+    }
+    cpphdl::logic<SUM_WIDTH>& add_rhs_comb_func()
+    {
+        if (PIPELINED && PIPELINE_ALIGN) add_rhs_comb = aligned_rhs_reg;
+        else add_rhs_comb = aligned_rhs_comb_func();
         return add_rhs_comb;
     }
 
@@ -241,88 +263,91 @@ private:
         return special_result_comb;
     }
 
-    cpphdl::logic<W> result_comb;
-    cpphdl::logic<W>& result_comb_func()
+    // Optional hard-block boundary: normalization and rounding are separate
+    // enabled stages. The default preserves the original one-stage adder ABI.
+    static constexpr size_t NORMAL_BITS = 128;
+    static constexpr size_t NORMAL_SIGN = SUM_WIDTH + 32 + W;
+    cpphdl::reg<cpphdl::logic<NORMAL_BITS>> normalized_reg;
+    cpphdl::logic<NORMAL_BITS> normalized_comb;
+    cpphdl::logic<NORMAL_BITS>& normalized_comb_func()
     {
-        uint64_t sum;
-        uint64_t magnitude;
-        uint64_t retained;
-        cpphdl::logic<64> result_raw;
-        uint64_t discarded;
+        uint64_t sum, magnitude, discarded, leading, special_value;
         int exponent;
-        bool negative;
-        bool guard;
-        bool round;
-        bool sticky;
-        uint8_t i;
-
+        unsigned normalize;
+        bool negative, special;
         sum = PIPELINED ? (uint64_t)sum_reg :
             ((uint64_t)add_lhs_comb_func() + (uint64_t)add_rhs_comb_func()) & SUM_MASK;
-        magnitude = 0;
-        retained = 0;
-        result_raw = 0;
-        discarded = 0;
-        exponent = (int)(uint64_t)(PIPELINED ? exponent_reg : exponent_comb_func());
+        exponent = PIPELINED ? (int)(uint64_t)exponent_reg : (int)(uint64_t)exponent_comb_func();
         negative = (sum & (uint64_t(1) << (SUM_WIDTH - 1))) != 0;
-        guard = false;
-        round = false;
-        sticky = false;
-        result_comb = 0;
-
-        if (PIPELINED ? (bool)special_reg : special_comb_func()) {
-            result_raw = PIPELINED ? (uint64_t)special_result_reg : (uint64_t)special_result_comb_func();
-        }
-        else {
+        special = PIPELINED ? bool(special_reg) : special_comb_func();
+        special_value = PIPELINED ? (uint64_t)special_result_reg : (uint64_t)special_result_comb_func();
+        magnitude = 0;
+        discarded = 0;
+        normalize = 0;
+        leading = 0;
+        if (!special) {
             magnitude = negative ? ((uint64_t(0) - sum) & SUM_MASK) : sum;
             if (magnitude == 0) {
-                result_raw = 0;
-            }
-            else {
+                special = true;
+                special_value = 0;
+            } else {
                 if ((magnitude & (uint64_t(1) << (MANT_WIDTH + 4))) != 0) {
                     discarded = magnitude & 1;
                     magnitude >>= 1;
-                    if (discarded != 0) {
-                        magnitude |= 1;
-                    }
+                    if (discarded != 0) magnitude |= 1;
                     ++exponent;
                 }
-                for (i = 0; i < 32; ++i) {
-                    if ((magnitude & (uint64_t(1) << (MANT_WIDTH + 3))) == 0
-                        && magnitude != 0 && exponent > 0) {
-                        magnitude <<= 1;
-                        --exponent;
-                    }
-                }
-                if (exponent <= 0) {
-                    result_raw = negative ? SIGN_MASK : 0;
-                }
-                else if (exponent >= (int)EXP_MAX) {
-                    result_raw = (negative ? SIGN_MASK : 0) | (EXP_MAX << MANT_WIDTH);
-                }
-                else {
-                    retained = magnitude >> 3;
-                    guard = ((magnitude >> 2) & 1) != 0;
-                    round = ((magnitude >> 1) & 1) != 0;
-                    sticky = (magnitude & 1) != 0;
-                    if (guard && (round || sticky || (retained & 1) != 0)) {
-                        ++retained;
-                    }
-                    if (retained >= (uint64_t(1) << (MANT_WIDTH + 1))) {
-                        retained >>= 1;
-                        ++exponent;
-                    }
-                    if (exponent >= (int)EXP_MAX) {
-                        result_raw = (negative ? SIGN_MASK : 0) | (EXP_MAX << MANT_WIDTH);
-                    }
-                    else {
-                        result_raw = (negative ? SIGN_MASK : 0)
-                            | ((uint64_t)exponent << MANT_WIDTH)
-                            | (retained & MANT_MASK);
-                    }
-                }
+                leading = magnitude;
+                if (!(leading >> 32)) { normalize += 32; leading <<= 32; }
+                if (!(leading >> 48)) { normalize += 16; leading <<= 16; }
+                if (!(leading >> 56)) { normalize += 8; leading <<= 8; }
+                if (!(leading >> 60)) { normalize += 4; leading <<= 4; }
+                if (!(leading >> 62)) { normalize += 2; leading <<= 2; }
+                if (!(leading >> 63)) { normalize += 1; leading <<= 1; }
+                normalize -= 64 - (MANT_WIDTH + 4);
+                magnitude = leading >> (64 - (MANT_WIDTH + 4));
+                exponent -= int(normalize);
             }
         }
+        normalized_comb = cpphdl::logic<NORMAL_BITS>(magnitude);
+        normalized_comb |= cpphdl::logic<NORMAL_BITS>(uint32_t(exponent)) << SUM_WIDTH;
+        normalized_comb |= cpphdl::logic<NORMAL_BITS>(special_value) << (SUM_WIDTH + 32);
+        normalized_comb |= cpphdl::logic<NORMAL_BITS>(negative) << NORMAL_SIGN;
+        normalized_comb |= cpphdl::logic<NORMAL_BITS>(special) << (NORMAL_SIGN + 1);
+        return normalized_comb;
+    }
 
+    cpphdl::logic<W> result_comb;
+    cpphdl::logic<W>& result_comb_func()
+    {
+        cpphdl::logic<NORMAL_BITS> normalized;
+        cpphdl::logic<64> result_raw;
+        uint64_t magnitude, retained;
+        int exponent;
+        bool negative, special, guard, round, sticky;
+        if (PIPELINED && PIPELINE_NORMALIZE) normalized = normalized_reg;
+        else normalized = normalized_comb_func();
+        magnitude = (uint64_t)normalized.bits(SUM_WIDTH - 1, 0);
+        exponent = int32_t(uint32_t((uint64_t)normalized.bits(SUM_WIDTH + 31, SUM_WIDTH)));
+        negative = (uint64_t)normalized.bits(NORMAL_SIGN, NORMAL_SIGN) != 0;
+        special = (uint64_t)normalized.bits(NORMAL_SIGN + 1, NORMAL_SIGN + 1) != 0;
+        result_raw = 0;
+        retained = magnitude >> 3;
+        guard = ((magnitude >> 2) & 1) != 0;
+        round = ((magnitude >> 1) & 1) != 0;
+        sticky = (magnitude & 1) != 0;
+        if (special) result_raw = normalized.bits(SUM_WIDTH + 32 + W - 1, SUM_WIDTH + 32);
+        else if (exponent <= 0) result_raw = negative ? SIGN_MASK : 0;
+        else if (exponent >= (int)EXP_MAX) result_raw = (negative ? SIGN_MASK : 0) | (EXP_MAX << MANT_WIDTH);
+        else {
+            if (guard && (round || sticky || (retained & 1) != 0)) ++retained;
+            if (retained >= (uint64_t(1) << (MANT_WIDTH + 1))) {
+                retained >>= 1;
+                ++exponent;
+            }
+            if (exponent >= (int)EXP_MAX) result_raw = (negative ? SIGN_MASK : 0) | (EXP_MAX << MANT_WIDTH);
+            else result_raw = (negative ? SIGN_MASK : 0) | ((uint64_t)exponent << MANT_WIDTH) | (retained & MANT_MASK);
+        }
         result_comb = result_raw.bits(W - 1, 0);
         return result_comb;
     }
@@ -332,13 +357,28 @@ public:
     {
         if constexpr (!PIPELINED) return;
         if (en_in()) {
+            if (PIPELINE_NORMALIZE) normalized_reg._next = normalized_comb_func();
             sum_reg._next = add_lhs_comb_func() + add_rhs_comb_func();
-            exponent_reg._next = exponent_comb_func();
-            special_result_reg._next = special_result_comb_func();
-            special_reg._next = special_comb_func();
+            if (PIPELINE_ALIGN) {
+                aligned_lhs_reg._next = aligned_lhs_comb_func();
+                aligned_rhs_reg._next = aligned_rhs_comb_func();
+                aligned_exponent_reg._next = exponent_comb_func();
+                aligned_special_result_reg._next = special_result_comb_func();
+                aligned_special_reg._next = special_comb_func();
+                exponent_reg._next = aligned_exponent_reg;
+                special_result_reg._next = aligned_special_result_reg;
+                special_reg._next = aligned_special_reg;
+            } else {
+                exponent_reg._next = exponent_comb_func();
+                special_result_reg._next = special_result_comb_func();
+                special_reg._next = special_comb_func();
+            }
         }
 
         if (reset) {
+            aligned_lhs_reg.clr();aligned_rhs_reg.clr();
+            aligned_exponent_reg.clr();aligned_special_result_reg.clr();aligned_special_reg.clr();
+            normalized_reg.clr();
             sum_reg.clr();
             exponent_reg.clr();
             special_result_reg.clr();
@@ -349,6 +389,9 @@ public:
     void _strobe()
     {
         if constexpr (!PIPELINED) return;
+        aligned_lhs_reg.strobe();aligned_rhs_reg.strobe();
+        aligned_exponent_reg.strobe();aligned_special_result_reg.strobe();aligned_special_reg.strobe();
+        normalized_reg.strobe();
         sum_reg.strobe();
         exponent_reg.strobe();
         special_result_reg.strobe();

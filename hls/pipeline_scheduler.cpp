@@ -2,6 +2,8 @@
 #include "delayed_scheduler.h"
 #include "../synth/Verilog.h"
 #include "../synth/StreamPipeline.h"
+#include "../synth/ReadPipeline.h"
+#include "../synth/LoopPipeline.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Attr.h"
 
@@ -11,7 +13,14 @@ std::string cpphdlHlsAnnotationValue(const clang::CXXRecordDecl*, const clang::A
 namespace cpphdl::hls {
 using namespace graph;
 
+static bool memoryPipeline(const clang::CXXRecordDecl* record) {
+    for(const auto* attr:record->specific_attrs<clang::AnnotateAttr>())
+        if(attr->getAnnotation()=="CPPHDL_HLS_EXTERNAL_MEMORY")return true;
+    return false;
+}
+
 unsigned pipelineStages(const clang::CXXRecordDecl* record) {
+    if(memoryPipeline(record))return 1;
     auto* specialization = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record);
     if (!specialization || specialization->getTemplateArgs().size() < 2)
         throw std::runtime_error("ClockedPipeline requires a method class and a stage count");
@@ -24,6 +33,10 @@ std::map<std::string,Value> exportPipelineGraph(clang::ASTContext& ctx, clang::S
     const clang::CXXRecordDecl* record, Graph& output, const std::string& scope) {
     const unsigned stages = pipelineStages(record);
     auto design = lowerPipelineSource(ctx, sema, record);
+    if(memoryPipeline(record) && std::any_of(design.blocks.begin(),design.blocks.end(),[](const auto& b){return b.suspend;})) {
+        const auto& args=llvm::cast<clang::ClassTemplateSpecializationDecl>(record)->getTemplateArgs();
+        return synth::buildLoopPipeline(output,design,scope,args[4].getAsIntegral().getLimitedValue());
+    }
     Graph command;
     auto ports = synth::exportCombinationalCommand(command, design, scope);
     for (auto& node : command.nodes) if (node.op == "wire") node.op = "input";
@@ -73,9 +86,20 @@ std::map<std::string,Value> exportPipelineGraph(clang::ASTContext& ctx, clang::S
     }
     for (auto n : order) if (depth[n])
         command.nodes[n].scope = scope + ".hls_stage_" + std::to_string((depth[n]-1)*stages/longest);
+    if(memoryPipeline(record)) {
+        const auto& args=llvm::cast<clang::ClassTemplateSpecializationDecl>(record)->getTemplateArgs();
+        auto pins=synth::buildReadPipeline(output,std::move(command),scope,
+            args[4].getAsIntegral().getLimitedValue(),design.argumentBits,design.externalDataBits,design.blockRam);
+        if(design.blockRam) {
+            synth::connectLocalMemory(output,scope+".local_memory",design.memoryBytes,design.externalDataBits,pins);
+            for(auto p=pins.begin();p!=pins.end();)if(p->first.find("local_out.")==0)p=pins.erase(p);else ++p;
+        }
+        return pins;
+    }
     StreamPipeline pipeline;
     pipeline.scope = scope; pipeline.stages = stages;
     pipeline.latency = std::max(stages,minimumLatency);
+    synth::compactPipelineLogic(command);
     std::ostringstream serialized; command.save(serialized); pipeline.logic = serialized.str();
     output.currentScope = scope;
     for (auto [name,width] : std::map<std::string,unsigned>{{"reset",1},{"command_valid_in",1},
@@ -95,9 +119,26 @@ std::string generatePipeline(clang::ASTContext& ctx, clang::Sema& sema,
     graph.clockContract = ClockContract::RisingEdgeStep;
     auto ports = exportPipelineGraph(ctx,sema,record,graph,name);
     for (auto& node : graph.nodes) if (node.op == "wire") node.op = "input";
-    for (auto& [port,bits] : ports)
-        graph.ports.push_back({port,bits,port == "reset" || port.find("_in") == port.size()-3});
+    for (auto& [port,bits] : ports) {
+        bool input=port=="reset" || port=="command_valid_in" || port=="response_ready_in" ||
+            port=="operation_in" || port=="index_in" || port=="value_in";
+        auto external=port;
+        if(port.find("memory_out.")==0) {
+            input=port=="memory_out.ready_out" || port=="memory_out.valid_out" ||
+                  port=="memory_out.data_out" || port=="memory_out.error_out";
+            external="memory_out__"+port.substr(11);
+            external=external.substr(0,external.rfind('_'))+(input?"_in":"_out");
+        }
+        graph.ports.push_back({external,bits,input});
+    }
+    if(memoryPipeline(record))
+        return "// HLS ordered memory continuations; variable memory latency, pipelined requests.\n"+
+            synth::verilogText(graph,name);
+    unsigned latency = 0;
+    for (const auto& pipeline : graph.pipelines) if (pipeline.scope == name) latency = pipeline.latency;
+    if (!latency) throw std::runtime_error("pipeline generator lost its scheduled latency");
     return "// HLS pipelined_logic: II=1, STAGES=" + std::to_string(pipelineStages(record)) +
+        ", LATENCY=" + std::to_string(latency) +
         "; stage boundaries balance operation depth, not technology delay.\n" + synth::verilogText(graph,name);
 }
 }

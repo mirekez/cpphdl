@@ -27,6 +27,27 @@ double cellDelay(const Graph& graph, const Node& node, const DelayModel& m) {
     }
     throw std::runtime_error("no delay estimate for operation: " + node.op);
 }
+template<class Endpoint>
+static void timingEndpoints(Graph& graph, const DelayModel& model, const std::string& scope, Endpoint endpoint) {
+    auto inside = [&](const std::string& name) { return scope.empty() || name == scope || name.find(scope + ".") == 0; };
+    for (const auto& state : graph.states) {
+        const auto& name = graph.nodes.at(Graph::owner(state.bits[0])).name;
+        if (inside(name)) endpoint(state.next, model.setup, "register " + name);
+    }
+    for (const auto& port : graph.ports) if (!port.input) {
+        bool include = scope.empty();
+        for (auto bit : graph.resolved(port.bits)) if (bit > 1) {
+            const auto& n = graph.nodes[Graph::owner(bit)]; include |= inside(n.scope) || inside(n.name);
+        }
+        if (include) endpoint(port.bits, 0, "output " + port.name);
+    }
+    for (const auto& write : graph.memoryWrites) {
+        if (!inside(graph.memories.at(write.memory).name)) continue;
+        endpoint(write.address, model.setup, "memory write address");
+        endpoint(write.data, model.setup, "memory write data");
+        endpoint(write.enabled, model.setup, "memory write enable");
+    }
+}
 TimingReport estimateTiming(Graph& graph, const DelayModel& model, const std::string& scope) {
     for (double delay : {model.gate, model.mux, model.carry, model.clockToQ, model.setup, model.memoryBase, model.memoryLevel})
         if (!std::isfinite(delay) || delay < 0) throw std::runtime_error("cell delays must be finite and nonnegative");
@@ -54,7 +75,11 @@ TimingReport estimateTiming(Graph& graph, const DelayModel& model, const std::st
     KeepBoxes boxes(graph);
     TimingReport report;
     report.arrival.resize(graph.nodes.size());
-    std::set<size_t> done, active, boxDone, boxActive;
+    // Node and box identities are dense indices. Timing is repeated while
+    // scheduling large source pipelines; avoid per-node tree allocation and
+    // logarithmic membership checks on every traversal.
+    // 0 = unseen, 1 = active, 2 = complete (the active mark still detects cycles).
+    std::vector<unsigned char> nodeStatus(graph.nodes.size()), boxStatus(boxes.boxes.size());
     std::function<double(size_t)> nodeArrival;
     auto arrival = [&](const Value& value) {
         double result = 0;
@@ -64,20 +89,22 @@ TimingReport estimateTiming(Graph& graph, const DelayModel& model, const std::st
     nodeArrival = [&](size_t index) {
         if (boxes.owner.count(index)) {
             auto b = boxes.owner.at(index);
-            if (!boxDone.count(b)) {
-                if (!boxActive.insert(b).second) throw std::runtime_error("combinational path leaves and re-enters keep box");
+            if (boxStatus[b] != 2) {
+                if (boxStatus[b] == 1) throw std::runtime_error("combinational path leaves and re-enters keep box");
+                boxStatus[b] = 1;
                 double time = arrival(boxes.boxes[b].inputs) + boxes.boxes[b].delay;
                 for (auto n : boxes.boxes[b].nodes) report.arrival[n] = time;
-                boxActive.erase(b); boxDone.insert(b);
+                boxStatus[b] = 2;
             }
             return report.arrival[index];
         }
-        if (done.count(index)) return report.arrival[index];
-        if (!active.insert(index).second) throw std::runtime_error("cyclic timing graph");
+        if (nodeStatus[index] == 2) return report.arrival[index];
+        if (nodeStatus[index] == 1) throw std::runtime_error("cyclic timing graph");
+        nodeStatus[index] = 1;
         const auto& node = graph.nodes[index];
         double incoming = node.op == "state" ? 0 : std::max({arrival(node.left), arrival(node.right), arrival(node.select)});
         report.arrival[index] = incoming + cellDelay(graph, node, model);
-        active.erase(index); done.insert(index);
+        nodeStatus[index] = 2;
         return report.arrival[index];
     };
     for (auto index : order) nodeArrival(index);
@@ -85,24 +112,73 @@ TimingReport estimateTiming(Graph& graph, const DelayModel& model, const std::st
         double delay = arrival(value) + extra;
         if (delay > report.worst) { report.worst = delay; report.endpoint = name; }
     };
-    auto inside = [&](const std::string& name) { return scope.empty() || name == scope || name.find(scope + ".") == 0; };
-    for (const auto& state : graph.states) {
-        const auto& name = graph.nodes.at(Graph::owner(state.bits[0])).name;
-        if (inside(name)) endpoint(state.next, model.setup, "register " + name);
-    }
-    for (const auto& port : graph.ports) if (!port.input) {
-        bool include = scope.empty();
-        for (auto bit : graph.resolved(port.bits)) if (bit > 1) {
-            const auto& n = graph.nodes[Graph::owner(bit)]; include |= inside(n.scope) || inside(n.name);
-        }
-        if (include) endpoint(port.bits, 0, "output " + port.name);
-    }
-    for (const auto& write : graph.memoryWrites) {
-        if (!inside(graph.memories.at(write.memory).name)) continue;
-        endpoint(write.address, model.setup, "memory write address");
-        endpoint(write.data, model.setup, "memory write data");
-        endpoint(write.enabled, model.setup, "memory write enable");
-    }
+    timingEndpoints(graph,model,scope,endpoint);
     return report;
 }
+ScopedTimingReport estimateScopedTiming(Graph& graph, const DelayModel& model, const std::string& scope,
+    const std::map<std::string,Value>& boundaryPins) {
+    auto full=[&]() {
+        const auto timing=estimateTiming(graph,model,scope);
+        ScopedTimingReport result;result.worst=timing.worst;result.endpoint=timing.endpoint;
+        for(const auto& [name,bits]:boundaryPins)for(auto bit:graph.resolved(bits))if(bit>1) {
+            auto n=Graph::owner(bit);result.arrival[n]=timing.arrival.at(n);
+        }
+        return result;
+    };
+    // Keep-box timing can depend on inputs outside the selected node cone;
+    // one-clock annotations also require recomputing their aggregate delays.
+    if(scope.empty() || std::any_of(graph.attributes.begin(),graph.attributes.end(),
+        [](const ScopeAttribute& a){return a.name=="keep_box" || a.name=="one_clock";}))return full();
+    for(double delay:{model.gate,model.mux,model.carry,model.clockToQ,model.setup,model.memoryBase,model.memoryLevel})
+        if(!std::isfinite(delay) || delay<0)throw std::runtime_error("cell delays must be finite and nonnegative");
+    struct NeedsPreparation {};
+    struct Visit {unsigned char status=0;double arrival=0;};
+    std::unordered_map<size_t,Visit> visits;
+    ScopedTimingReport result;
+    struct Frame {size_t index;unsigned operand=0;size_t offset=0;double incoming=0;};
+    std::vector<Frame> stack;
+    auto nodeArrival=[&](size_t index) {
+        if(visits[index].status==2)return visits[index].arrival;
+        visits[index].status=1;stack.push_back({index});
+        // Whole linked designs can have deep control cones. Heap-backed DFS
+        // avoids depending on the process stack size, as dependencyOrder does.
+        while(!stack.empty()) {
+            auto& frame=stack.back();
+            const auto& node=graph.nodes.at(frame.index);
+            if(node.op=="wire")throw NeedsPreparation{};
+            if(node.op=="state" || frame.operand==3) {
+                auto& visit=visits[frame.index];
+                visit.arrival=frame.incoming+cellDelay(graph,node,model);visit.status=2;
+                stack.pop_back();continue;
+            }
+            const auto& value=frame.operand==0?node.left:frame.operand==1?node.right:node.select;
+            if(frame.offset==value.size()){++frame.operand;frame.offset=0;continue;}
+            const auto bit=graph.resolve(value[frame.offset]);
+            if(bit<=1){++frame.offset;continue;}
+            const auto owner=Graph::owner(bit);
+            const auto& child=visits[owner];
+            if(child.status==2){frame.incoming=std::max(frame.incoming,child.arrival);++frame.offset;continue;}
+            // Word-level false cycles may need bit refinement; full preparation
+            // handles those and diagnoses true cycles/undriven bits.
+            if(child.status==1)throw NeedsPreparation{};
+            visits[owner].status=1;stack.push_back({owner});
+        }
+        return visits.at(index).arrival;
+    };
+    auto arrival=[&](const Value& value) {
+        double time=0;
+        for(auto bit:graph.resolved(value))if(bit>1)time=std::max(time,nodeArrival(Graph::owner(bit)));
+        return time;
+    };
+    try {
+        timingEndpoints(graph,model,scope,[&](const Value& value,double extra,const std::string& name) {
+            const auto delay=arrival(value)+extra;
+            if(delay>result.worst){result.worst=delay;result.endpoint=name;}
+        });
+        for(const auto& [name,bits]:boundaryPins)arrival(bits);
+    } catch(const NeedsPreparation&) {return full();}
+    for(const auto& [index,visit]:visits)result.arrival[index]=visit.arrival;
+    return result;
+}
+
 }

@@ -3,6 +3,7 @@
 #include "BlackBox.h"
 #include "KeepBoxes.h"
 #include "Mapping.h"
+#include "AtomicMethod.h"
 #include <filesystem>
 #include <cstdio>
 #include <cmath>
@@ -10,7 +11,9 @@
 cpphdl::graph::Graph makeGraph();
 
 int main(int argc, char** argv) {
-    if (argc != 9 && argc != 10 && argc != 11) return 2;
+    const bool operationsOnly=argc>9 && std::string(argv[argc-1])=="operations-only";
+    if(operationsOnly)--argc;
+    if(argc<9 || argc>11)return 2;
     try {
         auto graph = makeGraph();
         cpphdl::synth::DelayModel model;
@@ -73,6 +76,7 @@ int main(int argc, char** argv) {
         report << "],\"streaming_regions\":[";
         comma = false;
         for (const auto& pipeline : graph.pipelines) {
+            if (cpphdl::synth::nestedAtomic(graph,pipeline.scope)) continue;
             report << (comma ? "," : "") << "{\"scope\":" << std::quoted(pipeline.scope)
                    << ",\"hls_stages\":" << pipeline.stages << ",\"latency\":" << pipeline.latency
                    << ",\"initiation_interval\":1,\"feedback_policy\":\"floating\"}";
@@ -89,6 +93,10 @@ int main(int argc, char** argv) {
         if (!report) throw std::runtime_error("cannot write timing report");
         graph.writeCpp(argv[4]);
         cpphdl::synth::emitVerilog(graph, argv[1], argv[2]);
+        // FPGA tools consume the operation RTL and infer its synchronous RAMs.
+        // Generic gate export expands those RAMs into individual registers;
+        // keep that optional for large designs targeting technology synthesis.
+        if (operationsOnly) return 0;
         auto directory = std::filesystem::path(argv[1]).parent_path();
         auto gates = cpphdl::synth::mapGates(graph);
         cpphdl::synth::emitVerilog(gates, (directory / "gates.v").string(), argv[2]);

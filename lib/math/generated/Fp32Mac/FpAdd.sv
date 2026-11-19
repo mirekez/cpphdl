@@ -55,7 +55,8 @@ module FpAdd #(
         logic guard;
         logic round;
         logic sticky;
-        logic[7:0] i;
+        logic[31:0] normalize;
+        logic[63:0] leading;
         sum=sum_reg;
         magnitude=64'h0;
         retained=64'h0;
@@ -66,6 +67,8 @@ module FpAdd #(
         guard=0;
         round=0;
         sticky=0;
+        normalize=32'h0;
+        leading=64'h0;
         result_comb = 'h0;
         if (((special_reg) != '0)) begin
             result_raw = special_result_reg;
@@ -84,12 +87,35 @@ module FpAdd #(
                     end
                     exponent=exponent+1;
                 end
-                for (i=8'h0;signed'(32'(i)) < 32'sh20;i=i+1) begin
-                    if (((((magnitude & ((64'h1 <<< ((MANT_WIDTH + 64'h3)))))) == 64'h0) && (magnitude != 64'h0)) && (exponent > 32'sh0)) begin
-                        magnitude<<='h1;
-                        --exponent;
-                    end
+                normalize=32'h0;
+                leading=magnitude;
+                if (!(((leading >>> 32'sh20)) != '0)) begin
+                    normalize+=32'h20;
+                    leading<<='h20;
                 end
+                if (!(((leading >>> 32'sh30)) != '0)) begin
+                    normalize+=32'h10;
+                    leading<<='h10;
+                end
+                if (!(((leading >>> 32'sh38)) != '0)) begin
+                    normalize+=32'h8;
+                    leading<<='h8;
+                end
+                if (!(((leading >>> 32'sh3C)) != '0)) begin
+                    normalize+=32'h4;
+                    leading<<='h4;
+                end
+                if (!(((leading >>> 32'sh3E)) != '0)) begin
+                    normalize+=32'h2;
+                    leading<<='h2;
+                end
+                if (!(((leading >>> 32'sh3F)) != '0)) begin
+                    normalize+=32'h1;
+                    leading<<='h1;
+                end
+                normalize-=64'h40 - ((MANT_WIDTH + 64'h4));
+                magnitude=leading >>> ((64'h40 - ((MANT_WIDTH + 64'h4))));
+                exponent-=signed'(32'(normalize));
                 if (exponent<=32'sh0) begin
                     result_raw = (negative) ? (SIGN_MASK) : (64'h0);
                 end

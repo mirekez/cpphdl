@@ -6,8 +6,12 @@
 #include "Fp32Bits.h"
 #include "FpAdd.h"
 
-// Two enabled stages: FP32 product, then FpAdd's registered significand sum.
-// Extra stages belong to the latency-parameterized replacement wrapper.
+// Two enabled stages by default: product, then FpAdd's significand sum.
+// PIPELINE_ADD inserts FpAdd's internal normalization/rounding boundary.
+// PIPELINE_PRODUCT captures the raw DSP product before FP32 rounding.
+// PIPELINE_ALIGN separates the adder alignment and significand sum.
+// The replacement wrapper accounts for all selected internal stages.
+template<bool PIPELINE_ADD=false, bool PIPELINE_PRODUCT=false, bool PIPELINE_ALIGN=false>
 class Fp32Mac : public cpphdl::Module {
   public:
     _PORT(uint32_t) a_in;
@@ -15,34 +19,52 @@ class Fp32Mac : public cpphdl::Module {
     _PORT(uint32_t) c_in;
     _PORT(bool) en_in;
     _PORT(uint32_t) result_out;
-    FpAdd<32, 8> adder;
+    FpAdd<32, 8, true, PIPELINE_ADD, PIPELINE_ALIGN> adder;
     cpphdl::reg<cpphdl::logic<32>> product, addend;
+    cpphdl::reg<cpphdl::logic<128>> raw_product;
+    cpphdl::reg<cpphdl::logic<32>> raw_addend;
+    cpphdl::logic<128> raw_product_comb;
     uint32_t multiply_comb, result_comb;
+    cpphdl::logic<128>& raw_product_comb_func() {
+        uint32_t a, b, ea, eb, ma, mb, sign, special_value;
+        uint64_t product_value;
+        int32_t exponent;
+        bool special;
+        a = a_in(); b = b_in();
+        ea = (a >> 23) & 255; eb = (b >> 23) & 255;
+        ma = a & 0x7fffff; mb = b & 0x7fffff;
+        sign = (a ^ b) & 0x80000000u;
+        // No normalization, rounding or class-selection mux lies between
+        // this multiply and its optional register. Metadata travels beside it.
+        product_value = uint64_t(ma | 0x800000u) * uint64_t(mb | 0x800000u);
+        exponent = int32_t(ea) + int32_t(eb) - 127;
+        special = true; special_value = sign;
+        if ((ea == 255 && ma) || (eb == 255 && mb) || (ea == 255 && !eb) || (eb == 255 && !ea))
+            special_value = 0x7fc00000u;
+        else if (ea == 255 || eb == 255)
+            special_value = sign | 0x7f800000u;
+        else if (ea && eb) special = false;
+        raw_product_comb = cpphdl::logic<128>(product_value);
+        raw_product_comb |= cpphdl::logic<128>(uint32_t(exponent)) << 48;
+        raw_product_comb |= cpphdl::logic<128>(special_value) << 80;
+        raw_product_comb |= cpphdl::logic<128>(special) << 112;
+        raw_product_comb |= cpphdl::logic<128>(sign != 0) << 113;
+        return raw_product_comb;
+    }
     uint32_t &multiply_comb_func() {
-        uint32_t a, b, ea, eb, ma, mb, sign, shift, retained, tail;
+        cpphdl::logic<128> raw;
+        uint32_t sign, shift, retained, tail;
         uint64_t product_value, mantissa;
         int32_t exponent;
-        a = a_in();
-        b = b_in();
-        ea = (a >> 23) & 255;
-        eb = (b >> 23) & 255;
-        ma = a & 0x7fffff;
-        mb = b & 0x7fffff;
-        sign = (a ^ b) & 0x80000000u;
-        product_value = 0;
-        mantissa = 0;
-        exponent = 0;
-        shift = 20;
-        retained = 0;
-        tail = 0;
+        if (PIPELINE_PRODUCT) raw = raw_product;
+        else raw = raw_product_comb_func();
+        product_value = (uint64_t)raw.bits(47,0);
+        exponent = int32_t(uint32_t((uint64_t)raw.bits(79,48)));
+        sign = (uint64_t)raw.bits(113,113) ? 0x80000000u : 0;
+        mantissa = 0; shift = 20; retained = 0; tail = 0;
         multiply_comb = sign;
-        if ((ea == 255 && ma) || (eb == 255 && mb) || (ea == 255 && !eb) || (eb == 255 && !ea))
-            multiply_comb = 0x7fc00000u;
-        else if (ea == 255 || eb == 255)
-            multiply_comb = sign | 0x7f800000u;
-        else if (ea && eb) {
-            product_value = uint64_t(ma | 0x800000u) * uint64_t(mb | 0x800000u);
-            exponent = int32_t(ea) + int32_t(eb) - 127;
+        if ((uint64_t)raw.bits(112,112)) multiply_comb = uint32_t((uint64_t)raw.bits(111,80));
+        else {
             if (product_value & (uint64_t(1) << 47)) {
                 shift = 21;
                 ++exponent;
@@ -82,17 +104,25 @@ class Fp32Mac : public cpphdl::Module {
     void _work(bool reset) {
         if (en_in()) {
             product._next = multiply_comb_func();
-            addend._next = c_in();
+            if (PIPELINE_PRODUCT) {
+                raw_product._next = raw_product_comb_func();
+                raw_addend._next = c_in();
+                addend._next = raw_addend;
+            } else addend._next = c_in();
         }
         if (reset) {
             product.clr();
             addend.clr();
+            raw_product.clr();
+            raw_addend.clr();
         }
         adder._work(reset);
     }
     void _strobe() {
         product.strobe();
         addend.strobe();
+        raw_product.strobe();
+        raw_addend.strobe();
         adder._strobe();
     }
 };
@@ -113,6 +143,15 @@ long _system_clock = 0;
 #include <array>
 #include <cstdio>
 #include <stdexcept>
+#ifndef FP_MAC_PIPELINE_ADD
+#define FP_MAC_PIPELINE_ADD 0
+#endif
+#ifndef FP_MAC_PIPELINE_ALIGN
+#define FP_MAC_PIPELINE_ALIGN 0
+#endif
+#ifndef FP_MAC_PIPELINE_PRODUCT
+#define FP_MAC_PIPELINE_PRODUCT 0
+#endif
 
 int main_from_header(int, char**) {
     using namespace cpphdl_examples::math;
@@ -121,7 +160,7 @@ int main_from_header(int, char**) {
 #elif defined(FP_MAC_NATIVE_MODEL)
     cpphdl_native::Model dut;
 #else
-    Fp32Mac dut;
+    Fp32Mac<FP_MAC_PIPELINE_ADD,FP_MAC_PIPELINE_PRODUCT,FP_MAC_PIPELINE_ALIGN> dut;
 #endif
     uint32_t a = 0, b = 0, c = 0;
     bool enable = true;
@@ -132,8 +171,9 @@ int main_from_header(int, char**) {
     dut.en_in = _ASSIGN(enable);
     dut._assign();
 #endif
-    std::array<uint32_t, 2> expected{};
-    std::array<bool, 2> valid{};
+    constexpr unsigned stages=2+FP_MAC_PIPELINE_ADD+FP_MAC_PIPELINE_PRODUCT+FP_MAC_PIPELINE_ALIGN;
+    std::array<uint32_t, stages> expected{};
+    std::array<bool, stages> valid{};
     uint32_t random = 0x786325ad;
     auto next = [&]() {
         random ^= random << 13;
@@ -161,9 +201,8 @@ int main_from_header(int, char**) {
             expected = {};
             valid = {};
         } else if (enable) {
-            expected[1] = expected[0];
+            for(unsigned i=stages-1;i;--i) {expected[i]=expected[i-1];valid[i]=valid[i-1];}
             expected[0] = fp32_add(c, fp32_multiply(a, b));
-            valid[1] = valid[0];
             valid[0] = true;
         }
 #ifdef VERILATOR
@@ -198,9 +237,9 @@ int main_from_header(int, char**) {
         ++_system_clock;
         uint32_t result = dut.result_out();
 #endif
-        if (valid[1] && result != expected[1]) {
+        if (valid[stages-1] && result != expected[stages-1]) {
             std::fprintf(stderr, "clock=%u result=%08x expected=%08x\n", cycle, result,
-                         expected[1]);
+                         expected[stages-1]);
             throw std::runtime_error("FP32 MAC primitive mismatch");
         }
     }

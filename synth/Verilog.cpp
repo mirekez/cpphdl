@@ -38,6 +38,52 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
     graph.optimize();
     auto order = graph.dependencyOrder();
     KeepBoxes boxes(graph);
+    struct SynchronousRead { size_t memory; Value address,enable; };
+    std::map<size_t,SynchronousRead> synchronousReads;
+    // Preserve whole-word RAM output registers in emitted RTL. Splitting a
+    // 65-bit read into independent 64-bit and scalar hold muxes prevents
+    // Quartus from recognizing the output register and flattens the RAM.
+    // This is only a spelling change of an existing clocked read, never an
+    // inserted pipeline stage; reset/forwarding muxes are deliberately excluded.
+    if(boxes.boxes.empty())for(size_t index=0;index<graph.states.size();++index) {
+        const auto& state=graph.states[index];
+        if(!state.reset.empty())continue;
+        std::optional<SynchronousRead> match;
+        bool valid=true;
+        for(size_t i=0;i<state.next.size() && valid;++i) {
+            auto bit=graph.resolve(state.next[i]);
+            Value enable{1};
+            if(bit>1 && graph.nodes[Graph::owner(bit)].op=="mux") {
+                const auto& mux=graph.nodes[Graph::owner(bit)];auto lane=Graph::lane(bit);
+                if(graph.resolve(mux.right.at(lane))!=graph.resolve(state.bits[i])){valid=false;break;}
+                enable=graph.resolved(mux.select);bit=graph.resolve(mux.left.at(lane));
+            }
+            if(bit<2){valid=false;break;}
+            const auto& read=graph.nodes[Graph::owner(bit)];
+            if(read.op!="memory_read"){valid=false;break;}
+            auto memory=number(graph.resolved(read.right)),word=number(graph.resolved(read.select));
+            if(!memory || *memory>=graph.memories.size() || !word ||
+               graph.memories[*memory].width!=state.bits.size() || *word*64+Graph::lane(bit)!=i ||
+               *word*64>=state.bits.size() || read.width!=std::min<size_t>(64,state.bits.size()-*word*64)) {
+                valid=false;break;
+            }
+            auto address=graph.resolved(read.left);
+            if(!match)match=SynchronousRead{size_t(*memory),address,enable};
+            else if(match->memory!=*memory || match->address!=address || match->enable!=enable)valid=false;
+        }
+        if(valid && match)synchronousReads.emplace(index,*match);
+    }
+    if(!synchronousReads.empty()) {
+        // Remove only the combinational cones replaced by clocked RAM reads.
+        // A genuinely asynchronous reader, if any, remains an ordinary root.
+        Graph combinational=graph;
+        for(const auto& [index,read]:synchronousReads) {
+            combinational.states[index].next=Value(graph.states[index].next.size(),0);
+            combinational.ports.push_back({"sync_address_"+std::to_string(index),read.address,false});
+            combinational.ports.push_back({"sync_enable_"+std::to_string(index),read.enable,false});
+        }
+        order=combinational.dependencyOrder();
+    }
     std::set<size_t> replacementOutputs;
     for (const auto& r : graph.replacements) for (const auto& [name,value] : r.pins)
         if (!pipelineInput(name)) for (auto bit : graph.resolved(value)) if (bit>1) replacementOutputs.insert(Graph::owner(bit));
@@ -240,7 +286,13 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
             out << ") begin\n";
             if (!reset.empty())
                 out << "  if (" << reset << ") " << bits(state.bits) << " <= " << bits(state.resetValue) << ";\n  else ";
-            out << "  " << bits(state.bits) << " <= " << bits(state.next) << ";\nend\n";
+            auto read=synchronousReads.find(size_t(entry-graph.states.data()));
+            if(read!=synchronousReads.end()) {
+                const auto& r=read->second;const auto& memory=graph.memories[r.memory];
+                out << "  if (" << bits(r.enable) << ") " << bits(state.bits) << " <= "
+                    << bits(r.address) << " < 64'd" << memory.depth << " ? __cpphdl_memory_" << r.memory
+                    << "[" << memoryIndex(r.memory,r.address) << "] : " << memory.width << "'d0;\nend\n";
+            } else out << "  " << bits(state.bits) << " <= " << bits(state.next) << ";\nend\n";
         }
         bool opened = false;
         for (const auto& write : graph.memoryWrites) {

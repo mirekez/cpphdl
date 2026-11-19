@@ -13,6 +13,8 @@ module SynchronousRamExample (
 ,   input wire[3-1:0][32-1:0] write_data_in
 ,   output wire[3-1:0][32-1:0] data_out
 ,   output wire[31:0] narrow_out
+,   output wire[3-1:0][32-1:0] block_data_out
+,   output wire[31:0] block_narrow_out
 );
 
     typedef logic[3-1:0][32-1:0] Data;
@@ -29,6 +31,7 @@ module SynchronousRamExample (
     cpphdl_examples_SynchronousRam #(
         1
 ,       64
+,       0
     ) narrow (
         .clk(clk)
 ,       .reset(reset)
@@ -48,6 +51,7 @@ module SynchronousRamExample (
     cpphdl_examples_SynchronousRam #(
         3
 ,       64
+,       0
     ) wide (
         .clk(clk)
 ,       .reset(reset)
@@ -57,6 +61,46 @@ module SynchronousRamExample (
 ,       .write_address_in(wide__write_address_in)
 ,       .data_in(wide__data_in)
 ,       .data_out(wide__data_out)
+    );
+    wire block_narrow__read_in;
+    wire block_narrow__write_in;
+    wire[31:0] block_narrow__read_address_in;
+    wire[31:0] block_narrow__write_address_in;
+    wire[unsigned'(64'(1))-1:0][32-1:0] block_narrow__data_in;
+    wire[unsigned'(64'(1))-1:0][32-1:0] block_narrow__data_out;
+    cpphdl_examples_SynchronousRam #(
+        1
+,       64
+,       1
+    ) block_narrow (
+        .clk(clk)
+,       .reset(reset)
+,       .read_in(block_narrow__read_in)
+,       .write_in(block_narrow__write_in)
+,       .read_address_in(block_narrow__read_address_in)
+,       .write_address_in(block_narrow__write_address_in)
+,       .data_in(block_narrow__data_in)
+,       .data_out(block_narrow__data_out)
+    );
+    wire block_wide__read_in;
+    wire block_wide__write_in;
+    wire[31:0] block_wide__read_address_in;
+    wire[31:0] block_wide__write_address_in;
+    wire[unsigned'(64'(3))-1:0][32-1:0] block_wide__data_in;
+    wire[unsigned'(64'(3))-1:0][32-1:0] block_wide__data_out;
+    cpphdl_examples_SynchronousRam #(
+        3
+,       64
+,       1
+    ) block_wide (
+        .clk(clk)
+,       .reset(reset)
+,       .read_in(block_wide__read_in)
+,       .write_in(block_wide__write_in)
+,       .read_address_in(block_wide__read_address_in)
+,       .write_address_in(block_wide__write_address_in)
+,       .data_in(block_wide__data_in)
+,       .data_out(block_wide__data_out)
     );
 
     // tmp variables
@@ -73,8 +117,20 @@ module SynchronousRamExample (
         assign wide__read_address_in = read_address_in;
         assign narrow__data_in = write_data_in[64'h0];
         assign wide__data_in = write_data_in;
+        assign block_narrow__write_in = ((write_in) != '0);
+        assign block_wide__write_in = ((write_in) != '0);
+        assign block_narrow__read_in = ((read_in) != '0);
+        assign block_wide__read_in = ((read_in) != '0);
+        assign block_narrow__write_address_in = write_address_in;
+        assign block_wide__write_address_in = write_address_in;
+        assign block_narrow__read_address_in = read_address_in;
+        assign block_wide__read_address_in = read_address_in;
+        assign block_narrow__data_in = write_data_in[64'h0];
+        assign block_wide__data_in = write_data_in;
         assign data_out = wide__data_out;
         assign narrow_out = unsigned'(32'(narrow__data_out[64'h0]));
+        assign block_data_out = block_wide__data_out;
+        assign block_narrow_out = unsigned'(32'(block_narrow__data_out[64'h0]));
     endgenerate
 
     task _work (input logic reset);

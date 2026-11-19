@@ -41,6 +41,8 @@ def main():
     parser.add_argument('--top', required=True, help='C++ root object variable or top module class')
     parser.add_argument('--module', default='SynthTop', help='output Verilog module')
     parser.add_argument('--output', required=True, type=Path, help='new or empty directory')
+    parser.add_argument('--operations-only', action='store_true',
+                        help='emit timing and operation RTL for FPGA synthesis; skip generic gate/RAM expansion')
     parser.add_argument('--cxx', default=os.environ.get('CXX', 'c++'))
     parser.add_argument('--tool-timeout', type=int, default=300,
                         help='maximum seconds for each external tool invocation (default: 300)')
@@ -110,9 +112,17 @@ def main():
              root / 'synth/Verilog.cpp', root / 'synth/Mapping.cpp', root / 'synth/timing.cpp', root / 'synth/retiming.cpp', '-o', output / 'emit'], 'compile-emitter')
         run([output / 'emit', output / 'operations.v', args.module, output / 'timing.json',
              output / 'retimed_graph.cc', args.retiming or 'none', str(args.clock_period_ns or 0),
-             args.retime_module, str(args.delay_scale), str(args.pipeline_latency or 0), args.pipeline_enable], 'emit',
+             args.retime_module, str(args.delay_scale), str(args.pipeline_latency or 0), args.pipeline_enable,
+             *(['operations-only'] if args.operations_only else [])], 'emit',
             env=emitter_environment(compiler, args.tool_timeout))
         manifest['timing'] = json.loads((output / 'timing.json').read_text())
+        if args.operations_only:
+            manifest.update(status='complete', mapping='operation RTL for technology synthesis; RAM inference preserved')
+            external = {box['module'] for box in manifest['timing']['external_blackboxes']}
+            if external: manifest['external_implementations_required'] = sorted(external)
+            save()
+            print(output / 'operations.v')
+            return 0
         boxes = {box['module'] for box in manifest['timing']['keep_boxes']}
         external = {box['module'] for box in manifest['timing']['external_blackboxes']}
         replacements = {box['module'] for box in manifest['timing'].get('pipeline_replacements', [])}

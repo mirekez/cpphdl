@@ -153,6 +153,94 @@ static bool reconvergentFeedback() {
     }
     return true;
 }
+static int scopedTimingChecks() {
+    Graph g; g.currentScope = "parent";
+    auto input = g.wire(16, "data", "input");
+    auto upstream = g.binary("add", input, constant(17, 16), 16);
+    g.currentScope = "parent.worker";
+    auto pin = g.wire(16, "parent.worker.pin");
+    g.connect(pin, upstream);
+    auto result = g.wire(16, "parent.worker.result", "state");
+    auto next = g.binary("xor", pin, constant(0x1959, 16), 16);
+    g.states.push_back({result, next, {1}});
+    // State launches cut the backward cone, including a state in a child scope.
+    auto queued = g.wire(16, "parent.worker.request.memory.reply", "state");
+    g.states.push_back({queued, result, {1}});
+    g.ports = {{"data", input, true}, {"result", queued, false}};
+    g.memories.push_back({"parent.worker.ram", 16, 16});
+    g.memoryWrites.push_back({0, constant(0, 4), next, {1}});
+    g.currentScope = "parent.other";
+    auto unrelated = input;
+    for (unsigned i = 0; i < 128; ++i)
+        unrelated = g.binary("add", unrelated, constant(i + 1, 16), 16);
+    auto other = g.wire(16, "parent.other.result", "state");
+    g.states.push_back({other, unrelated, {1}});
+    g.ports.push_back({"other", other, false});
+    estimateTiming(g); // Prepare once, as retime does before its region loop.
+    std::map<std::string, Value> pins = {{"input", pin}, {"registered", result}};
+    auto compare = [&](Graph& graph) {
+        const auto local = estimateScopedTiming(graph, {}, "parent.worker", pins);
+        auto copy = graph;
+        const auto full = estimateTiming(copy, {}, "parent.worker");
+        if (std::abs(local.worst - full.worst) > 1e-9 || local.endpoint != full.endpoint) return false;
+        for (const auto& [name, bits] : pins) for (auto bit : copy.resolved(bits)) if (bit > 1) {
+            auto n = Graph::owner(bit);
+            if (!local.arrival.count(n) || std::abs(local.arrival.at(n) - full.arrival.at(n)) > 1e-9) return false;
+        }
+        return true;
+    };
+    CHECK(compare(g));
+    auto local = estimateScopedTiming(g, {}, "parent.worker", pins);
+    CHECK(local.arrival.size() < 12);
+    CHECK(!local.arrival.count(Graph::owner(g.resolved(unrelated).front())));
+    CHECK(local.arrival.at(Graph::owner(result.front())) == DelayModel{}.clockToQ);
+    // Replacing an upstream region must invalidate every old arrival, even
+    // when the queried region and its stored pin values have not changed.
+    g.currentScope = "parent.replacement";
+    auto replacement = g.binary("mul", input, constant(19, 16), 16);
+    g.connect(upstream, replacement);
+    CHECK(compare(g));
+    CHECK(estimateScopedTiming(g, {}, "parent.worker", pins).worst > local.worst);
+    // Memory writes and combinational outputs are endpoints without registers.
+    g.states.clear(); g.ports = {{"data", input, true}};
+    pins.erase("registered");
+    CHECK(compare(g));
+    CHECK(estimateScopedTiming(g, {}, "parent.worker", pins).endpoint == "memory write data");
+    g.memoryWrites.clear();
+    g.ports.push_back({"result", next, false});
+    CHECK(compare(g));
+    CHECK(estimateScopedTiming(g, {}, "parent.worker", pins).endpoint == "output result");
+    // Atomic annotations require aggregate timing, so use the full estimator.
+    for (const auto* kind : {"keep_box", "one_clock"}) {
+        auto annotated = g;
+        annotated.attributes.push_back({"parent.replacement", kind, "0.7"});
+        CHECK(compare(annotated));
+    }
+    // A word-level cycle may be acyclic at bit level; preparation refines it.
+    Graph fields; fields.currentScope = "worker";
+    auto data = fields.wire(4, "data", "input");
+    auto a = fields.wire(2, "a"), b = fields.wire(2, "b");
+    auto av = fields.add("and", 2, {data[0], b[0]}, {data[1], 1});
+    auto bv = fields.add("and", 2, {data[2], a[0]}, {data[3], 1});
+    fields.connect(a, av); fields.connect(b, bv);
+    fields.ports = {{"data", data, true}, {"result", av, false}};
+    auto fullFields = fields;
+    const auto fieldTiming = estimateTiming(fullFields, {}, "worker");
+    const auto localFields = estimateScopedTiming(fields, {}, "worker", {});
+    CHECK(std::abs(fieldTiming.worst - localFields.worst) < 1e-9);
+    // True cycles and undriven values must retain the full diagnostic path.
+    for (bool cycle : {false, true}) {
+        Graph bad; bad.currentScope = "worker";
+        auto wire = bad.wire(1, "wire");
+        if (cycle) bad.connect(wire, bad.add("xor", 1, wire, {1}));
+        bad.ports = {{"result", wire, false}};
+        bool rejected = false;
+        try { estimateScopedTiming(bad, {}, "worker", {}); }
+        catch (const std::runtime_error&) { rejected = true; }
+        CHECK(rejected);
+    }
+    return 0;
+}
 int main() {
     for (unsigned latency : {1u, 2u, 20u}) for (bool enabled : {false, true}) {
         auto source = chain();
@@ -184,6 +272,7 @@ int main() {
     }
     try { auto stateful = chain(); pipelineLatency(stateful, 2); CHECK(false); }
     catch (const std::runtime_error&) {}
+    CHECK(scopedTimingChecks() == 0);
     CHECK(arithmeticFeedback());
     CHECK(reconvergentFeedback());
     CHECK(feedbackPair());

@@ -5,7 +5,7 @@ using namespace cpphdl::graph;
 int main() {
     try {
         uint64_t random=0xabc98f721;
-        for(unsigned width:{4,8,16,32,64}) {
+        for(unsigned width:{1,3,4,5,8,16,17,31,32,33,63,64}) {
             Graph graph; graph.clockContract=ClockContract::RisingEdgeStep;
             auto a=graph.wire(width,"a","input"),b=graph.wire(width,"b","input");
             graph.ports={{"a",a,true},{"b",b,true}};

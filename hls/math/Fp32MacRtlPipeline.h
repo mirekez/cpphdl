@@ -16,7 +16,7 @@ public:
     _PORT(bool) response_valid_out;
     _PORT(uint32_t) result_out;
     _PORT(uint32_t) fault_out;
-    Fp32Mac mac;
+    Fp32Mac<> mac;
     cpphdl::reg<cpphdl::u1> valid[LATENCY];
     cpphdl::reg<cpphdl::u32> delay[LATENCY>2?LATENCY-2:1];
     void _assign() {

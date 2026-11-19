@@ -31,14 +31,30 @@ class Mapper {
         return a;
     }
     Value add(Value a, Value b, bool subtract = false) {
-        Bit carry = subtract;
+        // A ripple carry becomes a long LUT chain once HLS inserts cuts and
+        // Quartus can no longer recognize a whole word adder. Brent-Kung
+        // prefixes bound carry depth while keeping the prefix count linear.
+        Value propagate(a.size()),generate(a.size()),sum(a.size());
         for (size_t i = 0; i < a.size(); ++i) {
             Bit rhs = subtract ? invert(b[i]) : b[i];
-            Bit x = gate("xor", a[i], rhs);
-            Bit next = gate("or", gate("and", a[i], rhs), gate("and", x, carry));
-            a[i] = gate("xor", x, carry); carry = next;
+            sum[i]=propagate[i]=gate("xor",a[i],rhs);
+            generate[i]=gate("and",a[i],rhs);
         }
-        return a;
+        auto combine=[&](size_t high,size_t low) {
+            generate[high]=gate("or",generate[high],gate("and",propagate[high],generate[low]));
+            propagate[high]=gate("and",propagate[high],propagate[low]);
+        };
+        size_t stride=1;
+        for(;stride<a.size();stride*=2)
+            for(size_t i=2*stride-1;i<a.size();i+=2*stride)combine(i,i-stride);
+        for(stride/=4;stride;stride/=2)
+            for(size_t i=3*stride-1;i<a.size();i+=2*stride)combine(i,i-stride);
+        for(size_t i=0;i<a.size();++i) {
+            Bit carry=i ? generate[i-1] : Bit(subtract);
+            if(i && subtract)carry=gate("or",carry,propagate[i-1]);
+            sum[i]=gate("xor",sum[i],carry);
+        }
+        return sum;
     }
     Value multiply(const Value& a, const Value& b, unsigned width) {
         // A compression wave reads only the preceding wave. Reusing freshly
@@ -82,12 +98,23 @@ class Mapper {
         return add(std::move(rows[0]), std::move(rows[1]));
     }
     Bit less(Value a, Value b, bool sign = false) {
-        Bit result = 0;
+        struct Group {Bit equal,less;};
+        std::vector<Group> groups;
         for (size_t i = 0; i < a.size(); ++i) {
             if (sign && i + 1 == a.size()) { a[i] = invert(a[i]); b[i] = invert(b[i]); }
-            result = gate("mux", result, b[i], invert(gate("xor", a[i], b[i])));
+            groups.push_back({invert(gate("xor",a[i],b[i])),gate("and",invert(a[i]),b[i])});
         }
-        return result;
+        while(groups.size()>1) {
+            std::vector<Group> next;
+            for(size_t i=0;i<groups.size();i+=2) {
+                if(i+1==groups.size()){next.push_back(groups[i]);continue;}
+                const auto low=groups[i],high=groups[i+1];
+                next.push_back({gate("and",high.equal,low.equal),
+                    gate("mux",low.less,high.less,high.equal)});
+            }
+            groups=std::move(next);
+        }
+        return groups.empty()?0:groups[0].less;
     }
     Bit equal(Value a, Value b) {
         Bit result = 1;
@@ -147,7 +174,7 @@ public:
     Graph run() {
         source.validateClocks();
         out.clockContract = source.clockContract; out.clocks = source.clocks; out.attributes = source.attributes;
-        auto order = source.dependencyOrder();
+        auto order = source.dependencyOrder(true);
         for (size_t n = 0; n < source.nodes.size(); ++n) {
             const auto& node = source.nodes[n];
             if (node.op == "input" || node.op == "state") {

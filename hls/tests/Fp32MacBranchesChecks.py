@@ -17,7 +17,7 @@ def main():
   with log.open('w') as f:subprocess.run(list(map(str,cmd)),stdout=f,stderr=f,check=True,preexec_fn=limit)
  sys.path.insert(0,str(root/'hls/math'));from generate_mac_replacement import array
  try:
-  for rows,cols,latency in [(1,1,2),(2,3,3),(1,1,9),(1,1,10),(4,4,a.latency)]:
+  for rows,cols,latency in [(1,1,2),(2,3,3),(1,1,4),(1,1,5),(1,1,6),(1,1,7),(1,1,8),(1,1,9),(1,1,10),(4,4,a.latency)]:
    case=Path(tempfile.mkdtemp(prefix=f'{rows}x{cols}-l{latency}-',dir=work));n=rows*cols;words=2*n+rows+cols+4
    (case/'input.sv').write_text(array(rows,cols)+f'''\nmodule Test(input clk,reset,command_valid_in,response_ready_in,
 input [{words*32-1}:0] operation_in,index_in,value_in,output command_ready_out,response_valid_out,

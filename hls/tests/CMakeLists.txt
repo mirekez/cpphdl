@@ -75,6 +75,11 @@ target_include_directories(hls_fp32_mac PRIVATE "${CMAKE_SOURCE_DIR}/include")
 set_target_properties(hls_fp32_mac PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 add_dependencies(hls_tests hls_fp32_mac)
 add_test(NAME hls_fp32_mac COMMAND hls_fp32_mac)
+add_executable(hls_fp_add_modes FpAddModes.cpp)
+target_include_directories(hls_fp_add_modes PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_features(hls_fp_add_modes PRIVATE cxx_std_17)
+add_dependencies(hls_tests hls_fp_add_modes)
+add_test(NAME hls_fp_add_modes COMMAND hls_fp_add_modes)
 add_executable(hls_fp32_math Fp32Math.cpp)
 set_target_properties(hls_fp32_math PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_options(hls_fp32_math PRIVATE -ffp-contract=off)
@@ -148,6 +153,61 @@ foreach(stages 1 3)
         set_tests_properties(hls_pipeline_array_${stages}_verilator PROPERTIES TIMEOUT 180)
     endif()
 endforeach()
+add_test(NAME hls_pipeline_array_alias
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/PipelineArrayAliasChecks.py"
+        --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+        --source "${CMAKE_CURRENT_SOURCE_DIR}/PipelineArrayAlias.cpp"
+        --verilator "${HLS_VERILATOR}"
+        --work "${CMAKE_CURRENT_BINARY_DIR}/pipeline-array-alias")
+set_tests_properties(hls_pipeline_array_alias PROPERTIES TIMEOUT 600 LABELS "hls;pipeline;memory;retiming")
+if(HLS_VERILATOR)
+    add_test(NAME hls_nested_replacement
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/NestedReplacementChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/nested-replacement")
+    set_tests_properties(hls_nested_replacement PROPERTIES TIMEOUT 1200 LABELS "hls;pipeline;memory;retiming;replacement")
+    add_test(NAME hls_wide_external_memory
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/WideMemoryChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/wide-external-memory")
+    set_tests_properties(hls_wide_external_memory PROPERTIES TIMEOUT 1200 LABELS "hls;memory;retiming;wide")
+    add_test(NAME hls_concurrent_external_reads
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ConcurrentReadsChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/concurrent-external-reads")
+    set_tests_properties(hls_concurrent_external_reads PROPERTIES TIMEOUT 3600 LABELS "hls;memory;retiming;concurrent")
+    add_test(NAME hls_concurrent_read_safety
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ConcurrentReadsSafetyChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/concurrent-read-safety")
+    set_tests_properties(hls_concurrent_read_safety PROPERTIES TIMEOUT 3600 LABELS "hls;memory;retiming;concurrent")
+    add_test(NAME hls_concurrent_wide_reads
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ConcurrentWideReadsChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}"
+            --work "${CMAKE_CURRENT_BINARY_DIR}/concurrent-wide-reads")
+    set_tests_properties(hls_concurrent_wide_reads PROPERTIES TIMEOUT 3600 LABELS "hls;memory;retiming;wide;concurrent")
+endif()
+add_hls_native(hls_pipeline_predicate PipelinePredicate.cpp PIPELINE_STAGES=1)
+add_test(NAME hls_pipeline_predicate_native COMMAND "${HLS_NATIVE_BINARY}")
+if(HLS_VERILATOR)
+    add_test(NAME hls_pipeline_predicate_verilator COMMAND "${CMAKE_COMMAND}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-predicate" -DSTAGES=1
+        -DSOURCE=PipelinePredicate.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
+    add_test(NAME hls_pipeline_predicate_synth_verilator COMMAND "${CMAKE_COMMAND}"
+        "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-predicate-synth" -DSTAGES=1 -DSYNTH=ON -DPERIOD_NS=4.0
+        -DSOURCE=PipelinePredicate.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
+    set_tests_properties(hls_pipeline_predicate_verilator hls_pipeline_predicate_synth_verilator
+        PROPERTIES TIMEOUT 600 LABELS "hls;pipeline;retiming")
+endif()
 if(HLS_VERILATOR)
     add_test(NAME hls_pipeline_array_synth_verilator COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
@@ -287,13 +347,19 @@ add_subdirectory(../examples/hft "${CMAKE_BINARY_DIR}/hls/examples/hft")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
-foreach(case RANGE 0 37)
+foreach(case RANGE 0 40)
     add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/OpenMPReject.cmake")
     set_tests_properties(hls_openmp_reject_${case} PROPERTIES TIMEOUT 60 LABELS "hls;openmp;expected-rejection")
 endforeach()
+
+add_test(NAME hls_openmp_atomic_nested COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/OpenMPAtomicChecks.py"
+    --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+    --root "${CMAKE_SOURCE_DIR}" --work "${CMAKE_CURRENT_BINARY_DIR}/openmp-atomic-nested")
+set_tests_properties(hls_openmp_atomic_nested PROPERTIES TIMEOUT 1200 LABELS "hls;openmp;replacement;retiming")
 
 add_executable(hls_shared_blocks SharedBlocks_test.cpp ../SharedBlocks.cpp ../Combinational.cpp)
 set_target_properties(hls_shared_blocks PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
@@ -404,3 +470,26 @@ foreach(case RANGE 0 5)
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reject-${case}" "-DTOOLCHAIN=${HLS_TOOLCHAIN}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Reject.cmake")
 endforeach()
+
+if(HLS_VERILATOR)
+    add_test(NAME hls_source_call_pipeline
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/SourceCallChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/source-call-pipeline")
+    set_tests_properties(hls_source_call_pipeline PROPERTIES TIMEOUT 2400 LABELS "hls;openmp;retiming;memory")
+    add_test(NAME hls_source_read_pipeline
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/SourceReadChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/source-read-pipeline")
+    set_tests_properties(hls_source_read_pipeline PROPERTIES TIMEOUT 2400 LABELS "hls;openmp;retiming;memory")
+    add_test(NAME hls_source_write_pipeline
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/SourceWriteChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/source-write-pipeline")
+    set_tests_properties(hls_source_write_pipeline PROPERTIES TIMEOUT 2400 LABELS "hls;retiming;memory")
+    add_test(NAME hls_source_loop_pipeline
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/SourceLoopChecks.py"
+            --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"
+            --verilator "${HLS_VERILATOR}" --work "${CMAKE_CURRENT_BINARY_DIR}/source-loop-pipeline")
+    set_tests_properties(hls_source_loop_pipeline PROPERTIES TIMEOUT 2400 LABELS "hls;openmp;retiming;memory")
+endif()

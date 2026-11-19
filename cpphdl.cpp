@@ -82,13 +82,23 @@ static bool isCurrentOrBaseRecord(const CXXRecordDecl* current, const CXXRecordD
     return current->isDerivedFrom(owner);
 }
 
-bool evaluatedIntegerExpr(const clang::Expr* expr, ASTContext& ctx, cpphdl::Expr& out)
+bool evaluatedConstantExpr(const clang::Expr* expr, ASTContext& ctx, cpphdl::Expr& out)
 {
     if (!expr) {
         return false;
     }
 
     clang::Expr::EvalResult result;
+    if(expr->getType()->isRealFloatingType()) {
+        if(!expr->EvaluateAsRValue(result,ctx) || !result.Val.isFloat())return false;
+        // Match the graph/HLS representation, including signed zero and the
+        // initializer's target-format rounding. These are stored FP bits,
+        // never an unsynthesizable SV real or textual C++ floating literal.
+        const auto bits=result.Val.getFloat().bitcastToAPInt();
+        llvm::SmallString<32> text;bits.toString(text,16,false);
+        out=cpphdl::Expr{std::to_string(bits.getBitWidth())+"'h"+text.str().str(),cpphdl::Expr::EXPR_NUM};
+        return true;
+    }
     if (!expr->EvaluateAsInt(result, ctx)) {
         return false;
     }
@@ -767,7 +777,7 @@ std::unordered_map<std::string, cpphdl::Expr> templateTypeConstexprSubstitutions
                 continue;
             }
             cpphdl::Expr value;
-            if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, value)) {
+            if (!evaluatedConstantExpr(VD->getInit(), *hlp.ctx, value)) {
                 continue;
             }
             result.emplace(paramPkg + VD->getNameAsString(), value);
@@ -1055,7 +1065,7 @@ cpphdl::Struct exportStruct(CXXRecordDecl* RD, Helpers& hlp, cpphdl::Struct* st)
 
         DEBUG_AST(debugIndent, " Const(" << VD->getNameAsString() << "): ");
         cpphdl::Expr init;
-        if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, init)) {
+        if (!evaluatedConstantExpr(VD->getInit(), *hlp.ctx, init)) {
             init = hlp.exprToExpr(VD->getInit());
         }
         applyTemplateTypeSubstitutions(init, typeSubstitutions);
@@ -1895,7 +1905,7 @@ struct MethodVisitor : public RecursiveASTVisitor<MethodVisitor>
             }
 
             cpphdl::Expr init;
-            if (!evaluatedIntegerExpr(VD->getInit(), *hlp.ctx, init)) {
+            if (!evaluatedConstantExpr(VD->getInit(), *hlp.ctx, init)) {
                 init = hlp.exprToExpr(VD->getInit());
             }
             const auto typeSubstitutions = templateTypeSubstitutions(hlp.parent, hlp);

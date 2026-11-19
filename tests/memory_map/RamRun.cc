@@ -93,6 +93,22 @@ int main()
         }
         assert(b.tick(reset) == output);
     }
+#ifdef VERILATOR
+    // Physical address truncation must not turn invalid writes into aliases.
+    b.read = false;
+    b.write = true;
+    b.mask = 3;
+    b.data[0] = 0xdeadbeef;
+    b.data[1] = 0x76543210;
+    for (uint32_t invalid : {8u, 0x10000003u, 0xffffffffu}) {
+        b.wa = invalid;
+        b.tick();
+    }
+    b.write = false;
+    b.read = true;
+    for (b.ra = 0; b.ra < 8; ++b.ra)
+        assert(b.tick() == words[b.ra]);
+#endif
     std::puts(
         "PASS masked RAM: word enables, read-before-write, held outputs and reset preservation");
 }

@@ -22,6 +22,9 @@ bool outlineCall(std::vector<ScheduledBlock>& blocks, int entry, int exit,
 void coalesceBlocks(std::vector<ScheduledBlock>& blocks, int resetEntry, int commandEntry);
 // Remove speculative call clocks only when their feedback path already crosses a clock.
 void releaseSharedCallBoundaries(std::vector<ScheduledBlock>& blocks);
+// Values read before definition on any path from each block, including loops.
+std::vector<std::set<std::string>> liveAtBlockEntries(const std::vector<ScheduledBlock>& blocks,
+                                                    const std::map<std::string, BlockSymbol>& symbols);
 std::set<std::string> liveAcrossClocks(const std::vector<ScheduledBlock>& blocks,
                                      const std::map<std::string, BlockSymbol>& symbols);
 

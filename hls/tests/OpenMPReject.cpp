@@ -2,6 +2,17 @@
 #include "../math/Float.h"
 static constexpr uint32_t global_seed = 17;
 static uint32_t mutable_seed = 1;
+struct [[clang::annotate("CPPHDL_REPLACEMENT_MODULE=RejectedAtomic")]] StatefulAtomic {
+    uint32_t state = 0;
+    uint32_t command(uint32_t value) { return state += value; }
+};
+struct [[clang::annotate("CPPHDL_REPLACEMENT_MODULE=RejectedAtomic")]] GlobalAtomic {
+    uint32_t command(uint32_t value) const { return value + mutable_seed; }
+};
+static uint32_t transitive_global(uint32_t value) { return value + mutable_seed; }
+struct [[clang::annotate("CPPHDL_REPLACEMENT_MODULE=RejectedAtomic")]] TransitiveAtomic {
+    uint32_t command(uint32_t value) const { return transitive_global(value); }
+};
 struct OpenMPRejectedMethods {
     static uint32_t aliased(const uint32_t& x) { return x; }
     static uint32_t recursive(uint32_t x) { return x?recursive(x-1):0; }
@@ -157,6 +168,15 @@ struct OpenMPRejectedMethods {
 #elif OPENMP_REJECT == 37
 #pragma omp simd reduction(+:sum)
         for (unsigned lane = 0; lane < 4; ++lane) sum += typed_static(value);
+#elif OPENMP_REJECT == 38
+#pragma omp simd reduction(+:sum)
+        for (unsigned lane = 0; lane < 4; ++lane) sum += StatefulAtomic{}.command(value);
+#elif OPENMP_REJECT == 39
+#pragma omp simd reduction(+:sum)
+        for (unsigned lane = 0; lane < 4; ++lane) sum += GlobalAtomic{}.command(value);
+#elif OPENMP_REJECT == 40
+#pragma omp simd reduction(+:sum)
+        for (unsigned lane = 0; lane < 4; ++lane) sum += TransitiveAtomic{}.command(value);
 #endif
         return sum ^ values[0] ^ scratch;
     }

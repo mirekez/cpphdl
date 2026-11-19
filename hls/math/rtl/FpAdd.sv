@@ -7,6 +7,8 @@
 module FpAdd #(
     parameter W = 'h20
 ,   parameter EW = 'h8
+,   parameter PIPELINE_NORMALIZE = 0
+,   parameter PIPELINE_ALIGN = 0
  )
  (
     input wire clk
@@ -22,6 +24,8 @@ module FpAdd #(
     localparam  EXP_MAX = ((64'h1 <<< EW)) - 64'h1;
     localparam  SIGN_MASK = 64'h1 <<< ((W - 64'h1));
     localparam  SUM_MASK = ((64'h1 <<< SUM_WIDTH)) - 64'h1;
+    localparam  NORMAL_SIGN = (SUM_WIDTH + 64'h20) + W;
+    localparam  NORMAL_BITS = 64'h80;
 
 
     // regs and combs
@@ -29,11 +33,20 @@ module FpAdd #(
     reg[EW-1:0] exponent_reg;
     reg[W-1:0] special_result_reg;
     reg special_reg;
+    reg[SUM_WIDTH-1:0] aligned_lhs_reg;
+    reg[SUM_WIDTH-1:0] aligned_rhs_reg;
+    reg[EW-1:0] aligned_exponent_reg;
+    reg[W-1:0] aligned_special_result_reg;
+    reg aligned_special_reg;
     logic[SUM_WIDTH-1:0] add_lhs_comb;
     logic[SUM_WIDTH-1:0] add_rhs_comb;
+    logic[SUM_WIDTH-1:0] aligned_lhs_comb;
+    logic[SUM_WIDTH-1:0] aligned_rhs_comb;
     logic[EW-1:0] exponent_comb;
     logic[W-1:0] special_result_comb;
     logic special_comb;
+    reg[128-1:0] normalized_reg;
+    logic[128-1:0] normalized_comb;
     logic[W-1:0] result_comb;
 
     // members
@@ -43,38 +56,38 @@ module FpAdd #(
     logic[EW-1:0] exponent_reg_tmp;
     logic[W-1:0] special_result_reg_tmp;
     logic special_reg_tmp;
+    logic[SUM_WIDTH-1:0] aligned_lhs_reg_tmp;
+    logic[SUM_WIDTH-1:0] aligned_rhs_reg_tmp;
+    logic[EW-1:0] aligned_exponent_reg_tmp;
+    logic[W-1:0] aligned_special_result_reg_tmp;
+    logic aligned_special_reg_tmp;
+    logic[128-1:0] normalized_reg_tmp;
 
 
-    always_comb begin : result_comb_func  // result_comb_func
+    always_comb begin : normalized_comb_func  // normalized_comb_func
+        logic signed[31:0] exponent;
+        logic[31:0] normalize;
         logic[63:0] sum;
         logic[63:0] magnitude;
-        logic[63:0] retained;
-        logic[64-1:0] result_raw;
         logic[63:0] discarded;
-        logic signed[31:0] exponent;
+        logic[63:0] leading;
+        logic[63:0] special_value;
         logic negative;
-        logic guard;
-        logic round;
-        logic sticky;
-        logic[7:0] i;
+        logic special;
         sum=sum_reg;
-        magnitude=64'h0;
-        retained=64'h0;
-        result_raw = 'h0;
-        discarded=64'h0;
         exponent=unsigned'(64'(exponent_reg));
         negative=((sum & ((64'h1 <<< ((SUM_WIDTH - 64'h1)))))) != 64'h0;
-        guard=0;
-        round=0;
-        sticky=0;
-        result_comb = 'h0;
-        if (((special_reg) != '0)) begin
-            result_raw = special_result_reg;
-        end
-        else begin
+        special=((special_reg) != '0);
+        special_value=special_result_reg;
+        magnitude=64'h0;
+        discarded=64'h0;
+        normalize=32'h0;
+        leading=64'h0;
+        if (!special) begin
             magnitude=(negative) ? ((((64'h0 - sum)) & SUM_MASK)) : (sum);
             if (magnitude == 64'h0) begin
-                result_raw = 'h0;
+                special=1;
+                special_value=64'h0;
             end
             else begin
                 if (((magnitude & ((64'h1 <<< ((MANT_WIDTH + 64'h4)))))) != 64'h0) begin
@@ -85,37 +98,93 @@ module FpAdd #(
                     end
                     exponent=exponent+1;
                 end
-                for (i=8'h0;signed'(32'(i)) < 32'sh20;i=i+1) begin
-                    if (((((magnitude & ((64'h1 <<< ((MANT_WIDTH + 64'h3)))))) == 64'h0) && (magnitude != 64'h0)) && (exponent > 32'sh0)) begin
-                        magnitude<<='h1;
-                        --exponent;
-                    end
+                leading=magnitude;
+                if (!(((leading >>> 32'sh20)) != '0)) begin
+                    normalize+=32'h20;
+                    leading<<='h20;
                 end
-                if (exponent<=32'sh0) begin
-                    result_raw = (negative) ? (SIGN_MASK) : (64'h0);
+                if (!(((leading >>> 32'sh30)) != '0)) begin
+                    normalize+=32'h10;
+                    leading<<='h10;
+                end
+                if (!(((leading >>> 32'sh38)) != '0)) begin
+                    normalize+=32'h8;
+                    leading<<='h8;
+                end
+                if (!(((leading >>> 32'sh3C)) != '0)) begin
+                    normalize+=32'h4;
+                    leading<<='h4;
+                end
+                if (!(((leading >>> 32'sh3E)) != '0)) begin
+                    normalize+=32'h2;
+                    leading<<='h2;
+                end
+                if (!(((leading >>> 32'sh3F)) != '0)) begin
+                    normalize+=32'h1;
+                    leading<<='h1;
+                end
+                normalize-=64'h40 - ((MANT_WIDTH + 64'h4));
+                magnitude=leading >>> ((64'h40 - ((MANT_WIDTH + 64'h4))));
+                exponent-=signed'(32'(normalize));
+            end
+        end
+        normalized_comb = magnitude;
+        normalized_comb |= 128'(unsigned'(32'(exponent))) << SUM_WIDTH;
+        normalized_comb |= 128'(special_value) << (SUM_WIDTH + 64'h20);
+        normalized_comb |= 128'(negative) << NORMAL_SIGN;
+        normalized_comb |= 128'(special) << (NORMAL_SIGN + 64'h1);
+    end
+
+    always_comb begin : result_comb_func  // result_comb_func
+        logic[128-1:0] normalized;
+        logic[64-1:0] result_raw;
+        logic signed[31:0] exponent;
+        logic[63:0] magnitude;
+        logic[63:0] retained;
+        logic negative;
+        logic special;
+        logic guard;
+        logic round;
+        logic sticky;
+        if (PIPELINE_NORMALIZE) begin
+            normalized = normalized_reg;
+        end
+        else begin
+            normalized = normalized_comb;
+        end
+        magnitude=normalized['h0 +:SUM_WIDTH];
+        exponent=32'(unsigned'(64'(normalized[SUM_WIDTH +:32])));
+        negative=unsigned'(64'(normalized[NORMAL_SIGN +:1])) != 64'h0;
+        special=unsigned'(64'(normalized[(NORMAL_SIGN + 64'h1) +:1])) != 64'h0;
+        result_raw = 'h0;
+        retained=magnitude >>> 32'sh3;
+        guard=((((magnitude >>> 32'sh2)) & 64'h1)) != 64'h0;
+        round=((((magnitude >>> 32'sh1)) & 64'h1)) != 64'h0;
+        sticky=((magnitude & 64'h1)) != 64'h0;
+        if (special) begin
+            result_raw = normalized[SUM_WIDTH + 64'h20 +:W];
+        end
+        else begin
+            if (exponent<=32'sh0) begin
+                result_raw = (negative) ? (SIGN_MASK) : (64'h0);
+            end
+            else begin
+                if (exponent>=signed'(32'(EXP_MAX))) begin
+                    result_raw = ((negative) ? (SIGN_MASK) : (64'h0)) | ((EXP_MAX <<< MANT_WIDTH));
                 end
                 else begin
+                    if (guard && (((round || sticky) || (((retained & 64'h1)) != 64'h0)))) begin
+                        retained=retained+1;
+                    end
+                    if (retained>=(64'h1 <<< ((MANT_WIDTH + 64'h1)))) begin
+                        retained>>='h1;
+                        exponent=exponent+1;
+                    end
                     if (exponent>=signed'(32'(EXP_MAX))) begin
                         result_raw = ((negative) ? (SIGN_MASK) : (64'h0)) | ((EXP_MAX <<< MANT_WIDTH));
                     end
                     else begin
-                        retained=magnitude >>> 32'sh3;
-                        guard=((((magnitude >>> 32'sh2)) & 64'h1)) != 64'h0;
-                        round=((((magnitude >>> 32'sh1)) & 64'h1)) != 64'h0;
-                        sticky=((magnitude & 64'h1)) != 64'h0;
-                        if (guard && (((round || sticky) || (((retained & 64'h1)) != 64'h0)))) begin
-                            retained=retained+1;
-                        end
-                        if (retained>=(64'h1 <<< ((MANT_WIDTH + 64'h1)))) begin
-                            retained>>='h1;
-                            exponent=exponent+1;
-                        end
-                        if (exponent>=signed'(32'(EXP_MAX))) begin
-                            result_raw = ((negative) ? (SIGN_MASK) : (64'h0)) | ((EXP_MAX <<< MANT_WIDTH));
-                        end
-                        else begin
-                            result_raw = (((negative) ? (SIGN_MASK) : (64'h0)) | ((unsigned'(64'(exponent)) <<< MANT_WIDTH))) | ((retained & MANT_MASK));
-                        end
+                        result_raw = (((negative) ? (SIGN_MASK) : (64'h0)) | ((unsigned'(64'(exponent)) <<< MANT_WIDTH))) | ((retained & MANT_MASK));
                     end
                 end
             end
@@ -123,7 +192,7 @@ module FpAdd #(
         result_comb = result_raw['h0 +:W];
     end
 
-    always_comb begin : add_lhs_comb_func  // add_lhs_comb_func
+    always_comb begin : aligned_lhs_comb_func  // aligned_lhs_comb_func
         logic[63:0] raw_a;
         logic[63:0] raw_b;
         logic[63:0] exponent_a;
@@ -150,7 +219,7 @@ module FpAdd #(
         shift_mask=64'h0;
         encoded = 'h0;
         shift=32'h0;
-        add_lhs_comb = 'h0;
+        aligned_lhs_comb = 'h0;
         if (!special) begin
             significand_a=((((64'h1 <<< MANT_WIDTH)) | mantissa_a)) <<< 'h3;
             aligned_a=significand_a;
@@ -171,11 +240,11 @@ module FpAdd #(
                 end
             end
             encoded = (sign_a) ? ((((64'h0 - aligned_a)) & SUM_MASK)) : (aligned_a);
-            add_lhs_comb = encoded['h0 +:SUM_WIDTH];
+            aligned_lhs_comb = encoded['h0 +:SUM_WIDTH];
         end
     end
 
-    always_comb begin : add_rhs_comb_func  // add_rhs_comb_func
+    always_comb begin : aligned_rhs_comb_func  // aligned_rhs_comb_func
         logic[63:0] raw_a;
         logic[63:0] raw_b;
         logic[63:0] exponent_a;
@@ -202,7 +271,7 @@ module FpAdd #(
         shift_mask=64'h0;
         encoded = 'h0;
         shift=32'h0;
-        add_rhs_comb = 'h0;
+        aligned_rhs_comb = 'h0;
         if (!special) begin
             significand_b=((((64'h1 <<< MANT_WIDTH)) | mantissa_b)) <<< 'h3;
             aligned_b=significand_b;
@@ -223,7 +292,25 @@ module FpAdd #(
                 end
             end
             encoded = (sign_b) ? ((((64'h0 - aligned_b)) & SUM_MASK)) : (aligned_b);
-            add_rhs_comb = encoded['h0 +:SUM_WIDTH];
+            aligned_rhs_comb = encoded['h0 +:SUM_WIDTH];
+        end
+    end
+
+    always_comb begin : add_lhs_comb_func  // add_lhs_comb_func
+        if (PIPELINE_ALIGN) begin
+            add_lhs_comb = aligned_lhs_reg;
+        end
+        else begin
+            add_lhs_comb = aligned_lhs_comb;
+        end
+    end
+
+    always_comb begin : add_rhs_comb_func  // add_rhs_comb_func
+        if (PIPELINE_ALIGN) begin
+            add_rhs_comb = aligned_rhs_reg;
+        end
+        else begin
+            add_rhs_comb = aligned_rhs_comb;
         end
     end
 
@@ -315,12 +402,33 @@ module FpAdd #(
     task _work (input logic reset);
     begin: _work
         if (en_in) begin
+            if (PIPELINE_NORMALIZE) begin
+                normalized_reg_tmp = normalized_comb;
+            end
             sum_reg_tmp = add_lhs_comb + add_rhs_comb;
-            exponent_reg_tmp = exponent_comb;
-            special_result_reg_tmp = special_result_comb;
-            special_reg_tmp = special_comb;
+            if (PIPELINE_ALIGN) begin
+                aligned_lhs_reg_tmp = aligned_lhs_comb;
+                aligned_rhs_reg_tmp = aligned_rhs_comb;
+                aligned_exponent_reg_tmp = exponent_comb;
+                aligned_special_result_reg_tmp = special_result_comb;
+                aligned_special_reg_tmp = special_comb;
+                exponent_reg_tmp = aligned_exponent_reg;
+                special_result_reg_tmp = aligned_special_result_reg;
+                special_reg_tmp = aligned_special_reg;
+            end
+            else begin
+                exponent_reg_tmp = exponent_comb;
+                special_result_reg_tmp = special_result_comb;
+                special_reg_tmp = special_comb;
+            end
         end
         if (reset) begin
+            aligned_lhs_reg_tmp = '0;
+            aligned_rhs_reg_tmp = '0;
+            aligned_exponent_reg_tmp = '0;
+            aligned_special_result_reg_tmp = '0;
+            aligned_special_reg_tmp = '0;
+            normalized_reg_tmp = '0;
             sum_reg_tmp = '0;
             exponent_reg_tmp = '0;
             special_result_reg_tmp = '0;
@@ -337,6 +445,12 @@ module FpAdd #(
         exponent_reg_tmp = exponent_reg;
         special_result_reg_tmp = special_result_reg;
         special_reg_tmp = special_reg;
+        aligned_lhs_reg_tmp = aligned_lhs_reg;
+        aligned_rhs_reg_tmp = aligned_rhs_reg;
+        aligned_exponent_reg_tmp = aligned_exponent_reg;
+        aligned_special_result_reg_tmp = aligned_special_result_reg;
+        aligned_special_reg_tmp = aligned_special_reg;
+        normalized_reg_tmp = normalized_reg;
 
             _work(reset);
 
@@ -344,6 +458,12 @@ module FpAdd #(
         exponent_reg <= exponent_reg_tmp;
         special_result_reg <= special_result_reg_tmp;
         special_reg <= special_reg_tmp;
+        aligned_lhs_reg <= aligned_lhs_reg_tmp;
+        aligned_rhs_reg <= aligned_rhs_reg_tmp;
+        aligned_exponent_reg <= aligned_exponent_reg_tmp;
+        aligned_special_result_reg <= aligned_special_result_reg_tmp;
+        aligned_special_reg <= aligned_special_reg_tmp;
+        normalized_reg <= normalized_reg_tmp;
     end
 
     assign c_out = result_comb;

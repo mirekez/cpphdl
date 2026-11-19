@@ -69,6 +69,10 @@ int main() {
         memoryLive[1].yes = 2;
         memoryLive[2].statements = {"result = scratch.wide;"};
         check(liveAcrossClocks(memoryLive, symbols) == std::set<std::string>{"scratch.first"});
+        auto entryLive=liveAtBlockEntries(memoryLive,symbols);
+        check(entryLive[0]==std::set<std::string>{"scratch.input"});
+        check(entryLive[1]==std::set<std::string>{"scratch.first"});
+        check(entryLive[2]==std::set<std::string>{"scratch.wide"});
         memoryLive[1].statements[0] = "if (fault == 0) begin scratch.second = 7; end";
         check(liveAcrossClocks(memoryLive, symbols) == std::set<std::string>({"scratch.first", "scratch.second"}));
 
