@@ -76,7 +76,7 @@ set_target_properties(hls_fp32_mac PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUI
 add_dependencies(hls_tests hls_fp32_mac)
 add_test(NAME hls_fp32_mac COMMAND hls_fp32_mac)
 add_executable(hls_fp_add_modes FpAddModes.cpp)
-target_include_directories(hls_fp_add_modes PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(hls_fp_add_modes PRIVATE cpphdl::runtime)
 target_compile_features(hls_fp_add_modes PRIVATE cxx_std_17)
 add_dependencies(hls_tests hls_fp_add_modes)
 add_test(NAME hls_fp_add_modes COMMAND hls_fp_add_modes)
