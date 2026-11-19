@@ -10,7 +10,8 @@
 // One-stage floating-point adder. Alignment is combinational before sum_clock,
 // the signed significand addition is registered, and normalization/rounding is
 // combinational after the register. Exponent-zero values are flushed to zero.
-template<size_t W=32, size_t EW=8>
+// PIPELINED=false exposes the same arithmetic for synthesis-time retiming.
+template<size_t W=32, size_t EW=8, bool PIPELINED=true>
 class FpAdd : public cpphdl::Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;
@@ -255,20 +256,21 @@ private:
         bool sticky;
         uint8_t i;
 
-        sum = (uint64_t)sum_reg;
+        sum = PIPELINED ? (uint64_t)sum_reg :
+            ((uint64_t)add_lhs_comb_func() + (uint64_t)add_rhs_comb_func()) & SUM_MASK;
         magnitude = 0;
         retained = 0;
         result_raw = 0;
         discarded = 0;
-        exponent = (int)(uint64_t)exponent_reg;
+        exponent = (int)(uint64_t)(PIPELINED ? exponent_reg : exponent_comb_func());
         negative = (sum & (uint64_t(1) << (SUM_WIDTH - 1))) != 0;
         guard = false;
         round = false;
         sticky = false;
         result_comb = 0;
 
-        if (special_reg) {
-            result_raw = (uint64_t)special_result_reg;
+        if (PIPELINED ? (bool)special_reg : special_comb_func()) {
+            result_raw = PIPELINED ? (uint64_t)special_result_reg : (uint64_t)special_result_comb_func();
         }
         else {
             magnitude = negative ? ((uint64_t(0) - sum) & SUM_MASK) : sum;
@@ -328,6 +330,7 @@ private:
 public:
     void _work(bool reset)
     {
+        if constexpr (!PIPELINED) return;
         if (en_in()) {
             sum_reg._next = add_lhs_comb_func() + add_rhs_comb_func();
             exponent_reg._next = exponent_comb_func();
@@ -345,6 +348,7 @@ public:
 
     void _strobe()
     {
+        if constexpr (!PIPELINED) return;
         sum_reg.strobe();
         exponent_reg.strobe();
         special_result_reg.strobe();

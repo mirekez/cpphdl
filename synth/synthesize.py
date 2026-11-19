@@ -45,12 +45,19 @@ def main():
     parser.add_argument('--tool-timeout', type=int, default=300,
                         help='maximum seconds for each external tool invocation (default: 300)')
     parser.add_argument('--retiming', choices=('keep_behaviour_retiming', 'fit_pipeline_retiming'))
+    parser.add_argument('--pipeline-latency', type=int,
+                        help='exact pipeline cycles for a combinational core; partition internal logic and balance paths')
+    parser.add_argument('--pipeline-enable', default='', help='one-bit input; hold outputs on bubbles after delaying this launch enable')
     parser.add_argument('--clock-period-ns', type=float, help='estimated timing target for retiming')
     parser.add_argument('--retime-module', default='', help='C++ instance path; default is the whole design')
     parser.add_argument('--delay-scale', type=float, default=1.0, help='scale all built-in delay estimates')
     parser.add_argument('source', type=Path)
     add_clock_arguments(parser)
     args = parser.parse_args(arguments)
+    if args.pipeline_latency is not None and (args.pipeline_latency <= 0 or args.retiming):
+        parser.error('--pipeline-latency must be positive and cannot be combined with --retiming')
+    if args.pipeline_enable and args.pipeline_latency is None:
+        parser.error('--pipeline-enable requires --pipeline-latency')
     if args.tool_timeout <= 0:
         parser.error('--tool-timeout must be positive')
     clocks = clock_arguments(parser, args)
@@ -103,7 +110,7 @@ def main():
              root / 'synth/Verilog.cpp', root / 'synth/Mapping.cpp', root / 'synth/timing.cpp', root / 'synth/retiming.cpp', '-o', output / 'emit'], 'compile-emitter')
         run([output / 'emit', output / 'operations.v', args.module, output / 'timing.json',
              output / 'retimed_graph.cc', args.retiming or 'none', str(args.clock_period_ns or 0),
-             args.retime_module, str(args.delay_scale)], 'emit',
+             args.retime_module, str(args.delay_scale), str(args.pipeline_latency or 0), args.pipeline_enable], 'emit',
             env=emitter_environment(compiler, args.tool_timeout))
         manifest['timing'] = json.loads((output / 'timing.json').read_text())
         boxes = {box['module'] for box in manifest['timing']['keep_boxes']}

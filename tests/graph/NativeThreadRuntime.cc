@@ -110,6 +110,37 @@ static void exceptionDrain(Threads& pool, unsigned count) {
     require(caught && work.done.load() == count - 1);
 }
 
+// Exercise completion publication after cold stores, with workers repeatedly
+// entering/leaving their parked state. This stresses store -> notify ordering;
+// unlike a timing-dependent lost-wake reproducer it checks only correctness.
+static void coldCompletions() {
+    struct Work {
+        std::vector<unsigned char> bytes = std::vector<unsigned char>(32u << 20);
+        unsigned iteration = 0;
+        std::size_t begin = 0;
+    } work;
+    Threads pool(2, 1);
+    for (unsigned i = 0; i < 8192; ++i) {
+        work.iteration = i;
+        work.begin = (std::size_t(i) * 64 * 4160) % work.bytes.size();
+        pool.run(&work, [](void* ptr, Threads& executor, unsigned lane, uint32_t epoch) noexcept {
+            auto& w = *static_cast<Work*>(ptr);
+            if (!lane) {
+                // Alternate dependency waiting and the caller's completion join.
+                if (w.iteration & 1) executor.wait(0, epoch);
+                return;
+            }
+            for (unsigned k = 0; k < 64; ++k)
+                w.bytes[(w.begin + k * 4160) % w.bytes.size()] =
+                    static_cast<unsigned char>(w.iteration + k);
+            if (w.iteration & 1) executor.complete(0, epoch);
+        });
+        for (unsigned k = 0; k < 64; ++k)
+            require(work.bytes[(work.begin + k * 4160) % work.bytes.size()] ==
+                    static_cast<unsigned char>(i + k));
+    }
+}
+
 int main(int argc, char**) {
     cpphdl::graph_runtime::NativeAffinityScope affinity;
     if (argc > 1) {
@@ -159,5 +190,6 @@ int main(int argc, char**) {
         Threads pool(30, 30);
         pool.run(nullptr, [](void*, Threads&, unsigned, uint32_t) noexcept {}, 1u);
     }
-    std::puts("PASS native runtime: subsets, task queue, dependencies, exceptions, shared executor, shutdown (1/2/6/30 workers)");
+    coldCompletions();
+    std::puts("PASS native runtime: subsets, task queue, dependencies, exceptions, shared executor, shutdown, cold completion publication (1/2/6/30 workers)");
 }

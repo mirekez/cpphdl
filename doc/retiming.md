@@ -12,15 +12,24 @@ The wrapper type selects delayed or pipeline scheduling automatically, with or
 without synthesis. Ordinary conversion emits only RTL and does not run graph export. Neither flow requires
 Yosys: synthesis uses the exporter and generic gate mapper in `synth/`.
 
-There are two different contracts:
+There are three different contracts:
 
 | Mode | Existing clock-cycle behaviour | Register count | Purpose |
 | --- | --- | --- | --- |
 | `keep_behaviour_retiming` | Preserved | May change when banks split or merge | Balance existing stages |
 | `fit_pipeline_retiming` | Additional latency; transaction feedback may reduce throughput | Increases | Meet an estimated stage period |
+| `--pipeline-latency N` | Combinational input becomes an exact N-cycle pipeline | Increases | Fixed interface latency with internal operator cuts and balanced paths |
 
 Retiming is opt-in. Without a command-line rule or a source annotation, synthesis
 reports estimated timing but does not move or insert registers.
+
+Fixed-latency pipelining accepts only combinational cores without memories,
+named clocks, keep boxes or external blackboxes. It runs every clock and does
+not infer reset behavior. `--pipeline-enable PORT` optionally holds outputs on
+invalid launches; internal stages keep advancing. Retain delayed valid metadata
+in the caller.
+This option is exclusive with timing-driven rules and annotations; it does
+not promise a stage period. See [synthesis.md](synthesis.md) for the CLI contract.
 
 ## Delay Estimates
 

@@ -281,7 +281,19 @@ logic; timing analysis also checks the logic outside the HLS regions.
 
 ## Retiming
 
-Request retiming explicitly, for example on the feed-forward regression:
+For a combinational core, `--pipeline-latency N` inserts an exact N-cycle,
+one-input-per-clock pipeline. Estimated arrival times choose internal operator
+boundaries; balancing registers align all operands and outputs. Word-level
+operators are retained in `operations.v` for technology mapping. This mode
+rejects existing state, memories, named clocks, keep boxes and blackboxes;
+it cannot be combined with `--retiming`. Pipelines run continuously. Optional
+`--pipeline-enable PORT` delays a one-bit launch input and holds the final output
+registers on invalid cycles, without stalling internal stages. There is no implicit
+reset protocol. Consumers must delay their valid tags by N cycles and ignore
+the startup contents. `timing.json` reports the cycle count,
+register bits and estimated before/after delays, not a physical Fmax guarantee.
+
+Request timing-driven retiming explicitly, for example on the feed-forward regression:
 
 ```sh
 build/cpphdl --synth --top cpphdl_top --module SynthRetiming \

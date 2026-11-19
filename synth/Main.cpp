@@ -10,7 +10,7 @@
 cpphdl::graph::Graph makeGraph();
 
 int main(int argc, char** argv) {
-    if (argc != 9) return 2;
+    if (argc != 9 && argc != 10 && argc != 11) return 2;
     try {
         auto graph = makeGraph();
         cpphdl::synth::DelayModel model;
@@ -33,7 +33,14 @@ int main(int argc, char** argv) {
                 rules[a].scope.find(rules[b].scope + ".") == 0 || rules[b].scope.find(rules[a].scope + ".") == 0)
                 throw std::runtime_error("overlapping retiming scopes");
         std::ofstream report(argv[3]);
-        report << "{\"estimate_only\":true,\"rules\":[";
+        if (argc >= 10 && std::stoul(argv[9])) {
+            if (!rules.empty()) throw std::runtime_error("fixed latency cannot be combined with retiming annotations");
+            auto result = cpphdl::synth::pipelineLatency(graph, std::stoul(argv[9]), model, argc == 11 ? argv[10] : "");
+            report << "{\"pipeline_latency\":" << result.addedLatency
+                   << ",\"pipeline_register_bits\":" << result.insertedBits
+                   << ",\"before_ns\":" << result.before << ",\"after_ns\":" << result.after << ',';
+        } else report << '{';
+        report << "\"estimate_only\":true,\"rules\":[";
         for (size_t i = 0; i < rules.size(); ++i) {
             const auto& rule = rules[i];
             auto result = cpphdl::synth::retime(graph, rule, model);

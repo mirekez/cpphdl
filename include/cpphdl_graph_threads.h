@@ -78,8 +78,20 @@ inline unsigned nativeMemoryWorkers(unsigned capacity) {
 // avoiding a shared proxy counter on every notification. Wraparound is safe:
 // Each worker has its own command/completion stamp, so workers omitted from
 // many transactions can rejoin even after the shared transaction epoch wraps.
+// FIX_SYNCHRO_STALLING_LOCK opts into seq_cst notification stamps; by default
+// retain the original release ordering. Some libstdc++ versions
+// check a shared waiter count before issuing a futex wake, without a StoreLoad
+// fence after the caller's release store (GCC PR127757). That can let both the
+// notifier and waiter see old values and lose a wake. A seq_cst publication
+// supplies the missing ordering, including on the completion/dependency paths.
+// This is a library workaround; conforming atomic::notify needs no such fence.
 class Threads {
     struct alignas(64) Slot { std::atomic<uint32_t> value{0}; };
+#ifdef FIX_SYNCHRO_STALLING_LOCK
+    static constexpr auto publicationOrder = std::memory_order_seq_cst;
+#else
+    static constexpr auto publicationOrder = std::memory_order_release;
+#endif
 public:
     using Function = void (*)(void*, Threads&, unsigned, uint32_t) noexcept;
     Threads(unsigned lanes, unsigned tasks)
@@ -196,7 +208,7 @@ public:
         model_ = model; function_ = function;
         const auto epoch = ++epoch_;
         for (unsigned lane = 1; lane < activeLanes; ++lane) {
-            commands_[lane].value.fetch_add(1, std::memory_order_release);
+            commands_[lane].value.fetch_add(1, publicationOrder);
             commands_[lane].value.notify_one();
         }
         invoke(function,model,0,epoch);
@@ -216,7 +228,7 @@ public:
         waitFor(tasks_[task].value, epoch);
     }
     void complete(unsigned task, uint32_t epoch) noexcept {
-        tasks_[task].value.store(epoch, std::memory_order_release);
+        tasks_[task].value.store(epoch, publicationOrder);
         tasks_[task].value.notify_all();
     }
 private:
@@ -267,7 +279,7 @@ private:
             }
             if (stopping_.load(std::memory_order_relaxed)) return;
             invoke(function_,model_,lane,epoch_);
-            completed_[lane].value.store(epoch, std::memory_order_release);
+            completed_[lane].value.store(epoch, publicationOrder);
             completed_[lane].value.notify_all();
             seen = epoch;
         }
@@ -275,7 +287,7 @@ private:
     void stop() noexcept {
         stopping_.store(true, std::memory_order_relaxed);
         for (unsigned lane = 1; lane < lanes_; ++lane) {
-            commands_[lane].value.fetch_add(1, std::memory_order_release);
+            commands_[lane].value.fetch_add(1, publicationOrder);
             commands_[lane].value.notify_one();
         }
         for (auto& worker : workers_) worker.join();

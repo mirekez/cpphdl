@@ -285,15 +285,37 @@ constexpr uint64_t operator OP(T lhs, const cat<N...>& rhs) { return static_cast
 template<size_t... L, size_t... R> \
 constexpr uint64_t operator OP(const cat<L...>& lhs, const cat<R...>& rhs) { return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); }
 
-CPPHDL_CAT_BINARY_OP(+)
-CPPHDL_CAT_BINARY_OP(-)
 CPPHDL_CAT_BINARY_OP(*)
 CPPHDL_CAT_BINARY_OP(/)
 CPPHDL_CAT_BINARY_OP(%)
-CPPHDL_CAT_BINARY_OP(&)
-CPPHDL_CAT_BINARY_OP(|)
-CPPHDL_CAT_BINARY_OP(^)
 #undef CPPHDL_CAT_BINARY_OP
+
+// Preserve the scalar result for narrow expressions, but never truncate wide
+// concatenations to uint64_t (Rocket FP64 uses a 107-bit add here).
+#define CPPHDL_CAT_PACKED_BINARY_OP(OP) \
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0> \
+constexpr auto operator OP(const cat<N...>& lhs, T rhs) { \
+    if constexpr (SUM<N...>() > 64) return lhs.pack() OP logic<SUM<N...>()>(rhs); \
+    else return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); \
+} \
+template<typename T, size_t... N, enable_cat_integral_t<T> = 0> \
+constexpr auto operator OP(T lhs, const cat<N...>& rhs) { \
+    if constexpr (SUM<N...>() > 64) return logic<SUM<N...>()>(lhs) OP rhs.pack(); \
+    else return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); \
+} \
+template<size_t... L, size_t... R> \
+constexpr auto operator OP(const cat<L...>& lhs, const cat<R...>& rhs) { \
+    constexpr size_t width = SUM<L...>() > SUM<R...>() ? SUM<L...>() : SUM<R...>(); \
+    if constexpr (width > 64) return logic<width>(lhs.pack()) OP logic<width>(rhs.pack()); \
+    else return static_cast<uint64_t>(lhs) OP static_cast<uint64_t>(rhs); \
+}
+
+CPPHDL_CAT_PACKED_BINARY_OP(+)
+CPPHDL_CAT_PACKED_BINARY_OP(-)
+CPPHDL_CAT_PACKED_BINARY_OP(&)
+CPPHDL_CAT_PACKED_BINARY_OP(|)
+CPPHDL_CAT_PACKED_BINARY_OP(^)
+#undef CPPHDL_CAT_PACKED_BINARY_OP
 
 template<typename T, size_t... N, enable_cat_integral_t<T> = 0>
 constexpr uint64_t operator<<(const cat<N...>& lhs, T rhs) { return static_cast<uint64_t>(lhs) << static_cast<unsigned>(rhs); }

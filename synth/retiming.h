@@ -15,4 +15,7 @@ struct RetimingReport {
     bool met = false;
 };
 RetimingReport retime(graph::Graph&, const RetimingRule&, const DelayModel& = {});
+// Pipeline a combinational function with an exact input-to-output latency.
+RetimingReport pipelineLatency(graph::Graph&, unsigned cycles, const DelayModel& = {},
+                              const std::string& enablePort = {});
 }

@@ -7,6 +7,98 @@
 
 namespace cpphdl::synth {
 using namespace graph;
+RetimingReport pipelineLatency(Graph& g, unsigned cycles, const DelayModel& model, const std::string& enablePort) {
+    if (!cycles) throw std::runtime_error("pipeline latency must be positive");
+    g.optimize();
+    if (!g.states.empty() || !g.memories.empty() || !g.pipelines.empty() ||
+        !g.replacements.empty() || !g.clocks.empty() || !KeepBoxes(g).boxes.empty())
+        throw std::runtime_error("fixed-latency pipelining requires a combinational graph without keep boxes");
+    auto timing = estimateTiming(g, model);
+    Value enable;
+    if (!enablePort.empty()) {
+        for (const auto& port : g.ports)
+            if (port.input && port.name == enablePort && port.bits.size() == 1) enable = g.resolved(port.bits);
+        if (enable.empty()) throw std::runtime_error("pipeline enable must name a one-bit input port");
+    }
+    Value delayedEnable;
+    auto order = g.dependencyOrder();
+    std::map<Bit, Bit> rewritten;
+    std::map<Bit, unsigned> stage;
+    // An enable may be unused by the combinational core and absent from its
+    // dependency order; it still becomes live when output registers are added.
+    for (const auto& port : g.ports) if (port.input)
+        for (auto bit : g.resolved(port.bits)) if (bit > 1) {
+            rewritten[bit] = bit;
+            stage[bit] = 0;
+        }
+    std::map<std::pair<Bit, unsigned>, Bit> delays;
+    RetimingReport report;
+    report.before = timing.worst;
+    report.addedLatency = cycles;
+    // Keep word-level arithmetic intact for DSP inference. Partition at operator
+    // boundaries using estimated arrival times, then balance every operand path.
+    auto delay = [&](Bit bit, unsigned target) {
+        unsigned source = bit > 1 ? stage.at(bit) : target;
+        while (source < target) {
+            auto key = std::make_pair(bit, source + 1);
+            auto found = delays.find(key);
+            if (found != delays.end()) bit = found->second;
+            else {
+                auto reg = g.wire(1, "pipeline_" + std::to_string(source + 1), "state");
+                g.nodes[Graph::owner(reg[0])].left = {0};
+                Value next{bit};
+                if (source + 1 == cycles && !delayedEnable.empty())
+                    next = g.mux(delayedEnable, next, reg);
+                g.states.push_back({reg, next, {1}});
+                bit = delays.emplace(key, reg[0]).first->second;
+                stage[bit] = source + 1;
+                ++report.insertedBits;
+            }
+            ++source;
+        }
+        return bit;
+    };
+    auto operand = [&](Value value, unsigned target) {
+        value = g.resolved(value);
+        for (auto& bit : value) if (bit > 1) bit = delay(rewritten.at(bit), target);
+        return value;
+    };
+    for (auto index : order) {
+        auto node = g.nodes[index];
+        if (node.hostEffect() || node.op == "blackbox")
+            throw std::runtime_error("fixed-latency pipelining cannot schedule host effects or blackboxes");
+        unsigned target = 0;
+        if (node.op != "input" && timing.worst > 0) {
+            double start = std::max(0.0, timing.arrival[index] - cellDelay(g, node, model));
+            target = std::min(cycles - 1, unsigned(start * cycles / timing.worst));
+            for (auto* value : {&node.left, &node.right, &node.select})
+                for (auto bit : g.resolved(*value)) if (bit > 1)
+                    target = std::max(target, stage.at(rewritten.at(bit)));
+        }
+        Value result;
+        if (node.op == "input") {
+            for (unsigned lane = 0; lane < node.width; ++lane)
+                result.push_back((index + 1) * 64 + 2 + lane);
+        } else {
+            auto left = operand(node.left, target);
+            auto right = operand(node.right, target);
+            auto select = operand(node.select, target);
+            g.currentScope = node.scope;
+            result = g.add(node.op, node.width, left, right, select, node.name);
+        }
+        for (unsigned lane = 0; lane < node.width; ++lane) {
+            rewritten[(index + 1) * 64 + 2 + lane] = result[lane];
+            if (result[lane] > 1) stage[result[lane]] = target;
+        }
+    }
+    g.currentScope.clear();
+    if (!enable.empty()) delayedEnable = operand(enable, cycles - 1);
+    for (auto& port : g.ports) if (!port.input) port.bits = operand(port.bits, cycles);
+    g.optimize();
+    report.after = estimateTiming(g, model).worst;
+    report.met = true; // Exact cycle count, not a physical timing guarantee.
+    return report;
+}
 namespace {
 Value nodeBits(const Graph& g, size_t n) {
     Value v(g.nodes.at(n).width);

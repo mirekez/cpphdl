@@ -154,6 +154,36 @@ static bool reconvergentFeedback() {
     return true;
 }
 int main() {
+    for (unsigned latency : {1u, 2u, 20u}) for (bool enabled : {false, true}) {
+        auto source = chain();
+        source.ports.back().bits = source.states.front().next;
+        source.states.clear();
+        source.ports.push_back({"bypass", source.ports.front().bits, false});
+        auto en = source.wire(1, "en", "input");
+        source.ports.push_back({"en", en, true});
+        auto piped = source;
+        auto result = pipelineLatency(piped, latency, {}, enabled ? "en" : "");
+        CHECK(result.addedLatency == latency && result.insertedBits >= 8 * latency);
+        Evaluate reference(source), dut(piped);
+        std::vector<uint64_t> expected;
+        uint64_t held = 0, heldBypass = 0;
+        for (unsigned cycle = 0; cycle < 256; ++cycle) {
+            reference.input("data", cycle * 37); reference.eval();
+            expected.push_back(reference.output("result"));
+            dut.input("data", cycle * 37); dut.input("en", cycle % 3 != 0); dut.tick();
+            if (cycle + 1 >= latency) {
+                auto launched = cycle + 1 - latency;
+                if (!enabled || launched % 3 != 0) {
+                    held = expected[launched]; heldBypass = (launched * 37) & 255;
+                }
+                CHECK(dut.output("result") == held);
+                CHECK(dut.output("bypass") == heldBypass);
+            }
+        }
+        if (latency == 2) CHECK(result.after < result.before);
+    }
+    try { auto stateful = chain(); pipelineLatency(stateful, 2); CHECK(false); }
+    catch (const std::runtime_error&) {}
     CHECK(arithmeticFeedback());
     CHECK(reconvergentFeedback());
     CHECK(feedbackPair());
