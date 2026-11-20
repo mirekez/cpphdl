@@ -9,13 +9,16 @@
 
 // Combinational floating-point hyperbolic tangent. A 32-segment linear
 // interpolation table covers |x| < 4; larger values saturate to one. The
-// Q25 table has at most 0.0015 absolute interpolation error and avoids the
-// 64-bit variable divider that could not meet FPGA timing.
+// Q15 table with eight-bit interpolation has at most 0.00185 absolute error
+// and avoids the variable divider that could not meet FPGA timing.
 template<size_t W=32, size_t EW=8>
 class FpTanh : public cpphdl::Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;
     static constexpr size_t FIXED_BITS = MANT_WIDTH + 4 < 25 ? MANT_WIDTH + 4 : 25;
+    static constexpr size_t FRACTION_BITS = FIXED_BITS - 3 < 8 ? FIXED_BITS - 3 : 8;
+    static constexpr size_t TABLE_SHIFT_LEFT = FIXED_BITS > 15 ? FIXED_BITS - 15 : 0;
+    static constexpr size_t TABLE_SHIFT_RIGHT = FIXED_BITS < 15 ? 15 - FIXED_BITS : 0;
     static constexpr uint32_t MANT_MASK = (uint32_t(1) << MANT_WIDTH) - 1;
     static constexpr uint32_t EXP_MAX = (uint32_t(1) << EW) - 1;
     static constexpr uint32_t SIGN_MASK = uint32_t(1) << (W - 1);
@@ -41,7 +44,7 @@ private:
         uint32_t significand;
         uint32_t x_fixed;
         uint32_t fraction;
-        uint64_t interpolated;
+        uint32_t interpolated;
         uint32_t y_fixed;
         uint32_t y0;
         uint32_t y1;
@@ -128,45 +131,46 @@ private:
                     y_fixed = ONE_FIXED;
                 }
                 else {
-                    fraction = x_fixed & ((uint64_t(1) << (FIXED_BITS - 3)) - 1);
+                    fraction = (x_fixed >> (FIXED_BITS - 3 - FRACTION_BITS))
+                        & ((uint32_t(1) << FRACTION_BITS) - 1);
                     switch (segment) {
-                    case 0: y0 = 0u; y1 = 4172594u; break;
-                    case 1: y0 = 4172594u; y1 = 8218107u; break;
-                    case 2: y0 = 8218107u; y1 = 12024479u; break;
-                    case 3: y0 = 12024479u; y1 = 15506079u; break;
-                    case 4: y0 = 15506079u; y1 = 18609279u; break;
-                    case 5: y0 = 18609279u; y1 = 21312062u; break;
-                    case 6: y0 = 21312062u; y1 = 23619153u; break;
-                    case 7: y0 = 23619153u; y1 = 25554859u; break;
-                    case 8: y0 = 25554859u; y1 = 27155638u; break;
-                    case 9: y0 = 27155638u; y1 = 28463676u; break;
-                    case 10: y0 = 28463676u; y1 = 29522085u; break;
-                    case 11: y0 = 29522085u; y1 = 30371736u; break;
-                    case 12: y0 = 30371736u; y1 = 31049467u; break;
-                    case 13: y0 = 31049467u; y1 = 31587321u; break;
-                    case 14: y0 = 31587321u; y1 = 32012447u; break;
-                    case 15: y0 = 32012447u; y1 = 32347398u; break;
-                    case 16: y0 = 32347398u; y1 = 32610638u; break;
-                    case 17: y0 = 32610638u; y1 = 32817111u; break;
-                    case 18: y0 = 32817111u; y1 = 32978807u; break;
-                    case 19: y0 = 32978807u; y1 = 33105282u; break;
-                    case 20: y0 = 33105282u; y1 = 33204115u; break;
-                    case 21: y0 = 33204115u; y1 = 33281290u; break;
-                    case 22: y0 = 33281290u; y1 = 33341517u; break;
-                    case 23: y0 = 33341517u; y1 = 33388497u; break;
-                    case 24: y0 = 33388497u; y1 = 33425131u; break;
-                    case 25: y0 = 33425131u; y1 = 33453689u; break;
-                    case 26: y0 = 33453689u; y1 = 33475947u; break;
-                    case 27: y0 = 33475947u; y1 = 33493292u; break;
-                    case 28: y0 = 33493292u; y1 = 33506807u; break;
-                    case 29: y0 = 33506807u; y1 = 33517336u; break;
-                    case 30: y0 = 33517336u; y1 = 33525538u; break;
-                    case 31: y0 = 33525538u; y1 = 33531927u; break;
+                    case 0: y0 = 0u; y1 = 4075u; break;
+                    case 1: y0 = 4075u; y1 = 8025u; break;
+                    case 2: y0 = 8025u; y1 = 11743u; break;
+                    case 3: y0 = 11743u; y1 = 15143u; break;
+                    case 4: y0 = 15143u; y1 = 18173u; break;
+                    case 5: y0 = 18173u; y1 = 20813u; break;
+                    case 6: y0 = 20813u; y1 = 23066u; break;
+                    case 7: y0 = 23066u; y1 = 24956u; break;
+                    case 8: y0 = 24956u; y1 = 26519u; break;
+                    case 9: y0 = 26519u; y1 = 27797u; break;
+                    case 10: y0 = 27797u; y1 = 28830u; break;
+                    case 11: y0 = 28830u; y1 = 29660u; break;
+                    case 12: y0 = 29660u; y1 = 30322u; break;
+                    case 13: y0 = 30322u; y1 = 30847u; break;
+                    case 14: y0 = 30847u; y1 = 31262u; break;
+                    case 15: y0 = 31262u; y1 = 31589u; break;
+                    case 16: y0 = 31589u; y1 = 31846u; break;
+                    case 17: y0 = 31846u; y1 = 32048u; break;
+                    case 18: y0 = 32048u; y1 = 32206u; break;
+                    case 19: y0 = 32206u; y1 = 32329u; break;
+                    case 20: y0 = 32329u; y1 = 32426u; break;
+                    case 21: y0 = 32426u; y1 = 32501u; break;
+                    case 22: y0 = 32501u; y1 = 32560u; break;
+                    case 23: y0 = 32560u; y1 = 32606u; break;
+                    case 24: y0 = 32606u; y1 = 32642u; break;
+                    case 25: y0 = 32642u; y1 = 32670u; break;
+                    case 26: y0 = 32670u; y1 = 32691u; break;
+                    case 27: y0 = 32691u; y1 = 32708u; break;
+                    case 28: y0 = 32708u; y1 = 32721u; break;
+                    case 29: y0 = 32721u; y1 = 32732u; break;
+                    case 30: y0 = 32732u; y1 = 32740u; break;
+                    case 31: y0 = 32740u; y1 = 32746u; break;
                     default: y0 = 0; y1 = 0; break;
                     }
-                    interpolated = y0 + (((uint64_t)(y1 - y0) * fraction
-                        + (uint64_t(1) << (FIXED_BITS - 4))) >> (FIXED_BITS - 3));
-                    y_fixed = interpolated >> (25 - FIXED_BITS);
+                    interpolated = y0 + (((y1 - y0) * fraction
+                        + (uint32_t(1) << (FRACTION_BITS - 1))) >> FRACTION_BITS);
+                    y_fixed = (interpolated << TABLE_SHIFT_LEFT) >> TABLE_SHIFT_RIGHT;
                 }
 
                 if (y_fixed == 0) {
