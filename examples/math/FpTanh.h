@@ -7,21 +7,19 @@
 #include <cstddef>
 #include <cstdint>
 
-// Combinational floating-point hyperbolic tangent. The core uses the bounded
-// [5/4] Pade approximation x*(945+105*x*x+x^4)/(945+420*x*x+15*x^4)
-// for |x| < 4 and saturates to one outside that range. The older [3/2]
-// approximation had up to 0.026 absolute error, which moved GELU across FP8
-// rounding midpoints. All arithmetic is fixed-point and synthesizable.
+// Combinational floating-point hyperbolic tangent. A 32-segment linear
+// interpolation table covers |x| < 4; larger values saturate to one. The
+// Q25 table has at most 0.0015 absolute interpolation error and avoids the
+// 64-bit variable divider that could not meet FPGA timing.
 template<size_t W=32, size_t EW=8>
 class FpTanh : public cpphdl::Module
 {
     static constexpr size_t MANT_WIDTH = W - EW - 1;
-    // At |x| < 4 the largest numerator is below 11524 * 2^(2*FIXED_BITS).
     static constexpr size_t FIXED_BITS = MANT_WIDTH + 4 < 25 ? MANT_WIDTH + 4 : 25;
-    static constexpr uint64_t MANT_MASK = (uint64_t(1) << MANT_WIDTH) - 1;
-    static constexpr uint64_t EXP_MAX = (uint64_t(1) << EW) - 1;
-    static constexpr uint64_t SIGN_MASK = uint64_t(1) << (W - 1);
-    static constexpr uint64_t ONE_FIXED = uint64_t(1) << FIXED_BITS;
+    static constexpr uint32_t MANT_MASK = (uint32_t(1) << MANT_WIDTH) - 1;
+    static constexpr uint32_t EXP_MAX = (uint32_t(1) << EW) - 1;
+    static constexpr uint32_t SIGN_MASK = uint32_t(1) << (W - 1);
+    static constexpr uint32_t ONE_FIXED = uint32_t(1) << FIXED_BITS;
     static constexpr int EXP_BIAS = (1 << (EW - 1)) - 1;
 
     static_assert(W >= 4 && W <= 32, "FpTanh supports widths from 4 to 32 bits");
@@ -36,21 +34,21 @@ private:
 
     cpphdl::logic<W>& result_comb_func()
     {
-        uint64_t raw;
-        uint64_t sign;
-        uint64_t exponent;
-        uint64_t mantissa;
-        uint64_t significand;
-        uint64_t x_fixed;
-        uint64_t x_squared;
-        uint64_t x_fourth;
-        uint64_t numerator;
-        uint64_t denominator;
-        uint64_t y_fixed;
-        uint64_t normalized;
-        uint64_t discarded;
-        uint64_t halfway;
-        cpphdl::logic<64> result_raw;
+        uint32_t raw;
+        uint32_t sign;
+        uint32_t exponent;
+        uint32_t mantissa;
+        uint32_t significand;
+        uint32_t x_fixed;
+        uint32_t fraction;
+        uint64_t interpolated;
+        uint32_t y_fixed;
+        uint32_t y0;
+        uint32_t y1;
+        uint32_t normalized;
+        uint32_t discarded;
+        uint32_t halfway;
+        cpphdl::logic<32> result_raw;
         int exponent_unbiased;
         int fixed_shift;
         int result_exponent;
@@ -60,18 +58,19 @@ private:
         uint8_t shift_amount;
         uint8_t msb;
         uint8_t i;
+        uint8_t segment;
 
-        raw = (uint64_t)data_in();
+        raw = (uint32_t)data_in();
         sign = raw & SIGN_MASK;
         exponent = (raw >> MANT_WIDTH) & EXP_MAX;
         mantissa = raw & MANT_MASK;
         significand = 0;
         x_fixed = 0;
-        x_squared = 0;
-        x_fourth = 0;
-        numerator = 0;
-        denominator = 1;
+        fraction = 0;
+        interpolated = 0;
         y_fixed = 0;
+        y0 = 0;
+        y1 = 0;
         normalized = 0;
         discarded = 0;
         halfway = 0;
@@ -84,6 +83,7 @@ private:
         zero_shift = 0;
         shift_amount = 0;
         msb = 0;
+        segment = 0;
         result_comb = 0;
 
         if (exponent == 0) {
@@ -123,13 +123,50 @@ private:
                     }
                 }
 
-                x_squared = (x_fixed * x_fixed) >> FIXED_BITS;
-                x_fourth = (x_squared * x_squared) >> FIXED_BITS;
-                numerator = x_fixed * (945 * ONE_FIXED + 105 * x_squared + x_fourth);
-                denominator = 945 * ONE_FIXED + 420 * x_squared + 15 * x_fourth;
-                y_fixed = (numerator + denominator / 2) / denominator;
-                if (y_fixed > ONE_FIXED) {
+                segment = (uint8_t)(x_fixed >> (FIXED_BITS - 3));
+                if (segment >= 32) {
                     y_fixed = ONE_FIXED;
+                }
+                else {
+                    fraction = x_fixed & ((uint64_t(1) << (FIXED_BITS - 3)) - 1);
+                    switch (segment) {
+                    case 0: y0 = 0u; y1 = 4172594u; break;
+                    case 1: y0 = 4172594u; y1 = 8218107u; break;
+                    case 2: y0 = 8218107u; y1 = 12024479u; break;
+                    case 3: y0 = 12024479u; y1 = 15506079u; break;
+                    case 4: y0 = 15506079u; y1 = 18609279u; break;
+                    case 5: y0 = 18609279u; y1 = 21312062u; break;
+                    case 6: y0 = 21312062u; y1 = 23619153u; break;
+                    case 7: y0 = 23619153u; y1 = 25554859u; break;
+                    case 8: y0 = 25554859u; y1 = 27155638u; break;
+                    case 9: y0 = 27155638u; y1 = 28463676u; break;
+                    case 10: y0 = 28463676u; y1 = 29522085u; break;
+                    case 11: y0 = 29522085u; y1 = 30371736u; break;
+                    case 12: y0 = 30371736u; y1 = 31049467u; break;
+                    case 13: y0 = 31049467u; y1 = 31587321u; break;
+                    case 14: y0 = 31587321u; y1 = 32012447u; break;
+                    case 15: y0 = 32012447u; y1 = 32347398u; break;
+                    case 16: y0 = 32347398u; y1 = 32610638u; break;
+                    case 17: y0 = 32610638u; y1 = 32817111u; break;
+                    case 18: y0 = 32817111u; y1 = 32978807u; break;
+                    case 19: y0 = 32978807u; y1 = 33105282u; break;
+                    case 20: y0 = 33105282u; y1 = 33204115u; break;
+                    case 21: y0 = 33204115u; y1 = 33281290u; break;
+                    case 22: y0 = 33281290u; y1 = 33341517u; break;
+                    case 23: y0 = 33341517u; y1 = 33388497u; break;
+                    case 24: y0 = 33388497u; y1 = 33425131u; break;
+                    case 25: y0 = 33425131u; y1 = 33453689u; break;
+                    case 26: y0 = 33453689u; y1 = 33475947u; break;
+                    case 27: y0 = 33475947u; y1 = 33493292u; break;
+                    case 28: y0 = 33493292u; y1 = 33506807u; break;
+                    case 29: y0 = 33506807u; y1 = 33517336u; break;
+                    case 30: y0 = 33517336u; y1 = 33525538u; break;
+                    case 31: y0 = 33525538u; y1 = 33531927u; break;
+                    default: y0 = 0; y1 = 0; break;
+                    }
+                    interpolated = y0 + (((uint64_t)(y1 - y0) * fraction
+                        + (uint64_t(1) << (FIXED_BITS - 4))) >> (FIXED_BITS - 3));
+                    y_fixed = interpolated >> (25 - FIXED_BITS);
                 }
 
                 if (y_fixed == 0) {
