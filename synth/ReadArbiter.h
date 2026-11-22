@@ -6,7 +6,7 @@ namespace cpphdl::synth {
 // storage, so a blocked continuation cannot hold up its own downstream reply.
 inline void connectReadStages(graph::Graph& g,const std::string& scope,unsigned depth,
     unsigned dataBits,std::vector<std::map<std::string,graph::Value>>& stages,
-    std::map<std::string,graph::Value>& pins,unsigned replyDepth=0) {
+    std::map<std::string,graph::Value>& pins,unsigned replyDepth=0,bool exclusiveRequests=false) {
     using namespace graph;
     pins["memory_out.write_in"]={0};pins["memory_out.data_in"]=Value(dataBits,0);
     if(stages.empty()) {
@@ -28,9 +28,22 @@ inline void connectReadStages(graph::Graph& g,const std::string& scope,unsigned 
         auto both=[&](Value a,Value b){return g.binary("and",a,b,1);};
         auto inv=[&](Value a){return g.unary("not",a);};
         auto equal=[&](Value a,unsigned b){return g.binary("eq",a,constant(b,bits),1);};
-        auto next=g.wire(bits,scope+".next","state");
-        auto locked=g.wire(1,scope+".locked","state");
-        auto held=g.wire(bits,scope+".held","state");
+        Value next,locked,held;
+        if(!exclusiveRequests) {
+            next=g.wire(bits,scope+".next","state");
+            locked=g.wire(1,scope+".locked","state");
+            held=g.wire(bits,scope+".held","state");
+        }
+        auto reduceOr=[&](std::vector<Value> values,unsigned width) {
+            while(values.size()>1) {
+                std::vector<Value> level;
+                for(size_t i=0;i<values.size();i+=2)
+                    level.push_back(i+1==values.size()?values[i]:
+                        g.binary("or",values[i],values[i+1],width));
+                values=std::move(level);
+            }
+            return values.front();
+        };
         // Two balanced priority trees implement round-robin choice: first
         // eligible index at/after next, otherwise wrap to the first request.
         // A priority chain for every possible start makes a wide source call's
@@ -46,10 +59,31 @@ inline void connectReadStages(graph::Graph& g,const std::string& scope,unsigned 
             auto left=first(begin,count/2,eligible),right=first(begin+count/2,count/2,eligible);
             return {g.binary("or",left.valid,right.valid,1),g.mux(left.valid,left.index,right.index)};
         };
-        auto any=first(0,1u<<bits,false),after=first(0,1u<<bits,true);
-        Value choice=g.mux(after.valid,after.index,any.index),valid=any.valid;
-        choice=g.mux(locked,held,choice);
+        Value choice,valid;
+        if(exclusiveRequests) {
+            // A single-visit access chain cannot issue its next access until
+            // the previous reply reaches that continuation. Its request
+            // valids are one-hot. Do not encode a priority winner and decode
+            // it back into every stage's ready path in this case.
+            std::vector<Value> valids,owners;
+            for(unsigned i=0;i<stages.size();++i) {
+                auto v=stages[i].at("request_valid_out");valids.push_back(v);
+                owners.push_back(g.mux(v,constant(i,bits),constant(0,bits)));
+            }
+            valid=reduceOr(std::move(valids),1);
+            choice=reduceOr(std::move(owners),bits);
+            g.attributes.push_back({scope,"hls_exclusive_memory_requests","1"});
+        } else {
+            auto any=first(0,1u<<bits,false),after=first(0,1u<<bits,true);
+            choice=g.mux(after.valid,after.index,any.index);valid=any.valid;
+            choice=g.mux(locked,held,choice);
+        }
         auto select=[&](const std::string& field,unsigned width) {
+            // Keep payload selection separate from the direct exclusive
+            // ready grants. An indexed mux can eliminate identical fields
+            // and shared address/data bits across access sites. Masking every
+            // payload with its valid prevents that simplification and adds
+            // wide gating even where all sites supply the same value.
             std::vector<Value> values(1u<<bits,Value(width,0));
             for(unsigned i=0;i<stages.size();++i)values[i]=stages[i].at(field);
             for(unsigned bit=0;values.size()>1;++bit) {
@@ -88,17 +122,49 @@ inline void connectReadStages(graph::Graph& g,const std::string& scope,unsigned 
         g.connect(issuedReady,tags.at("command_ready_out"));
         auto take=both(valid,request.at("command_ready_out"));
         auto state=[&](Value q,Value d){g.states.push_back({q,g.mux(pins.at("reset"),Value(q.size(),0),d),{1}});};
-        state(locked,both(valid,inv(take)));
-        state(held,g.mux(valid,choice,held));
-        auto successor=g.mux(equal(choice,stages.size()-1),constant(0,bits),
-                             g.binary("add",choice,constant(1,bits),bits));
-        state(next,g.mux(take,successor,next));
+        if(!exclusiveRequests) {
+            state(locked,both(valid,inv(take)));
+            state(held,g.mux(valid,choice,held));
+            auto successor=g.mux(equal(choice,stages.size()-1),constant(0,bits),
+                                 g.binary("add",choice,constant(1,bits),bits));
+            state(next,g.mux(take,successor,next));
+        }
         std::vector<Value> replyReadyTerms;
         Value reply=tags.at("data_out");reply.push_back(tags.at("error_out").at(0));
+        auto replyOwner=tags.at("context_out");
+        auto replyValid=tags.at("response_valid_out");
+        if(exclusiveRequests) {
+            // A single-token chain cannot issue its next access before the
+            // current reply is consumed. One shared registered reply slot
+            // therefore suffices; separate per-site slots only duplicate its
+            // wide data registers. Capture ownership with the payload and
+            // retain the response boundary under downstream backpressure.
+            Value packet=replyOwner;
+            packet.insert(packet.end(),reply.begin(),reply.end());
+            auto ready=g.wire(1,scope+".shared_response_ready");
+            auto response=buildMemoryContinuation(g,scope+".shared_response",1,
+                {{"reset",pins.at("reset")},{"command_valid_in",replyValid},
+                 {"request_ready_in",{1}},{"context_in",packet},
+                 {"memory_valid_in",{1}},{"memory_data_in",{0}},
+                 {"memory_error_in",{0}},{"response_ready_in",ready}},false);
+            g.connect(replyReady,response.at("command_ready_out"));
+            replyReady=ready;
+            replyOwner=slice(response.at("context_out"),0,bits);
+            reply=slice(response.at("context_out"),bits,dataBits+1);
+            replyValid=response.at("response_valid_out");
+        }
         for(unsigned index=0;index<stages.size();++index) {
             auto& s=stages[index];
-            auto selected=equal(choice,index),owner=equal(tags.at("context_out"),index);
+            auto selected=exclusiveRequests?s.at("request_valid_out"):equal(choice,index);
+            auto owner=equal(replyOwner,index);
             g.connect(s.at("request_ready_in"),both(selected,request.at("command_ready_out")));
+            if(exclusiveRequests) {
+                replyReadyTerms.push_back(both(owner,s.at("memory_ready_out")));
+                g.connect(s.at("memory_valid_in"),both(owner,replyValid));
+                g.connect(s.at("memory_data_in"),slice(reply,0,dataBits));
+                g.connect(s.at("memory_error_in"),slice(reply,dataBits,1));
+                continue;
+            }
             auto responses=buildMemoryContinuation(g,scope+".responses_"+std::to_string(index),replyDepth?replyDepth:depth,
                 {{"reset",pins.at("reset")},{"command_valid_in",both(owner,tags.at("response_valid_out"))},
                  {"request_ready_in",{1}},{"context_in",reply},{"memory_valid_in",{1}},

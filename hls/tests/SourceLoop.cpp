@@ -2,6 +2,13 @@
 #ifndef LOOP_CASE
 #define LOOP_CASE 2
 #endif
+#if LOOP_CASE==15
+struct LaneMemory {
+    cpphdl::hls::external_ptr<uint32_t> data;
+    uint32_t read(uint32_t i) const {return data[i];}
+    void write(uint32_t i,uint32_t value) const {data[i]=value;}
+};
+#endif
 #if LOOP_CASE==1 || LOOP_CASE==2 || LOOP_CASE==7 || LOOP_CASE==13
 #include "../math/Fp32MacPipeline.h"
 #endif
@@ -162,6 +169,81 @@ struct SourceLoopMethods {
             base+=4;--count;
         }
         memory[32]=value;return (uint64_t(base)<<32)|value;
+#elif LOOP_CASE==15
+        // Const accessors can have pointed-to memory effects. Their ordered
+        // read/write semantics must survive spatial expansion of the packet.
+        LaneMemory input{memory},output{memory};
+        uint32_t updated[4];
+#pragma omp simd
+        for(unsigned lane=0;lane<4;++lane) {
+            updated[lane]=input.read(lane)+value;
+            output.write(lane,updated[lane]);
+        }
+        uint32_t sum=0;
+        for(unsigned lane=0;lane<4;++lane)sum+=updated[lane];
+        memory[32]=sum;return sum;
+#elif LOOP_CASE==16
+        // A memory-reading loop test cannot be duplicated as a pure test.
+        uint32_t sum=value,i=0;
+        while(i<count && (memory[i]&1u))sum+=memory[i++];
+        memory[32]=sum;return sum;
+#elif LOOP_CASE==17
+        // Rotating a scalar test must still evaluate its increment exactly
+        // once initially and once after each iteration, including continue.
+        uint32_t sum=value,i=0;
+        while(i++<count) {
+            if(i==2)continue;
+            sum+=memory[i-1];
+        }
+        memory[32]=sum;return (uint64_t(i)<<32)|sum;
+#elif LOOP_CASE==18
+        uint32_t data[8],sum=value;
+        for(unsigned i=0;i<8;++i)data[i]=memory[i];
+        for(unsigned round=0;round<count;++round) {
+            uint32_t lanes[4];
+#pragma omp simd
+            for(unsigned lane=0;lane<4;++lane)
+                lanes[lane]=lane<count?data[(round+lane)&7]+data[(round+lane+1)&7]:value;
+            sum+=lanes[0]+lanes[1]+lanes[2]+lanes[3];
+        }
+        memory[32]=sum;return sum;
+#elif LOOP_CASE==19
+        uint32_t data[8],sum=value;
+        for(unsigned i=0;i<8;++i)data[i]=memory[i];
+        for(unsigned round=0;round<count;++round) {
+            const auto first=data[round&7];
+            const auto second=data[first&7];
+            data[(round+1)&7]=second+value;
+            sum+=data[(round+1)&7];
+        }
+        memory[32]=sum;return sum;
+#elif LOOP_CASE==20
+        uint32_t data[4]{};
+        for(unsigned i=0;i<count;++i)data[(i+value)&3]=memory[i]+i;
+        uint32_t sum=value;
+        for(unsigned i=0;i<4;++i)sum=sum*33+data[i];
+        memory[32]=sum;return sum;
+#elif LOOP_CASE==21
+        uint32_t data[8]{};
+        for(unsigned i=0;i<count;++i) {
+            auto word=memory[i];data[i]=word;
+            if(word&1)break;
+        }
+        uint32_t sum=value;
+        for(unsigned i=0;i<count;++i)sum+=data[i];
+        memory[32]=sum;return sum;
+#elif LOOP_CASE==22
+        struct Packet {uint32_t lane[256];};
+        Packet packet{};
+        packet.lane[255]=value;packet.lane[0]=count;
+        uint32_t sum=packet.lane[255]+packet.lane[0]+packet.lane[128];
+        memory[32]=sum;return sum;
+#elif LOOP_CASE==23
+        uint32_t data[256]{};
+        for(unsigned i=0;i<count;++i)data[(i+value)&255]=memory[i];
+        uint32_t sum=value;
+        for(unsigned i=0;i<256;++i)sum+=data[i];
+        memory[32]=sum;return sum;
 #else
         uint32_t sum=value,finishedInput;
         if(count&1) {

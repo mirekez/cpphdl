@@ -321,23 +321,24 @@ class DelayedScheduler {
                     )
                     reject(nullptr, "external memory access requires a power-of-two supported scalar or padding-free wire aggregate fitting DATA_BITS");
                 if (pipelineMode) {
-                    if(item.type.isVolatileQualified() || (external && bits(item.type)>64))
-                        reject(nullptr,"streaming memory currently supports nonvolatile accesses of up to 64 bits");
+                    if(item.type.isVolatileQualified())
+                        reject(nullptr,"streaming memory requires nonvolatile accesses");
                     if(!external && (!count || !item.type.isTriviallyCopyableType(ctx) || bits(item.type)>1048576))
                         reject(nullptr,"local memory transfer requires a bounded trivially copyable value: "+item.type.getAsString());
                     const std::string domain=external?"external":"local";
                     std::vector<std::string> loaded;
-                    for(unsigned offset=0;offset<count;offset+=8) {
+                    const unsigned transferBytes=externalDataBits/8;
+                    for(unsigned offset=0;offset<count;offset+=transferBytes) {
                         auto id=std::to_string(tempCount++);
                         auto saved="scratch."+domain+"_value_"+id;
                         // Pointer values use the HLS address width, while their
                         // containing object retains the host's pointer layout.
-                        const auto width=std::min(64u,bits(item.type)-8*offset);
+                        const auto width=std::min(externalDataBits,bits(item.type)-8*offset);
                         blockSymbols[saved]={item.write?1u:width,domain+"_value",true};
                         auto partAddress=offset?"("+address+" + "+std::to_string(offset)+")":address;
                         auto partData=offset?"("+castTo(item.type,data)+" >> "+std::to_string(8*offset)+")":castTo(item.type,data);
                         prefix.push_back(saved+" = hls_"+domain+"_"+(item.write?"write_":"read_")+std::to_string(width)+"("+
-                            addressCast(partAddress)+","+std::to_string(std::min(8u,count-offset))+","+
+                            addressCast(partAddress)+","+std::to_string(std::min(transferBytes,count-offset))+","+
                             (item.write?partData+",":"")+id+");");
                         prefix.push_back("if (fault == 0) fault = hls_"+domain+"_memory_fault("+id+");");
                         loaded.push_back(saved);
@@ -348,7 +349,7 @@ class DelayedScheduler {
                             result+="(";
                             for(size_t i=0;i<loaded.size();++i)
                                 result+=(i?" | ":"")+std::string("(")+std::to_string(bits(item.type))+"'("+
-                                    loaded[i]+") << "+std::to_string(64*i)+")";
+                                    loaded[i]+") << "+std::to_string(externalDataBits*i)+")";
                             result+=")";
                         }
                     }
@@ -843,7 +844,7 @@ class DelayedScheduler {
     }
     void store(Value target, Value value) {
         if (!target.location) reject(nullptr, "assignment needs an lvalue: " + target.type.getAsString() + " " + target.text);
-        if (blockRam && bytes(target.type) >= 256 && value.text == "'0") {
+        if (blockRam && !pipelineMode && bytes(target.type) >= 256 && value.text == "'0") {
             // Large clears use a counted RAM-port loop, not an unrolled FSM
             // and a whole-aggregate temporary for every beat.
             const unsigned count = bytes(target.type), words = count / 8;
@@ -861,6 +862,11 @@ class DelayedScheduler {
                 store({offsetAddress(target.text, i), ctx.UnsignedCharTy, true}, {"0", ctx.UnsignedCharTy});
             return;
         }
+        // In a streaming pipeline, retain a value initialization until storage
+        // analysis. Synthesizing a dynamic clear loop here exposes the address
+        // and falsely spills every large, statically indexed SIMD packet to
+        // RAM. Actual addressable objects still lower through the RAM port in
+        // resolveAccesses; register packets retain a constant zero value.
         std::string data = read(value);
         emit(access({target.text, data, target.type, true}));
     }
@@ -1148,6 +1154,18 @@ class DelayedScheduler {
 
     Value invoke(FunctionDecl* fn, const std::vector<Value>& args, std::string self = "", Value constructed = {}) {
         std::string name = fn->getQualifiedNameAsString();
+        if(auto* assignment=dyn_cast<CXXMethodDecl>(fn); pipelineMode && assignment &&
+           (assignment->isCopyAssignmentOperator() || assignment->isMoveAssignmentOperator()) &&
+           assignment->isTrivial() && args.size()==1 && !self.empty()) {
+            const auto type=ctx.getRecordType(assignment->getParent());
+            if(wireValue(type,true) && bits(type)<=externalDataBits) {
+                // A trivial, padding-free value assignment that fits one port
+                // is a typed transfer. Expanding Clang's generated field/array
+                // copy body would create byte/element loops and spill its
+                // temporary, losing the whole-beat access in the C++ source.
+                Value target{self,type,true};store(target,args.front());return target;
+            }
+        }
         if (auto* member = dyn_cast<CXXMethodDecl>(fn); preserveAtomicCalls && member && member->getNameAsString() == "command" &&
             (fn->getCanonicalDecl() != entryFunction || calling[fn->getCanonicalDecl()])) {
             std::string module;
@@ -1823,7 +1841,7 @@ class DelayedScheduler {
                         ctx.hasSameUnqualifiedType(knownArray->second->getElementType(), type))
                         array = knownArray->second;
                 }
-                if (array && array->getSize().getLimitedValue() <= 64) {
+                if (array) {
                     auto known = staticInteger(ctx, index->getIdx(), elaboratedIndices);
                     if (known && *known >= 0 && uint64_t(*known) < array->getSize().getLimitedValue()) {
                         return {offsetAddress(base.text, uint64_t(*known) * bytes(type)), type, true};
@@ -1832,7 +1850,10 @@ class DelayedScheduler {
                     // either scheduler. Do not spill the whole packet to the
                     // byte arena merely to read a constant array index. Dynamic
                     // selection stays a memory access outside spatial pipelines.
-                    if (pipelineMode && !blockRam) {
+                    // The mux size limit applies to runtime selection only.
+                    // Constant OpenMP lane indices need no mux regardless of
+                    // the declared array extent.
+                    if (array->getSize().getLimitedValue() <= 64 && pipelineMode && !blockRam) {
                         ArraySelection selection{read(i), {}};
                         for (unsigned n = 0; n < array->getSize().getLimitedValue(); ++n)
                             selection.elements.push_back(offsetAddress(base.text, n * bytes(type)));
@@ -1984,7 +2005,7 @@ class DelayedScheduler {
             (void)definition(fn);
             return fn;
         };
-        try { plan = planOpenMP(ctx, directive, resolve, elaboratedIndices); }
+        try { plan = planOpenMP(ctx, directive, resolve, elaboratedIndices, pipelineMode && externalMemory); }
         catch (const std::runtime_error& error) { reject(directive, error.what()); }
         auto original = contexts.back().variables;
         auto originalIndices = elaboratedIndices;

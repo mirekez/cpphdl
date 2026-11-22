@@ -347,7 +347,22 @@ add_subdirectory(../examples/hft "${CMAKE_BINARY_DIR}/hls/examples/hft")
 add_subdirectory(../examples/llm "${CMAKE_BINARY_DIR}/hls/examples/llm")
 add_subdirectory(../examples/dram "${CMAKE_BINARY_DIR}/hls/examples/dram")
 add_subdirectory(../examples/openmp "${CMAKE_BINARY_DIR}/hls/examples/openmp")
-foreach(case RANGE 0 40)
+if(HLS_VERILATOR)
+    foreach(tier raw mapped)
+        set(nested_synth OFF)
+        if(tier STREQUAL "mapped")
+            set(nested_synth ON)
+        endif()
+        add_test(NAME hls_openmp_nested_packet_${tier} COMMAND "${CMAKE_COMMAND}"
+            "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-nested-packet-${tier}"
+            -DSTAGES=1 -DOPENMP=ON "-DSYNTH=${nested_synth}" -DPERIOD_NS=2.0
+            -DSOURCE=OpenMPNestedPacket.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
+        set_tests_properties(hls_openmp_nested_packet_${tier} PROPERTIES TIMEOUT 600 LABELS "hls;openmp;retiming")
+    endforeach()
+endif()
+foreach(case RANGE 0 43)
     add_test(NAME hls_openmp_reject_${case} COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}" "-DCASE=${case}"
         "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openmp-reject-${case}"

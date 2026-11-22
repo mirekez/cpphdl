@@ -47,7 +47,7 @@ inline std::map<std::string,graph::Value> buildMemoryContinuation(
     // A direct registered head avoids RAM tCO plus forwarding/mux logic on
     // the high-fanout local-memory request and response boundary. Deeper
     // contexts below retain synchronous block-RAM storage.
-    if(depth==2 && in.at("context_in").size()<=256) {
+    if(depth==2) {
         auto both=[&](Value a,Value b){return g.binary("and",a,b,1);};
         auto either=[&](Value a,Value b){return g.binary("or",a,b,1);};
         auto inv=[&](Value a){return g.unary("not",a);};
@@ -92,14 +92,29 @@ inline std::map<std::string,graph::Value> buildMemoryContinuation(
     const unsigned payloadBits=in.at("context_in").size();
     const bool predicated=in.count("request_enable_in");
     Value context=in.at("context_in");
-    if(predicated)context.push_back(in.at("request_enable_in").at(0));
     const unsigned contextBits=context.size();
     auto forwarded=reg("forwarded_context",contextBits),ramContext=reg("ram_context",contextBits);
     auto useForwarded=reg("use_forwarded",1);
     auto empty=g.binary("eq",count,constant(0,count.size()),1);
     auto available=both(running,inv(empty));
     auto saved=g.mux(useForwarded,forwarded,ramContext);
-    auto enabled=predicated?slice(saved,payloadBits,1):Value{1};
+    // Request enable is protocol state, not payload. Reading it from the
+    // context RAM puts the RAM's clock-to-output delay in the response-ready
+    // path, which can extend through arbiters and other memory boundaries.
+    // Keep this one bit per entry in registers while payload stays in RAM.
+    Value enables,enabled{1};
+    if(predicated) {
+        enables=reg("request_enables",depth);
+        std::vector<Value> values;
+        for(unsigned i=0;i<depth;++i)values.push_back(slice(enables,i,1));
+        for(unsigned bit=0;values.size()>1;++bit) {
+            std::vector<Value> level;
+            for(size_t i=0;i<values.size();i+=2)
+                level.push_back(g.mux({head[bit]},values[i+1],values[i]));
+            values=std::move(level);
+        }
+        enabled=values.front();
+    }
     auto issue=predicated?in.at("request_enable_in"):Value{1};
     std::map<std::string,Value> out;
     out["response_valid_out"]=both(available,either(inv(enabled),in.at("memory_valid_in")));
@@ -110,6 +125,17 @@ inline std::map<std::string,graph::Value> buildMemoryContinuation(
     out["request_valid_out"]=both(running,both(space,both(issue,in.at("command_valid_in"))));
     out["command_ready_out"]=both(running,both(space,either(inv(issue),in.at("request_ready_in"))));
     auto push=both(in.at("command_valid_in"),out.at("command_ready_out"));
+    if(predicated) {
+        Value nextEnables;
+        for(unsigned i=0;i<depth;++i) {
+            auto write=both(push,g.binary("eq",tail,constant(i,pointerBits),1));
+            auto bit=g.mux(write,issue,slice(enables,i,1));
+            nextEnables.push_back(bit.at(0));
+        }
+        // Occupancy reset invalidates these bits; each accepted command
+        // writes its own enable before that entry can become visible.
+        g.states.push_back({enables,nextEnables,{1}});
+    }
     out["context_out"]=slice(saved,0,payloadBits);
     out["data_out"]=g.mux(enabled,in.at("memory_data_in"),Value(in.at("memory_data_in").size(),0));
     out["error_out"]=both(enabled,in.at("memory_error_in"));

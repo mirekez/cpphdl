@@ -61,7 +61,7 @@ int main() {
             Memory memory=initial(),expected=memory;
             std::deque<Access> trace;std::vector<Job> jobs;
             for(unsigned id=0;id<Jobs;++id)jobs.push_back(reference(id,expected,trace,errors));
-            std::array<unsigned,Jobs> acknowledged{};
+            std::array<unsigned,Jobs> acknowledged{},requested{};
             struct Pending {unsigned due;Access access;uint64_t data;};std::deque<Pending> pending;
             unsigned sent=0,received=0;
             bool heldRequest=false,heldResult=false;
@@ -84,8 +84,24 @@ int main() {
                 if(take)++sent;
                 Access access{};uint64_t readData=0;
                 if(request) {
-                    if(trace.empty())throw std::runtime_error("extra external effect");
-                    access=trace.front();trace.pop_front();
+                    // Only the initial independent external-to-local copy may
+                    // have read ahead of its first error. Accept an exact,
+                    // ordered suffix of that loop's reads, never a store or
+                    // a read from the following calculation/next invocation.
+                    constexpr bool copyCase=LOOP_CASE==6 || LOOP_CASE==7 || LOOP_CASE==8 ||
+                        LOOP_CASE==18 || LOOP_CASE==19 || LOOP_CASE==20 || LOOP_CASE==23;
+                    unsigned copyCount=(LOOP_CASE==18 || LOOP_CASE==19)?8:received%9;
+                    bool suffix=copyCase && received<sent && jobs[received].fault &&
+                        jobs[received].count<=copyCount && requested[received]>=jobs[received].count &&
+                        (trace.empty() || trace.front().job!=received);
+                    if(suffix) {
+                        if(requested[received]>=copyCount)throw std::runtime_error("speculative read passed copy loop boundary");
+                        access={received,requested[received]+1,0x1000+4*requested[received],4,false,false,0,
+                            load(memory,4*requested[received],4)};
+                    } else {
+                        if(trace.empty())throw std::runtime_error("extra external effect");
+                        access=trace.front();trace.pop_front();
+                    }
                     if(access.job>=sent||d.memory_out___05Faddr_out!=access.address||d.memory_out___05Fsize_out!=access.size||
                         bool(d.memory_out___05Fwrite_out)!=access.write||(access.write&&d.memory_out___05Fdata_out!=access.data)) {
                         std::fprintf(stderr,"access job=%u ordinal=%u actual=%x/%u/%u/%llx expected=%x/%u/%u/%llx\n",access.job,access.ordinal,
@@ -97,9 +113,10 @@ int main() {
                         readData=load(memory,access.address-0x1000,access.size);
                         if(!access.error&&readData!=access.reply)throw std::runtime_error("load issued before prior store became visible");
                     }
+                    ++requested[access.job];
                 }
                 if(d.response_valid_out) {
-                    if(received>=sent||acknowledged[received]!=jobs[received].count)
+                    if(received>=sent||acknowledged[received]!=requested[received]||requested[received]<jobs[received].count)
                         throw std::runtime_error("function returned before its memory acknowledgements");
                     if(d.fault_out!=jobs[received].fault||(!d.fault_out&&d.result_out!=jobs[received].result)) {
                         std::fprintf(stderr,"result job=%u actual=%llx/%u expected=%llx/%u\n",received,(unsigned long long)d.result_out,

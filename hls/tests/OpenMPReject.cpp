@@ -14,6 +14,12 @@ struct [[clang::annotate("CPPHDL_REPLACEMENT_MODULE=RejectedAtomic")]] Transitiv
     uint32_t command(uint32_t value) const { return transitive_global(value); }
 };
 struct OpenMPRejectedMethods {
+    static uint32_t nested_global(uint32_t value) {
+        uint32_t sum=0;
+#pragma omp simd reduction(+:sum)
+        for(unsigned bit=0;bit<4;++bit)sum+=(value>>bit)+mutable_seed;
+        return sum;
+    }
     static uint32_t aliased(const uint32_t& x) { return x; }
     static uint32_t recursive(uint32_t x) { return x?recursive(x-1):0; }
     static uint32_t helper(uint32_t value) { return value * 3u + mutable_seed++; }
@@ -177,6 +183,23 @@ struct OpenMPRejectedMethods {
 #elif OPENMP_REJECT == 40
 #pragma omp simd reduction(+:sum)
         for (unsigned lane = 0; lane < 4; ++lane) sum += TransitiveAtomic{}.command(value);
+#elif OPENMP_REJECT == 41
+        struct Packet {uint32_t value[2];};
+        Packet packets[4]{};
+#pragma omp simd
+        for(unsigned lane=0;lane<4;++lane) {
+            auto packet=packets[(lane+1)%4];
+            values[lane]=values[(lane+1)%4]+packet.value[1];
+        }
+#elif OPENMP_REJECT == 42
+#pragma omp simd reduction(+:sum)
+        for(unsigned lane=0;lane<4;++lane)sum+=nested_global(value+lane);
+#elif OPENMP_REJECT == 43
+#pragma omp simd
+        for(unsigned outer=0;outer<2;++outer) {
+#pragma omp simd
+            for(unsigned inner=0;inner<4;++inner)values[outer]=value+inner;
+        }
 #endif
         return sum ^ values[0] ^ scratch;
     }

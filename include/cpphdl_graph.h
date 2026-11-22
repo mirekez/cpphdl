@@ -660,11 +660,12 @@ public:
         }
     }
 
-    // Final native emission can discard state outside the observable sequential
-    // cone. Do not run this during partition extraction or streaming scheduling:
-    // those graphs can still acquire consumers/bindings at a later stage.
-    size_t pruneUnusedState() {
-        if (states.empty() || !pipelines.empty()) return 0;
+    // Final emission can discard state outside the observable sequential cone.
+    // Scheduling metadata is not a circuit output, but must retain its state
+    // until scheduling and replacement linking have finished. Only the final
+    // RTL emitter may explicitly ignore that metadata.
+    size_t pruneUnusedState(bool finalEmission = false) {
+        if (states.empty() || (!finalEmission && !pipelines.empty())) return 0;
         std::vector<std::vector<size_t>> owners(nodes.size());
         for (size_t index = 0; index < states.size(); ++index) {
             std::set<size_t> words;
@@ -683,6 +684,11 @@ public:
             }
         };
         for (const auto& port : ports) if (!port.input) require(port.bits);
+        // Linked hard blocks consume pins outside the ordinary node graph.
+        // Their input producers must survive even if no top-level output
+        // directly references them. Preserve every pin conservatively.
+        for (const auto& replacement : replacements)
+            for (const auto& [name,bits] : replacement.pins) require(bits);
         // Even an unread memory can have writes or observable bounds errors.
         for (const auto& access : memoryAccesses) {
             require(access.address); require(access.enabled);

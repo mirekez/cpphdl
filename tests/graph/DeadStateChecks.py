@@ -107,6 +107,14 @@ int main(int argc,char**argv) {
  // Streaming bindings are outside this pass's final-native contract.
  Graph streaming=sequential();streaming.pipelines.push_back({});
  assert(streaming.pruneUnusedState()==0 && streaming.states.size()==original);
+ // Final RTL ignores scheduling metadata, but keeps hard-block pin producers.
+ streaming.pipelines.back().pins["metadata_only"]=streaming.states.back().bits;
+ auto hardInput=streaming.wire(8,"replacement_only","state");
+ streaming.states.push_back({hardInput,streaming.states.front().bits,{1},0});
+ streaming.replacements.push_back({"hard","HardBlock","",1,{{"operation_in",hardInput}}});
+ assert(streaming.pruneUnusedState()==0 && streaming.states.size()==original+1);
+ assert(streaming.pruneUnusedState(true)==2 && streaming.states.size()==original-1);
+ assert(streaming.states.back().bits==hardInput);
  // Even unused invalid clocks/reset/event histories must still be rejected.
  auto rejected=[&](Graph bad) {
   bool threw=false;try{bad.emit(dir+"/invalid.h");}catch(const std::runtime_error&){threw=true;}

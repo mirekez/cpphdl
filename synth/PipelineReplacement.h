@@ -31,9 +31,20 @@ inline void linkPipelineReplacements(graph::Graph& g) {
             throw std::runtime_error("replacement LATENCY is below its minimum: " + module);
         PipelineReplacement r{p.scope,module,body,p.latency,p.pins};
         std::set<Value> owned;
-        for (auto q : p.registers) owned.insert(g.resolved(q));
+        std::set<Bit> ownedHeads;
+        for (auto q : p.registers) {
+            auto bits = g.resolved(q);
+            if (!bits.empty()) ownedHeads.insert(bits.front());
+            owned.insert(std::move(bits));
+        }
         g.states.erase(std::remove_if(g.states.begin(),g.states.end(),[&](const State& s) {
-            return owned.count(g.resolved(s.bits));
+            // Most states belong to another source region. Avoid allocating
+            // and resolving an entire value for each state and each MAC.
+            // Resolve the head on every visit: preceding replacements may
+            // have changed aliases. Matching heads still require full value
+            // equality, including width, shared prefixes and constant bits.
+            if (!s.bits.empty() && !ownedHeads.count(g.resolve(s.bits.front()))) return false;
+            return owned.count(g.resolved(s.bits)) != 0;
         }),g.states.end());
         for (auto& [name,bits] : r.pins) bits = g.resolved(bits);
         for (auto& [name,bits] : r.pins) if (!pipelineInput(name)) {

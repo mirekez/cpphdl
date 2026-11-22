@@ -50,6 +50,7 @@ struct Fp32BitsMethods {
         // long control/data pipelines in HLS for a ten-bit significand.
         // A zero mantissa selects no case and preserves signed zero.
         subnormal = 0;
+#pragma omp simd reduction(|:subnormal)
         for (unsigned bit = 0; bit < 10; ++bit) {
             if ((mant >> bit) == 1)
                 subnormal |= ((103u + bit) << 23) |

@@ -12,7 +12,8 @@ set(reasons "constant integers" "shared scalar write" "cross-lane read/write dep
     "address budget" "bounded static affine"
     "cross-lane read/write dependence" "cross-lane read/write dependence"
     "automatic arithmetic locals" "automatic arithmetic locals"
-    "stateless annotated classes" "mutable or nonconstant global" "mutable or nonconstant global")
+    "stateless annotated classes" "mutable or nonconstant global" "mutable or nonconstant global"
+    "cross-lane read/write dependence" "mutable or nonconstant global" "disjoint array writes")
 list(GET reasons ${CASE} reason)
 file(REMOVE_RECURSE "${WORK}/generated")
 file(MAKE_DIRECTORY "${WORK}")

@@ -11,7 +11,7 @@ import sys
 def primitive():
     root=Path(__file__).resolve().parent/'rtl'
     return ('`ifndef CPPHDL_FP32_MAC_RTL\n`define CPPHDL_FP32_MAC_RTL\n`ifdef SYNTHESIS\n'+
-            '\n'.join((root/name).read_text() for name in ['FpAdd.sv','Fp32Mac.sv'])+
+            '\n'.join((root/name).read_text() for name in ['FpAdd.sv','Fp32Mac.sv','AgilexFp32Mac.sv'])+
             '\n`else\n'+(root/'Fp32MacSimulation.sv').read_text()+'\n`endif\n`endif\n')
 
 
@@ -29,19 +29,39 @@ module CpphdlFp32MacBoundary #(parameter INPUT_STAGE=0, OUTPUT_STAGE=0, NORMALIZ
     output wire [31:0] result_out
 );
     wire [95:0] operands;
+    // The enclosing valid pipeline flushes every in-flight result on reset.
+    // Input payload needs no clear: new valid operands traverse every stage
+    // before they can be observed. Avoid 96 reset loads per MAC at the input
+    // boundary. Keep the output clear for better target register packing;
+    // protocol state and delay-ring position also retain their resets.
     generate if(INPUT_STAGE)begin: registered_input
         (* preserve *) reg [95:0] captured;
         always @(posedge clk)begin
-            if(reset)captured<=0;
-            else if(en_in)captured<={a_in,b_in,c_in};
+            if(en_in)captured<={a_in,b_in,c_in};
         end
         assign operands=captured;
     end else begin: direct_input
         assign operands={a_in,b_in,c_in};
     end endgenerate
     wire [31:0] computed;
+    // The portable core has five stages when all three internal cuts are
+    // selected. A native Agilex FP multiplier-adder has the same five enabled
+    // clocks. Keep shorter schedules on FpAdd rather than changing their ABI.
+`ifdef SYNTHESIS
+`ifdef CPPHDL_TARGET_AGILEX7
+    generate if(NORMALIZE_STAGE && PRODUCT_STAGE && ALIGN_STAGE)begin: native_dsp
+        CpphdlAgilexFp32Mac mac(.clk(clk),.advance(en_in),
+            .a(operands[64+:32]),.b(operands[32+:32]),.c(operands[0+:32]),.result(computed));
+    end else begin: portable_dsp
+`endif
+`endif
     Fp32Mac #(.PIPELINE_ADD(NORMALIZE_STAGE),.PIPELINE_PRODUCT(PRODUCT_STAGE),.PIPELINE_ALIGN(ALIGN_STAGE)) mac(.clk(clk),.reset(reset),.en_in(en_in),
         .a_in(operands[64+:32]),.b_in(operands[32+:32]),.c_in(operands[0+:32]),.result_out(computed));
+`ifdef SYNTHESIS
+`ifdef CPPHDL_TARGET_AGILEX7
+    end endgenerate
+`endif
+`endif
     generate if(OUTPUT_STAGE)begin: registered_output
         (* preserve *) reg [31:0] captured;
         always @(posedge clk)begin
@@ -62,6 +82,11 @@ module Fp32MacPipeline #(parameter LATENCY=2)(
     initial if (LATENCY < 2) $fatal(1, "FP32 MAC requires LATENCY >= 2");
     localparam INPUT_STAGE=(LATENCY>2), NORMALIZE_STAGE=(LATENCY>3), OUTPUT_STAGE=(LATENCY>4), PRODUCT_STAGE=(LATENCY>5), ALIGN_STAGE=(LATENCY>6);
     localparam CORE_LATENCY=2+INPUT_STAGE+NORMALIZE_STAGE+OUTPUT_STAGE+PRODUCT_STAGE+ALIGN_STAGE;
+`ifdef CPPHDL_TARGET_AGILEX7
+    localparam DELAY_RAM_MIN_DEPTH=2;
+`else
+    localparam DELAY_RAM_MIN_DEPTH=8;
+`endif
     reg [LATENCY-1:0] valid;
     wire advance = !valid[LATENCY-1] || response_ready_in;
     wire [31:0] computed;
@@ -78,7 +103,7 @@ module Fp32MacPipeline #(parameter LATENCY=2)(
             for(i=1;i<LATENCY;i=i+1)valid[i]<=valid[i-1];
         end
     end
-    CpphdlMacEnabledDelay #(.WIDTH(32),.DEPTH(LATENCY-CORE_LATENCY)) delay_result(
+    CpphdlMacEnabledDelay #(.WIDTH(32),.DEPTH(LATENCY-CORE_LATENCY),.RAM_MIN_DEPTH(DELAY_RAM_MIN_DEPTH)) delay_result(
         .clk(clk),.reset(reset),.advance(advance),.data_in(computed),.data_out(result_out));
 endmodule
 `endif
@@ -98,6 +123,11 @@ module Fp32MacArray_{rows}_{cols} #(parameter LATENCY=2)(
     initial if(LATENCY<2)$fatal(1,"FP32 MAC array requires LATENCY >= 2");
     localparam INPUT_STAGE=(LATENCY>2), NORMALIZE_STAGE=(LATENCY>3), OUTPUT_STAGE=(LATENCY>4), PRODUCT_STAGE=(LATENCY>5), ALIGN_STAGE=(LATENCY>6);
     localparam CORE_LATENCY=2+INPUT_STAGE+NORMALIZE_STAGE+OUTPUT_STAGE+PRODUCT_STAGE+ALIGN_STAGE;
+`ifdef CPPHDL_TARGET_AGILEX7
+    localparam DELAY_RAM_MIN_DEPTH=2;
+`else
+    localparam DELAY_RAM_MIN_DEPTH=8;
+`endif
     // Mask at the arithmetic boundary, not after LATENCY cycles. Only the
     // selected payload and its tag occupy the deep, shared RAM delay.
     reg [31:0] tags[0:CORE_LATENCY-1];reg [{lanes-1}:0] masks[0:CORE_LATENCY-1];
@@ -108,7 +138,7 @@ module Fp32MacArray_{rows}_{cols} #(parameter LATENCY=2)(
     wire [{(lanes+1)*32-1}:0] selected;
     assign command_ready_out=advance;assign response_valid_out=valid[LATENCY-1];
     assign selected[{lanes*32}+:32]=tags[CORE_LATENCY-1];assign fault_out=0;
-    CpphdlMacEnabledDelay #(.WIDTH({(lanes+1)*32}),.DEPTH(LATENCY-CORE_LATENCY)) delay_result(
+    CpphdlMacEnabledDelay #(.WIDTH({(lanes+1)*32}),.DEPTH(LATENCY-CORE_LATENCY),.RAM_MIN_DEPTH(DELAY_RAM_MIN_DEPTH)) delay_result(
         .clk(clk),.reset(reset),.advance(advance),.data_in(selected),.data_out(result_out));
     genvar row,col;
     generate for(row=0;row<{rows};row=row+1)begin: rows

@@ -1,5 +1,6 @@
 #pragma once
 #include "ReadPipeline.h"
+#include "CopyLoop.h"
 #include "ScheduledGraph.h"
 #include "LocalMemory.h"
 #include "../hls/Combinational.h"
@@ -12,6 +13,54 @@ namespace cpphdl::synth {
 inline std::map<std::string,graph::Value> buildLoopPipeline(graph::Graph& out,
     ScheduledDesign source,const std::string& scope,unsigned depth) {
     using namespace graph;
+    // Start a loop visit at its body, not at a predicated test+body region.
+    // Otherwise the final false test still traverses every inactive memory
+    // continuation and invokes pure arithmetic replacements in the body.
+    // Rotate only scalar calculation test blocks: calls or memory
+    // effects retain their original schedule. The test remains on both the
+    // initial path and the tail path, so zero trips and continue are preserved.
+    auto pureCondition=[](const std::string& text) {
+        for(size_t i=0;i<text.size();) {
+            if(!std::isalpha(static_cast<unsigned char>(text[i])) && text[i]!='_' && text[i]!='$'){++i;continue;}
+            auto begin=i++;
+            while(i<text.size() && (std::isalnum(static_cast<unsigned char>(text[i])) ||
+                text[i]=='_' || text[i]=='.' || text[i]=='$'))++i;
+            const auto name=text.substr(begin,i-begin);
+            auto next=i;while(next<text.size() && std::isspace(static_cast<unsigned char>(text[next])))++next;
+            if(next<text.size() && text[next]=='(' && name!="$signed" && name!="$unsigned")return false;
+        }
+        return true;
+    };
+    auto pureTest=[&](const hls::ScheduledBlock& block) {
+        if(!pureCondition(block.condition))return false;
+        for(const auto& s:block.statements) {
+            const auto equal=s.find(" = ");
+            if(equal==std::string::npos || s.back()!=';' || s.find(';')!=s.size()-1)return false;
+            const auto target=s.substr(0,equal);
+            const auto symbol=source.symbols.find(target);
+            if(symbol==source.symbols.end() || !symbol->second.writable ||
+                (target.find("scratch.")!=0 && target.find("values.")!=0) ||
+                !pureCondition(s.substr(equal+3)))return false;
+        }
+        return true;
+    };
+    std::set<int> rotatedTests;
+    for(const auto& b:source.blocks)if(b.suspend && !b.memoryBoundary &&
+        !b.recursiveBoundary && !b.sharedCallBoundary && b.yes>=0) {
+        const auto& test=source.blocks.at(b.yes);
+        if(!test.condition.empty() && !test.suspend &&
+            test.yes>=0 && test.no>=0 && pureTest(test))
+            rotatedTests.insert(b.yes);
+    }
+    for(auto& b:source.blocks)if(rotatedTests.count(b.yes) &&
+        !b.memoryBoundary && !b.recursiveBoundary && !b.sharedCallBoundary)b.suspend=false;
+    std::set<int> rotatedEntries;
+    for(int test:rotatedTests) {
+        hls::ScheduledBlock enter;enter.yes=source.blocks[test].yes;enter.suspend=true;
+        rotatedEntries.insert(int(source.blocks.size()));
+        source.blocks[test].yes=int(source.blocks.size());source.blocks.push_back(std::move(enter));
+    }
+    out.attributes.push_back({scope,"hls_rotated_loop_tests",std::to_string(rotatedTests.size())});
     std::set<int> reachable,entries{source.commandEntry};
     std::vector<int> pending{source.commandEntry};
     while(!pending.empty()) {
@@ -29,7 +78,13 @@ inline std::map<std::string,graph::Value> buildLoopPipeline(graph::Graph& out,
             while(!pending.empty()) {
                 int n=pending.back();pending.pop_back();
                 if(n<0 || (n!=entry && entries.count(n)) || !seen.insert(n).second)continue;
-                if(owner.count(n) && owner.at(n)!=entry){entries.insert(n);changed=true;break;}
+                // The empty boundary inserted by rotation is part of its
+                // duplicated pure test. Cutting it again as a shared join
+                // creates an otherwise useless body -> empty -> body cycle,
+                // hiding the self-backedge from iteration scheduling.
+                if(owner.count(n) && owner.at(n)!=entry && !rotatedTests.count(n) && !rotatedEntries.count(n)){
+                    entries.insert(n);changed=true;break;
+                }
                 owner[n]=entry;const auto& b=source.blocks.at(n);
                 if(!b.suspend)pending.push_back(b.yes);
                 pending.push_back(b.no);
@@ -145,10 +200,13 @@ inline std::map<std::string,graph::Value> buildLoopPipeline(graph::Graph& out,
         Value packet=ports.at("result_out"),destination=ports.at("destination_out");
         packet.insert(packet.end(),destination.begin(),destination.end());
         std::map<std::string,Value> next;
+        std::map<std::string,Value> iterationNext;
         std::set<std::string> changed;
         for(const auto& p:{"operation_in","index_in","value_in"}) {
             auto value=ports.at(p);next[p]=value;
-            if(input.offsets.count(p))logic.ports.push_back({p,value,true});
+            if(input.offsets.count(p)) {
+                logic.ports.push_back({p,value,true});iterationNext[p]=value;
+            }
             else logic.connect(value,Value(value.size(),0));
         }
         auto field=source.clocked.begin();
@@ -156,7 +214,10 @@ inline std::map<std::string,graph::Value> buildLoopPipeline(graph::Graph& out,
             const auto& s=logic.states[i];
             next[*field]=s.next;
             if(logic.resolved(s.next)!=logic.resolved(s.bits))changed.insert(*field);
-            if(input.offsets.count(*field))logic.ports.push_back({"context_"+std::to_string(i),s.bits,true});
+            if(input.offsets.count(*field)) {
+                const auto port="context_"+std::to_string(i);
+                logic.ports.push_back({port,s.bits,true});iterationNext[port]=s.next;
+            }
             else logic.connect(s.bits,Value(s.bits.size(),0));
             ++field;
         }
@@ -178,7 +239,13 @@ inline std::map<std::string,graph::Value> buildLoopPipeline(graph::Graph& out,
         // A region cannot be visited again until its current result retires.
         // Each static access site therefore holds at most one context/reply;
         // shared owner queues retain their configured request window.
-        r.pins=buildReadPipeline(out,std::move(logic),name,depth,source.argumentBits,source.externalDataBits,source.blockRam,true);
+        const bool pipelinedCopy=source.blockRam && successors[entry].count(entry) &&
+            buildCopyLoopPipeline(out,logic,name,depth,source.argumentBits,source.externalDataBits,
+                source.resultBits,entry,iterationNext,r.pins);
+        std::string destinations;
+        for(int target:successors[entry])destinations+=(destinations.empty()?"":",")+std::to_string(target);
+        out.attributes.push_back({name,"hls_loop_successors",destinations});
+        if(!pipelinedCopy)r.pins=buildReadPipeline(out,std::move(logic),name,depth,source.argumentBits,source.externalDataBits,source.blockRam,true);
         out.connect(r.pins.at("reset"),pins.at("reset"));
         out.connect(r.pins.at("command_valid_in"),both(running,r.occupied));
         for(const auto& p:{"operation_in","index_in","value_in"}) {

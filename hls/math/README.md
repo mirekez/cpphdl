@@ -67,6 +67,17 @@ combinational timing of its FP arithmetic. FPGA timing must still be checked
 on the replacement itself. `Fp32MacRtlPipeline.h` remains a register-based C++
 reference for equivalence, rather than the resource-optimized FPGA replacement.
 
+For Agilex 7 synthesis, `CPPHDL_TARGET_AGILEX7` selects the native FP32 DSP
+multiplier-adder inside the annotated MAC when `LATENCY >= 7`. Its five DSP
+stages plus the existing input/output registers replace the five-stage portable
+`Fp32Mac`/`FpAdd` core without changing the selected total latency, initiation
+interval, or backpressure protocol. Remaining delay still uses the same enabled
+delay module. Shorter schedules retain the portable core. The exact-math
+simulation branch and ordinary C++ calculation remain unchanged. DSP payload
+registers need no reset: reset clears the wrapper's validity. This target choice
+must be explicit in the synthesis project; integer significand addition in
+`FpAdd` does not by itself infer a floating-point DSP adder.
+
 `hls_enabled_delay_storage` verifies RAM inference with Yosys, including the
 4x4, 48-cycle MAC wrapper with arithmetic treated as black boxes. The native
 graph branch tests compare both hardware and simulation arithmetic against

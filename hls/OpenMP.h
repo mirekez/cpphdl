@@ -30,5 +30,8 @@ struct OpenMPPlan {
 };
 // Validate a bounded, race-free hardware subset before allocating any lanes.
 OpenMPLoop planStaticLoop(clang::ASTContext&, const clang::ForStmt*);
-OpenMPPlan planOpenMP(clang::ASTContext&, const clang::OMPExecutableDirective*, const OpenMPCallResolver& = {}, const StaticIntegers& = {});
+// The streaming memory backend may lower const accessor methods through its
+// ordered effect schedule. This does not prove their pointer accesses disjoint
+// or authorize concurrent memory effects; pure spatial pipelines stay strict.
+OpenMPPlan planOpenMP(clang::ASTContext&, const clang::OMPExecutableDirective*, const OpenMPCallResolver& = {}, const StaticIntegers& = {}, bool orderedConstAccessors = false);
 }

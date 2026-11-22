@@ -170,6 +170,14 @@ class Exporter {
             if(a.size()!=1 || !number(a[0]))throw std::runtime_error("invalid streaming memory identity");
             auto key=scope+"."+domain+"_access_"+std::to_string(*number(a[0]));
             for(size_t n=0;n<g.nodes.size();++n)if((g.nodes[n].op==domain+"_load" || g.nodes[n].op==domain+"_store") && g.nodes[n].name==key) {
+                // The compiler-owned synchronous local arena cannot signal an
+                // access error. Keep the loads' known-zero result visible to the
+                // dataflow scheduler instead of serializing independent loads
+                // behind opaque fault dependencies. External faults retain
+                // their ordered suppression of subsequent accesses.
+                // Stores retain their effect token: it also keeps a store
+                // live when its data result is otherwise unused.
+                if(domain=="local" && d.blockRam && g.nodes[n].op=="local_load")return {constant(0,32)};
                 Value loaded;
                 for(unsigned bit=0;bit<g.nodes[n].width;++bit)loaded.push_back((n+1)*64+2+bit);
                 return {g.add(domain+"_fault",32,loaded,{},evaluationGuard,key)};
@@ -179,9 +187,23 @@ class Exporter {
         const std::string readPrefix="hls_"+domain+"_read_";
         if(name.find(readPrefix)==0) {
             if(a.size()!=3 || !number(a[2]))throw std::runtime_error("invalid streaming read arguments");
-            return {g.add(domain+"_load",std::stoul(name.substr(readPrefix.size())),
-                resize(a[0],32),resize(a[1],8),both(evaluationGuard,inv(env.at("fault"))),
-                scope+"."+domain+"_access_"+std::to_string(*number(a[2])))};
+            const unsigned width=std::stoul(name.substr(readPrefix.size()));
+            if(!width || width>d.externalDataBits)throw std::runtime_error("streaming read exceeds memory payload");
+            Value value;
+            for(unsigned offset=0;offset<width;offset+=64) {
+                Value descriptor=resize(a[1],8);
+                // Several graph words describe one wide source access. Their
+                // common identity/address/predicate denotes one request and
+                // acknowledgement, not one scalar request per graph word.
+                if(width>64) {
+                    auto part=constant(offset,32);descriptor.insert(descriptor.end(),part.begin(),part.end());
+                }
+                auto word=g.add(domain+"_load",std::min(64u,width-offset),
+                    resize(a[0],32),descriptor,both(evaluationGuard,inv(env.at("fault"))),
+                    scope+"."+domain+"_access_"+std::to_string(*number(a[2])));
+                value.insert(value.end(),word.begin(),word.end());
+            }
+            return {value};
         }
         const std::string writePrefix="hls_"+domain+"_write_";
         if(name.find(writePrefix)==0) {

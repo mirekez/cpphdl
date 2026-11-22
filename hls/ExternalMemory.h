@@ -91,7 +91,10 @@ void store_external(external_ptr<T> pointer, const T& value)
 // on each ordered response, independently of other pending requests.
 // In write-bearing commands, potentially aliasing invocations keep their memory
 // regions ordered through the last acknowledgement. Runtime-loop pipelines
-// currently admit one invocation until return; loop backedges reuse arithmetic.
+// admit one invocation until return; loop backedges reuse arithmetic. Within
+// an external-to-local copy loop, memory-independent iterations may issue ahead
+// under the same side-effect-free read contract. Local writes remain ordered;
+// a failed read suppresses later writes and the exit drains all issued reads.
 // Reset both endpoints and discard pending responses before admitting new work.
 template<unsigned ADDRESS_BITS = 32, unsigned DATA_BITS = 64>
 struct ExternalMemoryIf : public Interface {

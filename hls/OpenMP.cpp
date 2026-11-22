@@ -2,6 +2,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Attr.h"
+#include <algorithm>
 #include <functional>
 #include <set>
 #include <map>
@@ -77,7 +78,7 @@ OpenMPLoop loopPlan(ASTContext& ctx, const ForStmt* loop) {
     }
     return result;
 }
-void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResolver& resolver, const StaticIntegers& inherited) {
+void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResolver& resolver, const StaticIntegers& inherited, bool orderedConstAccessors) {
     auto atomicRecord = [](const CXXRecordDecl* record) {
         if (!record || !record->isEmpty()) return false;
         for (const auto* attr : record->specific_attrs<AnnotateAttr>())
@@ -89,6 +90,12 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
         return construction && construction->getNumArgs() == 0 &&
             construction->getConstructor()->isTrivial() && atomicRecord(construction->getConstructor()->getParent());
     };
+    auto trivialValueCopy = [&](const Stmt* statement) {
+        auto* construction = dyn_cast<CXXConstructExpr>(statement);
+        return construction && construction->getConstructor()->isTrivial() &&
+            construction->getConstructor()->isCopyOrMoveConstructor() &&
+            construction->getType().isTriviallyCopyableType(ctx);
+    };
     std::set<const ValueDecl*> local, independent;
     for (auto* var : plan.privates) independent.insert(var);
     for (auto* var : plan.firstprivates) independent.insert(var);
@@ -97,6 +104,7 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     for (auto& loop : plan.loops) indices.insert(loop.variable);
     std::function<void(const Stmt*)> declarations = [&](const Stmt* stmt) {
         if (!stmt) return;
+        if (auto* simd = dyn_cast<OMPSimdDirective>(stmt)) {declarations(simd->getRawStmt());return;}
         if (auto* ds = dyn_cast<DeclStmt>(stmt)) for (auto* decl : ds->decls()) {
             // Type aliases introduce no storage or cross-lane state.
             if (isa<TypedefNameDecl>(decl)) continue;
@@ -114,11 +122,21 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     pureCall = [&](const CallExpr* call) {
         auto* fn = resolver ? resolver(call) : call->getDirectCallee();
         if (!fn) unsupported("pure helpers require a direct call with a visible body");
+        auto scalar = [](QualType type) { return !type.isVolatileQualified() &&
+            (type->isIntegerType() || type->isRealFloatingType()); };
+        if(orderedConstAccessors)if(auto* method=dyn_cast<CXXMethodDecl>(fn);
+            method && method->isConst() && !method->isVolatile() && fn->getBody() &&
+            (fn->getReturnType()->isVoidType() || scalar(fn->getReturnType())) &&
+            std::all_of(fn->param_begin(),fn->param_end(),[&](const ParmVarDecl* p){return scalar(p->getType());})) {
+            // The ordinary source scheduler inlines the accessor and retains
+            // its memory predicates, alias order, fault handling and waits.
+            // OpenMP still expands the independent packet fields into lanes;
+            // it must not misclassify an accessor as a pure arithmetic call.
+            return;
+        }
         if (auto* method = dyn_cast<CXXMethodDecl>(fn); method && !method->isStatic() &&
             !(method->isConst() && method->getNameAsString() == "command" && atomicRecord(method->getParent())))
             unsupported("pure helpers must be free/static value functions or const commands of stateless annotated classes");
-        auto scalar = [](QualType type) { return !type.isVolatileQualified() &&
-            (type->isIntegerType() || type->isRealFloatingType()); };
         if (!scalar(fn->getReturnType())) unsupported("pure helpers require an arithmetic value result");
         std::set<const ValueDecl*> own;
         for (auto* param : fn->parameters()) {
@@ -132,6 +150,7 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
         if (!body) unsupported("pure helpers require a visible instantiated body");
         std::function<void(const Stmt*)> collect = [&](const Stmt* stmt) {
             if (!stmt) return;
+            if (auto* simd = dyn_cast<OMPSimdDirective>(stmt)) {collect(simd->getRawStmt());return;}
             if (auto* ds = dyn_cast<DeclStmt>(stmt)) for (auto* declaration : ds->decls()) {
                 if (isa<TypedefNameDecl>(declaration)) continue;
                 auto* var = dyn_cast<VarDecl>(declaration);
@@ -144,6 +163,15 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
         collect(body);
         std::function<void(const Stmt*)> check = [&](const Stmt* stmt) {
             if (!stmt) return;
+            if (auto* simd = dyn_cast<OMPSimdDirective>(stmt)) {
+                // A scalar helper may itself expose bounded independent work
+                // (e.g. an integer normalization reduction). Validate its
+                // ownership and clauses, then also apply helper purity checks
+                // to the original loop, not Clang's synthetic bookkeeping.
+                (void)planOpenMP(ctx,simd,resolver);
+                check(simd->getRawStmt());
+                return;
+            }
             if (auto* call = dyn_cast<CallExpr>(stmt)) pureCall(call);
             if (auto* loop = dyn_cast<ForStmt>(stmt)) (void)loopPlan(ctx, loop);
             if (isa<WhileStmt>(stmt) || isa<DoStmt>(stmt) || isa<GotoStmt>(stmt) ||
@@ -169,9 +197,16 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     };
     std::function<void(const Stmt*)> check = [&](const Stmt* stmt) {
         if (!stmt) return;
+        if (auto* simd = dyn_cast<OMPSimdDirective>(stmt)) {
+            if (!simd->clauses().empty()) unsupported("nested SIMD clauses require a separate value helper");
+            // Outer lane ownership sees every inner access. Each inner SIMD
+            // is additionally validated with the enclosing lane coordinates
+            // when the scheduler elaborates it.
+            check(simd->getRawStmt());return;
+        }
         if (auto* call = dyn_cast<CallExpr>(stmt)) pureCall(call);
         if (auto* loop = dyn_cast<ForStmt>(stmt)) (void)loopPlan(ctx, loop);
-        if ((isa<CXXConstructExpr>(stmt) && !trivialAtomicConstruction(stmt)) || isa<ReturnStmt>(stmt) || isa<GotoStmt>(stmt) ||
+        if ((isa<CXXConstructExpr>(stmt) && !trivialAtomicConstruction(stmt) && !trivialValueCopy(stmt)) || isa<ReturnStmt>(stmt) || isa<GotoStmt>(stmt) ||
             isa<WhileStmt>(stmt) || isa<DoStmt>(stmt) || isa<BreakStmt>(stmt) ||
             isa<ContinueStmt>(stmt) || isa<OMPExecutableDirective>(stmt))
             unsupported("lane bodies require bounded arithmetic/branches and pure scalar helpers");
@@ -273,6 +308,7 @@ void validateBody(ASTContext& ctx, const OpenMPPlan& plan, const OpenMPCallResol
     };
     memory = [&](const Stmt* stmt) {
         if (!stmt) return;
+        if (auto* simd = dyn_cast<OMPSimdDirective>(stmt)) {memory(simd->getRawStmt());return;}
         if (auto* branch = dyn_cast<IfStmt>(stmt)) {
             memory(branch->getInit());memory(branch->getConditionVariableDeclStmt());memory(branch->getCond());
             auto known=staticInteger(ctx,branch->getCond(),values);
@@ -435,7 +471,7 @@ std::optional<int64_t> staticInteger(ASTContext& ctx,const Expr* input,const Sta
     }
     return {};
 }
-OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive, const OpenMPCallResolver& resolver, const StaticIntegers& inherited) {
+OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive, const OpenMPCallResolver& resolver, const StaticIntegers& inherited, bool orderedConstAccessors) {
     using namespace llvm::omp;
     auto kind = directive->getDirectiveKind();
     if (kind != OMPD_parallel_for && kind != OMPD_parallel_for_simd && kind != OMPD_simd)
@@ -512,7 +548,7 @@ OpenMPPlan planOpenMP(ASTContext& ctx, const OMPExecutableDirective* directive, 
         body = loop->getBody();
     }
     plan.body = body;
-    validateBody(ctx, plan, resolver, inherited);
+    validateBody(ctx, plan, resolver, inherited, orderedConstAccessors);
     return plan;
 }
 }

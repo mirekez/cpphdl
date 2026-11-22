@@ -8,7 +8,10 @@ namespace cpphdl::synth {
 inline void connectLocalMemory(graph::Graph& g,const std::string& scope,unsigned bytes,
     unsigned dataBits,const std::map<std::string,graph::Value>& pins) {
     using namespace graph;
-    if(dataBits<64 || bytes<16)throw std::runtime_error("invalid local memory geometry");
+    if(dataBits<64 || dataBits>512 || (dataBits&(dataBits-1)) || bytes<16)
+        throw std::runtime_error("invalid local memory geometry");
+    const unsigned lanes=dataBits/8;
+    unsigned laneBits=0;while((1u<<laneBits)<lanes)++laneBits;
     const auto previousScope=g.currentScope;g.currentScope=scope;
     auto both=[&](Value a,Value b){return g.binary("and",a,b,1);};
     auto either=[&](Value a,Value b){return g.binary("or",a,b,1);};
@@ -19,7 +22,7 @@ inline void connectLocalMemory(graph::Graph& g,const std::string& scope,unsigned
     auto pending=reg("reply_valid",1),written=reg("reply_write",1);
     auto replyReady=g.wire(1,scope+".reply_ready");
     auto ramReady=both(running,either(inv(pending),replyReady));
-    auto prepared=reg("prepared_valid",1),preparedWrite=reg("prepared_write",1),preparedLow=reg("prepared_offset",3);
+    auto prepared=reg("prepared_valid",1),preparedWrite=reg("prepared_write",1),preparedLow=reg("prepared_offset",laneBits);
     auto ready=both(running,either(inv(prepared),ramReady));
     // The arbitration tree ends at this register. Address calculation and the
     // bank-address preparation then gets its own cycle instead of sharing the
@@ -47,22 +50,22 @@ inline void connectLocalMemory(graph::Graph& g,const std::string& scope,unsigned
     // Access widths are checked during lowering. As in ordinary C++, local
     // pointers must designate live objects; out-of-bounds accesses are not a
     // runtime exception contract. Do not synthesize a byte-arena bounds checker
-    // into every local request. Fields may straddle an eight-byte word.
+    // into every local request. Fields may straddle a full-width port word.
     auto readEnable=both(accept,inv(preparedWrite));
-    unsigned indexBits=1;while((uint64_t(1)<<indexBits)<(uint64_t(bytes)+7)/8)++indexBits;
+    unsigned indexBits=1;while((uint64_t(1)<<indexBits)<(uint64_t(bytes)+lanes-1)/lanes)++indexBits;
     // Match the addressable hardware depth. A non-power-of-two declaration
     // requires the generic emitter to guard an out-of-range read with a data
     // mux before the register, which prevents Quartus block-RAM inference.
     // The additional addresses are outside the source arena's object contract.
     const unsigned depth=1u<<indexBits;
     Value data;
-    const auto low=slice(address,0,3);
+    const auto low=slice(address,0,laneBits);
     g.states.push_back({preparedLow,g.mux(prepare,low,preparedLow),{1}});
-    for(unsigned lane=0;lane<8;++lane) {
+    for(unsigned lane=0;lane<lanes;++lane) {
         const auto m=g.memories.size();g.memories.push_back({scope+".lane_"+std::to_string(lane),8,depth});
-        auto offset=g.binary("sub",constant(lane,3),low,3);
-        auto calculatedIndex=g.binary("add",slice(address,3,indexBits),
-            resize(g.binary("lt",constant(lane,3),low,1),indexBits),indexBits);
+        auto offset=g.binary("sub",constant(lane,laneBits),low,laneBits);
+        auto calculatedIndex=g.binary("add",slice(address,laneBits,indexBits),
+            resize(g.binary("lt",constant(lane,laneBits),low,1),indexBits),indexBits);
         // Register the final bank address, byte enable and write data at
         // the hard RAM port. Registering only the source byte address leaves
         // the crossing-word increment in series with the RAM access delay.
@@ -74,17 +77,17 @@ inline void connectLocalMemory(graph::Graph& g,const std::string& scope,unsigned
         g.memoryAccesses.push_back({m,index,readEnable,true});
         data.insert(data.end(),saved.begin(),saved.end());
         Value shift=offset;shift.insert(shift.begin(),3,0);
-        auto value=g.binary("shr",slice(savedRequest,41,64),shift,64);
+        auto value=g.binary("shr",slice(savedRequest,41,dataBits),shift,dataBits);
         auto byte=reg("bank_data_"+std::to_string(lane),8),enable=reg("bank_write_"+std::to_string(lane),1);
         g.states.push_back({byte,g.mux(prepare,slice(value,0,8),byte),{1}});
         g.states.push_back({enable,g.mux(prepare,both(write,g.binary("lt",resize(offset,8),size,1)),enable),{1}});
         g.memoryWrites.push_back({m,index,byte,both(accept,enable)});
     }
-    auto offset=reg("read_offset",3);
+    auto offset=reg("read_offset",laneBits);
     g.states.push_back({offset,g.mux(readEnable,preparedLow,offset),{1}});
     auto duplicate=data;data.insert(data.end(),duplicate.begin(),duplicate.end());
     Value shift=offset;shift.insert(shift.begin(),3,0);
-    data=resize(g.binary("shr",data,shift,128),dataBits);
+    data=resize(g.binary("shr",data,shift,2*dataBits),dataBits);
     auto state=[&](Value q,Value d){g.states.push_back({q,g.mux(reset,Value(q.size(),0),d),{1}});};
     state(pending,g.mux(accept,Value{1},g.mux(replyReady,Value{0},pending)));
     state(written,g.mux(accept,preparedWrite,written));
@@ -103,6 +106,7 @@ inline void connectLocalMemory(graph::Graph& g,const std::string& scope,unsigned
     g.connect(pins.at("local_out.error_out"),slice(responses.at("context_out"),dataBits,1));
     g.connect(pins.at("local_out.data_out"),slice(responses.at("context_out"),0,dataBits));
     g.attributes.push_back({scope,"hls_local_memory_bytes",std::to_string(bytes)});
+    g.attributes.push_back({scope,"hls_local_memory_port_bits",std::to_string(dataBits)});
     g.currentScope=previousScope;
 }
 } // namespace cpphdl::synth

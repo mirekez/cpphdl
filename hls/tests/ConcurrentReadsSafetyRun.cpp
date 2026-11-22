@@ -85,7 +85,9 @@ int main() {
         if(dut.memory_out___05Fvalid_out && !dut.memory_out___05Fready_in)++agent.stalls;
 #ifdef READ_RETIMED
         if(!dut.retiming_ready_out)throw std::runtime_error("safety transition not admitted");
-        edge();while(!dut.retiming_commit_out)edge();
+        // A zero-latency mapping can already commit at admission. Wait
+        // without consuming it, then sample and commit exactly one edge.
+        while(!dut.retiming_commit_out)edge();
         auto result=snapshot();edge();
 #else
         auto result=snapshot();edge();

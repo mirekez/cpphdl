@@ -457,6 +457,10 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/DeadStateChecks.py"
         --cxx "${CPPHDL_TEST_CXX}")
     set_tests_properties(cpp_graph_dead_state PROPERTIES TIMEOUT 240)
+    add_test(NAME cpp_graph_state_bit_pruning COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/graph/StateBitPruningChecks.py"
+        --cxx "${CPPHDL_TEST_CXX}")
+    set_tests_properties(cpp_graph_state_bit_pruning PROPERTIES TIMEOUT 240)
     add_test(NAME cpp_graph_constant_memory COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/graph/ConstantMemoryChecks.py"
         --cpphdl "$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" --cxx "${CPPHDL_TEST_CXX}"

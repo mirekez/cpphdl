@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -11,14 +12,14 @@ import subprocess
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for key in ('cpphdl','cxx','verilator','work'):p.add_argument('--'+key,type=Path,required=True)
-    p.add_argument('--cases',type=int,nargs='+',choices=range(15),default=list(range(15)))
+    p.add_argument('--cases',type=int,nargs='+',choices=range(24),default=list(range(24)))
     a=p.parse_args()
     for key in ('cpphdl','cxx','verilator','work'):setattr(a,key,getattr(a,key).resolve())
     tests=Path(__file__).resolve().parent;root=tests.parents[1]
     a.work.mkdir(parents=True,exist_ok=True)
     env=os.environ.copy();env['PATH']=str(a.verilator.parent)+os.pathsep+str(a.cxx.parent)+os.pathsep+env.get('PATH','')
     env['LD_LIBRARY_PATH']=str(root/'.conda/lib')+os.pathsep+env.get('LD_LIBRARY_PATH','')
-    inputs=[a.cpphdl,Path(__file__),tests/'SourceLoop.cpp',tests/'SourceLoopRun.cpp',tests/'SourceLoopReference.h',root/'synth/LoopPipeline.h',
+    inputs=[a.cpphdl,Path(__file__),tests/'SourceLoop.cpp',tests/'SourceLoopRun.cpp',tests/'SourceLoopReference.h',root/'synth/LoopPipeline.h',root/'synth/ReadGroup.h',root/'synth/CopyLoop.h',
             root/'synth/LocalMemory.h',root/'hls/Combinational.cpp',root/'synth/ReadPipeline.h',root/'synth/ReadArbiter.h',root/'synth/MemoryContinuation.h',
             root/'synth/ScheduledGraph.cpp',root/'synth/StreamPipeline.h',root/'hls/delayed_scheduler.cpp',root/'synth/Verilog.cpp',
             root/'hls/math/Float.h',root/'hls/math/Nonlinear.h']
@@ -61,6 +62,16 @@ def main():
                  '--output',mapped,'--retiming','fit_pipeline_retiming','--clock-period-ns','4',
                  tests/'SourceLoop.cpp','--',*defs,'-DSYNTHESIS'],a.work/(prefix+'-synth.log'))
             timing=json.loads((mapped/'timing.json').read_text());report['timing'][prefix]=timing
+            if case==18 and '"hls_independent_local_loads"' not in (mapped/'retimed_graph.cc').read_text():
+                raise AssertionError('independent local load group was not generated')
+            copy_loop='"hls_copy_loop_pipeline"' in (mapped/'retimed_graph.cc').read_text()
+            if case==20 and not copy_loop:raise AssertionError('independent copy loop was not pipelined')
+            if case==21 and copy_loop:raise AssertionError('data-dependent copy exit was speculated')
+            if case in (22,23):
+                sizes=re.findall(r'"hls_local_memory_bytes" "(\d+)"',(mapped/'retimed_graph.cc').read_text())
+                if len(sizes)!=1:raise AssertionError('missing local arena size')
+                if case==22 and int(sizes[0])>32:raise AssertionError('zero initialization spilled a value packet to RAM')
+                if case==23 and int(sizes[0])<1024:raise AssertionError('runtime indexed zero array lost its RAM backing')
             if len(timing['pipeline_replacements'])!=({1:1,2:1,5:2,7:1,13:4}.get(case,0)):raise AssertionError('wrong scalar MAC boundary')
             if case==13:
                 mac_latency=max(r['latency'] for r in timing['pipeline_replacements'])

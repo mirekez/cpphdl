@@ -2,13 +2,18 @@
 #include "Mapping.h"
 #include "Evaluate.h"
 #include "Verilog.h"
+#include "MemoryBoundaryFocused.h"
 #include <deque>
 #include <cstdio>
+#include <vector>
 
 using namespace cpphdl::graph;
 int main() {
     try {
-        for(bool fullExchange:{false,true}) for(unsigned depth:{1,2,8,32}) for(unsigned contextBits:{32,65,96,512}) {
+        for(bool fullExchange:{false,true}) for(unsigned depth:{1,2,8,32})
+            for(unsigned contextBits:(depth==2 ? std::vector<unsigned>{32,65,96,512,513,553} :
+                                      depth==8 ? std::vector<unsigned>{32,65,96,97,98,512} :
+                                                 std::vector<unsigned>{32,65,96,512})) {
             Graph g;g.clockContract=ClockContract::RisingEdgeStep;
             std::map<std::string,Value> in;
             for(auto [name,width]:std::map<std::string,unsigned>{{"reset",1},{"command_valid_in",1},
@@ -18,7 +23,7 @@ int main() {
             }
             auto out=cpphdl::synth::buildMemoryContinuation(g,"continuation",depth,in,fullExchange);
             for(const auto& [name,value]:out)g.ports.push_back({name,value,false});
-            if((depth==1 || (depth==2 && contextBits<=256))?!g.memories.empty():
+            if((depth==1 || depth==2)?!g.memories.empty():
                 (g.memories.size()!=1 || g.memories[0].depth!=depth || g.memories[0].width!=contextBits))
                 throw std::runtime_error("continuation lost context RAM");
             (void)cpphdl::synth::verilogText(g,"MemoryContinuation");
@@ -69,6 +74,7 @@ int main() {
             if(sim.output("memory_ready_out") || sim.output("response_valid_out"))
                 throw std::runtime_error("empty continuation accepted an unowned response");
         }
-        std::puts("PASS memory continuations: pipelined requests, ordered contexts, errors, stalls, reset");
+        runFocusedMemoryBoundaryChecks();
+        std::puts("PASS memory continuations: pipelined requests, ordered contexts, errors, stalls, reset, wide depth-2 boundaries, deep predicated sidecars");
     } catch(const std::exception& e) {std::fprintf(stderr,"FAIL %s\n",e.what());return 1;}
 }

@@ -2,14 +2,18 @@
 // payload RAM is deliberately not reset. No read/write address collision.
 `ifndef CPPHDL_ENABLED_DELAY
 `define CPPHDL_ENABLED_DELAY
-module CpphdlEnabledDelay #(parameter WIDTH=32, parameter DEPTH=1)(
+module CpphdlEnabledDelay #(parameter WIDTH=32, parameter DEPTH=1,
+    parameter RAM_MIN_DEPTH=8)(
     input wire clk, reset, advance,
     input wire [WIDTH-1:0] data_in,
     output wire [WIDTH-1:0] data_out
 );
     generate if (DEPTH == 0) begin: direct
         assign data_out = data_in;
-    end else if (DEPTH < 8) begin: short_delay
+    // A one-edge delay must stay a register: the RAM ring would otherwise
+    // read and write the same address. Larger depths can use target-selected
+    // RAM storage even when the generic small-delay preference is registers.
+    end else if (DEPTH < 2 || DEPTH < RAM_MIN_DEPTH) begin: short_delay
         reg [WIDTH-1:0] words[0:DEPTH-1];
         integer i;
         always @(posedge clk) begin

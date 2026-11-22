@@ -81,6 +81,46 @@ uint64_t loopReference(unsigned count,uint32_t value,Read read,Write write) {
 #elif LOOP_CASE==14
     for(unsigned i=0;i<count;++i)sum+=read(i);
     write(32,sum);return (uint64_t(0x1000+4*count)<<32)|sum;
+#elif LOOP_CASE==15
+    sum=0;
+    for(unsigned i=0;i<4;++i){auto updated=read(i)+value;write(i,updated);sum+=updated;}
+#elif LOOP_CASE==16
+    for(unsigned i=0;i<count;++i) {
+        auto word=read(i);if(!(word&1u))break;
+        // The body is a separate source region from the memory-reading test.
+        sum+=read(i);
+    }
+#elif LOOP_CASE==17
+    for(unsigned i=0;i<count;++i)if(i!=1)sum+=read(i);
+    write(32,sum);return (uint64_t(count+1)<<32)|sum;
+#elif LOOP_CASE==18
+    std::array<uint32_t,8> data{};
+    for(unsigned i=0;i<8;++i)data[i]=read(i);
+    for(unsigned round=0;round<count;++round)
+        for(unsigned lane=0;lane<4;++lane)
+            sum+=lane<count?data[(round+lane)%8]+data[(round+lane+1)%8]:value;
+#elif LOOP_CASE==19
+    std::array<uint32_t,8> data{};
+    for(unsigned i=0;i<8;++i)data[i]=read(i);
+    for(unsigned round=0;round<count;++round) {
+        uint32_t next=data[data[round%8]%8]+value;
+        data[(round+1)%8]=next;sum+=next;
+    }
+#elif LOOP_CASE==20
+    std::array<uint32_t,4> data{};
+    for(unsigned i=0;i<count;++i)data[(i+value)%4]=read(i)+i;
+    for(auto word:data)sum=sum*33+word;
+#elif LOOP_CASE==21
+    std::array<uint32_t,8> data{};
+    for(unsigned i=0;i<count;++i) {
+        data[i]=read(i);if(data[i]&1)break;
+    }
+    for(unsigned i=0;i<count;++i)sum+=data[i];
+#elif LOOP_CASE==22
+    sum=value+count;
+#elif LOOP_CASE==23
+    // Distinct locations for the at-most-eight writes, all other words zero.
+    for(unsigned i=0;i<count;++i)sum+=read(i);
 #else
     for(unsigned i=0;i<((count&1)?count:1);++i)sum+=read(i);
     sum+=(count&1)?11u:23u;
