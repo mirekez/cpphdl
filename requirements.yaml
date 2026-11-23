@@ -19,6 +19,7 @@ dependencies:
     - cmake>=3.28
     - make==4.4.1
     - pkg-config
+    - libslirp
     - yaml>=0.2.3
     - libboost-devel
     - libxml2-devel
