@@ -6,7 +6,7 @@ C++HDL is a Hardware Description Language framework built over C++RTL dialect. I
 1. 10-50x faster than verilator simulation (run), based on registers, clocks, gates and transistors
 2. Proven efficient AI-human hw. fixture media language (more detailed than prompt, less detailed than verilog)
 3. Build very large RTL models in C++ and run them on native GPUs/clusters
-4. HLS and Synthesis layers with retiming capabilities to translate generic C++ to C++RTL or gates
+4. HLS and Synthesis layers with floating retiming capabilities to translate generic C++ to C++RTL or gates/auto-pipeline
 5. Digital and Analog in one bottle - you can deliver your model simulation as binary, link to third patry IP
 
 !!! C++RTL natively reflects SystemVerilog or VerilogA: register to register, clock to clock, transistor to transistor - no transformation happens between them. It supports both direction conversion just by language substitution.
@@ -31,7 +31,7 @@ Analog part: https://github.com/mirekez/cpphdl/blob/main/doc/analog.pdf
 
 Some resources on wiki: https://github.com/mirekez/cpphdl/wiki
 
-<img src="doc/cpphdl-layers.png" width="50%" alt="Inverted pyramid: C++HLS for generic C++ hardware and pipelines, C++Analog for analog modelling and mixed-signal simulation, and C++RTL as a C++ reflection of SystemVerilog.">
+<img src="doc/cpphdl-layers.png" width="50%" alt="Pyramid with C++Analog at the top for analog modelling and mixed-signal simulation, C++RTL at the lower left for C++ reflection of SystemVerilog, and C++HLS at the lower right for turning generic C++ functions into pipelines.">
 
 - **C++Analog:** Describe analog behaviour in C++ and connect the models to mixed-signal simulations.
 - **C++RTL:** Describe explicit RTL models in C++, with ports, registers, combinational logic, and clocks.
