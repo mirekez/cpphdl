@@ -20,9 +20,24 @@ int main(){
  if(order.size()!=2*count-1)return 1;
  std::vector<bool> seen(g.nodes.size());
  for(auto index:order){const auto& n=g.nodes[index];for(const auto* v:{&n.left,&n.right,&n.select})for(auto bit:*v){bit=g.resolve(bit);if(bit>1&&!seen[Graph::owner(bit)])return 2;}seen[index]=true;}
- Graph cycle;auto a=cycle.wire(1,"a"),b=cycle.wire(1,"b");
- cycle.connect(a,cycle.binary("xor",b,{1},1));cycle.connect(b,cycle.binary("xor",a,{1},1));cycle.ports.push_back({"out",a,false});
- try{cycle.dependencyOrder();return 3;}catch(const std::runtime_error& e){if(std::string(e.what()).find("combinational cycle")==std::string::npos)return 4;}
+ Graph cycle;
+ auto a=cycle.wire(1,"a"), b=cycle.wire(1,"b");
+ // Independent inputs prevent the loop from folding into cancelling inversions.
+ auto x=cycle.wire(1,"x","input"), y=cycle.wire(1,"y","input");
+ cycle.ports.push_back({"x",x,true});
+ cycle.ports.push_back({"y",y,true});
+ cycle.connect(a,cycle.binary("xor",b,x,1));
+ cycle.connect(b,cycle.binary("xor",a,y,1));
+ cycle.ports.push_back({"out",a,false});
+ try {
+     cycle.dependencyOrder();
+     return 3;
+ } catch (const std::runtime_error& error) {
+     if (std::string(error.what()).find("combinational cycle")==std::string::npos) {
+         std::cerr<<error.what()<<'\n';
+         return 4;
+     }
+ }
  std::cout<<"PASS deep dependency order and real-cycle rejection\n";
 }
 ''')

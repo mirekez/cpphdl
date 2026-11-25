@@ -302,6 +302,11 @@ foreach(src ${TRIBE_TEST_SOURCES})
         )
     endif()
     if(target_name STREQUAL "Perf_test")
+        # Keep the native wall-time benchmark comparable to its optimized
+        # baseline when the rest of the tree is built with Debug flags.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${target_name} PRIVATE "$<$<CONFIG:Debug>:-O2>")
+        endif()
         set_tests_properties(${target_name} PROPERTIES RUN_SERIAL TRUE)
     endif()
 

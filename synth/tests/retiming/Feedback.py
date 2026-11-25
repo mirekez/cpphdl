@@ -36,12 +36,13 @@ def run(command, label, failure=None):
 
 command = [a.cpphdl, '--synth', '--top', 'cpphdl_top', '--module', 'SynthRetiming',
            '--cxx', a.cxx, '--retiming', 'fit_pipeline_retiming',
-           '--clock-period-ns', '3.205128205' if a.case == 'feedback_frames' else '2.5']
+           '--clock-period-ns', '2.7' if a.case == 'feedback_frames' else '2.5']
 run([*command, '--output', work / 'rtl', source], 'synth')
 report = json.loads((work / 'rtl/timing.json').read_text())
 rule = report['rules'][0]
 assert rule['target_met'] and rule['added_latency'] > 0, rule
 if a.case == 'feedback_frames':
+    assert rule['before_ns'] > rule['target_ns'] >= rule['after_ns'], rule
     assert rule['feedback_scheduled'] and rule['initiation_interval'] == rule['added_latency'] + 1, rule
 else:
     assert len(report['keep_boxes']) == 2, report

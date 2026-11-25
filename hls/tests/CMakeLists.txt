@@ -241,9 +241,11 @@ foreach(stages 1 3 7)
     endif()
 endforeach()
 if(HLS_VERILATOR)
+    # Tighten the period below the existing three-stage schedule so this
+    # fixture exercises added latency as well as II=1 and gate behavior.
     add_test(NAME hls_pipeline_synth_verilator COMMAND "${CMAKE_COMMAND}"
         "-DCPPHDL=$<TARGET_FILE:${CPPHDL_TEST_TARGET}>" "-DROOT=${CMAKE_SOURCE_DIR}"
-        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-synth" -DSTAGES=3 -DSYNTH=ON
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/pipeline-synth" -DSTAGES=3 -DSYNTH=ON -DPERIOD_NS=1.4
         -DSOURCE=PipelineFeedback.cpp "-DTOOLCHAIN=${HLS_TOOLCHAIN}" "-DVERILATOR=${HLS_VERILATOR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Pipeline.cmake")
     set_tests_properties(hls_pipeline_synth_verilator PROPERTIES TIMEOUT 300)

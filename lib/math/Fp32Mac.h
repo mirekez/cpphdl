@@ -128,6 +128,12 @@ class Fp32Mac : public cpphdl::Module {
 };
 #pragma pop_macro("MAINFILE")
 
+#if defined(SYNTHESIS) && defined(MAINFILE)
+// The inline testbench is excluded during conversion. Instantiate its default
+// configuration explicitly so the converter emits the standalone DUT.
+template class Fp32Mac<>;
+#endif
+
 #if !defined(SYNTHESIS) && defined(MAINFILE)
 #pragma push_macro("MAINFILE")
 #undef MAINFILE
