@@ -2,6 +2,7 @@
 #include "KeepBoxes.h"
 #include "BlackBox.h"
 #include "PipelineReplacement.h"
+#include "ReplacementControl.h"
 #include "StatePruning.h"
 #include <filesystem>
 
@@ -69,6 +70,7 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
     std::set<size_t> replacementOutputs;
     for (const auto& r : graph.replacements) for (const auto& [name,value] : r.pins)
         if (!pipelineInput(name)) for (auto bit : graph.resolved(value)) if (bit>1) replacementOutputs.insert(Graph::owner(bit));
+    const auto replacementControls = replacementControlLoads(graph);
     auto nodeName = [](size_t index) { return "__cpphdl_node_" + std::to_string(index); };
     // Batch independent bit muxes, never a chain with dependencies inside it.
     // The mapped graph/cell inventory stays bit-level; only its spelling changes.
@@ -151,9 +153,17 @@ static std::string buildVerilog(Graph& graph, const std::string& module, std::st
         if (bit > 1) declarations.insert(Graph::owner(bit));
     for (const auto& state : graph.states) for (auto bit : graph.resolved(state.bits))
         if (bit > 1) declarations.insert(Graph::owner(bit));
-    for (size_t i : declarations) if (!bundled.count(i))
+    for (size_t i : declarations) if (!bundled.count(i)) {
+        // Physical Agilex experiments show that shared replacement enables
+        // need local launch copies. This is a placement hint, not extra HLS
+        // latency or preserve: Quartus can still retime these registers.
+        const auto control = replacementControls.find(i);
+        if (control != replacementControls.end() && control->second > 64 && !replacementOutputs.count(i))
+            out << "// Hard-block handshake shared by " << control->second << " replacements.\n"
+                << "`ifdef CPPHDL_TARGET_AGILEX7\n(* maxfan = 64 *)\n`endif\n";
         out << (graph.nodes[i].op == "state" && !replacementOutputs.count(i) ? "reg" : "wire") << " [" << graph.nodes[i].width-1
             << ":0] " << nodeName(i) << ";\n";
+    }
     for (size_t i = 0; i < bundles.size(); ++i)
         out << "wire [" << bundles[i].size() - 1 << ":0] " << bundleName(i) << ";\n";
     for (size_t i = 0; i < graph.memories.size(); ++i) {
