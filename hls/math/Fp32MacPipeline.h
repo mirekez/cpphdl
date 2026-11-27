@@ -1,11 +1,15 @@
 #pragma once
 #include "Float.h"
 
+#ifndef CPPHDL_FP32_MAC_MIN_LATENCY
+#define CPPHDL_FP32_MAC_MIN_LATENCY "2"
+#endif
+
 namespace cpphdl::hls::math {
 // A source-level MAC module: the ordinary C++ implementation is the reference
 // for synthesis. The replacement retains separate FP32 multiply/add rounding.
 struct [[clang::annotate("CPPHDL_REPLACEMENT_MODULE=Fp32MacPipeline")]]
-       [[clang::annotate("CPPHDL_REPLACEMENT_MIN_LATENCY=2")]]
+       [[clang::annotate("CPPHDL_REPLACEMENT_MIN_LATENCY=" CPPHDL_FP32_MAC_MIN_LATENCY)]]
        [[clang::annotate("CPPHDL_REPLACEMENT_SCRIPT=generate_mac_replacement.py;")]] Fp32MacMethods {
     static float calculate(float c,float a,float b) {
         return decode(Fp32MacMethods{}.command(encode(c),encode(a),encode(b)));
