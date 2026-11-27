@@ -1,0 +1,22 @@
+--- corev_apu/tb/ariane_tb.cpp
++++ ariane_tb.cpp
+@@ -38,0 +39 @@
++#include <cstdlib>
+@@ -358 +359,3 @@
+-  while (!dtm->done() && !jtag->done() && !(top->exit_o & 0x1)) {
++  const auto reset_cycles = main_time;
++  const auto work_start = std::chrono::steady_clock::now();
++  while (main_time < max_cycles && !dtm->done() && !jtag->done() && !(top->exit_o & 0x1)) {
+@@ -377,0 +381,8 @@
++  const double work_seconds = std::chrono::duration<double>(
++      std::chrono::steady_clock::now() - work_start).count();
++  if (std::getenv("CVA6_BENCH_STATS")) {
++    fprintf(stderr, "CVA6_BENCH reset_cycles=%llu work_cycles=%llu total_cycles=%llu work_seconds=%.9f\n",
++            static_cast<unsigned long long>(reset_cycles),
++            static_cast<unsigned long long>(main_time - reset_cycles),
++            static_cast<unsigned long long>(main_time), work_seconds);
++  }
+@@ -395,0 +407,3 @@
++  } else if (!dtm->done() && !jtag->done() && !(top->exit_o & 0x1)) {
++    fprintf(stderr, "%s *** TIMEOUT *** after %ld cycles\n", htif_argv[1], main_time);
++    ret = 1;

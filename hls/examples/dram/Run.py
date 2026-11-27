@@ -39,10 +39,13 @@ if args.flow == "gates":
     manifest = json.loads((rtl / "manifest.json").read_text())
     assert manifest["status"] == "complete"
     timing = manifest["timing"]
-    assert timing["rules"][0]["target_met"] and timing["rules"][0]["added_latency"] > 0
+    rule = timing["rules"][0]
+    # The calculation can be rescheduled within its existing pipeline latency.
+    assert rule["before_ns"] > rule["target_ns"] >= rule["after_ns"], rule
+    assert rule["target_met"] and rule["inserted_register_bits"] > 0, rule
     assert len(timing["streaming_regions"]) == 1
     assert timing["streaming_regions"][0]["initiation_interval"] == 1
-    assert not timing["rules"][0]["feedback_scheduled"], "memory handshake must not be retimed"
+    assert not rule["feedback_scheduled"], "memory handshake must not be retimed"
     sources = [rtl / "gates.v"]
 else:
     run([args.cpphdl, "--generated-dir", rtl, source], "conversion")

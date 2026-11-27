@@ -3,20 +3,22 @@ name: cpphdl-verilator-rtl
 description: Use when writing or debugging C++HDL tests that mix C++ testbench models with Verilated RTL, especially reset ordering, register inputs, AXI4 responder wiring, eval sequencing, _assign/_strobe discipline, and avoiding C++/SystemVerilog simulation mismatches.
 ---
 
-# C++HDL and Verilator RTL Tests
+# C++HDL tests
 
-Use this skill when editing C++HDL tests or harnesses that instantiate a Verilated module and connect it to C++ models such as `Axi4Ram`, `Axi4RegionMux`, UART, CLINT, or accelerator devices.
+Use this skills when editing C++HDL tests or harnesses
 
 ## MAIN RULES:
 
 - Never try to explicitly evaluate ports or combs values! They calculated implicitly by calling comb-functions chain. Combs and ports are lambdas in cpphdl and can refresh all chain on demand. Value is cached until next clock start
 - Never call \_assign() in work cycle - this function only binds lambdas to ports, it does not calculate anything!
-- Define variables only in the beginning of methods (this is not our requirement, this is requirements of verilator and yosys_slang)
+  `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle. Never run any `_assign()` after `_work()` cycles begin
+- Put `.strobe()` and `.apply()` calls only in the `_strobe()` methods. Do not call them from `_work()`, helper methods, comb functions, or `_assign()`.
+- Define local variables only in the beginning of methods (this is not our requirement, this is requirements of verilator and yosys_slang)
 - Try to not use `return` in `_work()` method, better put `if (reset)` in the end of `_work()` method or use `if (reset) { ... } else { ... }`. Slang does not support `disable` in always blocks
 
 ## Hard Rules
 
-- Put `_ASSIGN(...)`, `_ASSIGN_REG(...)`, , `_ASSIGN_COMB(...)`, `_ASSIGN_I(...)`, `_ASSIGN_REG/COMB_I(...)`, `_ASSIGN_INDEXED(...)`, and `_ASSIGN_REG/COMB_INDEXED(...)` assignments only in `_assign()`.
+- Use `_ASSIGN(...)`, `_ASSIGN_REG(...)`, , `_ASSIGN_COMB(...)`, `_ASSIGN_I(...)`, `_ASSIGN_REG/COMB_I(...)`, `_ASSIGN_INDEXED(...)`, and `_ASSIGN_REG/COMB_INDEXED(...)` assignments only in `_assign()` method.
 - Assign a C++HDL interface once with `assignIf(...)`; do not assign its individual ports separately. Make the connection in the immediate common parent's `_assign()`:
 
 ```cpp
@@ -25,19 +27,15 @@ void _assign()
     assignIf(driver, responder, driver.source_out, responder.sink_in);
 }
 ```
+(do not replace this with one assignment per `valid`, `ready`, `data`, or other interface member. `assignIf` resolves both interface directions and expands the flattened SystemVerilog connections consistently)
 
-  Do not replace this with one assignment per `valid`, `ready`, `data`, or other interface member. `assignIf` resolves both interface directions and expands the flattened SystemVerilog connections consistently.
 - C++HDL forbids assignments across hierarchy levels, matching synthesizable SystemVerilog module encapsulation. A module may connect its own ports and the exposed ports/interfaces of its immediate child modules, but it must not reach through a child into a grandchild or assign a child module's internal state. Expose an intermediate port or interface and connect the hierarchy one level at a time.
-- Put `.strobe()` and `.apply()` calls only in the parent `_strobe()` method. Do not call them from `_work()`, helper methods, comb functions, or `_assign()`.
-- `_assign()` is structural elaboration. It should run once before the simulation cycle loop, not once per cycle. Never run any `_assign()` after `_work()` cycles begin
-- In Verilator mode, write all Verilated input ports before `eval()`.
-- For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ C++HDL update order accidentally matching Verilator.
+- In Verilator test mode, write all Verilated input ports before `eval()`. For registered logic, make the C++ harness ordering match the RTL edge being sampled. Do not rely on C++ C++HDL update order accidentally matching Verilator.
 - In rare case if you use Verilator for 0-clock latency module testing, to see comb output from Verilator use eval() with clk = 0. This will update combs without updating regs
 - sys_clock is mandatory global variable to be incremented once per main loop cycle, it is used to cache combinational variables functions results
-- it's better to put `if (reset)` section in the end of `_work()` method to do not forget to call nested `_work()` methods in case of reset
-- better use operators >> and << and | when possible instead of bits(a,b) and [] for logic<>, if it does not make logic much longer (bits() is slower)
+- prefer fast operators like >> and << and | when possible instead of bits(a,b) and [] for logic<>, if it does not make logic longer
 
-## Verilator Cycle Pattern
+## Verilator testing harness
 
 For a Verilated DUT connected to C++ responder models, use this shape unless the local test has a proven reason to differ:
 
@@ -72,12 +70,55 @@ void cycle(bool reset = false)
 
 The important point is not the exact helper names. The important point is that responder outputs are presented to the Verilated DUT before the clock edge that samples them, and C++ model state is strobed after that edge.
 
-## Reset
-
 - Drive `reset` through the same `eval_dut(reset)` path as normal cycles so all inputs and AXI responder signals are valid during reset.
 - Hold reset for multiple cycles when the DUT contains RAM init FSMs or caches.
 - Keep C++ model `_work(reset)` and `_strobe()` in the same parent cycle order used after reset.
 - Do not special-case reset by calling only `dut.eval()` and skipping connected C++ models unless the test explicitly needs disconnected reset behavior.
+- Set Verilated register-like inputs directly before `eval()`:
+  Do not assign these through `_ASSIGN()/_ASSIGN_REG()` in Verilator-only code. `_ASSIGN()` is for C++HDL structural assignment inside `_assign()`. Verilator requires strait data for ports, not functions
+
+```cpp
+dut.reset_pc_in = reset_pc;
+dut.memory_base_in = memory_base;
+dut.mem_region_size_in[0] = region0_size;
+```
+
+- For C++ C++HDL models connected around a Verilated DUT:
+
+- `_assign()` wires ports once.
+- `_work(reset)` computes next values for C++ models.
+- Verilated `eval()` computes and samples RTL depending on `clk`.
+- `_strobe()` commits C++ model registers and memory buffers.
+
+Keep memory buffer `.apply()` inside the memory module `_strobe()` path only. If a parent calls `.apply()` manually, C++ and Verilator tests can diverge.
+
+- Debugging Handshake Hangs:
+
+When a Verilator-only hang appears:
+
+1. Trace valid/ready on both sides of the boundary: DUT master output, C++ responder input, C++ responder output, DUT responder input.
+2. Check whether the valid pulse exists only between two `eval()` calls.
+3. Compare the harness cycle order with a known passing test such as an L2 cache Verilator test.
+4. Remove temporary debug prints before finishing.
+
+Common signatures:
+
+- C++ passes, Verilator hangs on first read: responder `rvalid` is generated by the C++ model, but is not presented before the Verilated clock edge.
+- Verilator hangs during instruction refill immediately after reset: responder feedback was presented before the Verilated master outputs were evaluated for the current low-clock phase.
+- Direct C++ device test passes, CPU `.elf` Verilator test hangs: the device logic may be fine; inspect the mixed C++/Verilator boundary first.
+
+# Using interfaces like Axi4Driver, Axi4Responder and Axi4If
+
+Use this skill when editing C++HDL models or tests or harnesses to verilator connected to/from Axi4
+
+## Hard Rules
+
+- Use structures with Axi4Driver and Axi4Responder instead of declaring separated registers for Axi4 signals
+- Use Axi4If interface instead of defining _PORT() for each signal
+- Use operator= of Axi4If if you need to assign driver or responder to AxiIf
+- Use Module method assignIn if you need to bind 2 Axi4If interfaces of 2 different modules
+- If nothing of this works use macroses like AXI4_DRIVER_FROM AXI4_RESPONDER_FROM or similar with _VERILATOR suffix
+- Try to use right types like u<ID_WIDTH>, not uint32_t for variables when you need to use them
 
 ## AXI4 Responder Wiring
 
@@ -99,57 +140,6 @@ Pitfalls:
 - If responder signals are forced too early without first evaluating the DUT's current master outputs, instruction or data refill can hang from reset.
 - Keep `rready`/`bready` behavior legal and stable. A testbench may hold ready high, but the DUT still must observe valid/ready on a clock edge.
 - For wide AXI data, use the established conversion helper, for example `verilator_logic_to_wide(...)` or `copy_to_logic<PORT_BITS>(...)`; do not hand-copy only one word of a beat.
-
-## Register Inputs
-
-Set Verilated register-like inputs directly before `eval()`:
-
-```cpp
-dut.reset_pc_in = reset_pc;
-dut.memory_base_in = memory_base;
-dut.mem_region_size_in[0] = region0_size;
-```
-
-Do not assign these through `_ASSIGN()/_ASSIGN_REG()` in Verilator-only code. `_ASSIGN()` is for C++HDL structural assignment inside `_assign()`. Verilator requires strait data for ports, not functions
-
-## C++ Model Order
-
-For C++ C++HDL models connected around a Verilated DUT:
-
-- `_assign()` wires ports once.
-- `_work(reset)` computes next values for C++ models.
-- Verilated `eval()` computes and samples RTL depending on `clk`.
-- `_strobe()` commits C++ model registers and memory buffers.
-
-Keep memory buffer `.apply()` inside the memory module `_strobe()` path only. If a parent calls `.apply()` manually, C++ and Verilator tests can diverge.
-
-## Debugging Handshake Hangs
-
-When a Verilator-only hang appears:
-
-1. Trace valid/ready on both sides of the boundary: DUT master output, C++ responder input, C++ responder output, DUT responder input.
-2. Check whether the valid pulse exists only between two `eval()` calls.
-3. Compare the harness cycle order with a known passing test such as an L2 cache Verilator test.
-4. Remove temporary debug prints before finishing.
-
-Common signatures:
-
-- C++ passes, Verilator hangs on first read: responder `rvalid` is generated by the C++ model, but is not presented before the Verilated clock edge.
-- Verilator hangs during instruction refill immediately after reset: responder feedback was presented before the Verilated master outputs were evaluated for the current low-clock phase.
-- Direct C++ device test passes, CPU `.elf` Verilator test hangs: the device logic may be fine; inspect the mixed C++/Verilator boundary first.
-
-# Using Axi4Driver, Axi4Responder and Axi4If interface
-
-Use this skill when editing C++HDL models or tests or harnesses to verilator connected to/from Axi4
-
-## Hard Rules
-
-- Use structures with Axi4Driver and Axi4Responder instead of declaring separated registers for Axi4 signals
-- Use Axi4If interface instead of defining _PORT() for each Axi4 signal
-- Use operator= of Axi4If if you need to assign driver or responder to AxiIf
-- Use Module method assignIn if you need to bind 2 Axi4If interfaces of 2 different modules
-- If nothing of this works use macroses like AXI4_DRIVER_FROM AXI4_RESPONDER_FROM or similar with _VERILATOR suffix
-- Try to use right types like u<ID_WIDTH>, not uint32_t for variables when you need to use them
 
 # Developing RTL modules, devices, examples
 

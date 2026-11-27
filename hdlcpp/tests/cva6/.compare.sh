@@ -5,8 +5,8 @@ source "$SCRIPT_DIR/build.sh"
 
 comparison_table() {
     gawk -F '\t' '
-        BEGIN { printf "\n%-36s %14s %12s %14s %9s %9s %s\n", "Backend", "Compilation(s)", "Build", "Execution(s)", "Cycles", "Commits", "Result" }
-        NR>1 { printf "%-36s %14s %12s %14s %9s %9s %s\n", $1,$2,$3,$4,$5,$6,$7 }
+        BEGIN { printf "\n%-36s %14s %12s %14s %9s %9s %s\n", "Backend", "Compilation(s)", "Build", "Execution(s)", "Cycles", "Commits", "Speedup / Result" }
+        NR>1 { printf "%-36s %14s %12s %14s %9s %9s %s\n", $1,$2,$3,$4,$5,$6,$8 "x " $7 }
     ' "$ROOT/comparison.tsv"
 }
 
@@ -22,40 +22,48 @@ build_measurement() {
 }
 
 compare() {
-    case "${1:-}" in
-        --help)
-            echo 'Build and run original Verilator (1/4 threads), native graph (1/4), optimize-combs, and default C++HDL.'
-            echo 'Usage: .compare.sh [--rebuild]'
-            echo 'Run .build_cva6.sh first. Shared HDLCPP conversion is built automatically.'
-            echo '--rebuild discards backend object caches and rebuilds every model and the shared conversion.'
-            echo 'Compilation is successful build wall time, including lowering and linking; execution is simulator work time.'
-            echo 'Cached binaries retain their original measured build time; older unmeasured builds say unmeasured.'
-            echo 'A resumed build reports only that attempt and is labelled resumed. All builds use one compiler job.'
-            return ;;
-        --rebuild) export CVA6_REBUILD=1 ;;
-        '') export CVA6_REBUILD=0 ;;
-        *) die 'usage: .compare.sh [--rebuild]' ;;
-    esac
-    (($#<=1)) || die 'usage: .compare.sh [--rebuild]'
+    local all=0 argument
+    export CVA6_REBUILD=0
+    for argument in "$@"; do
+        case "$argument" in
+            --help)
+                echo 'Usage: .compare.sh [--rebuild] [--all]'
+                echo 'Clone the local CVA6 checkout, then compare Verilator and native graph with one and four threads.'
+                echo '--all also tests optimize-combs and default C++HDL.'
+                echo '--rebuild rebuilds the conversion and simulators and discards partial backend objects.'
+                echo 'Compilation includes lowering and linking. Execution measures the simulator work loop.'
+                echo 'Cached builds retain their recorded build time. A resumed build reports only that attempt.'
+                return ;;
+            --rebuild) CVA6_REBUILD=1 ;;
+            --all) all=1 ;;
+            *) die 'usage: .compare.sh [--rebuild] [--all]' ;;
+        esac
+    done
     initialize
     exec 9> "$ROOT/.lock"
     flock -n 9 || die "another CVA6 build/run owns $ROOT"
-    require_source
-    printf 'backend\tcompilation_seconds\tbuild\texecution_seconds\tcycles\tcommits\tvalidation\n' > "$ROOT/comparison.tsv"
+    prepare
     build_model hdlcpp
     build_measurement hdlcpp
-    printf 'Shared SV-to-C++ conversion: %s s (%s); excluded from individual backend compilation.\n' "$BUILD_SECONDS" "$BUILD_STATE" | tee "$ROOT/conversion-time.txt"
-    local mode seconds
-    for mode in verilator verilator-4threads cpphdl-native-graph cpphdl-native-graph-4threads cpphdl-optimize-combs cpphdl; do
-        build_model "$mode"
+    printf 'Shared SV-to-C++ conversion: %s s (%s).\n' "$BUILD_SECONDS" "$BUILD_STATE" | tee "$ROOT/conversion-time.txt"
+    local -a modes=(verilator verilator-4threads cpphdl-native-graph cpphdl-native-graph-4threads)
+    if ((all)); then
+        modes+=(cpphdl-optimize-combs cpphdl)
+    fi
+    printf 'backend\tcompilation_seconds\tbuild\texecution_seconds\tcycles\tcommits\tvalidation\tspeedup_vs_verilator\n' > "$ROOT/comparison.tsv"
+    local mode seconds cycles commits speedup reference_seconds
+    for mode in "${modes[@]}"; do
+        if [[ "$mode" != verilator ]]; then build_model "$mode"; fi
         build_measurement "$mode"
         run_model "$mode"
-        seconds=$(awk '{print $2}' "$ROOT/runs/$mode/result.txt")
-        printf '%s\t%s\t%s\t%s\t396778\t297074\tPASS\n' "$mode" "$BUILD_SECONDS" "$BUILD_STATE" "$seconds" >> "$ROOT/comparison.tsv"
-        comparison_table
+        read -r _ seconds _ cycles _ commits _ < "$ROOT/runs/$mode/result.txt"
+        if [[ "$mode" == verilator ]]; then reference_seconds=$seconds; fi
+        speedup=$(awk -v reference="$reference_seconds" -v elapsed="$seconds" 'BEGIN {printf "%.3f", reference/elapsed}')
+        printf '%s\t%s\t%s\t%s\t%s\t%s\tPASS\t%s\n' "$mode" "$BUILD_SECONDS" "$BUILD_STATE" "$seconds" "$cycles" "$commits" "$speedup" >> "$ROOT/comparison.tsv"
     done
-    echo 'All modes: identical ELF, checksum 0xd687fdc5 and ordered integer commits.'
-    echo 'Both Verilator modes retain trace formatting; C++ validation runs are separate and excluded from execution time.'
+    comparison_table
+    echo 'All modes used the same ELF, returned checksum 0xd687fdc5 and matched the ordered integer commit trace.'
+    echo 'Verilator retains trace formatting in its timed run. C++HDL collects commits in a separate validation run.'
     echo "Report: $ROOT/comparison.tsv"
 }
 

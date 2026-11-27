@@ -146,6 +146,8 @@ class SynchronousRamExample : public cpphdl::Module {
 #define write_data_in write_data
 #define data_out data
 #define narrow_out narrow
+#define block_data_out block_data
+#define block_narrow_out block_narrow
 #endif
 #endif
 long _system_clock = 0;

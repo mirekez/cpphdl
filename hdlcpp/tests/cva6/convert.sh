@@ -4,6 +4,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/build.sh"
 initialize
 require_source
+[[ -n "$HDLCPP" ]] || die 'build hdlcpp or set HDLCPP'
 OUT="$ROOT/ordinary"
 mkdir -p "$OUT/logs" "$OUT/work" "$OUT/generated"
 gawk -v root="$OUT" '
@@ -44,7 +45,8 @@ while IFS= read -r source; do
         : > "$directory/${categories[category]}.tsv"
         arguments+=("HDLCPP_WRITE_${variables[category]}=$directory/${categories[category]}.tsv")
     done
-    (cd "$directory"; env HDLCPP_METADATA_ONLY=1 "${arguments[@]}" "$HDLCPP" "$SOURCE/$source") > "$OUT/logs/metadata-$index.log" 2>&1
+    (cd "$directory"; env HDLCPP_METADATA_ONLY=1 "${arguments[@]}" "$HDLCPP" "$SOURCE/$source") > "$OUT/logs/metadata-$index.log" 2>&1 ||
+        die "metadata failed for $source (see $OUT/logs/metadata-$index.log)"
     gawk -F '\t' 'NF { key=$1; if (FILENAME ~ /\/(ports|widths|callables)\.tsv$/) sub(/\..*/, "", key); print key }' "$directory"/*.tsv | sort -u > "$directory/modules"
     printf '%s\t%s\n' "$source" "$index" >> "$OUT/work/metadata.map"
     ((index+=1))
@@ -69,7 +71,9 @@ for pass in {1..12}; do
         cat "$OUT/cva6_module_params.tsv" > "$directory/params.tsv"
         gawk -F '\t' 'ARGIND==1 { own[$0]=1; next } !($1 in own)' "$OUT/work/metadata/$index/modules" "$OUT/cva6_auto_module_params.tsv" >> "$directory/params.tsv"
         : > "$directory/traits.tsv"
-        (cd "$directory"; env HDLCPP_PORT_TYPES="$directory/ports.tsv" HDLCPP_MODULE_PARAMS="$directory/params.tsv" HDLCPP_APPEND_FINAL_MODULE_TRAITS="$directory/traits.tsv" "$HDLCPP" "$SOURCE/$source") > "$OUT/logs/${source//\//__}.log" 2>&1
+        log="$OUT/logs/${source//\//__}.log"
+        (cd "$directory"; env HDLCPP_PORT_TYPES="$directory/ports.tsv" HDLCPP_MODULE_PARAMS="$directory/params.tsv" HDLCPP_APPEND_FINAL_MODULE_TRAITS="$directory/traits.tsv" "$HDLCPP" "$SOURCE/$source") > "$log" 2>&1 ||
+            die "HDLCPP failed for $source (see $log)"
         cat "$HDLCPP_MODULE_TRAITS" "$directory/traits.tsv" | gawk 'NF && !seen[$0]++' > "$OUT/work/traits.next"
         mv "$OUT/work/traits.next" "$HDLCPP_MODULE_TRAITS"
         destination="$OUT/generated/${source%.*}.h"
@@ -87,7 +91,7 @@ gawk '
     BEGIN { RS="\0"; ORS="" }
     function repair(text, method, leaf, parent, start, finish, body, token, position, bracket, depth, cursor, replacement) {
         start=index(text, "& " method "_func()")
-        if (!start) { print "missing TLB method " method > "/dev/stderr"; exit 1 }
+        if (!start) return text
         body=substr(text,start)
         match(substr(body,2), /\n    (std::remove_cvref_t<decltype\(|_LAZY_COMB\()/)
         finish=RSTART ? RSTART : length(body)
@@ -119,7 +123,10 @@ gawk '
             if (!finish) exit 1
             text=substr(text,1,start-1) substr(tail,finish)
         }
-        if (text ~ /content_q_(u|ppn)_comb_func\(\)/) exit 1
+        if (text ~ /content_q_(u|ppn)_comb_func\(\)/) {
+            print "unresolved projected TLB fields" > "/dev/stderr"
+            exit 1
+        }
         print text
     }
 ' "$OUT/generated/core/cva6_mmu/cva6_tlb.h" > "$OUT/work/tlb.h"

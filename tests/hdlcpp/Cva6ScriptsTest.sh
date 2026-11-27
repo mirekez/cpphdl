@@ -12,6 +12,47 @@ bash "$FIXTURE/.compare.sh" --help >/dev/null
 [[ ! -e "$CVA6_WORK_ROOT" ]]
 source "$FIXTURE/build.sh"
 (
+    upstream="$TEST_ROOT/upstream"
+    git init -q "$upstream"
+    echo 'pinned source' > "$upstream/source.sv"
+    git -C "$upstream" add source.sv
+    git -C "$upstream" -c user.name=Test -c user.email=test@example.invalid commit -qm fixture
+    CVA6_REVISION=$(git -C "$upstream" rev-parse HEAD)
+    CVA6_URL="file://$upstream"
+    SOURCE="$TEST_ROOT/checkout"
+    checkout_source
+    checkout_source
+    [[ $(cat "$SOURCE/source.sv") == 'pinned source' ]]
+    echo 'local edit' > "$SOURCE/source.sv"
+    if (require_source) 2>/dev/null; then exit 1; fi
+    [[ $(cat "$SOURCE/source.sv") == 'local edit' ]]
+)
+[[ $(find_tool '' bash) == /* ]]
+if find_tool /does/not/exist bash; then exit 1; fi
+(
+    REPO="$TEST_ROOT/project"
+    VERILATOR_SOURCE="$TEST_ROOT/bundled-verilator"
+    export TEST_VERILATOR_RUNTIME="$TEST_ROOT/verilator-runtime"
+    mkdir -p "$TEST_ROOT/old-bin" "$TEST_ROOT/current-bin" "$TEST_VERILATOR_RUNTIME/include"
+    touch "$TEST_VERILATOR_RUNTIME/include/verilated.h"
+    printf '%s\n' '#!/usr/bin/env bash' 'echo "Verilator 5.034"' > "$TEST_ROOT/old-bin/verilator"
+    cat > "$TEST_ROOT/current-bin/verilator" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    --version) echo "Verilator 5.050" ;;
+    --getenv) echo "$TEST_VERILATOR_RUNTIME" ;;
+esac
+EOF
+    chmod +x "$TEST_ROOT"/{old-bin,current-bin}/verilator
+    export PATH="$TEST_ROOT/old-bin:$TEST_ROOT/current-bin:$PATH"
+    [[ $(find_benchmark_verilator) == "$TEST_ROOT/current-bin/verilator" ]]
+)
+(
+    unset CVA6_CPU CVA6_CPUS4
+    first_cpu=$(simulation_affinity verilator)
+    [[ $(taskset -c "$first_cpu" awk '/^Cpus_allowed_list:/ {print $2}' /proc/self/status) == "$first_cpu" ]]
+)
+(
     before=$(compilation_inputs | sha256sum)
     run_model() { echo 'changed validation'; }
     [[ $(compilation_inputs | sha256sum) == "$before" ]]
@@ -31,12 +72,14 @@ PASSED
 CVA6_BENCH reset_cycles=10 work_cycles=396768 total_cycles=396778 work_seconds=1.25
 matrix.riscv *** SUCCESS *** (tohost = 0) after 396778 cycles
 EOF
-[[ $(check_run verilator "$TEST_ROOT/run.log") == 1.25 ]]
+[[ $(check_run verilator "$TEST_ROOT/run.log") == "1.25 396778" ]]
 if check_run cpphdl-native-graph "$TEST_ROOT/run.log" >/dev/null; then exit 1; fi
 echo 'CVA6_GRAPH_EDGES total_cycles=396778' >> "$TEST_ROOT/run.log"
 check_run cpphdl-native-graph "$TEST_ROOT/run.log" >/dev/null
 sed 's/396778/396779/g' "$TEST_ROOT/run.log" > "$TEST_ROOT/bad.log"
 if check_run cpphdl-native-graph "$TEST_ROOT/bad.log" >/dev/null; then exit 1; fi
+sed -e 's/396778/2058/g' -e 's/396768/2048/g' "$TEST_ROOT/run.log" > "$TEST_ROOT/alternate.log"
+[[ $(check_run cpphdl-native-graph "$TEST_ROOT/alternate.log") == "1.25 2058" ]]
 gawk 'BEGIN { for (record=1;record<=297074;record++) print "3 0x80000000 (0x00000013) x 0 0x00000000" }' > "$TEST_ROOT/reference.log"
 gawk 'BEGIN { for (record=1;record<=297074;record++) printf "CPPCOMMIT cycle=%d ordinal=%d lane=0 order=%d pc=0x80000000 next=0x80000004 insn=0x00000013 trap=0 cause=0x0 rd=x0 data=0x1234\n",record,record,record }' > "$TEST_ROOT/candidate.log"
 normalize_commits verilator "$TEST_ROOT/reference.log" > "$TEST_ROOT/reference"

@@ -3,32 +3,164 @@ set -euo pipefail
 
 die() { echo "CVA6: $*" >&2; exit 1; }
 
+CVA6_REVISION=9c2cf60a83a0a6a7fc5dcd973a5a5f6c0f42cb75
+CVA6_URL=https://github.com/openhwfoundation/cva6.git
+VERILATOR_VERSION=5.050
+VERILATOR_REVISION=848d926ebd4addacacd294dc84e35d9d4ae8078c
+MAX_CYCLES=2000000
+
+find_tool() {
+    local override=$1 candidate
+    shift
+    if [[ -n "$override" ]]; then set -- "$override"; fi
+    for candidate in "$@"; do
+        if candidate=$(type -P -- "$candidate"); then
+            # Preserve names such as clang++, which select the driver mode.
+            realpath -ms -- "$candidate"
+            return
+        fi
+    done
+    return 1
+}
+
+find_benchmark_verilator() {
+    local candidate version runtime
+    local -a candidates
+    mapfile -t candidates < <(type -aP verilator)
+    candidates+=("$REPO/.conda/bin/verilator")
+    if [[ -x "$VERILATOR_SOURCE/bin/verilator_bin" ]]; then
+        candidates+=("$VERILATOR_SOURCE/bin/verilator")
+    fi
+    for candidate in "${candidates[@]}"; do
+        [[ -x "$candidate" ]] || continue
+        version=$("$candidate" --version 2>/dev/null) || continue
+        [[ "$version" == "Verilator $VERILATOR_VERSION" || "$version" == "Verilator $VERILATOR_VERSION "* ]] || continue
+        runtime=$("$candidate" --getenv VERILATOR_ROOT 2>/dev/null) || continue
+        [[ -f "$runtime/include/verilated.h" ]] || continue
+        realpath -ms -- "$candidate"
+        return
+    done
+    return 1
+}
+
 initialize() {
     SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
     REPO=$(cd "$SCRIPT_DIR/../../.." && pwd)
-    ROOT=$(realpath -m "${CVA6_WORK_ROOT:-/tmp/cva6-bash-$UID}")
+    local workspace_id
+    workspace_id=$(printf '%s' "$SCRIPT_DIR" | sha256sum | cut -c1-12)
+    ROOT=$(realpath -m "${CVA6_WORK_ROOT:-/tmp/cva6-bash-$UID-$workspace_id}")
     [[ "$ROOT" == /tmp/* && "$ROOT" != /tmp/ && "$ROOT" != *[[:space:]]* ]] || die 'CVA6_WORK_ROOT must be a directory below /tmp without whitespace'
-    SOURCE="$ROOT/source"
-    ORIGINAL=${CVA6_SRC:-$HOME/cva6}
-    RISCV=${RISCV:-$HOME/riscv}
-    CXX=${CPPHDL_CXX:-$REPO/.conda/bin/clang++}
-    HDLCPP=${HDLCPP:-$REPO/hdlcpp/build/hdlcpp}
-    CPPHDL=${CPPHDL:-$REPO/build/cpphdl}
-    VERILATOR=${VERILATOR:-$ORIGINAL/tools/verilator-new/bin/verilator}
-    CPU=${CVA6_CPU:-2}
-    CPUS4=${CVA6_CPUS4:-2,3,4,5}
+    SOURCE=$(realpath -m "${CVA6_SRC:-$SCRIPT_DIR/cva6}")
+    FESVR=$(realpath -m "${SPIKE_INSTALL_DIR:-$ROOT/fesvr}")
+    RISCV=$(realpath -m "${RISCV:-$HOME/riscv}")
+    CXX=$(find_tool "${CPPHDL_CXX:-}" clang++ "$REPO/.conda/bin/clang++") || true
+    HDLCPP=$(find_tool "${HDLCPP:-}" "$REPO/build/hdlcpp/Release/hdlcpp" "$REPO/build/hdlcpp/hdlcpp" "$REPO/hdlcpp/build/hdlcpp" hdlcpp) || true
+    CPPHDL=$(find_tool "${CPPHDL:-}" "$REPO/build/Release/cpphdl" "$REPO/build/cpphdl" cpphdl) || true
+    if [[ -n "$HDLCPP" ]]; then HDLCPP=$(realpath -- "$HDLCPP"); fi
+    if [[ -n "$CPPHDL" ]]; then CPPHDL=$(realpath -- "$CPPHDL"); fi
+    VERILATOR_SOURCE="$ROOT/tools/verilator-$VERILATOR_VERSION"
+    if [[ -n "${VERILATOR:-}" ]]; then
+        VERILATOR=$(find_tool "$VERILATOR") || die 'VERILATOR must point to an executable'
+    else
+        unset VERILATOR_ROOT VERILATOR_BIN
+        VERILATOR=$(find_benchmark_verilator) || true
+    fi
     ELF="$ROOT/elf/matrix_multiply.riscv"
-    export CVA6_WORK_ROOT="$ROOT" RISCV HDLCPP CPPHDL
+    export CVA6_WORK_ROOT="$ROOT" CVA6_SRC="$SOURCE" SPIKE_INSTALL_DIR="$FESVR" RISCV
+    export HDLCPP CPPHDL VERILATOR CPPHDL_CXX="$CXX"
     export CVA6_REPO_DIR="$SOURCE" TARGET_CFG=cv32a6_imac_sv32
     export HPDCACHE_DIR="$SOURCE/core/cache_subsystem/hpdcache"
-    mkdir -p "$ROOT/logs" "$ROOT/stamps"
-    mkdir -p "$ROOT/tmp"
-    export TMPDIR="$ROOT/tmp" CCACHE_DISABLE=1
+    mkdir -p "$ROOT/logs" "$ROOT/stamps" "$ROOT/tmp"
+    export TMPDIR="$ROOT/tmp" CCACHE_DISABLE=1 LC_ALL=C
+}
+
+# The documentation submodule is outside the simulation's dependency tree.
+simulation_submodules() {
+    git -C "$SOURCE" ls-tree -r HEAD | awk '$1 == "160000" && $4 !~ /^docs\// {print $4}'
 }
 
 require_source() {
-    [[ -f "$ROOT/source.ready" ]] || die 'run .build_cva6.sh first'
-    (cd "$SOURCE"; sha256sum --check --status "$SCRIPT_DIR/checkout.sha256") || die 'prepared CVA6 checkout changed; rerun .build_cva6.sh'
+    [[ -e "$SOURCE/.git" ]] && [[ $(git -C "$SOURCE" rev-parse HEAD) == "$CVA6_REVISION" ]] ||
+        die 'run .build_cva6.sh to prepare the pinned checkout'
+    local -a modules
+    mapfile -t modules < <(simulation_submodules)
+    if git -C "$SOURCE" submodule status --recursive -- "${modules[@]}" | grep '^[+-U]' >&2; then
+        die 'CVA6 simulation dependencies differ from the pinned revisions'
+    fi
+    git -C "$SOURCE" diff --quiet --ignore-submodules=untracked HEAD ||
+        die "tracked files in $SOURCE differ from the pinned checkout"
+}
+
+checkout_source() {
+    if [[ ! -e "$SOURCE" ]]; then
+        # A local shallow checkout of the exact commit, independent of the
+        # upstream default branch and any other CVA6 installation.
+        git init -q "$SOURCE"
+        git -C "$SOURCE" remote add origin "$CVA6_URL"
+    fi
+    [[ -e "$SOURCE/.git" ]] || die "$SOURCE already exists and is not a Git checkout"
+    if ! git -C "$SOURCE" rev-parse --verify HEAD >/dev/null 2>&1; then
+        git -C "$SOURCE" fetch --depth=1 origin "$CVA6_REVISION"
+        git -C "$SOURCE" checkout --detach "$CVA6_REVISION"
+    fi
+    [[ $(git -C "$SOURCE" rev-parse HEAD) == "$CVA6_REVISION" ]] ||
+        die "$SOURCE must be at $CVA6_REVISION"
+    local -a modules
+    mapfile -t modules < <(simulation_submodules)
+    git -C "$SOURCE" submodule update --init --recursive --depth 1 --jobs 4 -- "${modules[@]}"
+    require_source
+}
+
+verilator_runtime() {
+    [[ -n "$VERILATOR" ]] || die 'run .build_cva6.sh to prepare Verilator'
+    local runtime
+    runtime=$("$VERILATOR" --getenv VERILATOR_ROOT) || return
+    [[ -f "$runtime/include/verilated.h" ]] || die "cannot find Verilator headers in $runtime"
+    printf '%s\n' "$runtime"
+}
+
+build_verilator_tool() {
+    local tool
+    for tool in autoconf gcc g++ flex bison perl; do
+        command -v "$tool" >/dev/null || die "building Verilator $VERILATOR_VERSION requires $tool"
+    done
+    if [[ ! -e "$VERILATOR_SOURCE" ]]; then
+        mkdir -p "$ROOT/tools"
+        git -c advice.detachedHead=false clone --depth 1 --branch "v$VERILATOR_VERSION" \
+            https://github.com/verilator/verilator.git "$VERILATOR_SOURCE"
+    fi
+    [[ $(git -C "$VERILATOR_SOURCE" rev-parse HEAD) == "$VERILATOR_REVISION" ]] ||
+        die "unexpected source revision in $VERILATOR_SOURCE"
+    cd "$VERILATOR_SOURCE"
+    if [[ ! -x configure ]]; then autoconf; fi
+    if [[ ! -f src/Makefile ]]; then CC=gcc CXX=g++ ./configure; fi
+    # Build the optimized Verilator executable in its source tree.
+    make -C src -j4 opt
+}
+
+prepare_verilator() {
+    if [[ -n "$VERILATOR" ]]; then return; fi
+    printf 'Building Verilator %s in %s\n' "$VERILATOR_VERSION" "$VERILATOR_SOURCE"
+    stage setup-verilator bash "$SCRIPT_DIR/build.sh" verilator-tool
+    VERILATOR=$(find_benchmark_verilator) || die "could not run Verilator from $VERILATOR_SOURCE"
+    export VERILATOR
+}
+
+build_fesvr() {
+    if [[ -f "$FESVR/include/fesvr/dtm.h" && -f "$FESVR/lib/libfesvr.a" ]]; then return; fi
+    [[ "$FESVR" == "$ROOT/fesvr" ]] || die "install FESVR in $FESVR or unset SPIKE_INSTALL_DIR"
+    [[ -n "$CXX" ]] || die 'install clang++ or set CPPHDL_CXX'
+    local spike="$SOURCE/verif/core-v-verif/vendor/riscv/riscv-isa-sim"
+    local runtime
+    runtime=$(verilator_runtime)
+    mkdir -p "$ROOT/fesvr-build" "$FESVR/lib"
+    cd "$ROOT/fesvr-build"
+    CXX="$CXX" "$spike/configure" --prefix="$FESVR"
+    # The pinned Spike Makefile adds a YAML dependency to every C++ object.
+    # FESVR itself needs only the DPI headers and its static archive.
+    make -j1 -o "$FESVR/include/yaml-cpp" "CPPFLAGS=-I$runtime/include/vltstd -I$spike" libfesvr.a
+    make -j1 install-hdrs install-config-hdrs
+    install -m 644 libfesvr.a "$FESVR/lib/libfesvr.a"
 }
 
 stage() {
@@ -57,70 +189,138 @@ stage() {
 }
 
 compilation_inputs() {
-    # Reporting and validation do not generate model code. Keep their changes
-    # out of build keys so fixing log handling does not recompile this design.
-    declare -f die initialize require_source stage prepare native_graph build_model \
-        collect_group optimize_combs compile_group cpp_model ready
+    # Reporting and validation do not generate model code.
+    case "${1:-}" in
+        hdlcpp) declare -f stage ;;
+        verilator*) declare -f stage verilator_model ;;
+        *native-graph*) declare -f stage native_graph ;;
+        *) declare -f stage native_graph verilator_model collect_group optimize_combs compile_group cpp_model ;;
+    esac
 }
 
 fingerprint() {
-    local mode=$1
+    local mode=$1 runtime
+    case "$mode" in
+        verilator|verilator-4threads)
+            [[ -n "$CXX" ]] || die 'install clang++ or set CPPHDL_CXX'
+            runtime=$(verilator_runtime) || return
+            ;;
+        hdlcpp) [[ -n "$HDLCPP" ]] || die 'build hdlcpp or set HDLCPP' ;;
+        cpphdl|cpphdl-optimize-combs|cpphdl-native-graph|cpphdl-native-graph-4threads)
+            [[ -n "$CXX" && -n "$CPPHDL" ]] || die 'build cpphdl and install clang++, or set CPPHDL and CPPHDL_CXX'
+            ;;
+        *) die "unknown backend $mode" ;;
+    esac
     {
-        printf '%s\n' "$mode" "$SOURCE" "$CXX" "$RISCV"
-        compilation_inputs
-        sha256sum "$SCRIPT_DIR/convert.sh" "$SCRIPT_DIR"/*.cpp "$SCRIPT_DIR"/*.h "$SCRIPT_DIR"/*.in "$SCRIPT_DIR/checkout.sha256" "$CXX" "$RISCV/lib/libfesvr.a"
-        find "$RISCV/include" -name '*.h' -type f -print0 | sort -z | xargs -0 sha256sum
-        if [[ "$mode" == verilator* ]]; then
-            sha256sum "$VERILATOR" "${VERILATOR%/*}/verilator_bin"
-            find "${VERILATOR%/bin/*}/include" -type f -print0 | sort -z | xargs -0 sha256sum
+        printf '%s\n' "$mode" "$SOURCE" "$CVA6_REVISION"
+        compilation_inputs "$mode"
+        if [[ "$mode" == hdlcpp ]]; then
+            sha256sum "$HDLCPP" "$SCRIPT_DIR/convert.sh" "$SCRIPT_DIR/conversion.in" "$SCRIPT_DIR"/run_cpphdl_testharness*
         else
-            sha256sum "$HDLCPP" "$CPPHDL"
-            find "$REPO/include" -name '*.h' -type f -print0 | sort -z | xargs -0 sha256sum
-            if [[ "$mode" != hdlcpp ]]; then
-                [[ -f "$ROOT/stamps/hdlcpp" ]] || die 'run .build_cva6_hdlcpp.sh first'
-                sha256sum "$ROOT/stamps/hdlcpp"
-                find "$ROOT/ordinary" -name '*.h' -type f -print0 | sort -z | xargs -0 sha256sum
-            fi
-            if [[ "$mode" == *native-graph* ]]; then
-                find "$REPO/tools" -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum
+            sha256sum "$CXX" "$FESVR/lib/libfesvr.a"
+            find "$FESVR/include" -type f -print0 | sort -z | xargs -0r sha256sum
+            if [[ "$mode" == verilator* ]]; then
+                sha256sum "$SCRIPT_DIR/ariane-benchmark.patch" "$VERILATOR"
+                if [[ -f "${VERILATOR%/*}/verilator_bin" ]]; then
+                    sha256sum "${VERILATOR%/*}/verilator_bin"
+                fi
+                "$VERILATOR" --version
+                find "$runtime/include" -type f -print0 | sort -z | xargs -0r sha256sum
+            else
+                sha256sum "$HDLCPP" "$CPPHDL" "$ROOT/stamps/hdlcpp" "$SCRIPT_DIR"/*.cpp
+                find "$REPO/include" -name '*.h' -type f -print0 | sort -z | xargs -0r sha256sum
+                if [[ "$mode" == *native-graph* ]]; then
+                    find "$REPO/tools" -maxdepth 1 -type f -print0 | sort -z | xargs -0r sha256sum
+                fi
             fi
         fi
     } | sha256sum | cut -d ' ' -f1
 }
 
-prepare() {
-    [[ $(git -C "$ORIGINAL" rev-parse HEAD) == 9c2cf60a83a0a6a7fc5dcd973a5a5f6c0f42cb75 ]] || die 'expected CVA6 checkout 9c2cf60a83a0a6a7fc5dcd973a5a5f6c0f42cb75'
-    (cd "$ORIGINAL"; sha256sum --check --quiet "$SCRIPT_DIR/checkout.sha256") || die 'checkout differs from the qualified CVA6 fixture (including its harness changes)'
-    mkdir -p "$SOURCE" "$ROOT/elf"
-    cut -c67- "$SCRIPT_DIR/checkout.sha256" | tar -C "$ORIGINAL" -cf - -T - | tar -C "$SOURCE" -xf -
-    touch "$ROOT/source.ready"
+prepare_elf() {
+    local prefix=${CVA6_CROSS_COMPILE:-} cc cxx signature
+    if [[ -z "$prefix" ]]; then
+        local candidate
+        for candidate in "$RISCV/bin/riscv32-unknown-elf-" "$RISCV/bin/riscv64-unknown-elf-" riscv32-unknown-elf- riscv64-unknown-elf-; do
+            if find_tool "${candidate}gcc" >/dev/null && find_tool "${candidate}g++" >/dev/null; then
+                prefix=$candidate
+                break
+            fi
+        done
+    fi
+    cc=$(find_tool "${prefix}gcc") || true
+    cxx=$(find_tool "${prefix}g++") || true
+    [[ -n "$prefix" && -n "$cc" && -n "$cxx" ]] ||
+        die 'install an RV32-capable RISC-V GCC/G++ toolchain or set CVA6_CROSS_COMPILE'
     local common="$SOURCE/verif/tests/custom/common"
+    local linker="$SOURCE/config/gen_from_riscv_config/linker/link.ld"
     local flags=(-O2 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles -ffreestanding -fno-builtin -msmall-data-limit=0 -march=rv32imac_zicsr_zifencei -mabi=ilp32)
     local includes=(-I"$common" -I"$SOURCE/verif/tests/custom/env" -I"$SOURCE/verif/sim/dv/user_extension")
-    "$RISCV/bin/riscv32-unknown-elf-g++" "${flags[@]}" "${includes[@]}" -fno-exceptions -fno-rtti -DMATRIX_SIZE=32 -DMATRIX_REPEATS=1 -c "$SCRIPT_DIR/matrix_multiply_large.cpp" -o "$ROOT/elf/matrix.o"
-    "$RISCV/bin/riscv32-unknown-elf-gcc" "${flags[@]}" "${includes[@]}" -c "$SCRIPT_DIR/matrix_runtime.c" -o "$ROOT/elf/runtime.o"
-    "$RISCV/bin/riscv32-unknown-elf-gcc" "${flags[@]}" "${includes[@]}" -c "$common/crt.S" -o "$ROOT/elf/crt.o"
-    "$RISCV/bin/riscv32-unknown-elf-g++" "${flags[@]}" -T "$SOURCE/config/gen_from_riscv_config/linker/link.ld" "$ROOT/elf/matrix.o" "$ROOT/elf/runtime.o" "$ROOT/elf/crt.o" -lgcc -o "$ELF"
-    printf '%s  %s\n' 38ced8a38d6101aef1ab35e1e534a7bcb924dca41da5580a1e6fd2e3bc0c7a8a "$ELF" | sha256sum --check --status || die 'unexpected matmul ELF; use the qualified RV32 toolchain'
-    rm -- "$ROOT/elf/"*.o
+    signature=$({ declare -f prepare_elf; printf '%s\n' "$SOURCE" "$CVA6_REVISION"; sha256sum "$cc" "$cxx" "$SCRIPT_DIR/matrix_multiply_large.cpp" "$SCRIPT_DIR/matrix_runtime.c"; } | sha256sum | cut -d ' ' -f1)
+    if [[ -f "$ROOT/stamps/elf" && $(head -1 "$ROOT/stamps/elf") == "$signature" ]] &&
+        tail -n +2 "$ROOT/stamps/elf" | sha256sum --check --status; then
+        echo 'matmul ELF: verified cached build'
+        return
+    fi
+    mkdir -p "$ROOT/elf"
+    "$cxx" "${flags[@]}" "${includes[@]}" -fno-exceptions -fno-rtti -DMATRIX_SIZE=32 -DMATRIX_REPEATS=1 -c "$SCRIPT_DIR/matrix_multiply_large.cpp" -o "$ROOT/elf/matrix.o"
+    "$cc" "${flags[@]}" "${includes[@]}" -c "$SCRIPT_DIR/matrix_runtime.c" -o "$ROOT/elf/runtime.o"
+    "$cc" "${flags[@]}" "${includes[@]}" -c "$common/crt.S" -o "$ROOT/elf/crt.o"
+    "$cxx" "${flags[@]}" -T "$linker" "$ROOT/elf/matrix.o" "$ROOT/elf/runtime.o" "$ROOT/elf/crt.o" -lgcc -o "$ELF.tmp"
+    mv -- "$ELF.tmp" "$ELF"
+    { echo "$signature"; sha256sum "$ELF"; } > "$ROOT/stamps/elf"
+    rm -- "$ROOT/elf/matrix.o" "$ROOT/elf/runtime.o" "$ROOT/elf/crt.o"
+}
+
+prepare() {
+    checkout_source
+    prepare_elf
     build_model verilator
+}
+
+verilator_model() {
+    local mode=$1 output=$2 threads=1 runtime
+    if [[ "$mode" == verilator-4threads ]]; then threads=4; fi
+    runtime=$(verilator_runtime)
+    patch --output="$output/ariane_tb.cpp" "$SOURCE/corev_apu/tb/ariane_tb.cpp" "$SCRIPT_DIR/ariane-benchmark.patch"
+    # Use upstream's RTL source list and flags. Without Spike tandem, only
+    # FESVR is needed from the Spike build.
+    cat > "$output/host.mk" <<EOF
+verilate_command := \$(subst corev_apu/tb/ariane_tb.cpp,$output/ariane_tb.cpp,\$(verilate_command))
+verilate_command := \$(subst -lfesvr -lriscv -ldisasm -lyaml-cpp,$FESVR/lib/libfesvr.a,\$(verilate_command))
+EOF
+    stage "build-$mode" make -C "$SOURCE" -f Makefile -f "$output/host.mk" verilate \
+        "verilator=$VERILATOR" "VL_INC_DIR=$runtime/include" "SPIKE_INSTALL_DIR=$FESVR" \
+        "ver-library=$output" target=cv32a6_imac_sv32 "verilator_threads=$threads" NUM_JOBS=1 \
+        "CXX=$CXX" "LINK=$CXX" TRACE_FAST= TRACE_COMPACT= PROFILE= DEBUG= SPIKE_TANDEM= spike-tandem=
+    grep -Eq "::threads\(\) const \\{ return ${threads}; \\}" "$output/Variane_testharness.cpp" ||
+        die 'unexpected Verilator model thread count'
 }
 
 native_graph() {
     local output=$1 threads=$2
     cp "$SCRIPT_DIR/native_graph_top.cpp" "$output/"
-    "$CPPHDL" --native-graph --top elaboration_root --chunk-size=512 --split-chunks=64 --optimize-threads="$threads" --cxx "$CXX" --frontend-flag=-DSYNTHESIS --frontend-flag=-I"$ROOT/ordinary" --frontend-flag=-I"$RISCV/include" --output "$output/graph" "$output/native_graph_top.cpp"
+    "$CPPHDL" --native-graph --top elaboration_root --chunk-size=512 --split-chunks=64 --optimize-threads="$threads" --cxx "$CXX" --frontend-flag=-DSYNTHESIS --frontend-flag=-I"$ROOT/ordinary" --frontend-flag=-I"$FESVR/include" --output "$output/graph" "$output/native_graph_top.cpp"
     local lanes
     lanes=$(sed -n 's/.*__cpphdl_thread_count = \([0-9]*\);.*/\1/p' "$output/graph/model.h")
     [[ ${lanes:-1} == "$threads" ]] || die 'native graph emitted the wrong thread count'
     gawk -F '\t' '$4 ~ /\.dut\.i_sram\.i_tc_sram_wrapper\[0\]\.i_tc_sram\.sram$/ { if ($2!=64 || $3!=33554432) exit 1; print "#define CVA6_GRAPH_SRAM memory" $1; count++ } END { if(count!=1) exit 1 }' "$output/graph/memories.tsv" > "$output/native_memory.h"
-    "$CXX" -std=c++23 -O2 -g0 -I"$output/graph" -I"$output" -I"$ROOT/ordinary" -I"$REPO/include" -I"$RISCV/include" "$ROOT/ordinary/run_cpphdl_testharness.cpp" "$SCRIPT_DIR/run_native_graph_model.cpp" "$output/graph/"model.part.*.cpp -L"$RISCV/lib" -lfesvr -pthread -latomic -o "$output/run"
+    "$CXX" -std=c++23 -O2 -g0 -I"$output/graph" -I"$output" -I"$ROOT/ordinary" -I"$REPO/include" -I"$FESVR/include" "$ROOT/ordinary/run_cpphdl_testharness.cpp" "$SCRIPT_DIR/run_native_graph_model.cpp" "$output/graph/"model.part.*.cpp "$FESVR/lib/libfesvr.a" -pthread -latomic -o "$output/run"
 }
 
 build_model() {
-    local mode=$1 output="$ROOT/$1" binary signature started seconds state=fresh threads=1
+    local mode=$1 output="$ROOT/$1" binary signature started seconds state=fresh
     require_source
-    if [[ "$mode" != hdlcpp && "$mode" != verilator* ]]; then ready hdlcpp; fi
+    if [[ "$mode" == verilator* ]]; then prepare_verilator; fi
+    if [[ "$mode" != hdlcpp && ( ! -f "$FESVR/lib/libfesvr.a" || ! -f "$FESVR/include/fesvr/dtm.h" ) ]]; then
+        prepare_verilator
+        stage fesvr bash "$SCRIPT_DIR/build.sh" fesvr
+    fi
+    if [[ "$mode" != hdlcpp && "$mode" != verilator* ]]; then
+        # Build the shared conversion on demand. A forced comparison already
+        # rebuilt it once before entering the backend loop.
+        if ! (ready hdlcpp) 2>/dev/null; then build_model hdlcpp; fi
+    fi
     signature=$(fingerprint "$mode")
     binary="$output/run"
     [[ "$mode" != verilator* ]] || binary="$output/Variane_testharness"
@@ -142,21 +342,7 @@ build_model() {
         [[ ! -e "$output" ]] || rm -r -- "$output"
         mkdir -p "$output"
         case "$mode" in
-            verilator|verilator-4threads)
-                [[ "$mode" != verilator-4threads ]] || threads=4
-                # This optional debug signal is optimized away by threaded RTL
-                # scheduling. Drop its printf column in both host variants;
-                # preserve the original RTL, workload loop, timer and tracing.
-                gawk '
-                    /r->ariane_testharness__DOT__i_ariane__DOT__i_cva6__DOT__i_frontend__DOT__i_instr_queue__DOT__push_instr,/ { removed++; next }
-                    { columns+=sub(/ iq_push=0x%x/, ""); print }
-                    END { if(removed!=1 || columns!=1) exit 1 }
-                ' "$SOURCE/corev_apu/tb/ariane_tb.cpp" > "$output/ariane_tb.cpp"
-                printf 'verilate_command := $(subst corev_apu/tb/ariane_tb.cpp,%s/ariane_tb.cpp,$(verilate_command))\n' "$output" > "$output/host.mk"
-                stage "build-$mode" make -C "$SOURCE" -f Makefile -f "$output/host.mk" verilate "verilator=$VERILATOR" "VERILATOR_INSTALL_DIR=${VERILATOR%/bin/*}" "SPIKE_INSTALL_DIR=$RISCV" "ver-library=$output" target=cv32a6_imac_sv32 "verilator_threads=$threads" NUM_JOBS=1 "CXX=$CXX" TRACE_FAST= TRACE_COMPACT= PROFILE= DEBUG= SPIKE_TANDEM=
-                # Check the generated model, not just the requested Make variable.
-                grep -Eq "::threads\(\) const \\{ return ${threads}; \\}" "$output/Variane_testharness.cpp" || die 'unexpected Verilator model thread count'
-                ;;
+            verilator|verilator-4threads) verilator_model "$mode" "$output" ;;
             cpphdl-native-graph) stage "build-$mode" bash "$SCRIPT_DIR/build.sh" native "$output" 1 ;;
             cpphdl-native-graph-4threads) stage "build-$mode" bash "$SCRIPT_DIR/build.sh" native "$output" 4 ;;
             cpphdl|cpphdl-optimize-combs) stage "build-$mode" bash "$SCRIPT_DIR/build.sh" cpp "$mode" "$signature" ;;
@@ -291,7 +477,7 @@ cpp_model() {
     cp -a "$ROOT/ordinary" "$WORK"
     cd "$WORK"
     HDLCPP_OPTIMIZE_INSTANTIATIONS_PER_FILE=24 HDLCPP_OPTIMIZE_MAX_DEFINITION_BYTES_PER_FILE=200000 "$HDLCPP" --optimize run_cpphdl_testharness_optimize_seed.cpp
-    local flags=(-std=c++23 -g0 -w -mcmodel=medium -fno-strict-aliasing -I"$REPO/include" -I"$WORK" -I"$RISCV/include" -fno-crash-diagnostics)
+    local flags=(-std=c++23 -g0 -w -mcmodel=medium -fno-strict-aliasing -I"$REPO/include" -I"$WORK" -I"$FESVR/include" -fno-crash-diagnostics)
     if [[ "$mode" == cpphdl-optimize-combs ]]; then optimize_combs; fi
     {
         echo '#include "cpphdl_optimized_externs.h"'
@@ -350,7 +536,7 @@ cpp_model() {
     done
     printf '%s\n' "${objects[@]}" > objects.list
     "$CXX" -std=c++17 -O2 "$SCRIPT_DIR/link_objects.cpp" -o "$WORK/link-objects"
-    "$WORK/link-objects" "$WORK/objects.list" "$CXX" "${flags[@]}" -L"$RISCV/lib" -lfesvr -pthread -latomic -Wl,-s -o "$output/run"
+    "$WORK/link-objects" "$WORK/objects.list" "$CXX" "${flags[@]}" "$FESVR/lib/libfesvr.a" -pthread -latomic -Wl,-s -o "$output/run"
 }
 
 buffer_output() {
@@ -365,13 +551,31 @@ buffer_output() {
 
 check_run() {
     local mode=$1 log=$2
-    gawk -v graph="$([[ "$mode" == *native-graph* ]] && echo 1 || echo 0)" '
+    gawk -v mode="$mode" '
         /^CVA6_MMUL / { workload++; if ($0!="CVA6_MMUL size=32 repeats=1 macs=32768 checksum=0xd687fdc5") bad=1 }
         /^PASSED\r?$/ { passed++ }
-        /\*\*\* SUCCESS \*\*\*/ { success++; if ($0!~/\*\*\* SUCCESS \*\*\* \(tohost = 0\) after 396778 cycles$/) bad=1 }
-        /^CVA6_BENCH / { stats++; if (!match($0,/^CVA6_BENCH reset_cycles=10 work_cycles=396768 total_cycles=396778 work_seconds=([0-9.]+)$/,parts) || parts[1]+0<=0) bad=1; seconds=parts[1] }
-        /^CVA6_GRAPH_EDGES / { edges++; if ($0!="CVA6_GRAPH_EDGES total_cycles=396778") bad=1 }
-        END { if (bad || workload!=1 || passed!=1 || success!=1 || stats!=1 || edges!=graph) exit 1; print seconds }
+        /\*\*\* SUCCESS \*\*\*/ {
+            success++
+            if (!match($0,/\*\*\* SUCCESS \*\*\* \(tohost = 0\) after ([0-9]+) cycles$/,parts)) bad=1
+            success_cycles=parts[1]
+        }
+        /^CVA6_BENCH / {
+            stats++
+            if (!match($0,/^CVA6_BENCH reset_cycles=10 work_cycles=([0-9]+) total_cycles=([0-9]+) work_seconds=([0-9]+\.[0-9]+)$/,parts)) bad=1
+            work=parts[1]; total=parts[2]; seconds=parts[3]
+        }
+        /^CVA6_GRAPH_EDGES / {
+            edges++
+            if (!match($0,/^CVA6_GRAPH_EDGES total_cycles=([0-9]+)$/,parts)) bad=1
+            graph_cycles=parts[1]
+        }
+        END {
+            graph=(mode ~ /native-graph/)
+            if (bad || workload!=1 || passed!=1 || success!=1 || stats!=1 || edges!=graph ||
+                work<=0 || total!=10+work || total!=success_cycles || seconds<=0 ||
+                (graph && graph_cycles!=total)) exit 1
+            print seconds, total
+        }
     ' "$log"
 }
 
@@ -390,7 +594,7 @@ normalize_commits() {
             destination=fields[5]+0
             printf "%08x %08x %d %08x\n",strtonum("0x" fields[2]),strtonum("0x" fields[3]),destination,destination ? strtonum("0x" fields[6]) : 0; count++
         }
-        END { if (bad || count!=297074) exit 1 }
+        END { if (bad || count==0) exit 1 }
     ' "$log"
 }
 
@@ -401,67 +605,107 @@ ready() {
     tail -n +2 "$ROOT/stamps/$mode" | sha256sum --check --status || die "$mode binary changed"
 }
 
+simulation_affinity() {
+    local mode=$1 limit=1 override=${CVA6_CPU:-}
+    if [[ "$mode" == *4threads ]]; then
+        limit=4
+        override=${CVA6_CPUS4:-}
+    fi
+    if [[ -n "$override" ]]; then
+        printf '%s\n' "$override"
+        return
+    fi
+    # Respect the caller's cpuset, including non-contiguous CPU ranges.
+    awk -v limit="$limit" '/^Cpus_allowed_list:/ {
+        split($2, ranges, ",")
+        for (i=1; i<=length(ranges) && count<limit; i++) {
+            fields=split(ranges[i], endpoints, "-")
+            last=(fields==1 ? endpoints[1] : endpoints[2])
+            for (cpu=endpoints[1]; cpu<=last && count<limit; cpu++) {
+                printf "%s%d", (count++ ? "," : ""), cpu
+            }
+        }
+        print ""
+    }' /proc/self/status
+}
+
 simulate() {
-    local mode=$1 phase=$2 affinity=$CPU variable
-    [[ "$mode" != *4threads ]] || affinity=$CPUS4
+    local mode=$1 phase=$2 affinity variable max=${3:-$MAX_CYCLES}
+    affinity=$(simulation_affinity "$mode")
     mkdir -p "$ROOT/runs/$mode/$phase"
     cd "$ROOT/runs/$mode/$phase"
     for variable in "${!CPPHDL_@}" "${!HDLCPP_@}" "${!CVA6_@}" "${!NATIVE_@}"; do [[ -z "$variable" ]] || unset "$variable"; done
     unset LD_PRELOAD
     export CVA6_BENCH_STATS=1
     if [[ "$mode" == verilator* ]]; then
-        exec taskset -c "$affinity" "$ROOT/$mode/Variane_testharness" --seed=1 --max-cycles=396778 "$ELF" "+elf_file=$ELF"
+        exec taskset -c "$affinity" "$ROOT/$mode/Variane_testharness" --seed=1 --max-cycles="$max" "$ELF" "+elf_file=$ELF"
     fi
     [[ "$phase" != validation ]] || export CPPHDL_TRACE_COMMITS=1
-    exec taskset -c "$affinity" "$ROOT/$mode/run" "$ELF" 396778
+    exec taskset -c "$affinity" "$ROOT/$mode/run" "$ELF" "$max"
+}
+
+run_stats() {
+    local mode=$1 label=$2
+    check_run "$mode" "$ROOT/logs/$label.log" ||
+        die "$mode output/cycle mismatch (see $ROOT/logs/$label.log)"
 }
 
 run_model() {
-    local mode=$1 seconds
+    local mode=$1 seconds cycles commits stats baseline
     require_source
+    if [[ "$mode" != verilator* ]]; then ready hdlcpp; fi
     ready "$mode"
-    printf '%s  %s\n' 38ced8a38d6101aef1ab35e1e534a7bcb924dca41da5580a1e6fd2e3bc0c7a8a "$ELF" | sha256sum --check --status || die 'matmul ELF changed'
+    [[ -f "$ROOT/stamps/elf" ]] && tail -n +2 "$ROOT/stamps/elf" | sha256sum --check --status ||
+        die 'matmul ELF missing or changed; run .build_cva6.sh'
     if [[ "$mode" == verilator ]]; then
         stage run-verilator bash "$SCRIPT_DIR/build.sh" simulate verilator timed
-        seconds=$(check_run verilator "$ROOT/logs/run-verilator.log") || die 'Verilator output/cycle mismatch'
+        stats=$(run_stats verilator run-verilator)
+        read -r seconds cycles <<< "$stats"
         normalize_commits verilator "$ROOT/runs/verilator/timed/trace_rvfi_hart_00.dasm" > "$ROOT/reference.commits" || die 'Verilator commit trace is incomplete or malformed'
-        sha256sum "$ELF" "$ROOT/verilator/Variane_testharness" "$ROOT/reference.commits" > "$ROOT/reference.sha256"
+        printf '%s\n' "$cycles" > "$ROOT/reference.cycles"
+        sha256sum "$ELF" "$ROOT/verilator/Variane_testharness" "$ROOT/reference.commits" "$ROOT/reference.cycles" > "$ROOT/reference.sha256"
     else
         ready verilator
         if [[ ! -f "$ROOT/reference.sha256" ]] || ! sha256sum --check --status "$ROOT/reference.sha256"; then run_model verilator; fi
+        baseline=$(<"$ROOT/reference.cycles")
         if [[ "$mode" == verilator-4threads ]]; then
-            # Both original RTL runners already emit full commit traces during
-            # their timed trial; validate that same run against one-thread RTL.
-            stage "run-$mode" bash "$SCRIPT_DIR/build.sh" simulate "$mode" timed
+            stage "run-$mode" bash "$SCRIPT_DIR/build.sh" simulate "$mode" timed "$baseline"
             normalize_commits "$mode" "$ROOT/runs/$mode/timed/trace_rvfi_hart_00.dasm" > "$ROOT/candidate.commits" || die "$mode commit trace is incomplete or malformed"
         else
-            stage "validate-$mode" bash "$SCRIPT_DIR/build.sh" buffer bash "$SCRIPT_DIR/build.sh" simulate "$mode" validation
-            check_run "$mode" "$ROOT/logs/validate-$mode.log" >/dev/null || die "$mode validation output/cycle mismatch"
+            stage "validate-$mode" bash "$SCRIPT_DIR/build.sh" buffer bash "$SCRIPT_DIR/build.sh" simulate "$mode" validation "$baseline"
+            stats=$(run_stats "$mode" "validate-$mode")
+            read -r seconds cycles <<< "$stats"
+            [[ "$cycles" == "$baseline" ]] || die "$mode validation took $cycles cycles, Verilator took $baseline"
             normalize_commits "$mode" "$ROOT/logs/validate-$mode.log" > "$ROOT/candidate.commits" || die "$mode commit log is incomplete or malformed"
         fi
         cmp "$ROOT/reference.commits" "$ROOT/candidate.commits" || die "$mode integer commit mismatch"
         rm -- "$ROOT/candidate.commits"
         if [[ "$mode" != verilator-4threads ]]; then
             rm -- "$ROOT/logs/validate-$mode.log"
-            stage "run-$mode" bash "$SCRIPT_DIR/build.sh" simulate "$mode" timed
+            stage "run-$mode" bash "$SCRIPT_DIR/build.sh" simulate "$mode" timed "$baseline"
         fi
-        seconds=$(check_run "$mode" "$ROOT/logs/run-$mode.log") || die "$mode timed output/cycle mismatch"
+        stats=$(run_stats "$mode" "run-$mode")
+        read -r seconds cycles <<< "$stats"
+        [[ "$cycles" == "$baseline" ]] || die "$mode took $cycles cycles, Verilator took $baseline"
     fi
+    commits=$(wc -l < "$ROOT/reference.commits")
     find "$ROOT/runs/$mode" -type f \( -name '*.dasm' -o -name '*.traces' \) -delete
-    printf '%-36s %12.6f s  %d cycles  %d commits  PASS\n' "$mode" "$seconds" 396778 297074 | tee "$ROOT/runs/$mode/result.txt"
+    printf '%-36s %12.6f s  %d cycles  %d commits  PASS\n' "$mode" "$seconds" "$cycles" "$commits" | tee "$ROOT/runs/$mode/result.txt"
 }
 
 main() {
     local action=${1:-help}; shift || true
     if [[ " $* " == *' --help '* || "$action" == help ]]; then
         echo 'Fixed CVA6 cv32a6_imac_sv32, 32x32 matmul, one repeat.'
-        echo 'Use .build_cva6.sh, .build_cva6_hdlcpp.sh, then the selected .build/.run entry points.'
-        echo 'Paths: CVA6_SRC=$HOME/cva6, CVA6_WORK_ROOT=/tmp/cva6-bash-$UID, RISCV=$HOME/riscv.'
-        echo 'Tools: HDLCPP, CPPHDL, CPPHDL_CXX, VERILATOR. Affinity: CVA6_CPU=2, CVA6_CPUS4=2,3,4,5.'
+        echo 'Run .compare.sh for Verilator versus native graph, or start with .build_cva6.sh for separate steps.'
+        echo 'Overrides: CVA6_SRC, CVA6_WORK_ROOT, RISCV, CVA6_CROSS_COMPILE, SPIKE_INSTALL_DIR.'
+        echo 'Tools: HDLCPP, CPPHDL, CPPHDL_CXX, VERILATOR. Optional affinity: CVA6_CPU, CVA6_CPUS4.'
         return
     fi
     initialize
     case "$action" in
+        verilator-tool) build_verilator_tool; return ;;
+        fesvr) build_fesvr; return ;;
         native) native_graph "$@"; return ;;
         cpp) cpp_model "$@"; return ;;
         simulate) simulate "$@"; return ;;
